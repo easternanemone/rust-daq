@@ -36,10 +36,11 @@ impl Instrument for MockInstrument {
         tokio::spawn(async move {
             let config = settings.instruments.get("mock").unwrap().clone();
             let sample_rate = config.get("sample_rate_hz").unwrap().as_float().unwrap();
+            let num_samples = config.get("num_samples").unwrap().as_integer().unwrap() as usize;
             let mut interval = interval(Duration::from_secs_f64(1.0 / sample_rate));
             let mut phase: f64 = 0.0;
 
-            loop {
+            for _ in 0..num_samples {
                 interval.tick().await;
                 let now = chrono::Utc::now();
                 phase += 0.1;
@@ -61,9 +62,15 @@ impl Instrument for MockInstrument {
                 };
 
                 // Ignore errors if no receivers are active
-                let _ = sender.send(sine_dp);
-                let _ = sender.send(cosine_dp);
+                if sender.send(sine_dp).is_err() || sender.send(cosine_dp).is_err() {
+                    // Stop if the receiver has been dropped
+                    break;
+                }
             }
+            info!(
+                "Mock instrument finished generating {} samples.",
+                num_samples
+            );
         });
 
         Ok(())

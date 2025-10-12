@@ -1,5 +1,5 @@
 //! Example data processors.
-use crate::core::{DataProcessor, DataPoint};
+use crate::core::{DataPoint, DataProcessor};
 
 /// A simple moving average filter.
 pub struct MovingAverage {

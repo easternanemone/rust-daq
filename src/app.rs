@@ -59,6 +59,11 @@ impl DaqApp {
         f(&mut *inner)
     }
 
+    /// Returns a clone of the application's Tokio runtime handle.
+    pub fn get_runtime(&self) -> Arc<Runtime> {
+        self.with_inner(|inner| inner.runtime.clone())
+    }
+
     /// Shuts down the application, stopping all instruments and the Tokio runtime.
     pub fn shutdown(&self) {
         self.with_inner(|inner| {

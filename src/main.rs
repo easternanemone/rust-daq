@@ -21,12 +21,8 @@ fn main() -> Result<()> {
     // Create a registry and register available instruments.
     // This is our static "plugin" system.
     let mut instrument_registry = InstrumentRegistry::new();
-    instrument_registry.register("mock", || {
-        Box::new(MockInstrument::new())
-    });
-    instrument_registry.register("scpi_keithley", || {
-        Box::new(ScpiInstrument::new())
-    });
+    instrument_registry.register("mock", || Box::new(MockInstrument::new()));
+    instrument_registry.register("scpi_keithley", || Box::new(ScpiInstrument::new()));
     let instrument_registry = Arc::new(instrument_registry);
 
     // Create the core application state

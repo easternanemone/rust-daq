@@ -12,7 +12,8 @@ default_format = "csv" # "csv", "hdf5", "arrow"
 
 [instruments.mock]
 name = "Mock Instrument"
-sample_rate_hz = 100.0
+sample_rate_hz = 1000.0 # Increased for faster testing
+num_samples = 4096      # Enough for multiple FFT windows
 channels = ["sine_wave", "cosine_wave"]
 
 [instruments.scpi_keithley]

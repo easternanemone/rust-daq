@@ -36,10 +36,7 @@ impl Gui {
                 if self.plot_data.len() >= PLOT_DATA_CAPACITY {
                     self.plot_data.pop_front();
                 }
-                let timestamp = data_point
-                    .timestamp
-                    .timestamp_micros() as f64
-                    / 1_000_000.0;
+                let timestamp = data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
                 if self.last_timestamp == 0.0 {
                     self.last_timestamp = timestamp;
                 }
@@ -93,9 +90,7 @@ fn instrument_control_panel(ui: &mut egui::Ui, inner: &mut DaqAppInner) {
 fn live_plot(ui: &mut egui::Ui, data: &VecDeque<[f64; 2]>) {
     ui.heading("Live Data (Mock Instrument Sine Wave)");
     let line = Line::new(PlotPoints::from_iter(data.iter().copied()));
-    Plot::new("live_plot")
-        .view_aspect(2.0)
-        .show(ui, |plot_ui| {
-            plot_ui.line(line);
-        });
+    Plot::new("live_plot").view_aspect(2.0).show(ui, |plot_ui| {
+        plot_ui.line(line);
+    });
 }
