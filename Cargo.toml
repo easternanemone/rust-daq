@@ -1,0 +1,60 @@
+[package]
+name = "rust_daq"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <you@example.com>"]
+description = "A modular scientific data acquisition (DAQ) application in Rust."
+
+[dependencies]
+# Async Runtime
+tokio = { version = "1", features = ["full"] }
+
+# GUI
+egui = "0.27.2"
+eframe = { version = "0.27.2", features = ["persistence"] }
+egui_plot = "0.27.2"
+
+# Data Handling
+ringbuf = "0.3.3"
+hdf5 = { version = "0.8.1", optional = true }
+arrow2 = { version = "0.17.2", optional = true }
+csv = { version = "1.3.0", optional = true }
+chrono = { version = "0.4.38", features = ["serde"] }
+
+# Serialization & Configuration
+serde = { version = "1.0", features = ["derive"] }
+config = { version = "0.14.0", features = ["toml"] }
+toml = "0.8.12"
+
+# Error Handling
+anyhow = "1.0.82"
+thiserror = "1.0.59"
+
+# Logging
+log = "0.4.21"
+env_logger = "0.11.3"
+
+# CLI
+clap = { version = "4.5.4", features = ["derive"] }
+
+# Concurrency & Async
+async-trait = "0.1.79"
+futures = "0.3.30"
+
+# Instrument Communication
+serialport = { version = "4.3.0", optional = true }
+
+# Utilities
+rand = "0.8.5"
+
+[features]
+default = ["storage_csv", "instrument_serial"]
+full = ["storage_csv", "storage_hdf5", "storage_arrow", "instrument_serial"]
+storage_csv = ["dep:csv"]
+storage_hdf5 = ["dep:hdf5"]
+storage_arrow = ["dep:arrow2"]
+instrument_serial = ["dep:serialport"]
+
+[[bin]]
+name = "rust_daq"
+path = "src/main.rs"

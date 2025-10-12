@@ -1,0 +1,22 @@
+# Default configuration for Rust DAQ application
+
+# Log level: "error", "warn", "info", "debug", "trace"
+log_level = "info"
+
+[storage]
+default_path = "data_output"
+default_format = "csv" # "csv", "hdf5", "arrow"
+
+# Configuration for specific instruments
+[instruments]
+
+[instruments.mock]
+name = "Mock Instrument"
+sample_rate_hz = 100.0
+channels = ["sine_wave", "cosine_wave"]
+
+[instruments.scpi_keithley]
+name = "Keithley 2400 (SCPI)"
+# Example for a serial-based SCPI device
+# port = "/dev/ttyUSB0"
+# baud_rate = 9600
