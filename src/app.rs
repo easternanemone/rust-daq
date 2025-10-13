@@ -154,4 +154,9 @@ impl DaqAppInner {
             info!("Instrument '{}' stopped.", id);
         }
     }
+
+    /// Returns a list of available channel names.
+    pub fn get_available_channels(&self) -> Vec<String> {
+        self.instrument_registry.list().collect()
+    }
 }

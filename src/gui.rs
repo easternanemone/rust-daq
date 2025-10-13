@@ -2,6 +2,7 @@
 use crate::app::{DaqApp, DaqAppInner};
 use crate::core::DataPoint;
 use eframe::egui;
+use egui_dock::{DockArea, DockState, Style, TabViewer};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::error;
 use std::collections::VecDeque;
@@ -9,39 +10,61 @@ use tokio::sync::broadcast;
 
 const PLOT_DATA_CAPACITY: usize = 1000;
 
+/// Represents the state of a single plot panel.
+struct PlotTab {
+    channel: String,
+    plot_data: VecDeque<[f64; 2]>,
+    last_timestamp: f64,
+}
+
+impl PlotTab {
+    fn new(channel: String) -> Self {
+        Self {
+            channel,
+            plot_data: VecDeque::with_capacity(PLOT_DATA_CAPACITY),
+            last_timestamp: 0.0,
+        }
+    }
+}
+
 /// The main GUI struct.
 pub struct Gui {
     app: DaqApp,
     data_receiver: broadcast::Receiver<DataPoint>,
-    plot_data: VecDeque<[f64; 2]>,
-    last_timestamp: f64,
+    dock_state: DockState<PlotTab>,
+    selected_channel: String,
 }
 
 impl Gui {
     /// Creates a new GUI.
     pub fn new(_cc: &eframe::CreationContext<'_>, app: DaqApp) -> Self {
         let data_receiver = app.with_inner(|inner| inner.data_sender.subscribe());
+        let dock_state = DockState::new(vec![PlotTab::new("sine_wave".to_string())]);
+        let selected_channel = "sine_wave".to_string();
+
         Self {
             app,
             data_receiver,
-            plot_data: VecDeque::with_capacity(PLOT_DATA_CAPACITY),
-            last_timestamp: 0.0,
+            dock_state,
+            selected_channel,
         }
     }
 
     /// Fetches new data points from the broadcast channel.
     fn update_data(&mut self) {
         while let Ok(data_point) = self.data_receiver.try_recv() {
-            if data_point.channel == "sine_wave" {
-                if self.plot_data.len() >= PLOT_DATA_CAPACITY {
-                    self.plot_data.pop_front();
+            for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
+                if tab.channel == data_point.channel {
+                    if tab.plot_data.len() >= PLOT_DATA_CAPACITY {
+                        tab.plot_data.pop_front();
+                    }
+                    let timestamp = data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
+                    if tab.last_timestamp == 0.0 {
+                        tab.last_timestamp = timestamp;
+                    }
+                    tab.plot_data
+                        .push_back([timestamp - tab.last_timestamp, data_point.value]);
                 }
-                let timestamp = data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
-                if self.last_timestamp == 0.0 {
-                    self.last_timestamp = timestamp;
-                }
-                self.plot_data
-                    .push_back([timestamp - self.last_timestamp, data_point.value]);
             }
         }
     }
@@ -52,13 +75,38 @@ impl eframe::App for Gui {
         self.update_data();
 
         self.app.with_inner(|inner| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Rust DAQ Control Panel");
-                ui.separator();
-                instrument_control_panel(ui, inner);
-                ui.separator();
-                live_plot(ui, &self.plot_data);
+            let available_channels: Vec<String> = inner.get_available_channels();
+
+            egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Rust DAQ Control Panel");
+                    ui.separator();
+
+                    egui::ComboBox::from_label("Channel")
+                        .selected_text(self.selected_channel.clone())
+                        .show_ui(ui, |ui| {
+                            for channel in &available_channels {
+                                ui.selectable_value(&mut self.selected_channel, channel.clone(), channel.clone());
+                            }
+                        });
+
+                    if ui.button("Add Plot").clicked() {
+                        self.dock_state.push_to_focused_leaf(PlotTab::new(self.selected_channel.clone()));
+                    }
+                });
             });
+
+            egui::CentralPanel::default().show(ctx, |ui| {
+                instrument_control_panel(ui, inner);
+            });
+
+            let mut tab_viewer = PlotTabViewer {
+                available_channels,
+            };
+
+            DockArea::new(&mut self.dock_state)
+                .style(Style::from_egui(ctx.style().as_ref()))
+                .show(ctx, &mut tab_viewer);
         });
 
         // Request a repaint to ensure the GUI is continuously updated
@@ -87,10 +135,34 @@ fn instrument_control_panel(ui: &mut egui::Ui, inner: &mut DaqAppInner) {
     }
 }
 
-fn live_plot(ui: &mut egui::Ui, data: &VecDeque<[f64; 2]>) {
-    ui.heading("Live Data (Mock Instrument Sine Wave)");
+struct PlotTabViewer {
+    available_channels: Vec<String>,
+}
+
+impl TabViewer for PlotTabViewer {
+    type Tab = PlotTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.channel.clone().into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        egui::ComboBox::from_label("Channel")
+            .selected_text(tab.channel.clone())
+            .show_ui(ui, |ui| {
+                for channel in &self.available_channels {
+                    ui.selectable_value(&mut tab.channel, channel.clone(), channel.clone());
+                }
+            });
+
+        live_plot(ui, &tab.plot_data, &tab.channel);
+    }
+}
+
+fn live_plot(ui: &mut egui::Ui, data: &VecDeque<[f64; 2]>, channel: &str) {
+    ui.heading(format!("Live Data ({})", channel));
     let line = Line::new(PlotPoints::from_iter(data.iter().copied()));
-    Plot::new("live_plot").view_aspect(2.0).show(ui, |plot_ui| {
+    Plot::new(channel).view_aspect(2.0).show(ui, |plot_ui| {
         plot_ui.line(line);
     });
 }
