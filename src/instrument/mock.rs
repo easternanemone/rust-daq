@@ -22,8 +22,8 @@ impl MockInstrument {
 
 #[async_trait]
 impl Instrument for MockInstrument {
-    fn name(&self) -> &'static str {
-        "Mock Instrument"
+    fn name(&self) -> String {
+        "Mock Instrument".to_string()
     }
 
     async fn connect(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError> {

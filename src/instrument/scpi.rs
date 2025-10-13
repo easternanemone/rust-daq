@@ -19,8 +19,8 @@ impl ScpiInstrument {
 
 #[async_trait]
 impl Instrument for ScpiInstrument {
-    fn name(&self) -> &'static str {
-        "SCPI Instrument"
+    fn name(&self) -> String {
+        "SCPI Instrument".to_string()
     }
 
     async fn connect(&mut self, _settings: &Arc<Settings>) -> Result<(), DaqError> {

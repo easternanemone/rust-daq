@@ -15,6 +15,10 @@ pub enum DaqError {
     #[error("Instrument error: {0}")]
     Instrument(String),
 
+    #[cfg(feature = "instrument_visa")]
+    #[error("VISA error: {0}")]
+    Visa(#[from] visa_rs::Error),
+
     #[error("Data processing error: {0}")]
     Processing(String),
 

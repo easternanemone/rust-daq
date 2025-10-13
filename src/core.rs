@@ -28,7 +28,7 @@ pub struct InstrumentHandle {
 #[async_trait]
 pub trait Instrument: Send + Sync {
     /// Returns the name of the instrument.
-    fn name(&self) -> &'static str;
+    fn name(&self) -> String;
 
     /// Connects to the instrument and prepares it for data acquisition.
     async fn connect(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError>;

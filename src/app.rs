@@ -36,14 +36,20 @@ impl DaqApp {
         let runtime = Arc::new(Runtime::new().map_err(DaqError::Tokio)?);
         let (data_sender, _) = broadcast::channel(1024);
 
-        let inner = DaqAppInner {
-            settings,
+        let mut inner = DaqAppInner {
+            settings: settings.clone(),
             instrument_registry,
             instruments: HashMap::new(),
             data_sender,
             runtime,
             shutdown_flag: false,
         };
+
+        for (id, _instrument_config) in &settings.instruments {
+            if let Err(e) = inner.spawn_instrument(id) {
+                error!("Failed to spawn instrument '{}': {}", id, e);
+            }
+        }
 
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
@@ -91,10 +97,16 @@ impl DaqAppInner {
             )));
         }
 
+        let instrument_config = self.settings.instruments.get(id)
+            .ok_or_else(|| DaqError::Config(config::ConfigError::NotFound("instrument".to_string())))?;
+        let instrument_type = instrument_config.get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DaqError::Config(config::ConfigError::NotFound("type".to_string())))?;
+
         let mut instrument = self
             .instrument_registry
-            .create(id)
-            .ok_or_else(|| DaqError::Instrument(format!("Instrument '{}' not found.", id)))?;
+            .create(instrument_type, id)
+            .ok_or_else(|| DaqError::Instrument(format!("Instrument type '{}' not found.", instrument_type)))?;
 
         let data_sender = self.data_sender.clone();
         let settings = self.settings.clone();

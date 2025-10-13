@@ -21,8 +21,20 @@ fn main() -> Result<()> {
     // Create a registry and register available instruments.
     // This is our static "plugin" system.
     let mut instrument_registry = InstrumentRegistry::new();
-    instrument_registry.register("mock", || Box::new(MockInstrument::new()));
-    instrument_registry.register("scpi_keithley", || Box::new(ScpiInstrument::new()));
+    instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
+    instrument_registry.register("scpi_keithley", |_id| Box::new(ScpiInstrument::new()));
+
+    #[cfg(feature = "instrument_visa")]
+    {
+        use rust_daq::instrument::visa::VisaInstrument;
+        // The unwrap here is not ideal, but the factory function doesn't
+        // support returning a Result. If creating a VISA instrument fails,
+        // the application will panic, which is acceptable for now.
+        instrument_registry.register("visa_instrument", |id| {
+            Box::new(VisaInstrument::new(id).unwrap())
+        });
+    }
+
     let instrument_registry = Arc::new(instrument_registry);
 
     // Create the core application state
