@@ -1,4 +1,6 @@
 //! The eframe/egui implementation for the GUI.
+pub mod storage_manager;
+
 use crate::{
     app::{DaqApp, DaqAppInner},
     core::DataPoint,
@@ -10,6 +12,7 @@ use egui_plot::{Line, Plot, PlotPoints};
 use log::{error, LevelFilter};
 use std::collections::VecDeque;
 use tokio::sync::broadcast;
+use self::storage_manager::StorageManager;
 
 mod log_panel;
 
@@ -37,8 +40,10 @@ pub struct Gui {
     app: DaqApp,
     data_receiver: broadcast::Receiver<DataPoint>,
     log_buffer: LogBuffer,
-    plot_data: VecDeque<[f64; 2]>,
-    last_timestamp: f64,
+    dock_state: DockState<PlotTab>,
+    selected_channel: String,
+    storage_manager: StorageManager,
+    show_storage: bool,
     // Log panel state
     log_filter_text: String,
     log_level_filter: LevelFilter,
@@ -51,12 +56,18 @@ impl Gui {
         let (data_receiver, log_buffer) = app.with_inner(|inner| {
             (inner.data_sender.subscribe(), inner.log_buffer.clone())
         });
+
+        let mut dock_state = DockState::new(vec![PlotTab::new("sine_wave".to_string())]);
+        dock_state.push_to_focused_leaf(PlotTab::new("cosine_wave".to_string()));
+
         Self {
             app,
             data_receiver,
             log_buffer,
-            plot_data: VecDeque::with_capacity(PLOT_DATA_CAPACITY),
-            last_timestamp: 0.0,
+            dock_state,
+            selected_channel: "sine_wave".to_string(),
+            storage_manager: StorageManager::new(),
+            show_storage: false,
             log_filter_text: String::new(),
             log_level_filter: LevelFilter::Info,
             scroll_to_bottom: true,
@@ -95,8 +106,6 @@ impl eframe::App for Gui {
             });
 
         self.app.with_inner(|inner| {
-            let available_channels: Vec<String> = inner.get_available_channels();
-
             egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Rust DAQ Control Panel");
@@ -105,7 +114,7 @@ impl eframe::App for Gui {
                     egui::ComboBox::from_label("Channel")
                         .selected_text(self.selected_channel.clone())
                         .show_ui(ui, |ui| {
-                            for channel in &available_channels {
+                            for channel in &inner.get_available_channels() {
                                 ui.selectable_value(&mut self.selected_channel, channel.clone(), channel.clone());
                             }
                         });
@@ -113,20 +122,40 @@ impl eframe::App for Gui {
                     if ui.button("Add Plot").clicked() {
                         self.dock_state.push_to_focused_leaf(PlotTab::new(self.selected_channel.clone()));
                     }
+
+                    ui.separator();
+                    if ui.button(if self.show_storage { "Hide Storage" } else { "Show Storage" }).clicked() {
+                        self.show_storage = !self.show_storage;
+                    }
                 });
             });
 
-            egui::CentralPanel::default().show(ctx, |ui| {
-                instrument_control_panel(ui, inner);
-            });
+            if self.show_storage {
+                egui::SidePanel::right("storage_panel")
+                    .resizable(true)
+                    .min_width(300.0)
+                    .show(ctx, |ui| {
+                        self.storage_manager.ui(ui, &self.app);
+                    });
+            }
 
+            egui::SidePanel::left("control_panel")
+                .resizable(true)
+                .min_width(200.0)
+                .show(ctx, |ui| {
+                    instrument_control_panel(ui, inner);
+                });
+
+            let available_channels = inner.get_available_channels();
             let mut tab_viewer = PlotTabViewer {
                 available_channels,
             };
 
-            DockArea::new(&mut self.dock_state)
-                .style(Style::from_egui(ctx.style().as_ref()))
-                .show(ctx, &mut tab_viewer);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                DockArea::new(&mut self.dock_state)
+                    .style(Style::from_egui(ctx.style().as_ref()))
+                    .show_inside(ui, &mut tab_viewer);
+            });
         });
 
         // Request a repaint to ensure the GUI is continuously updated
