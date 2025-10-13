@@ -30,3 +30,12 @@ name = "Rigol DS1054Z (VISA)"
 resource_string = "TCPIP0::192.168.1.101::INSTR"
 polling_rate_hz = 10.0
 queries = { "voltage" = ":MEAS:VPP? CHAN1", "frequency" = ":MEAS:FREQ? CHAN1" }
+
+# Configuration for data processing pipelines
+# Each key under [processors] corresponds to an instrument ID.
+# The value is an array of processor configurations to be applied in order.
+[processors]
+mock = [
+  { type = "iir", filter_type = "Lowpass", f0 = 50.0, fs = 1000.0 },
+  { type = "fft", window_size = 1024, overlap = 512, sampling_rate = 1000.0 }
+]

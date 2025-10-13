@@ -1,7 +1,8 @@
 //! The core application state and logic.
 use crate::{
     config::Settings,
-    core::{DataPoint, InstrumentHandle},
+    core::{DataPoint, DataProcessor, InstrumentHandle},
+    data::registry::ProcessorRegistry,
     error::DaqError,
     instrument::InstrumentRegistry,
     log_capture::LogBuffer,
@@ -22,6 +23,7 @@ pub struct DaqApp {
 pub struct DaqAppInner {
     pub settings: Arc<Settings>,
     pub instrument_registry: Arc<InstrumentRegistry>,
+    pub processor_registry: Arc<ProcessorRegistry>,
     pub instruments: HashMap<String, InstrumentHandle>,
     pub data_sender: broadcast::Sender<DataPoint>,
     pub log_buffer: LogBuffer,
@@ -34,6 +36,7 @@ impl DaqApp {
     pub fn new(
         settings: Arc<Settings>,
         instrument_registry: Arc<InstrumentRegistry>,
+        processor_registry: Arc<ProcessorRegistry>,
         log_buffer: LogBuffer,
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().map_err(DaqError::Tokio)?);
@@ -42,6 +45,7 @@ impl DaqApp {
         let mut inner = DaqAppInner {
             settings: settings.clone(),
             instrument_registry,
+            processor_registry,
             instruments: HashMap::new(),
             data_sender,
             log_buffer,
@@ -112,6 +116,15 @@ impl DaqAppInner {
             .create(instrument_type, id)
             .ok_or_else(|| DaqError::Instrument(format!("Instrument type '{}' not found.", instrument_type)))?;
 
+        // Create processor chain for this instrument
+        let mut processors: Vec<Box<dyn DataProcessor>> = Vec::new();
+        if let Some(processor_configs) = self.settings.processors.as_ref().and_then(|p| p.get(id)) {
+            for config in processor_configs {
+                let processor = self.processor_registry.create(&config.r#type, &config.config)?;
+                processors.push(processor);
+            }
+        }
+
         let data_sender = self.data_sender.clone();
         let settings = self.settings.clone();
         let id_clone = id.to_string();
@@ -123,11 +136,18 @@ impl DaqAppInner {
             let mut stream = instrument.data_stream().await?;
             loop {
                 tokio::select! {
-                    data_point = stream.recv() => {
-                        match data_point {
+                    data_point_result = stream.recv() => {
+                        match data_point_result {
                             Ok(dp) => {
-                                if let Err(e) = data_sender.send(dp) {
-                                    error!("Failed to broadcast data point: {}", e);
+                                let mut data_points = vec![dp];
+                                for processor in &mut processors {
+                                    data_points = processor.process(&data_points);
+                                }
+
+                                for processed_dp in data_points {
+                                    if let Err(e) = data_sender.send(processed_dp) {
+                                        error!("Failed to broadcast data point: {}", e);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -137,8 +157,6 @@ impl DaqAppInner {
                         }
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                        // This is a safeguard. The stream should ideally never stall for this long
-                        // without producing data or ending.
                         log::trace!("Instrument stream for {} is idle.", id_clone);
                     }
                 }

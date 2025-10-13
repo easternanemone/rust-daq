@@ -53,6 +53,7 @@ visa-rs = { version = "0.6.2", optional = true }
 # Utilities
 rand = "0.8.5"
 opener = "0.7.0"
+biquad = "0.4.1"
 
 [features]
 default = ["storage_csv", "instrument_serial"]

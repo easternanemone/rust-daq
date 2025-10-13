@@ -5,6 +5,7 @@ use log::{info, LevelFilter};
 use rust_daq::{
     app::DaqApp,
     config::Settings,
+    data::registry::ProcessorRegistry,
     gui::Gui,
     instrument::{mock::MockInstrument, scpi::ScpiInstrument, InstrumentRegistry},
     log_capture::{LogBuffer, LogCollector},
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
     // --- End of Log Initialization ---
 
     // Load configuration
-    let settings = Arc::new(Settings::new()?);
+    let settings = Arc::new(Settings::new(None)?);
     info!("Configuration loaded successfully.");
 
     // Create a registry and register available instruments.
@@ -58,8 +59,11 @@ fn main() -> Result<()> {
 
     let instrument_registry = Arc::new(instrument_registry);
 
+    // Create the processor registry
+    let processor_registry = Arc::new(ProcessorRegistry::new());
+
     // Create the core application state
-    let app = DaqApp::new(settings.clone(), instrument_registry, log_buffer)?;
+    let app = DaqApp::new(settings.clone(), instrument_registry, processor_registry, log_buffer)?;
     let app_clone = app.clone();
 
     // Set up and run the GUI

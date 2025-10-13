@@ -9,6 +9,14 @@ pub struct Settings {
     pub log_level: String,
     pub storage: StorageSettings,
     pub instruments: HashMap<String, toml::Value>,
+    pub processors: Option<HashMap<String, Vec<ProcessorConfig>>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProcessorConfig {
+    pub r#type: String,
+    #[serde(flatten)]
+    pub config: toml::Value,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -18,9 +26,10 @@ pub struct StorageSettings {
 }
 
 impl Settings {
-    pub fn new() -> Result<Self, DaqError> {
+    pub fn new(config_name: Option<&str>) -> Result<Self, DaqError> {
+        let config_path = format!("config/{}", config_name.unwrap_or("default"));
         let s = Config::builder()
-            .add_source(config::File::with_name("config/default"))
+            .add_source(config::File::with_name(&config_path))
             .build()
             .map_err(DaqError::Config)?;
 

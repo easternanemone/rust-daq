@@ -22,6 +22,9 @@ pub enum DaqError {
     #[error("Data processing error: {0}")]
     Processing(String),
 
+    #[error(transparent)]
+    Anyhow(#[from] anyhow::Error),
+
     #[error("Storage error: {0}")]
     Storage(String),
 
