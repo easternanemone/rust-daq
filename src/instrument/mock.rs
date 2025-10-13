@@ -53,12 +53,14 @@ impl Instrument for MockInstrument {
                     channel: "sine_wave".to_string(),
                     value: phase.sin() + noise,
                     unit: "V".to_string(),
+                    metadata: None,
                 };
                 let cosine_dp = DataPoint {
                     timestamp: now,
                     channel: "cosine_wave".to_string(),
                     value: phase.cos() + noise * 0.8,
                     unit: "V".to_string(),
+                    metadata: None,
                 };
 
                 // Ignore errors if no receivers are active

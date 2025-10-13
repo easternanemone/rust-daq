@@ -43,6 +43,7 @@ use std::sync::Arc;
 ///             channel: "test".to_string(),
 ///             value,
 ///             unit: "V".to_string(),
+///             metadata: None,
 ///         });
 ///     }
 ///
@@ -150,6 +151,7 @@ impl DataProcessor for FFTProcessor {
                     channel: self.channel.clone(),
                     value: magnitude_db,
                     unit: "dB".to_string(),
+                    metadata: None,
                 });
             }
 
@@ -173,6 +175,7 @@ impl DataProcessor for FFTProcessor {
                     channel: self.channel.clone(),
                     value: magnitude_db,
                     unit: "dB".to_string(),
+                    metadata: None,
                 });
             }
 

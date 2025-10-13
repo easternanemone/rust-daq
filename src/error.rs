@@ -28,6 +28,9 @@ pub enum DaqError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
     #[error("Feature '{0}' is not enabled. Please build with --features {0}")]
     FeatureNotEnabled(String),
 }

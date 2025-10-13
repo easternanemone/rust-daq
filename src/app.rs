@@ -6,6 +6,7 @@ use crate::{
     error::DaqError,
     instrument::InstrumentRegistry,
     log_capture::LogBuffer,
+    metadata::Metadata,
 };
 use anyhow::Result;
 use log::{error, info};
@@ -27,6 +28,9 @@ pub struct DaqAppInner {
     pub instruments: HashMap<String, InstrumentHandle>,
     pub data_sender: broadcast::Sender<DataPoint>,
     pub log_buffer: LogBuffer,
+    pub metadata: Metadata,
+    pub writer_task: Option<JoinHandle<Result<()>>>,
+    pub storage_format: String,
     runtime: Arc<Runtime>,
     shutdown_flag: bool,
 }
@@ -41,6 +45,7 @@ impl DaqApp {
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().map_err(DaqError::Tokio)?);
         let (data_sender, _) = broadcast::channel(1024);
+        let storage_format = settings.storage.default_format.clone();
 
         let mut inner = DaqAppInner {
             settings: settings.clone(),
@@ -49,6 +54,9 @@ impl DaqApp {
             instruments: HashMap::new(),
             data_sender,
             log_buffer,
+            metadata: Metadata::default(),
+            writer_task: None,
+            storage_format,
             runtime,
             shutdown_flag: false,
         };
@@ -180,5 +188,72 @@ impl DaqAppInner {
     /// Returns a list of available channel names.
     pub fn get_available_channels(&self) -> Vec<String> {
         self.instrument_registry.list().collect()
+    }
+
+    /// Starts the data recording process.
+    pub fn start_recording(&mut self) -> Result<(), DaqError> {
+        if self.writer_task.is_some() {
+            return Err(DaqError::Storage(
+                "Recording is already in progress.".to_string(),
+            ));
+        }
+
+        let settings = self.settings.clone();
+        let metadata = self.metadata.clone();
+        let mut rx = self.data_sender.subscribe();
+        let storage_format_for_task = self.storage_format.clone();
+
+        let task = self.runtime.spawn(async move {
+            let mut writer: Box<dyn crate::core::StorageWriter> =
+                match storage_format_for_task.as_str() {
+                    "csv" => Box::new(crate::data::storage::CsvWriter::new()),
+                    "hdf5" => Box::new(crate::data::storage::Hdf5Writer::new()),
+                    "arrow" => Box::new(crate::data::storage::ArrowWriter::new()),
+                    _ => {
+                        return Err(anyhow::anyhow!(DaqError::Storage(format!(
+                            "Unsupported storage format: {}",
+                            storage_format_for_task
+                        ))))
+                    }
+                };
+
+            writer.init(&settings).await?;
+            writer.set_metadata(&metadata).await?;
+
+            loop {
+                tokio::select! {
+                    data_point = rx.recv() => {
+                        match data_point {
+                            Ok(dp) => {
+                                if let Err(e) = writer.write(&[dp]).await {
+                                    error!("Failed to write data point: {}", e);
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                log::warn!("Data writer lagged by {} messages.", n);
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            writer.shutdown().await?;
+            Ok(())
+        });
+
+        self.writer_task = Some(task);
+        info!("Started recording with format: {}", self.storage_format);
+        Ok(())
+    }
+
+    /// Stops the data recording process.
+    pub fn stop_recording(&mut self) {
+        if let Some(task) = self.writer_task.take() {
+            task.abort();
+            info!("Stopped recording.");
+        }
     }
 }

@@ -48,6 +48,7 @@ impl Instrument for ScpiInstrument {
             channel: "scpi_placeholder".to_string(),
             value: 0.0,
             unit: "N/A".to_string(),
+            metadata: None,
         });
         Ok(receiver)
     }
