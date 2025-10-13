@@ -12,3 +12,4 @@ pub mod gui;
 pub mod instrument;
 pub mod log_capture;
 pub mod metadata;
+pub mod session;

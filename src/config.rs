@@ -1,7 +1,7 @@
 //! Configuration management.
 use crate::error::DaqError;
 use config::Config;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -19,7 +19,7 @@ pub struct ProcessorConfig {
     pub config: toml::Value,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StorageSettings {
     pub default_path: String,
     pub default_format: String,

@@ -7,10 +7,12 @@ use crate::{
     instrument::InstrumentRegistry,
     log_capture::LogBuffer,
     metadata::Metadata,
+    session::{self, Session},
 };
 use anyhow::Result;
 use log::{error, info};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::broadcast, task::JoinHandle};
 
@@ -100,6 +102,20 @@ impl DaqApp {
                 handle.task.abort();
             }
         });
+    }
+
+    /// Saves the current application state to a session file.
+    pub fn save_session(&self, path: &Path, gui_state: session::GuiState) -> Result<()> {
+        let session = Session::from_app(self, gui_state);
+        session::save_session(&session, path)
+    }
+
+    /// Loads application state from a session file.
+    pub fn load_session(&self, path: &Path) -> Result<session::GuiState> {
+        let session = session::load_session(path)?;
+        let gui_state = session.gui_state.clone();
+        session.apply_to_app(self);
+        Ok(gui_state)
     }
 }
 
