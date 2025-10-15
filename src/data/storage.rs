@@ -5,6 +5,7 @@ use crate::{
     error::DaqError,
     metadata::Metadata,
 };
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::fs::File;
 use std::io::Write;
@@ -47,9 +48,9 @@ impl CsvWriter {
 
 #[async_trait]
 impl StorageWriter for CsvWriter {
-    async fn init(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError> {
+    async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
         #[cfg(not(feature = "storage_csv"))]
-        return Err(DaqError::FeatureNotEnabled("storage_csv".to_string()));
+        return Err(DaqError::FeatureNotEnabled("storage_csv".to_string()).into());
 
         #[cfg(feature = "storage_csv")]
         {
@@ -60,7 +61,8 @@ impl StorageWriter for CsvWriter {
             );
             let path = PathBuf::from(&settings.storage.default_path);
             if !path.exists() {
-                std::fs::create_dir_all(&path).map_err(|e| DaqError::Storage(e.to_string()))?;
+                std::fs::create_dir_all(&path)
+                    .with_context(|| format!("Failed to create storage directory at {:?}", path))?;
             }
             self.path = path.join(file_name);
             log::info!("CSV Writer will be initialized at '{}'.", self.path.display());
@@ -68,25 +70,26 @@ impl StorageWriter for CsvWriter {
         }
     }
 
-    async fn set_metadata(&mut self, metadata: &Metadata) -> Result<(), DaqError> {
+    async fn set_metadata(&mut self, metadata: &Metadata) -> Result<()> {
         #[cfg(feature = "storage_csv")]
         {
-            let mut file = File::create(&self.path).map_err(|e| {
-                DaqError::Storage(format!("Failed to create CSV file: {}", e))
-            })?;
+            let mut file = File::create(&self.path)
+                .with_context(|| format!("Failed to create CSV file at {:?}", self.path))?;
 
             let json_string = serde_json::to_string_pretty(metadata)
-                .map_err(|e| DaqError::Serialization(e.to_string()))?;
+                .context("Failed to serialize metadata to JSON")?;
 
             for line in json_string.lines() {
-                file.write_all(b"# ").and_then(|_| file.write_all(line.as_bytes())).and_then(|_| file.write_all(b"\n"))
-                    .map_err(|e| DaqError::Storage(e.to_string()))?;
+                file.write_all(b"# ")
+                    .and_then(|_| file.write_all(line.as_bytes()))
+                    .and_then(|_| file.write_all(b"\n"))
+                    .context("Failed to write metadata to CSV file")?;
             }
 
             let mut writer = csv::Writer::from_writer(file);
             writer
                 .write_record(["timestamp", "channel", "value", "unit", "metadata"])
-                .map_err(|e| DaqError::Storage(e.to_string()))?;
+                .context("Failed to write CSV header")?;
 
             self.writer = Some(writer);
             Ok(())
@@ -95,7 +98,7 @@ impl StorageWriter for CsvWriter {
         Ok(())
     }
 
-    async fn write(&mut self, data: &[DataPoint]) -> Result<(), DaqError> {
+    async fn write(&mut self, data: &[DataPoint]) -> Result<()> {
         #[cfg(feature = "storage_csv")]
         {
             if let Some(writer) = self.writer.as_mut() {
@@ -112,7 +115,7 @@ impl StorageWriter for CsvWriter {
                             dp.unit.clone(),
                             metadata_str,
                         ])
-                        .map_err(|e| DaqError::Storage(e.to_string()))?;
+                        .context("Failed to write data point to CSV file")?;
                 }
             }
             Ok(())
@@ -121,13 +124,11 @@ impl StorageWriter for CsvWriter {
         Ok(())
     }
 
-    async fn shutdown(&mut self) -> Result<(), DaqError> {
+    async fn shutdown(&mut self) -> Result<()> {
         #[cfg(feature = "storage_csv")]
         {
             if let Some(mut writer) = self.writer.take() {
-                writer
-                    .flush()
-                    .map_err(|e| DaqError::Storage(e.to_string()))?;
+                writer.flush().context("Failed to flush CSV writer")?;
             }
             log::info!("CSV Writer shut down.");
             Ok(())
@@ -157,17 +158,17 @@ impl Hdf5Writer {
 
 #[async_trait]
 impl StorageWriter for Hdf5Writer {
-    async fn init(&mut self, _settings: &Arc<Settings>) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()))
+    async fn init(&mut self, _settings: &Arc<Settings>) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
     }
-    async fn set_metadata(&mut self, _metadata: &Metadata) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()))
+    async fn set_metadata(&mut self, _metadata: &Metadata) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
     }
-    async fn write(&mut self, _data: &[DataPoint]) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()))
+    async fn write(&mut self, _data: &[DataPoint]) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
     }
-    async fn shutdown(&mut self) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()))
+    async fn shutdown(&mut self) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
     }
 }
 
@@ -190,16 +191,16 @@ impl ArrowWriter {
 
 #[async_trait]
 impl StorageWriter for ArrowWriter {
-    async fn init(&mut self, _settings: &Arc<Settings>) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()))
+    async fn init(&mut self, _settings: &Arc<Settings>) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
     }
-    async fn set_metadata(&mut self, _metadata: &Metadata) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()))
+    async fn set_metadata(&mut self, _metadata: &Metadata) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
     }
-    async fn write(&mut self, _data: &[DataPoint]) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()))
+    async fn write(&mut self, _data: &[DataPoint]) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
     }
-    async fn shutdown(&mut self) -> Result<(), DaqError> {
-        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()))
+    async fn shutdown(&mut self) -> Result<()> {
+        Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
     }
 }

@@ -25,8 +25,8 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument},
-    error::DaqError,
 };
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use log::{info, warn};
 use std::sync::Arc;
@@ -47,58 +47,67 @@ use std::io::{BufRead, BufReader, Write};
 
 impl VisaInstrument {
     /// Creates a new `VisaInstrument` with the given resource name.
-    pub fn new(id: &str) -> Result<Self, DaqError> {
+    pub fn new(id: &str) -> Result<Self> {
+        let rm = DefaultRM::new().context("Failed to create VISA a new resource manager")?;
         Ok(Self {
             id: id.to_string(),
             session: None,
             sender: None,
-            rm: Arc::new(DefaultRM::new()?),
+            rm: Arc::new(rm),
         })
     }
 
     /// Writes a SCPI command to the instrument.
-    pub fn write(&self, command: &str) -> Result<(), DaqError> {
+    pub fn write(&self, command: &str) -> Result<()> {
         self.session
             .as_ref()
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))?
-            .write_all(command.as_bytes())?;
+            .ok_or_else(|| anyhow!("Not connected to instrument '{}'", self.id))?
+            .write_all(command.as_bytes())
+            .with_context(|| format!("Failed to write command to instrument '{}'", self.id))?;
         Ok(())
     }
 
     /// Writes a SCPI query to the instrument and returns the response.
-    pub fn query(&self, command: &str) -> Result<String, DaqError> {
-        self.write(command)?;
+    pub fn query(&self, command: &str) -> Result<String> {
+        self.write(command)
+            .with_context(|| format!("Failed to write query to instrument '{}'", self.id))?;
         let session = self
             .session
             .as_ref()
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))?;
+            .ok_or_else(|| anyhow!("Not connected to instrument '{}'", self.id))?;
         let mut reader = BufReader::new(session.as_ref());
         let mut buf = String::new();
-        reader.read_line(&mut buf)?;
+        reader
+            .read_line(&mut buf)
+            .with_context(|| format!("Failed to read query response from instrument '{}'", self.id))?;
         Ok(buf)
     }
 
     /// Reads a fixed number of bytes from the instrument.
-    pub fn read_binary(&self, length: usize) -> Result<Vec<u8>, DaqError> {
+    pub fn read_binary(&self, length: usize) -> Result<Vec<u8>> {
         let session = self
             .session
             .as_ref()
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))?;
+            .ok_or_else(|| anyhow!("Not connected to instrument '{}'", self.id))?;
         let mut reader = BufReader::new(session.as_ref());
         let mut buf = vec![0; length];
-        reader.read_exact(&mut buf)?;
+        reader
+            .read_exact(&mut buf)
+            .with_context(|| format!("Failed to read binary data from instrument '{}'", self.id))?;
         Ok(buf)
     }
 
     /// Reads from the instrument until the buffer is empty.
-    pub fn read_until_end(&self) -> Result<Vec<u8>, DaqError> {
+    pub fn read_until_end(&self) -> Result<Vec<u8>> {
         let session = self
             .session
             .as_ref()
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))?;
+            .ok_or_else(|| anyhow!("Not connected to instrument '{}'", self.id))?;
         let mut reader = BufReader::new(session.as_ref());
         let mut buf = Vec::new();
-        reader.read_to_end(&mut buf)?;
+        reader
+            .read_to_end(&mut buf)
+            .with_context(|| format!("Failed to read data from instrument '{}'", self.id))?;
         Ok(buf)
     }
 }
@@ -109,22 +118,24 @@ impl Instrument for VisaInstrument {
         self.id.clone()
     }
 
-    async fn connect(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError> {
+    async fn connect(&mut self, settings: &Arc<Settings>) -> Result<()> {
         info!("Connecting to VISA instrument: {}", self.id);
 
         let instrument_config = settings
             .instruments
             .get(&self.id)
-            .ok_or_else(|| DaqError::Instrument(format!("Configuration for {} not found", self.id)))?;
+            .ok_or_else(|| anyhow!("Configuration for '{}' not found", self.id))?;
 
         let resource_string = instrument_config
             .get("resource_string")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| DaqError::Instrument("resource_string not found in config".to_string()))?;
+            .ok_or_else(|| anyhow!("'resource_string' not found in config for '{}'", self.id))?;
 
         let res = self
             .rm
-            .open(&resource_string.try_into()?, AccessMode::NO_LOCK, TIMEOUT_IMMEDIATE)?;
+            .open(&resource_string.try_into()?, AccessMode::NO_LOCK, TIMEOUT_IMMEDIATE)
+            .with_context(|| format!("Failed to open VISA session for '{}'", self.id))?;
+
         self.session = Some(Arc::new(res));
         let (sender, _) = broadcast::channel(1024);
         self.sender = Some(sender.clone());
@@ -132,12 +143,12 @@ impl Instrument for VisaInstrument {
         let polling_rate_hz = instrument_config
             .get("polling_rate_hz")
             .and_then(|v| v.as_float())
-            .ok_or_else(|| DaqError::Instrument("polling_rate_hz not found in config".to_string()))?;
+            .ok_or_else(|| anyhow!("'polling_rate_hz' not found in config for '{}'", self.id))?;
 
         let queries = instrument_config
             .get("queries")
             .and_then(|v| v.clone().try_into::<std::collections::HashMap<String, String>>().ok())
-            .ok_or_else(|| DaqError::Instrument("queries not found in config".to_string()))?;
+            .ok_or_else(|| anyhow!("'queries' not found in config for '{}'", self.id))?;
 
         let instrument = self.clone();
 
@@ -172,7 +183,7 @@ impl Instrument for VisaInstrument {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> Result<(), DaqError> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from VISA instrument.");
         if let Some(session) = self.session.take() {
             drop(session);
@@ -181,10 +192,10 @@ impl Instrument for VisaInstrument {
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>, DaqError> {
+    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
         self.sender
             .as_ref()
             .map(|s| s.subscribe())
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))
+            .ok_or_else(|| anyhow!("Not connected to instrument '{}'", self.id))
     }
 }

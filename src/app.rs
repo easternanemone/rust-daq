@@ -3,13 +3,12 @@ use crate::{
     config::Settings,
     core::{DataPoint, DataProcessor, InstrumentHandle},
     data::registry::ProcessorRegistry,
-    error::DaqError,
     instrument::InstrumentRegistry,
     log_capture::LogBuffer,
     metadata::Metadata,
     session::{self, Session},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use log::{error, info};
 use std::collections::HashMap;
 use std::path::Path;
@@ -45,7 +44,7 @@ impl DaqApp {
         processor_registry: Arc<ProcessorRegistry>,
         log_buffer: LogBuffer,
     ) -> Result<Self> {
-        let runtime = Arc::new(Runtime::new().map_err(DaqError::Tokio)?);
+        let runtime = Arc::new(Runtime::new().context("Failed to create Tokio runtime")?);
         let (data_sender, _) = broadcast::channel(1024);
         let storage_format = settings.storage.default_format.clone();
 
@@ -121,30 +120,40 @@ impl DaqApp {
 
 impl DaqAppInner {
     /// Spawns an instrument to run on the Tokio runtime.
-    pub fn spawn_instrument(&mut self, id: &str) -> Result<(), DaqError> {
+    pub fn spawn_instrument(&mut self, id: &str) -> Result<()> {
         if self.instruments.contains_key(id) {
-            return Err(DaqError::Instrument(format!(
-                "Instrument '{}' is already running.",
-                id
-            )));
+            return Err(anyhow!("Instrument '{}' is already running.", id));
         }
 
-        let instrument_config = self.settings.instruments.get(id)
-            .ok_or_else(|| DaqError::Config(config::ConfigError::NotFound("instrument".to_string())))?;
-        let instrument_type = instrument_config.get("type")
+        let instrument_config = self
+            .settings
+            .instruments
+            .get(id)
+            .ok_or_else(|| anyhow!("Instrument config for '{}' not found.", id))?;
+        let instrument_type = instrument_config
+            .get("type")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| DaqError::Config(config::ConfigError::NotFound("type".to_string())))?;
+            .ok_or_else(|| anyhow!("Instrument type for '{}' not found in config.", id))?;
 
         let mut instrument = self
             .instrument_registry
             .create(instrument_type, id)
-            .ok_or_else(|| DaqError::Instrument(format!("Instrument type '{}' not found.", instrument_type)))?;
+            .ok_or_else(|| anyhow!("Instrument type '{}' not found.", instrument_type))?;
 
         // Create processor chain for this instrument
         let mut processors: Vec<Box<dyn DataProcessor>> = Vec::new();
-        if let Some(processor_configs) = self.settings.processors.as_ref().and_then(|p| p.get(id)) {
+        if let Some(processor_configs) = self.settings.processors.as_ref().and_then(|p| p.get(id))
+        {
             for config in processor_configs {
-                let processor = self.processor_registry.create(&config.r#type, &config.config)?;
+                let processor = self
+                    .processor_registry
+                    .create(&config.r#type, &config.config)
+                    .with_context(|| {
+                        format!(
+                            "Failed to create processor '{}' for instrument '{}'",
+                            config.r#type, id
+                        )
+                    })?;
                 processors.push(processor);
             }
         }
@@ -154,10 +163,16 @@ impl DaqAppInner {
         let id_clone = id.to_string();
 
         let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
-            instrument.connect(&settings).await?;
+            instrument
+                .connect(&settings)
+                .await
+                .with_context(|| format!("Failed to connect to instrument '{}'", id_clone))?;
             info!("Instrument '{}' connected.", id_clone);
 
-            let mut stream = instrument.data_stream().await?;
+            let mut stream = instrument
+                .data_stream()
+                .await
+                .context("Failed to get data stream")?;
             loop {
                 tokio::select! {
                     data_point_result = stream.recv() => {
@@ -207,11 +222,9 @@ impl DaqAppInner {
     }
 
     /// Starts the data recording process.
-    pub fn start_recording(&mut self) -> Result<(), DaqError> {
+    pub fn start_recording(&mut self) -> Result<()> {
         if self.writer_task.is_some() {
-            return Err(DaqError::Storage(
-                "Recording is already in progress.".to_string(),
-            ));
+            return Err(anyhow!("Recording is already in progress."));
         }
 
         let settings = self.settings.clone();
@@ -226,10 +239,10 @@ impl DaqAppInner {
                     "hdf5" => Box::new(crate::data::storage::Hdf5Writer::new()),
                     "arrow" => Box::new(crate::data::storage::ArrowWriter::new()),
                     _ => {
-                        return Err(anyhow::anyhow!(DaqError::Storage(format!(
+                        return Err(anyhow!(
                             "Unsupported storage format: {}",
                             storage_format_for_task
-                        ))))
+                        ))
                     }
                 };
 
