@@ -2,8 +2,8 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument},
-    error::DaqError,
 };
+use anyhow::Result;
 use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ impl Instrument for ScpiInstrument {
         "SCPI Instrument".to_string()
     }
 
-    async fn connect(&mut self, _settings: &Arc<Settings>) -> Result<(), DaqError> {
+    async fn connect(&mut self, _settings: &Arc<Settings>) -> Result<()> {
         info!("Connecting to SCPI Instrument...");
         // TODO: Implement connection logic (e.g., open serial port)
         // let config = settings.instruments.get("scpi_keithley").unwrap();
@@ -40,12 +40,12 @@ impl Instrument for ScpiInstrument {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> Result<(), DaqError> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from SCPI Instrument.");
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>, DaqError> {
+    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
         // This is a placeholder. A real implementation would spawn a task
         // that repeatedly queries the instrument and sends data points.
         let (sender, receiver) = broadcast::channel(1);

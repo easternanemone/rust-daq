@@ -1,5 +1,5 @@
 //! Configuration management.
-use crate::error::DaqError;
+use anyhow::{Context, Result};
 use config::Config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,13 +26,14 @@ pub struct StorageSettings {
 }
 
 impl Settings {
-    pub fn new(config_name: Option<&str>) -> Result<Self, DaqError> {
+    pub fn new(config_name: Option<&str>) -> Result<Self> {
         let config_path = format!("config/{}", config_name.unwrap_or("default"));
         let s = Config::builder()
             .add_source(config::File::with_name(&config_path))
             .build()
-            .map_err(DaqError::Config)?;
+            .with_context(|| format!("Failed to load configuration from '{}'", config_path))?;
 
-        s.try_deserialize().map_err(DaqError::Config)
+        s.try_deserialize()
+            .context("Failed to deserialize configuration")
     }
 }

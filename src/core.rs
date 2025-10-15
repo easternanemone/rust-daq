@@ -1,6 +1,5 @@
 //! Core traits and data types for the DAQ application.
 use crate::config::Settings;
-use crate::error::DaqError;
 use crate::metadata::Metadata;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -35,13 +34,13 @@ pub trait Instrument: Send + Sync {
     fn name(&self) -> String;
 
     /// Connects to the instrument and prepares it for data acquisition.
-    async fn connect(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError>;
+    async fn connect(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()>;
 
     /// Disconnects from the instrument.
-    async fn disconnect(&mut self) -> Result<(), DaqError>;
+    async fn disconnect(&mut self) -> anyhow::Result<()>;
 
     /// Returns a stream of `DataPoint`s from the instrument.
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>, DaqError>;
+    async fn data_stream(&mut self) -> anyhow::Result<broadcast::Receiver<DataPoint>>;
 }
 
 /// Trait for a data processor.
@@ -55,15 +54,15 @@ pub trait DataProcessor: Send + Sync {
 #[async_trait]
 pub trait StorageWriter: Send + Sync {
     /// Initializes the storage (e.g., creates a file, opens a database connection).
-    async fn init(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError>;
+    async fn init(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()>;
 
     /// Sets the experiment-level metadata for this storage session.
     /// This should be called once after `init` and before the first `write`.
-    async fn set_metadata(&mut self, metadata: &Metadata) -> Result<(), DaqError>;
+    async fn set_metadata(&mut self, metadata: &Metadata) -> anyhow::Result<()>;
 
     /// Writes a batch of data points to the storage.
-    async fn write(&mut self, data: &[DataPoint]) -> Result<(), DaqError>;
+    async fn write(&mut self, data: &[DataPoint]) -> anyhow::Result<()>;
 
     /// Finalizes the storage (e.g., closes the file).
-    async fn shutdown(&mut self) -> Result<(), DaqError>;
+    async fn shutdown(&mut self) -> anyhow::Result<()>;
 }

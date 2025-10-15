@@ -2,8 +2,8 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument},
-    error::DaqError,
 };
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ impl Instrument for MockInstrument {
         "Mock Instrument".to_string()
     }
 
-    async fn connect(&mut self, settings: &Arc<Settings>) -> Result<(), DaqError> {
+    async fn connect(&mut self, settings: &Arc<Settings>) -> Result<()> {
         info!("Connecting to Mock Instrument...");
         let (sender, _) = broadcast::channel(1024);
         self.sender = Some(sender.clone());
@@ -84,16 +84,16 @@ impl Instrument for MockInstrument {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> Result<(), DaqError> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from Mock Instrument.");
         self.sender = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>, DaqError> {
+    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
         self.sender
             .as_ref()
             .map(|s| s.subscribe())
-            .ok_or_else(|| DaqError::Instrument("Not connected".to_string()))
+            .ok_or_else(|| anyhow!("Not connected to mock instrument"))
     }
 }
