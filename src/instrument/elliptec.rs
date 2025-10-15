@@ -50,32 +50,30 @@ impl Elliptec {
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn send_command(&self, address: u8, command: &str) -> Result<String> {
+    async fn send_command_async(&self, address: u8, command: &str) -> Result<String> {
         use super::serial_helper;
         use std::time::Duration;
 
         let port = self.port.as_ref()
             .ok_or_else(|| anyhow!("Not connected to Elliptec '{}'", self.id))?;
 
-        let mut port = port.blocking_lock();
-
         // Elliptec protocol: address + command
         let cmd = format!("{}{}", address, command);
 
-        serial_helper::send_command(
-            &mut port,
-            &self.id,
-            &cmd,
-            "",
+        serial_helper::send_command_async(
+            port.clone(),
+            self.id.clone(),
+            cmd,
+            "".to_string(),
             Duration::from_millis(500),
             '\r',
-        )
+        ).await
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn get_position(&self, address: u8) -> Result<f64> {
+    async fn get_position(&self, address: u8) -> Result<f64> {
         // 'gp' command - get position
-        let response = self.send_command(address, "gp")?;
+        let response = self.send_command_async(address, "gp").await?;
 
         // Response format: "0PO12345678" where address=0, PO is response code, 12345678 is hex position
         if response.len() < 10 {
@@ -93,13 +91,13 @@ impl Elliptec {
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn set_position(&self, address: u8, degrees: f64) -> Result<()> {
+    async fn set_position(&self, address: u8, degrees: f64) -> Result<()> {
         // Convert degrees to counts
         let counts = ((degrees / 360.0) * 143360.0) as u32;
         let hex_pos = format!("{:08X}", counts);
 
         // 'ma' command - move absolute
-        self.send_command(address, &format!("ma{}", hex_pos))?;
+        self.send_command_async(address, &format!("ma{}", hex_pos)).await?;
         Ok(())
     }
 }
@@ -153,7 +151,7 @@ impl Instrument for Elliptec {
 
         // Query device info for each address
         for &addr in &self.device_addresses {
-            let response = self.send_command(addr, "in")?;
+            let response = self.send_command_async(addr, "in").await?;
             info!("Elliptec device {} info: {}", addr, response);
         }
 
@@ -180,7 +178,7 @@ impl Instrument for Elliptec {
 
                 // Poll each device
                 for &addr in &instrument.device_addresses {
-                    match instrument.get_position(addr) {
+                    match instrument.get_position(addr).await {
                         Ok(position) => {
                             let dp = DataPoint {
                                 timestamp,
@@ -242,7 +240,7 @@ impl Instrument for Elliptec {
                     if parts[1] == "position" {
                         let degrees: f64 = value.parse()
                             .with_context(|| format!("Invalid position value: {}", value))?;
-                        self.set_position(addr, degrees)?;
+                        self.set_position(addr, degrees).await?;
                         info!("Set Elliptec device {} to {} degrees", addr, degrees);
                     }
                 } else {
@@ -254,14 +252,14 @@ impl Instrument for Elliptec {
                     if args.is_empty() {
                         // Home all devices
                         for &addr in &self.device_addresses {
-                            self.send_command(addr, "ho")?;
+                            self.send_command_async(addr, "ho").await?;
                         }
                         info!("Homed all Elliptec devices");
                     } else {
                         // Home specific device
                         let addr: u8 = args[0].parse()
                             .with_context(|| format!("Invalid device address: {}", args[0]))?;
-                        self.send_command(addr, "ho")?;
+                        self.send_command_async(addr, "ho").await?;
                         info!("Homed Elliptec device {}", addr);
                     }
                 }

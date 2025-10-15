@@ -48,28 +48,26 @@ impl MaiTai {
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn send_command(&self, command: &str) -> Result<String> {
+    async fn send_command_async(&self, command: &str) -> Result<String> {
         use super::serial_helper;
         use std::time::Duration;
 
         let port = self.port.as_ref()
             .ok_or_else(|| anyhow!("Not connected to MaiTai '{}'", self.id))?;
 
-        let mut port = port.blocking_lock();
-
-        serial_helper::send_command(
-            &mut port,
-            &self.id,
-            command,
-            "\r",
+        serial_helper::send_command_async(
+            port.clone(),
+            self.id.clone(),
+            command.to_string(),
+            "\r".to_string(),
             Duration::from_secs(2),
             '\r',
-        )
+        ).await
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn query_value(&self, command: &str) -> Result<f64> {
-        let response = self.send_command(command)?;
+    async fn query_value(&self, command: &str) -> Result<f64> {
+        let response = self.send_command_async(command).await?;
         // Remove command echo if present
         let value_str = response.split(':').last().unwrap_or(&response);
         value_str.trim().parse::<f64>()
@@ -111,12 +109,12 @@ impl Instrument for MaiTai {
         self.port = Some(Arc::new(tokio::sync::Mutex::new(port)));
 
         // Verify connection with identity query
-        let id_response = self.send_command("*IDN?")?;
+        let id_response = self.send_command_async("*IDN?").await?;
         info!("MaiTai identity: {}", id_response);
 
         // Set wavelength if specified
         if let Some(wavelength) = instrument_config.get("wavelength").and_then(|v| v.as_float()) {
-            self.send_command(&format!("WAVELENGTH:{}", wavelength))?;
+            self.send_command_async(&format!("WAVELENGTH:{}", wavelength)).await?;
             info!("Set wavelength to {} nm", wavelength);
         }
 
@@ -142,7 +140,7 @@ impl Instrument for MaiTai {
                 let timestamp = chrono::Utc::now();
 
                 // Query wavelength
-                if let Ok(wavelength) = instrument.query_value("WAVELENGTH?") {
+                if let Ok(wavelength) = instrument.query_value("WAVELENGTH?").await {
                     let dp = DataPoint {
                         timestamp,
                         channel: format!("{}_wavelength", instrument.id),
@@ -157,7 +155,7 @@ impl Instrument for MaiTai {
                 }
 
                 // Query power
-                if let Ok(power) = instrument.query_value("POWER?") {
+                if let Ok(power) = instrument.query_value("POWER?").await {
                     let dp = DataPoint {
                         timestamp,
                         channel: format!("{}_power", instrument.id),
@@ -169,7 +167,7 @@ impl Instrument for MaiTai {
                 }
 
                 // Query shutter state
-                if let Ok(shutter) = instrument.query_value("SHUTTER?") {
+                if let Ok(shutter) = instrument.query_value("SHUTTER?").await {
                     let dp = DataPoint {
                         timestamp,
                         channel: format!("{}_shutter", instrument.id),
@@ -216,7 +214,7 @@ impl Instrument for MaiTai {
                     "wavelength" => {
                         let wavelength: f64 = value.parse()
                             .with_context(|| format!("Invalid wavelength value: {}", value))?;
-                        self.send_command(&format!("WAVELENGTH:{}", wavelength))?;
+                        self.send_command_async(&format!("WAVELENGTH:{}", wavelength)).await?;
                         info!("Set MaiTai wavelength to {} nm", wavelength);
                     }
                     "shutter" => {
@@ -225,7 +223,7 @@ impl Instrument for MaiTai {
                             "close" => "SHUTTER:0",
                             _ => return Err(anyhow!("Invalid shutter value: {}", value)),
                         };
-                        self.send_command(cmd)?;
+                        self.send_command_async(cmd).await?;
                         info!("MaiTai shutter: {}", value);
                     }
                     "laser" => {
@@ -234,7 +232,7 @@ impl Instrument for MaiTai {
                             "off" => "OFF",
                             _ => return Err(anyhow!("Invalid laser value: {}", value)),
                         };
-                        self.send_command(cmd)?;
+                        self.send_command_async(cmd).await?;
                         info!("MaiTai laser: {}", value);
                     }
                     _ => {

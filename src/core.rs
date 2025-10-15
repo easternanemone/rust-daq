@@ -1,4 +1,75 @@
 //! Core traits and data types for the DAQ application.
+//!
+//! This module defines the foundational abstractions for the entire data acquisition system,
+//! providing trait-based interfaces for instruments, data processors, and storage backends.
+//!
+//! # Architecture Overview
+//!
+//! The core architecture follows a plugin-based design with three primary traits:
+//!
+//! - [`Instrument`]: Represents any physical or virtual data acquisition device
+//! - [`DataProcessor`]: Transforms data points in real-time processing pipelines
+//! - [`StorageWriter`]: Persists data to various storage backends (CSV, HDF5, etc.)
+//!
+//! # Data Flow
+//!
+//! ```text
+//! Instrument --[DataPoint]--> DataProcessor --[DataPoint]--> StorageWriter
+//!     ↓                            ↓                              ↓
+//! broadcast::channel        Ring buffer cache              CSV/HDF5 file
+//! ```
+//!
+//! # Command System
+//!
+//! Instruments are controlled via [`InstrumentCommand`] messages sent through
+//! async channels, enabling non-blocking parameter updates and graceful shutdown.
+//!
+//! # Thread Safety
+//!
+//! All traits require `Send + Sync` to enable safe concurrent access across
+//! async tasks and threads. Data streaming uses Tokio's `broadcast` channels
+//! for multi-consumer patterns.
+//!
+//! # Examples
+//!
+//! ## Implementing an Instrument
+//!
+//! ```rust
+//! use rust_daq::core::{Instrument, DataPoint, InstrumentCommand};
+//! use rust_daq::config::Settings;
+//! use async_trait::async_trait;
+//! use std::sync::Arc;
+//! use tokio::sync::broadcast;
+//!
+//! struct MockInstrument {
+//!     id: String,
+//!     sender: Option<broadcast::Sender<DataPoint>>,
+//! }
+//!
+//! #[async_trait]
+//! impl Instrument for MockInstrument {
+//!     fn name(&self) -> String {
+//!         self.id.clone()
+//!     }
+//!
+//!     async fn connect(&mut self, _settings: &Arc<Settings>) -> anyhow::Result<()> {
+//!         let (sender, _) = broadcast::channel(1024);
+//!         self.sender = Some(sender);
+//!         Ok(())
+//!     }
+//!
+//!     async fn disconnect(&mut self) -> anyhow::Result<()> {
+//!         self.sender = None;
+//!         Ok(())
+//!     }
+//!
+//!     async fn data_stream(&mut self) -> anyhow::Result<broadcast::Receiver<DataPoint>> {
+//!         self.sender.as_ref()
+//!             .map(|s| s.subscribe())
+//!             .ok_or_else(|| anyhow::anyhow!("Not connected"))
+//!     }
+//! }
+//! ```
 use crate::config::Settings;
 use crate::metadata::Metadata;
 use async_trait::async_trait;
@@ -8,53 +79,431 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 /// A single data point captured from an instrument.
+///
+/// `DataPoint` is the fundamental unit of data in the DAQ system, representing
+/// a single measurement at a specific time. All data flowing through the system
+/// uses this structure, enabling uniform processing and storage.
+///
+/// # Fields
+///
+/// * `timestamp` - UTC timestamp when the measurement was captured. Uses `chrono::DateTime`
+///   for nanosecond precision and timezone awareness.
+/// * `channel` - Unique identifier for the data source (e.g., "laser_power", "stage_x_position").
+///   Channel naming convention: `{instrument_id}_{parameter_name}`
+/// * `value` - The measured value as a 64-bit float. All measurements are normalized to f64
+///   regardless of the instrument's native data type.
+/// * `unit` - Physical unit of the measurement (e.g., "W", "nm", "deg", "V"). Should follow
+///   SI unit conventions or common scientific notation.
+/// * `metadata` - Optional JSON metadata for instrument-specific information. Serialized
+///   only when present. Use for context like device address, calibration coefficients, etc.
+///
+/// # Memory Layout
+///
+/// Size: ~96 bytes (timestamp: 12, channel: 24, value: 8, unit: 24, metadata: 24, padding: 4)
+///
+/// # Examples
+///
+/// ```rust
+/// use rust_daq::core::DataPoint;
+/// use chrono::Utc;
+///
+/// let dp = DataPoint {
+///     timestamp: Utc::now(),
+///     channel: "power_meter_1_power".to_string(),
+///     value: 0.125,
+///     unit: "W".to_string(),
+///     metadata: Some(serde_json::json!({"wavelength": 1550.0})),
+/// };
+/// ```
+///
+/// # Serialization
+///
+/// DataPoint implements `Serialize`/`Deserialize` for efficient storage and transmission.
+/// The metadata field is skipped during serialization if `None`, reducing storage overhead
+/// for high-rate data streams.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataPoint {
+    /// UTC timestamp with nanosecond precision
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Channel identifier (format: `{instrument_id}_{parameter}`)
     pub channel: String,
+    /// Measured value (all measurements normalized to f64)
     pub value: f64,
+    /// Physical unit (SI notation recommended)
     pub unit: String,
-    /// Optional metadata for this specific data point.
+    /// Optional instrument-specific metadata (JSON)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
 /// Command that can be sent to an instrument.
+///
+/// `InstrumentCommand` provides a type-safe command interface for controlling
+/// instruments asynchronously. Commands are sent via Tokio `mpsc` channels to
+/// instrument tasks, enabling non-blocking operations.
+///
+/// # Variants
+///
+/// * `SetParameter(key, value)` - Set an instrument parameter without waiting for confirmation.
+///   Example: `SetParameter("wavelength".to_string(), "800.0".to_string())`
+///
+/// * `QueryParameter(key)` - Request the current value of a parameter. The response
+///   is typically sent via the instrument's data stream as a `DataPoint`.
+///   Example: `QueryParameter("temperature".to_string())`
+///
+/// * `Execute(command, args)` - Execute a complex command with optional arguments.
+///   Example: `Execute("home".to_string(), vec!["1".to_string()])` to home axis 1
+///
+/// * `Shutdown` - Gracefully shut down the instrument. Triggers `disconnect()` and
+///   breaks the instrument task loop. The shutdown process has a 5-second timeout,
+///   after which the task is forcefully terminated.
+///
+/// # Usage Pattern
+///
+/// Commands are sent through the `InstrumentHandle::command_tx` channel:
+///
+/// ```rust
+/// use rust_daq::core::InstrumentCommand;
+/// # use tokio::sync::mpsc;
+/// # async fn example(command_tx: mpsc::Sender<InstrumentCommand>) -> anyhow::Result<()> {
+/// // Set a parameter
+/// command_tx.send(InstrumentCommand::SetParameter(
+///     "power".to_string(),
+///     "100".to_string()
+/// )).await?;
+///
+/// // Execute a command
+/// command_tx.send(InstrumentCommand::Execute(
+///     "calibrate".to_string(),
+///     vec![]
+/// )).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Shutdown Behavior
+///
+/// The `Shutdown` command is special:
+/// 1. Sent to all instruments during app shutdown
+/// 2. Causes instrument task loop to break
+/// 3. Triggers `instrument.disconnect()` to clean up resources
+/// 4. If timeout (5s) expires, task is aborted
+///
+/// # Thread Safety
+///
+/// Commands are `Clone` to support broadcasting to multiple instruments and
+/// retry logic. They're also `Send` for cross-thread channel communication.
 #[derive(Clone, Debug)]
 pub enum InstrumentCommand {
-    /// Set a parameter (key, value)
+    /// Set a parameter (key, value) - no response expected
     SetParameter(String, String),
-    /// Query a parameter (key) - response will be sent via data stream
+    /// Query a parameter (key) - response sent via data stream
     QueryParameter(String),
     /// Execute a command with optional arguments
     Execute(String, Vec<String>),
+    /// Gracefully shut down the instrument (triggers disconnect, 5s timeout)
+    Shutdown,
 }
 
 /// A handle to a running instrument task.
+///
+/// `InstrumentHandle` provides a safe interface for managing and communicating
+/// with instrument tasks running on the Tokio runtime. Each instrument runs in
+/// its own async task, isolated from other instruments and the GUI.
+///
+/// # Fields
+///
+/// * `task` - Tokio task handle for the instrument's main loop. Can be awaited
+///   to get the task's result, or aborted to forcefully terminate the instrument.
+///   The task returns `Result<()>` where errors indicate instrument failures.
+///
+/// * `command_tx` - Command channel sender for sending [`InstrumentCommand`]s
+///   to the instrument. Bounded channel with capacity 32 to apply backpressure
+///   if the instrument cannot keep up with commands.
+///
+/// # Lifecycle
+///
+/// 1. **Created** by `DaqAppInner::spawn_instrument()` when an instrument is registered
+/// 2. **Active** during normal operation, processing commands and streaming data
+/// 3. **Shutdown** when `Shutdown` command is sent, triggering graceful disconnect
+/// 4. **Terminated** either by task completion or timeout + abort
+///
+/// # Usage Pattern
+///
+/// ```rust
+/// use rust_daq::core::{InstrumentHandle, InstrumentCommand};
+/// # use tokio::sync::mpsc;
+/// # use tokio::task::JoinHandle;
+/// # async fn example(handle: InstrumentHandle) -> anyhow::Result<()> {
+/// // Send a command to the instrument
+/// handle.command_tx.send(InstrumentCommand::SetParameter(
+///     "wavelength".to_string(),
+///     "800.0".to_string()
+/// )).await?;
+///
+/// // For shutdown, send Shutdown command then await task with timeout
+/// handle.command_tx.send(InstrumentCommand::Shutdown).await?;
+/// tokio::time::timeout(
+///     std::time::Duration::from_secs(5),
+///     handle.task
+/// ).await??;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Error Handling
+///
+/// If `command_tx.send()` fails with `SendError`, the instrument task has terminated.
+/// This typically indicates a crash or panic in the instrument code. The task handle
+/// should be awaited to retrieve the error details.
+///
+/// # Thread Safety
+///
+/// InstrumentHandle is `Send` but not `Sync` - ownership should be transferred
+/// between threads, not shared. The application stores handles in a `HashMap`
+/// protected by a `Mutex` for safe multi-threaded access.
 pub struct InstrumentHandle {
+    /// Tokio task handle (returns Result on completion/failure)
     pub task: JoinHandle<anyhow::Result<()>>,
+    /// Command channel sender (capacity: 32, bounded for backpressure)
     pub command_tx: mpsc::Sender<InstrumentCommand>,
 }
 
 /// Trait for any scientific instrument.
 ///
 /// This trait defines the common interface for all instruments, allowing them
-/// to be managed and controlled in a generic way.
+/// to be managed and controlled in a generic way. All instruments must implement
+/// this trait to be used in the DAQ system.
+///
+/// # Design Philosophy
+///
+/// The trait follows an async-first design to support non-blocking I/O operations
+/// (serial, USB, network). Each instrument runs in its own Tokio task, processing
+/// commands from a channel and streaming data via broadcast channels.
+///
+/// # Lifecycle Methods
+///
+/// 1. `connect()` - Initialize hardware connection and spawn data streaming task
+/// 2. `data_stream()` - Provide broadcast receiver for real-time data consumption
+/// 3. `handle_command()` - Process control commands (parameter changes, execution)
+/// 4. `disconnect()` - Clean up resources and close hardware connection
+///
+/// # Threading Model
+///
+/// Instruments must be `Send + Sync` to enable:
+/// - Transfer between async tasks (Send)
+/// - Shared access via Arc (Sync, though typically not needed)
+///
+/// # Implementation Example
+///
+/// See module-level documentation for a complete example of implementing this trait.
+///
+/// # Error Handling
+///
+/// All async methods return `anyhow::Result<()>` for flexible error handling.
+/// Common error scenarios:
+/// - Connection failures (device not found, permission denied)
+/// - Communication timeouts (no response from hardware)
+/// - Invalid commands (unsupported operation)
+/// - Hardware errors (device malfunction)
+///
+/// Errors should include context using `.context()` to aid debugging.
 #[async_trait]
 pub trait Instrument: Send + Sync {
-    /// Returns the name of the instrument.
+    /// Returns the unique identifier of the instrument.
+    ///
+    /// This name is used for channel naming, logging, and GUI display.
+    /// Should match the instrument's key in the configuration file.
+    ///
+    /// # Complexity
+    ///
+    /// O(1) - Simple string clone
     fn name(&self) -> String;
 
     /// Connects to the instrument and prepares it for data acquisition.
+    ///
+    /// This method should:
+    /// 1. Open the hardware connection (serial port, USB, network socket)
+    /// 2. Send initialization commands to the device
+    /// 3. Create broadcast channel for data streaming
+    /// 4. Spawn async task for polling/data acquisition (if applicable)
+    /// 5. Store the broadcast sender and any connection handles
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Application settings containing instrument configuration.
+    ///   Access instrument-specific config via `settings.instruments.get(self.name())`
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Configuration is missing or invalid
+    /// - Hardware connection fails (device not found, permission denied)
+    /// - Device initialization fails (invalid response, timeout)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::core::Instrument;
+    /// # use rust_daq::config::Settings;
+    /// # use std::sync::Arc;
+    /// # use async_trait::async_trait;
+    /// # struct MyInstrument;
+    /// # #[async_trait]
+    /// # impl Instrument for MyInstrument {
+    /// # fn name(&self) -> String { "my_instrument".to_string() }
+    /// async fn connect(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()> {
+    ///     let config = settings.instruments.get(&self.name())
+    ///         .ok_or_else(|| anyhow::anyhow!("Configuration not found"))?;
+    ///
+    ///     // Open connection, initialize device, spawn data task...
+    ///     Ok(())
+    /// }
+    /// # async fn disconnect(&mut self) -> anyhow::Result<()> { Ok(()) }
+    /// # async fn data_stream(&mut self) -> anyhow::Result<tokio::sync::broadcast::Receiver<rust_daq::core::DataPoint>> {
+    /// #     Err(anyhow::anyhow!("not implemented"))
+    /// # }
+    /// # }
+    /// ```
     async fn connect(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()>;
 
-    /// Disconnects from the instrument.
+    /// Disconnects from the instrument and releases resources.
+    ///
+    /// This method should:
+    /// 1. Stop any running data acquisition tasks
+    /// 2. Send shutdown commands to the device (if needed)
+    /// 3. Close the hardware connection
+    /// 4. Drop the broadcast sender to signal end of stream
+    ///
+    /// Called automatically when:
+    /// - `Shutdown` command is received
+    /// - Instrument task is aborted due to timeout
+    /// - Application is shutting down
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if device shutdown fails, but this error is typically
+    /// logged rather than propagated. The connection is closed regardless.
+    ///
+    /// # Idempotency
+    ///
+    /// This method should be safe to call multiple times. If already disconnected,
+    /// it should succeed without side effects.
     async fn disconnect(&mut self) -> anyhow::Result<()>;
 
-    /// Returns a stream of `DataPoint`s from the instrument.
+    /// Returns a broadcast receiver for the instrument's data stream.
+    ///
+    /// Each call to this method creates a new receiver that subscribes to the
+    /// same underlying broadcast channel. Multiple receivers can consume data
+    /// independently (multi-consumer pattern).
+    ///
+    /// # Data Streaming Pattern
+    ///
+    /// 1. `connect()` creates a `broadcast::channel` and spawns a data task
+    /// 2. Data task polls the instrument and sends `DataPoint`s via broadcast
+    /// 3. `data_stream()` returns a new receiver for each subscriber
+    /// 4. Receivers buffer data independently (channel capacity: 1024)
+    /// 5. If a receiver lags, oldest data is dropped (`RecvError::Lagged`)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Instrument is not connected (no broadcast sender exists)
+    /// - Connection was lost (sender dropped)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::core::{Instrument, DataPoint};
+    /// # async fn example(instrument: &mut dyn Instrument) -> anyhow::Result<()> {
+    /// let mut stream = instrument.data_stream().await?;
+    ///
+    /// // Receive data points (non-blocking)
+    /// match stream.try_recv() {
+    ///     Ok(dp) => println!("Received: {} = {}", dp.channel, dp.value),
+    ///     Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+    ///         // No data available yet
+    ///     },
+    ///     Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+    ///         println!("Warning: Dropped {} data points (receiver too slow)", n);
+    ///     },
+    ///     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+    ///         println!("Stream closed (instrument disconnected)");
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn data_stream(&mut self) -> anyhow::Result<broadcast::Receiver<DataPoint>>;
 
-    /// Handles a command sent to the instrument. Default implementation does nothing.
+    /// Handles a command sent to the instrument.
+    ///
+    /// This method processes [`InstrumentCommand`]s sent via the instrument's
+    /// command channel. The default implementation does nothing, which is
+    /// appropriate for read-only instruments.
+    ///
+    /// # Command Types
+    ///
+    /// - `SetParameter(key, value)` - Change instrument parameter (e.g., wavelength)
+    /// - `QueryParameter(key)` - Request current parameter value (send via data stream)
+    /// - `Execute(command, args)` - Execute complex operations (e.g., calibration)
+    /// - `Shutdown` - Handled by framework, not passed to this method
+    ///
+    /// # Implementation Guidelines
+    ///
+    /// - Parse command parameters with proper error handling
+    /// - Validate parameter ranges before sending to hardware
+    /// - Add context to errors for debugging: `.context("Failed to set wavelength")`
+    /// - Log command execution at INFO level
+    /// - For query responses, send `DataPoint` via broadcast channel
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Command is malformed or missing required parameters
+    /// - Parameter value is out of range
+    /// - Hardware communication fails
+    /// - Command is not supported by this instrument
+    ///
+    /// Errors are logged but don't terminate the instrument task.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::core::{Instrument, InstrumentCommand};
+    /// # use anyhow::{Context, Result};
+    /// # use async_trait::async_trait;
+    /// # struct MyInstrument;
+    /// # #[async_trait]
+    /// # impl Instrument for MyInstrument {
+    /// # fn name(&self) -> String { "test".to_string() }
+    /// # async fn connect(&mut self, _: &std::sync::Arc<rust_daq::config::Settings>) -> Result<()> { Ok(()) }
+    /// # async fn disconnect(&mut self) -> Result<()> { Ok(()) }
+    /// # async fn data_stream(&mut self) -> Result<tokio::sync::broadcast::Receiver<rust_daq::core::DataPoint>> {
+    /// #     Err(anyhow::anyhow!("not implemented"))
+    /// # }
+    /// async fn handle_command(&mut self, command: InstrumentCommand) -> Result<()> {
+    ///     match command {
+    ///         InstrumentCommand::SetParameter(key, value) => {
+    ///             if key == "wavelength" {
+    ///                 let wl: f64 = value.parse()
+    ///                     .context("Invalid wavelength value")?;
+    ///                 // Send to hardware...
+    ///                 log::info!("Set wavelength to {} nm", wl);
+    ///             }
+    ///         }
+    ///         InstrumentCommand::Execute(cmd, args) => {
+    ///             if cmd == "calibrate" {
+    ///                 // Perform calibration...
+    ///                 log::info!("Calibration complete");
+    ///             }
+    ///         }
+    ///         _ => {}
+    ///     }
+    ///     Ok(())
+    /// }
+    /// # }
+    /// ```
     async fn handle_command(&mut self, _command: InstrumentCommand) -> anyhow::Result<()> {
         Ok(())
     }
@@ -62,24 +511,340 @@ pub trait Instrument: Send + Sync {
 
 /// Trait for a data processor.
 ///
-/// Data processors can be chained to form a processing pipeline.
+/// Data processors transform streams of [`DataPoint`]s in real-time, enabling
+/// signal processing, filtering, triggering, and derived measurements. Processors
+/// can be chained to form multi-stage processing pipelines.
+///
+/// # Design Principles
+///
+/// - **Stateful**: Processors maintain internal state (filter coefficients, buffers, etc.)
+/// - **Batch processing**: Operates on slices of data points for efficiency
+/// - **Flexible output**: Can produce 0, 1, or many output points per input
+/// - **Thread-safe**: Must be `Send + Sync` for concurrent access
+///
+/// # Common Use Cases
+///
+/// - **Filtering**: IIR/FIR filters, moving averages, smoothing
+/// - **Signal processing**: FFT, power spectral density, correlation
+/// - **Triggering**: Edge detection, threshold crossing, event detection
+/// - **Derivation**: Calculating rates of change, integrals, statistics
+/// - **Transformation**: Unit conversion, calibration, normalization
+///
+/// # Pipeline Architecture
+///
+/// ```text
+/// DataPoint[] --[Processor 1]--> DataPoint[] --[Processor 2]--> DataPoint[]
+///     Raw data        Filter              FFT             Storage
+/// ```
+///
+/// Processors are registered in `ProcessorRegistry` and applied sequentially
+/// before data reaches storage or GUI display.
+///
+/// # Performance Considerations
+///
+/// - Process data in batches to amortize per-call overhead
+/// - Pre-allocate output vectors to avoid repeated allocations
+/// - Use SIMD operations for bulk data processing when applicable
+/// - Avoid expensive operations in hot paths (heap allocation, logging)
+///
+/// # Example: Simple Moving Average
+///
+/// ```rust
+/// use rust_daq::core::{DataProcessor, DataPoint};
+///
+/// struct MovingAverage {
+///     window_size: usize,
+///     buffer: Vec<f64>,
+/// }
+///
+/// impl DataProcessor for MovingAverage {
+///     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint> {
+///         let mut output = Vec::with_capacity(data.len());
+///
+///         for dp in data {
+///             self.buffer.push(dp.value);
+///             if self.buffer.len() > self.window_size {
+///                 self.buffer.remove(0);
+///             }
+///
+///             let avg = self.buffer.iter().sum::<f64>() / self.buffer.len() as f64;
+///             output.push(DataPoint {
+///                 timestamp: dp.timestamp,
+///                 channel: format!("{}_avg", dp.channel),
+///                 value: avg,
+///                 unit: dp.unit.clone(),
+///                 metadata: None,
+///             });
+///         }
+///
+///         output
+///     }
+/// }
+/// ```
 pub trait DataProcessor: Send + Sync {
+    /// Processes a batch of data points and returns transformed data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Input slice of data points to process. May be empty if no data available.
+    ///
+    /// # Returns
+    ///
+    /// Vector of processed data points. The output can be:
+    /// - **Empty** (`vec![]`) if input doesn't meet processing criteria (e.g., trigger not met)
+    /// - **Same length** as input for 1:1 transformations (filtering, calibration)
+    /// - **Shorter** for decimation or trigger detection
+    /// - **Longer** for expansion or derivative calculations
+    ///
+    /// # Complexity
+    ///
+    /// Varies by processor type:
+    /// - Simple filters: O(n) where n = data.len()
+    /// - FFT processors: O(n log n)
+    /// - Triggered processors: O(n) with early return
+    ///
+    /// # Implementation Notes
+    ///
+    /// - Maintain state between calls (e.g., filter history, buffer accumulation)
+    /// - Preserve original timestamps when possible
+    /// - Use descriptive channel names: `format!("{}_filtered", input_channel)`
+    /// - Clone unit strings efficiently or use `Arc<str>` for shared units
+    /// - Handle edge cases: empty input, first call (uninitialized state)
     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint>;
 }
 
 /// Trait for a data storage writer.
+///
+/// `StorageWriter` defines the interface for persisting data to various storage
+/// backends (CSV, HDF5, databases, cloud services). Writers are responsible for
+/// efficient batch I/O, metadata management, and graceful resource cleanup.
+///
+/// # Lifecycle
+///
+/// 1. **init()** - Create/open storage, allocate resources
+/// 2. **set_metadata()** - Write experiment metadata header
+/// 3. **write()** - Append data batches (called repeatedly)
+/// 4. **shutdown()** - Flush buffers, close files, finalize
+///
+/// # Async Design
+///
+/// All methods are async to support non-blocking I/O operations. Use:
+/// - `tokio::fs` for file operations
+/// - `tokio::spawn_blocking` for CPU-intensive operations (compression, serialization)
+/// - Buffered writes to minimize syscalls
+///
+/// # Error Handling
+///
+/// Storage errors are critical - they indicate data loss. Writers should:
+/// - Return detailed errors with `.context()` for debugging
+/// - Log errors before returning (storage task logs to console + file)
+/// - Implement retry logic for transient failures (disk space, network)
+/// - Fail fast on unrecoverable errors (permission denied, corruption)
+///
+/// # Supported Formats
+///
+/// Current implementations:
+/// - CSV: Human-readable, Excel-compatible, inefficient for large datasets
+/// - HDF5: Binary, self-describing, optimal for numeric arrays
+/// - Arrow/Parquet: Columnar format, efficient compression, ecosystem support
+///
+/// # Example: Simple CSV Writer
+///
+/// ```rust
+/// use rust_daq::core::{StorageWriter, DataPoint};
+/// use rust_daq::config::Settings;
+/// use rust_daq::metadata::Metadata;
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+/// use tokio::fs::File;
+/// use tokio::io::AsyncWriteExt;
+///
+/// struct CsvWriter {
+///     file: Option<File>,
+/// }
+///
+/// #[async_trait]
+/// impl StorageWriter for CsvWriter {
+///     async fn init(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()> {
+///         let path = format!("{}/data.csv", settings.storage.default_path);
+///         self.file = Some(File::create(path).await?);
+///         // Write CSV header
+///         if let Some(f) = &mut self.file {
+///             f.write_all(b"timestamp,channel,value,unit\n").await?;
+///         }
+///         Ok(())
+///     }
+///
+///     async fn set_metadata(&mut self, metadata: &Metadata) -> anyhow::Result<()> {
+///         // Write metadata as CSV comment lines
+///         Ok(())
+///     }
+///
+///     async fn write(&mut self, data: &[DataPoint]) -> anyhow::Result<()> {
+///         if let Some(f) = &mut self.file {
+///             for dp in data {
+///                 let line = format!("{},{},{},{}\n",
+///                     dp.timestamp, dp.channel, dp.value, dp.unit);
+///                 f.write_all(line.as_bytes()).await?;
+///             }
+///         }
+///         Ok(())
+///     }
+///
+///     async fn shutdown(&mut self) -> anyhow::Result<()> {
+///         if let Some(mut f) = self.file.take() {
+///             f.flush().await?;
+///         }
+///         Ok(())
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait StorageWriter: Send + Sync {
-    /// Initializes the storage (e.g., creates a file, opens a database connection).
+    /// Initializes the storage backend and prepares for writing.
+    ///
+    /// This method should:
+    /// 1. Create the storage file/connection based on settings
+    /// 2. Write file headers or initialize database tables
+    /// 3. Allocate write buffers for batch operations
+    /// 4. Set up compression if applicable
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Application settings containing storage configuration
+    ///   (path, format, compression level, buffer size)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - File/directory creation fails (permission denied, disk full)
+    /// - Database connection fails (invalid credentials, network error)
+    /// - Configuration is missing or invalid
+    ///
+    /// # Complexity
+    ///
+    /// O(1) for file creation, but may include O(n) overhead for pre-allocation
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::core::StorageWriter;
+    /// # use rust_daq::config::Settings;
+    /// # use std::sync::Arc;
+    /// # use async_trait::async_trait;
+    /// # use anyhow::Result;
+    /// # struct MyWriter;
+    /// # #[async_trait]
+    /// # impl StorageWriter for MyWriter {
+    /// async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
+    ///     let path = format!("{}/experiment.h5", settings.storage.default_path);
+    ///     tokio::fs::create_dir_all(&settings.storage.default_path).await?;
+    ///     // Initialize HDF5 file...
+    ///     Ok(())
+    /// }
+    /// # async fn set_metadata(&mut self, _: &rust_daq::metadata::Metadata) -> Result<()> { Ok(()) }
+    /// # async fn write(&mut self, _: &[rust_daq::core::DataPoint]) -> Result<()> { Ok(()) }
+    /// # async fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    /// # }
+    /// ```
     async fn init(&mut self, settings: &Arc<Settings>) -> anyhow::Result<()>;
 
     /// Sets the experiment-level metadata for this storage session.
-    /// This should be called once after `init` and before the first `write`.
+    ///
+    /// Metadata includes:
+    /// - Experimenter name, institution, project
+    /// - Session start time, configuration snapshot
+    /// - Instrument descriptions and calibration data
+    /// - Custom key-value pairs
+    ///
+    /// This method should be called once after `init()` and before the first `write()`.
+    /// The metadata is typically written to:
+    /// - CSV: Comment lines at file header
+    /// - HDF5: Root-level attributes
+    /// - Database: Metadata table
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - Experiment metadata structure containing session info
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Storage is not initialized (init() not called)
+    /// - Write operation fails (disk error, serialization error)
+    /// - Metadata format is incompatible with storage backend
+    ///
+    /// # Complexity
+    ///
+    /// O(1) for simple attribute writes, O(n) for large custom metadata
     async fn set_metadata(&mut self, metadata: &Metadata) -> anyhow::Result<()>;
 
     /// Writes a batch of data points to the storage.
+    ///
+    /// This is the hot path - called frequently with batches of data. Implementations
+    /// should:
+    /// - Buffer writes to minimize I/O syscalls
+    /// - Use batch insert APIs for databases
+    /// - Compress data if applicable (gzip, lz4)
+    /// - Flush periodically to prevent data loss on crash
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Slice of data points to write. May be empty (no-op).
+    ///
+    /// # Batching Strategy
+    ///
+    /// - Typical batch size: 100-1000 points
+    /// - Storage task accumulates points and calls write() periodically
+    /// - Flush interval: 1 second or when batch size reached
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Disk is full (no space left on device)
+    /// - File/connection is closed (shutdown already called)
+    /// - Serialization fails (invalid data format)
+    /// - Network error (for remote storage)
+    ///
+    /// # Complexity
+    ///
+    /// - CSV: O(n) where n = data.len() (sequential writes)
+    /// - HDF5: O(n) for appends, O(1) for pre-allocated datasets
+    /// - Database: O(n) for batch inserts
+    ///
+    /// # Performance
+    ///
+    /// For high-rate data (>1kHz), consider:
+    /// - Memory-mapped files for zero-copy writes
+    /// - Separate write thread/task to avoid blocking
+    /// - Asynchronous I/O with io_uring (Linux)
     async fn write(&mut self, data: &[DataPoint]) -> anyhow::Result<()>;
 
-    /// Finalizes the storage (e.g., closes the file).
+    /// Finalizes the storage and releases resources.
+    ///
+    /// This method should:
+    /// 1. Flush any remaining buffered data
+    /// 2. Write file footers or finalize indexes
+    /// 3. Close file descriptors or database connections
+    /// 4. Clean up temporary resources
+    ///
+    /// Called automatically during application shutdown. Errors are logged
+    /// but typically not propagated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Final flush fails (disk error)
+    /// - File close fails (NFS timeout)
+    /// - Finalization operations fail (index corruption)
+    ///
+    /// # Idempotency
+    ///
+    /// This method should be safe to call multiple times. Subsequent calls
+    /// should be no-ops if already shut down.
+    ///
+    /// # Complexity
+    ///
+    /// O(1) for simple file close, O(n) for index finalization or compression
     async fn shutdown(&mut self) -> anyhow::Result<()>;
 }

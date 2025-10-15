@@ -51,23 +51,21 @@ impl Newport1830C {
     }
 
     #[cfg(feature = "instrument_serial")]
-    fn send_command(&self, command: &str) -> Result<String> {
+    async fn send_command_async(&self, command: &str) -> Result<String> {
         use super::serial_helper;
         use std::time::Duration;
 
         let port = self.port.as_ref()
             .ok_or_else(|| anyhow!("Not connected to Newport 1830-C '{}'", self.id))?;
 
-        let mut port = port.blocking_lock();
-
-        serial_helper::send_command(
-            &mut port,
-            &self.id,
-            command,
-            "\r\n",
+        serial_helper::send_command_async(
+            port.clone(),
+            self.id.clone(),
+            command.to_string(),
+            "\r\n".to_string(),
             Duration::from_secs(1),
             '\n',
-        )
+        ).await
     }
 }
 
@@ -106,19 +104,19 @@ impl Instrument for Newport1830C {
 
         // Configure wavelength if specified
         if let Some(wavelength) = instrument_config.get("wavelength").and_then(|v| v.as_float()) {
-            self.send_command(&format!("PM:Lambda {}", wavelength))?;
+            self.send_command_async(&format!("PM:Lambda {}", wavelength)).await?;
             info!("Set wavelength to {} nm", wavelength);
         }
 
         // Configure range if specified
         if let Some(range) = instrument_config.get("range").and_then(|v| v.as_integer()) {
-            self.send_command(&format!("PM:Range {}", range))?;
+            self.send_command_async(&format!("PM:Range {}", range)).await?;
             info!("Set range to {}", range);
         }
 
         // Configure units if specified
         if let Some(units) = instrument_config.get("units").and_then(|v| v.as_integer()) {
-            self.send_command(&format!("PM:Units {}", units))?;
+            self.send_command_async(&format!("PM:Units {}", units)).await?;
             let unit_str = match units {
                 0 => "Watts",
                 1 => "dBm",
@@ -149,7 +147,7 @@ impl Instrument for Newport1830C {
                 interval.tick().await;
 
                 // Query power measurement
-                match instrument.send_command("PM:Power?") {
+                match instrument.send_command_async("PM:Power?").await {
                     Ok(response) => {
                         if let Ok(value) = response.parse::<f64>() {
                             let dp = DataPoint {
@@ -207,19 +205,19 @@ impl Instrument for Newport1830C {
                     "wavelength" => {
                         let wavelength: f64 = value.parse()
                             .with_context(|| format!("Invalid wavelength value: {}", value))?;
-                        self.send_command(&format!("PM:Lambda {}", wavelength))?;
+                        self.send_command_async(&format!("PM:Lambda {}", wavelength)).await?;
                         info!("Set Newport 1830-C wavelength to {} nm", wavelength);
                     }
                     "range" => {
                         let range: i32 = value.parse()
                             .with_context(|| format!("Invalid range value: {}", value))?;
-                        self.send_command(&format!("PM:Range {}", range))?;
+                        self.send_command_async(&format!("PM:Range {}", range)).await?;
                         info!("Set Newport 1830-C range to {}", range);
                     }
                     "units" => {
                         let units: i32 = value.parse()
                             .with_context(|| format!("Invalid units value: {}", value))?;
-                        self.send_command(&format!("PM:Units {}", units))?;
+                        self.send_command_async(&format!("PM:Units {}", units)).await?;
                         info!("Set Newport 1830-C units to {}", units);
                     }
                     _ => {
@@ -229,7 +227,7 @@ impl Instrument for Newport1830C {
             }
             InstrumentCommand::Execute(cmd, _) => {
                 if cmd == "zero" {
-                    self.send_command("PM:DS:Clear")?;
+                    self.send_command_async("PM:DS:Clear").await?;
                     info!("Newport 1830-C zeroed");
                 }
             }

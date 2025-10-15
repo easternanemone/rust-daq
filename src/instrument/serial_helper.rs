@@ -3,7 +3,9 @@ use anyhow::{Context, Result};
 use log::trace;
 use serialport::SerialPort;
 use std::io::{Read, Write};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 /// Sends a command to a serial port and reads the response.
 ///
@@ -66,4 +68,44 @@ pub fn send_command(
 
     // Return the trimmed response.
     Ok(response.trim().to_string())
+}
+
+/// Asynchronously sends a command to a serial port and reads the response.
+///
+/// This function wraps the synchronous `send_command` in `tokio::task::spawn_blocking`
+/// to avoid blocking the async runtime.
+///
+/// # Arguments
+///
+/// * `port_mutex` - An `Arc<Mutex<Box<dyn SerialPort>>>` wrapping the serial port.
+/// * `instrument_id` - The ID of the instrument for logging purposes.
+/// * `command` - The command string to send.
+/// * `terminator` - The terminator string to append to the command.
+/// * `timeout` - The maximum time to wait for a response.
+/// * `response_terminator` - The character that indicates the end of a response.
+///
+/// # Returns
+///
+/// A `Result` containing the response string or an error.
+pub async fn send_command_async(
+    port_mutex: Arc<Mutex<Box<dyn SerialPort>>>,
+    instrument_id: String,
+    command: String,
+    terminator: String,
+    timeout: Duration,
+    response_terminator: char,
+) -> Result<String> {
+    tokio::task::spawn_blocking(move || {
+        let mut port = port_mutex.blocking_lock();
+        send_command(
+            &mut port,
+            &instrument_id,
+            &command,
+            &terminator,
+            timeout,
+            response_terminator,
+        )
+    })
+    .await
+    .context("Task panicked")?
 }
