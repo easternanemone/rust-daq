@@ -49,7 +49,6 @@ pub struct IirFilterConfig {
 /// ```
 pub struct IirFilter {
     filter: DirectForm1<f64>,
-    config: IirFilterConfig,
 }
 
 impl IirFilter {
@@ -57,7 +56,6 @@ impl IirFilter {
         let coeffs = Self::design_filter(&config)?;
         Ok(Self {
             filter: DirectForm1::<f64>::new(coeffs),
-            config,
         })
     }
 
