@@ -34,6 +34,8 @@ pub struct DaqAppInner {
     pub storage_format: String,
     runtime: Arc<Runtime>,
     shutdown_flag: bool,
+    // Keep the initial receiver alive to buffer data until GUI subscribes
+    _data_receiver_keeper: broadcast::Receiver<DataPoint>,
 }
 
 impl DaqApp {
@@ -45,7 +47,7 @@ impl DaqApp {
         log_buffer: LogBuffer,
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().context("Failed to create Tokio runtime")?);
-        let (data_sender, _) = broadcast::channel(1024);
+        let (data_sender, data_receiver_keeper) = broadcast::channel(1024);
         let storage_format = settings.storage.default_format.clone();
 
         let mut inner = DaqAppInner {
@@ -60,6 +62,7 @@ impl DaqApp {
             storage_format,
             runtime,
             shutdown_flag: false,
+            _data_receiver_keeper: data_receiver_keeper,
         };
 
         for id in settings.instruments.keys() {
