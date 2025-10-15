@@ -46,3 +46,13 @@ example_*.yaml
 
 # Local docs (keep main docs/)
 /docs/
+
+# But keep important project documentation
+!AGENTS.md
+!AUTOMATION_QUICKSTART.md
+!BD_JULES_INTEGRATION.md
+!DEPLOYMENT_OVERVIEW.md
+!DEPLOYMENT_QUEUE.md
+!IMPROVEMENTS_IMPLEMENTED.md
+!NEXT_ACTIONS.md
+!README_DEPLOYMENT.md
