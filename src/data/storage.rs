@@ -88,7 +88,7 @@ impl StorageWriter for CsvWriter {
 
             let mut writer = csv::Writer::from_writer(file);
             writer
-                .write_record(&["timestamp", "channel", "value", "unit", "metadata"])
+                .write_record(["timestamp", "channel", "value", "unit", "metadata"])
                 .context("Failed to write CSV header")?;
 
             self.writer = Some(writer);
