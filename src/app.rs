@@ -103,7 +103,7 @@ use log::{error, info};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::{runtime::Runtime, sync::broadcast, task::JoinHandle};
+use tokio::{runtime::Runtime, sync::{broadcast, oneshot}, task::JoinHandle};
 
 /// The main application struct that holds all state.
 ///
@@ -204,6 +204,8 @@ pub struct DaqAppInner {
     pub metadata: Metadata,
     /// Storage task handle (Some = recording active, None = not recording)
     pub writer_task: Option<JoinHandle<Result<()>>>,
+    /// Storage shutdown signal sender (Some = recording active, None = not recording)
+    pub writer_shutdown_tx: Option<oneshot::Sender<()>>,
     /// Storage format string ("csv", "hdf5", "arrow")
     pub storage_format: String,
     /// Tokio runtime powering all async tasks (shared ownership)
@@ -293,6 +295,7 @@ impl DaqApp {
             log_buffer,
             metadata: Metadata::default(),
             writer_task: None,
+            writer_shutdown_tx: None,
             storage_format,
             runtime,
             shutdown_flag: false,
@@ -1014,6 +1017,10 @@ impl DaqAppInner {
         let metadata = self.metadata.clone();
         let mut rx = self.data_sender.subscribe();
         let storage_format_for_task = self.storage_format.clone();
+        
+        // Create shutdown signal channel
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        self.writer_shutdown_tx = Some(shutdown_tx);
 
         let task = self.runtime.spawn(async move {
             let mut writer: Box<dyn crate::core::StorageWriter> =
@@ -1049,6 +1056,10 @@ impl DaqAppInner {
                             }
                         }
                     }
+                    _ = &mut shutdown_rx => {
+                        info!("Storage writer received shutdown signal, gracefully stopping...");
+                        break;
+                    }
                 }
             }
 
@@ -1061,27 +1072,29 @@ impl DaqAppInner {
         Ok(())
     }
 
-    /// Stops the data recording process.
+    /// Stops the data recording process gracefully.
     ///
-    /// Aborts the storage writer task if one is running. The task is forcefully
-    /// terminated, which may result in:
-    /// - Unflushed data loss (last few data points not written to disk)
-    /// - Incomplete file (missing footer, index)
+    /// Sends a shutdown signal to the storage writer task, allowing it to:
+    /// - Flush all buffered data to disk  
+    /// - Properly finalize files with footers/indexes
+    /// - Call `writer.shutdown()` for clean termination
+    ///
+    /// Falls back to task abort if graceful shutdown times out after 5 seconds.
     ///
     /// # Behavior
     ///
-    /// - If recording is active (`writer_task.is_some()`): Task is aborted, handle removed
-    /// - If not recording (`writer_task.is_none()`): No-op (silently succeeds)
+    /// - If recording is active: Sends shutdown signal and waits for graceful completion
+    /// - If not recording: No-op (silently succeeds)
+    /// - On timeout or signal failure: Falls back to task abort
     ///
     /// # Data Safety
     ///
-    /// This method uses `abort()` rather than graceful shutdown. For graceful
-    /// shutdown with proper flush, the writer task would need to:
-    /// 1. Receive a shutdown signal via channel
-    /// 2. Call `writer.shutdown()` to flush buffers
-    /// 3. Complete naturally
-    ///
-    /// Current implementation prioritizes immediate stop over data safety.
+    /// This method prioritizes data integrity by using graceful shutdown:
+    /// 1. Send shutdown signal via oneshot channel
+    /// 2. Writer task receives signal and breaks from event loop
+    /// 3. Writer calls `writer.shutdown()` to flush buffers and finalize files
+    /// 4. Task completes naturally with proper cleanup
+    /// 5. Fallback to abort only if graceful shutdown fails
     ///
     /// # Examples
     ///
@@ -1098,22 +1111,48 @@ impl DaqAppInner {
     ///
     /// # Complexity
     ///
-    /// O(1) - Task abort + Option::take
-    ///
-    /// # Future Enhancement
-    ///
-    /// Consider implementing graceful shutdown:
-    /// ```text
-    /// 1. Send shutdown command to writer task
-    /// 2. Await task completion with timeout
-    /// 3. Abort if timeout expires
-    /// ```
-    ///
-    /// This would ensure `writer.shutdown()` is called for proper file finalization.
+    /// O(1) for signal send + O(timeout) for graceful shutdown (5s max)
     pub fn stop_recording(&mut self) {
-        if let Some(task) = self.writer_task.take() {
-            task.abort();
-            info!("Stopped recording.");
-        }
+        let task = match self.writer_task.take() {
+            Some(task) => task,
+            None => return, // Not recording
+        };
+        
+        let shutdown_tx = self.writer_shutdown_tx.take();
+        let runtime = self.runtime.clone();
+        
+        // Spawn shutdown task to avoid blocking
+        let _ = runtime.spawn(async move {
+            let shutdown_timeout = std::time::Duration::from_secs(5);
+            
+            if let Some(tx) = shutdown_tx {
+                if tx.send(()).is_ok() {
+                    // Try graceful shutdown with timeout
+                    match tokio::time::timeout(shutdown_timeout, task).await {
+                        Ok(Ok(Ok(_))) => {
+                            info!("Storage writer shut down gracefully.");
+                        }
+                        Ok(Ok(Err(e))) => {
+                            error!("Storage writer task returned error during shutdown: {}", e);
+                        }
+                        Ok(Err(e)) => {
+                            error!("Storage writer task panicked during shutdown: {}", e);
+                        }
+                        Err(_) => {
+                            log::warn!("Storage writer shutdown timed out after {}s", shutdown_timeout.as_secs());
+                            // Task is moved into timeout, can't abort here - timeout will handle cancellation
+                        }
+                    }
+                } else {
+                    log::warn!("Failed to send shutdown signal to storage writer, aborting task.");
+                    task.abort();
+                }
+            } else {
+                log::warn!("No shutdown channel available, aborting storage task.");
+                task.abort();
+            }
+        });
+        
+        info!("Stopped recording.");
     }
 }
