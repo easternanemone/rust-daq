@@ -6,6 +6,7 @@ use log::debug;
 use num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::sync::Arc;
+use std::collections::VecDeque;
 
 /// A data processor that performs a Fast Fourier Transform (FFT) on a sliding window of data.
 ///
@@ -58,7 +59,7 @@ pub struct FFTProcessor {
     window_size: usize,
     overlap: usize,
     sampling_rate: f64,
-    buffer: Vec<f64>,
+    buffer: VecDeque<f64>,
     fft_planner: Arc<dyn Fft<f64>>,
     hann_window: Vec<f64>,
     channel: String,
@@ -97,7 +98,7 @@ impl FFTProcessor {
             window_size,
             overlap,
             sampling_rate,
-            buffer: Vec::with_capacity(window_size * 2),
+            buffer: VecDeque::with_capacity(window_size * 2),
             fft_planner: fft,
             hann_window,
             channel: String::from("unknown"),
@@ -126,8 +127,9 @@ impl DataProcessor for FFTProcessor {
         while self.buffer.len() >= self.window_size {
             debug!("Processing window. Buffer size: {}", self.buffer.len());
 
-            let mut complex_buffer: Vec<Complex<f64>> = self.buffer[0..self.window_size]
+            let mut complex_buffer: Vec<Complex<f64>> = self.buffer
                 .iter()
+                .take(self.window_size)
                 .zip(self.hann_window.iter())
                 .map(|(&val, &win_val)| Complex::new(val * win_val, 0.0))
                 .collect();
@@ -181,7 +183,7 @@ impl DataProcessor for FFTProcessor {
             }
 
             all_fft_results.extend(fft_dps);
-            self.buffer.drain(0..step_size);
+            self.buffer.drain(..step_size);
             debug!("Drained buffer. New size: {}", self.buffer.len());
         }
 
