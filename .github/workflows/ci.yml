@@ -1,62 +1,283 @@
-name: Rust CI
+name: Rust CI/CD
 
 on:
   push:
     branches: ["main"]
+    tags:
+      - "v*"
   pull_request:
-    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  build_and_test:
-    name: Build and Test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
 
-      - name: Install HDF5 (for tests)
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install SARIF tools
+        run: cargo install clippy-sarif sarif-fmt
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo clippy (SARIF)
+        run: |
+          cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings | \
+          clippy-sarif | tee clippy-results.sarif | sarif-fmt
+        continue-on-error: true
+
+      - name: Upload SARIF results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: clippy-results.sarif
+          wait-for-processing: true
+        if: always()
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run cargo-audit
+        uses: rustsec/audit-check@v1.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check documentation builds
+        run: cargo doc --workspace --all-features --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Upload documentation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-${{ github.sha }}
+          path: target/doc
+          if-no-files-found: error
+
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install HDF5 dependencies (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-on-failure: true
 
-      - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-targets
 
-      - name: Run Clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+      - name: Documentation tests
+        run: cargo test --workspace --doc
 
-      - name: Run tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          # Run tests with all features enabled
-          args: --workspace --all-features
+  features:
+    name: Feature Builds (${{ matrix.feature-set }})
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - feature-set: default
+            args: ""
+          - feature-set: full
+            args: "--features full"
+          - feature-set: storage_csv
+            args: "--no-default-features --features storage_csv"
+          - feature-set: storage_hdf5
+            args: "--no-default-features --features storage_hdf5"
+          - feature-set: storage_arrow
+            args: "--no-default-features --features storage_arrow"
+          - feature-set: instrument_serial
+            args: "--no-default-features --features instrument_serial"
+          - feature-set: instrument_visa
+            args: "--no-default-features --features instrument_visa"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Build release
-        uses: actions-rs/cargo@v1
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install HDF5 dependencies
+        if: matrix.feature-set == 'storage_hdf5' || matrix.feature-set == 'full'
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          command: build
-          args: --release --workspace --all-features
+          cache-on-failure: true
+          shared-key: feature-builds
+
+      - name: cargo build ${{ matrix.feature-set }}
+        run: |
+          cargo build --workspace ${{ matrix.args }}
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [test, features, security, docs]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install HDF5 dependencies
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: coverage
+
+      - name: Generate coverage report
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --workspace --all-features --lcov --output-path coverage/lcov.info --html --output-dir coverage/html
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage
+          if-no-files-found: error
+
+  release:
+    name: Release (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [lint, test, features, coverage]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install HDF5 dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: release-${{ matrix.os }}
+
+      - name: Build release binaries
+        run: cargo build --workspace --features full --release
+
+      - name: Package artifacts
+        run: |
+          ARTIFACT_DIR="artifacts"
+          ARTIFACT_NAME="rust-daq-${{ matrix.os }}-${{ github.ref_name }}"
+          mkdir -p "$ARTIFACT_DIR"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp target/release/rust_daq.exe "$ARTIFACT_DIR/"
+            pwsh -Command "Compress-Archive -Path '${ARTIFACT_DIR}/rust_daq.exe' -DestinationPath '${ARTIFACT_DIR}/${ARTIFACT_NAME}.zip' -Force"
+            rm "$ARTIFACT_DIR/rust_daq.exe"
+          else
+            cp target/release/rust_daq "$ARTIFACT_DIR/"
+            tar -czf "$ARTIFACT_DIR/${ARTIFACT_NAME}.tar.gz" -C "$ARTIFACT_DIR" rust_daq
+            rm "$ARTIFACT_DIR/rust_daq"
+          fi
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-release-${{ github.ref_name }}
+          path: artifacts
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-artifacts/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
