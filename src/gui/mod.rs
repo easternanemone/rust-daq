@@ -101,6 +101,7 @@ pub struct Gui {
     log_filter_text: String,
     log_level_filter: LevelFilter,
     scroll_to_bottom: bool,
+    consolidate_logs: bool,
 }
 
 impl Gui {
@@ -125,6 +126,7 @@ impl Gui {
             log_filter_text: String::new(),
             log_level_filter: LevelFilter::Info,
             scroll_to_bottom: true,
+            consolidate_logs: false,
         }
     }
 
