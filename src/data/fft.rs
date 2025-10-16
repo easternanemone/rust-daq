@@ -1,6 +1,6 @@
 //! An FFT (Fast Fourier Transform) data processor for frequency analysis.
 
-use crate::core::{DataPoint, DataProcessor};
+use crate::core::{DataPoint, DataProcessor, Measurement, MeasurementProcessor, SpectrumData, FrequencyBin};
 use chrono::Utc;
 use log::debug;
 use num_complex::Complex;
@@ -9,12 +9,7 @@ use serde::Deserialize;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// Represents a single frequency bin in an FFT spectrum.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FrequencyBin {
-    pub frequency: f64,
-    pub magnitude: f64,
-}
+// FrequencyBin is now defined in core.rs
 
 /// Configuration for the FFTProcessor.
 #[derive(Clone, Debug, Deserialize)]
@@ -221,5 +216,143 @@ impl DataProcessor for FFTProcessor {
                 }
             })
             .collect()
+    }
+}
+
+impl MeasurementProcessor for FFTProcessor {
+    /// Processes measurements, converting scalar time-series data to frequency spectra.
+    ///
+    /// This implementation filters for `Measurement::Scalar` data points, performs FFT
+    /// analysis, and returns `Measurement::Spectrum` containing properly typed frequency
+    /// bins instead of JSON metadata workarounds.
+    fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement> {
+        // Extract scalar data points from measurements
+        let scalars: Vec<DataPoint> = data
+            .iter()
+            .filter_map(|m| {
+                if let Measurement::Scalar(dp) = m {
+                    Some(dp.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        if scalars.is_empty() {
+            return Vec::new();
+        }
+        
+        // Use the existing FFT processing logic
+        let fft_bins = self.process_fft(&scalars);
+        if fft_bins.is_empty() {
+            return Vec::new();
+        }
+        
+        // Update channel from the first data point
+        if self.channel == "unknown" {
+            self.channel = scalars[0].channel.clone();
+        }
+        
+        // Create a single spectrum measurement instead of multiple scalar DataPoints
+        let spectrum = SpectrumData {
+            timestamp: scalars.last().map_or_else(Utc::now, |dp| dp.timestamp),
+            channel: format!("{}_fft", self.channel),
+            unit: "dB".to_string(),
+            bins: fft_bins,
+            metadata: Some(serde_json::json!({
+                "window_size": self.window_size,
+                "overlap": self.overlap,
+                "sampling_rate": self.sampling_rate,
+            })),
+        };
+        
+        vec![Measurement::Spectrum(spectrum)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    
+    #[test]
+    fn test_measurement_processor_fft() {
+        let config = FFTConfig {
+            window_size: 8,
+            overlap: 4,
+            sampling_rate: 8.0,
+        };
+        let mut fft_processor = FFTProcessor::new(config);
+        
+        // Create test data - a simple sine wave
+        let mut measurements = Vec::new();
+        for i in 0..16 {
+            let t = i as f64 / 8.0;
+            let value = (2.0 * std::f64::consts::PI * 1.0 * t).sin(); // 1 Hz sine wave
+            measurements.push(Measurement::Scalar(DataPoint {
+                timestamp: Utc.timestamp_nanos((t * 1_000_000_000.0) as i64),
+                channel: "test_signal".to_string(),
+                value,
+                unit: "V".to_string(),
+                metadata: None,
+            }));
+        }
+        
+        // Process with new MeasurementProcessor interface
+        let result = fft_processor.process_measurements(&measurements);
+        
+        // Should get spectrum measurements
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            Measurement::Spectrum(spectrum) => {
+                assert_eq!(spectrum.channel, "test_signal_fft");
+                assert_eq!(spectrum.unit, "dB");
+                assert!(!spectrum.bins.is_empty());
+                
+                // Verify frequency bins are properly structured
+                let first_bin = &spectrum.bins[0];
+                assert_eq!(first_bin.frequency, 0.0); // DC component
+                
+                // Should have metadata about FFT parameters
+                assert!(spectrum.metadata.is_some());
+                let metadata = spectrum.metadata.as_ref().unwrap();
+                assert_eq!(metadata["window_size"], 8);
+                assert_eq!(metadata["sampling_rate"], 8.0);
+            }
+            _ => panic!("Expected Spectrum measurement, got {:?}", result[0]),
+        }
+    }
+    
+    #[test]
+    fn test_measurement_processor_filters_non_scalar() {
+        let config = FFTConfig {
+            window_size: 4,
+            overlap: 2,
+            sampling_rate: 4.0,
+        };
+        let mut fft_processor = FFTProcessor::new(config);
+        
+        // Mix of measurement types - only scalars should be processed
+        let measurements = vec![
+            Measurement::Spectrum(SpectrumData {
+                timestamp: Utc::now(),
+                channel: "existing_spectrum".to_string(),
+                unit: "dB".to_string(),
+                bins: vec![],
+                metadata: None,
+            }),
+            Measurement::Scalar(DataPoint {
+                timestamp: Utc::now(),
+                channel: "scalar_data".to_string(),
+                value: 1.0,
+                unit: "V".to_string(),
+                metadata: None,
+            }),
+        ];
+        
+        let result = fft_processor.process_measurements(&measurements);
+        
+        // Should return empty because we don't have enough scalar data for FFT window
+        assert!(result.is_empty());
     }
 }

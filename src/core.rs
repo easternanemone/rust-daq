@@ -121,7 +121,7 @@ use tokio::task::JoinHandle;
 /// DataPoint implements `Serialize`/`Deserialize` for efficient storage and transmission.
 /// The metadata field is skipped during serialization if `None`, reducing storage overhead
 /// for high-rate data streams.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DataPoint {
     /// UTC timestamp with nanosecond precision
     pub timestamp: chrono::DateTime<chrono::Utc>,
@@ -134,6 +134,144 @@ pub struct DataPoint {
     /// Optional instrument-specific metadata (JSON)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Represents a frequency bin in a spectrum measurement.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrequencyBin {
+    /// Frequency in Hz
+    pub frequency: f64,
+    /// Magnitude in dB or linear units
+    pub magnitude: f64,
+}
+
+/// Represents spectrum data from FFT or other frequency analysis.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpectrumData {
+    /// UTC timestamp when spectrum was captured
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Channel identifier (format: `{instrument_id}_{parameter}`)
+    pub channel: String,
+    /// Physical unit for magnitude values
+    pub unit: String,
+    /// Frequency bins containing the spectrum
+    pub bins: Vec<FrequencyBin>,
+    /// Optional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Represents image data from cameras or 2D sensors.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageData {
+    /// UTC timestamp when image was captured
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Channel identifier (format: `{instrument_id}_{parameter}`)
+    pub channel: String,
+    /// Image width in pixels
+    pub width: usize,
+    /// Image height in pixels
+    pub height: usize,
+    /// Pixel data (row-major order)
+    pub pixels: Vec<f64>,
+    /// Physical unit for pixel values
+    pub unit: String,
+    /// Optional metadata (exposure time, gain, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// A measurement from an instrument, supporting different data types.
+///
+/// `Measurement` replaces the scalar-only `DataPoint` design with an extensible
+/// enum that can represent scalar values, frequency spectra, images, and other
+/// measurement types. This eliminates the need for JSON metadata workarounds
+/// and provides type-safe access to structured data.
+///
+/// # Variants
+///
+/// * `Scalar(DataPoint)` - Traditional scalar measurement (temperature, voltage, etc.)
+/// * `Spectrum(SpectrumData)` - Frequency spectrum from FFT or spectral analysis
+/// * `Image(ImageData)` - 2D image data from cameras or imaging sensors
+///
+/// # Migration from DataPoint
+///
+/// Existing code using `DataPoint` can be wrapped in `Measurement::Scalar(datapoint)`.
+/// New processors can emit strongly-typed variants instead of encoding data in JSON metadata.
+///
+/// # Examples
+///
+/// ```rust
+/// use rust_daq::core::{Measurement, DataPoint, SpectrumData, FrequencyBin};
+/// use chrono::Utc;
+///
+/// // Scalar measurement (traditional)
+/// let scalar = Measurement::Scalar(DataPoint {
+///     timestamp: Utc::now(),
+///     channel: "sensor1_temperature".to_string(),
+///     value: 23.5,
+///     unit: "°C".to_string(),
+///     metadata: None,
+/// });
+///
+/// // Spectrum measurement (FFT output)
+/// let spectrum = Measurement::Spectrum(SpectrumData {
+///     timestamp: Utc::now(),
+///     channel: "mic1_fft".to_string(),
+///     unit: "dB".to_string(),
+///     bins: vec![
+///         FrequencyBin { frequency: 0.0, magnitude: -60.0 },
+///         FrequencyBin { frequency: 1000.0, magnitude: -20.0 },
+///     ],
+///     metadata: None,
+/// });
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Measurement {
+    /// Scalar measurement (traditional DataPoint)
+    Scalar(DataPoint),
+    /// Frequency spectrum from FFT or spectral analysis
+    Spectrum(SpectrumData),
+    /// 2D image data from cameras or imaging sensors
+    Image(ImageData),
+}
+
+impl Measurement {
+    /// Returns the timestamp of this measurement.
+    pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+        match self {
+            Measurement::Scalar(dp) => dp.timestamp,
+            Measurement::Spectrum(sd) => sd.timestamp,
+            Measurement::Image(id) => id.timestamp,
+        }
+    }
+    
+    /// Returns the channel identifier of this measurement.
+    pub fn channel(&self) -> &str {
+        match self {
+            Measurement::Scalar(dp) => &dp.channel,
+            Measurement::Spectrum(sd) => &sd.channel,
+            Measurement::Image(id) => &id.channel,
+        }
+    }
+    
+    /// Returns the unit of this measurement.
+    pub fn unit(&self) -> &str {
+        match self {
+            Measurement::Scalar(dp) => &dp.unit,
+            Measurement::Spectrum(sd) => &sd.unit,
+            Measurement::Image(id) => &id.unit,
+        }
+    }
+    
+    /// Returns the metadata of this measurement, if any.
+    pub fn metadata(&self) -> Option<&serde_json::Value> {
+        match self {
+            Measurement::Scalar(dp) => dp.metadata.as_ref(),
+            Measurement::Spectrum(sd) => sd.metadata.as_ref(),
+            Measurement::Image(id) => id.metadata.as_ref(),
+        }
+    }
 }
 
 /// Command that can be sent to an instrument.
@@ -611,6 +749,94 @@ pub trait DataProcessor: Send + Sync {
     /// - Clone unit strings efficiently or use `Arc<str>` for shared units
     /// - Handle edge cases: empty input, first call (uninitialized state)
     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint>;
+}
+
+/// Trait for processing measurements with support for different data types.
+///
+/// `MeasurementProcessor` is the next-generation processor interface that works
+/// with the `Measurement` enum instead of scalar-only `DataPoint`. This enables
+/// processors to emit and consume structured data like frequency spectra and images
+/// without JSON metadata workarounds.
+///
+/// # Design Philosophy
+///
+/// - **Type Safety**: Processors declare the specific measurement types they work with
+/// - **Composability**: Processors can transform one measurement type to another
+/// - **Efficiency**: Structured data avoids serialization/deserialization overhead
+/// - **Extensibility**: New measurement types can be added without breaking existing code
+///
+/// # Examples
+///
+/// ```rust
+/// use rust_daq::core::{MeasurementProcessor, Measurement, DataPoint, SpectrumData, FrequencyBin};
+/// use chrono::Utc;
+///
+/// struct FFTProcessor;
+///
+/// impl MeasurementProcessor for FFTProcessor {
+///     fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement> {
+///         let mut spectra = Vec::new();
+///         for measurement in data {
+///             if let Measurement::Scalar(_dp) = measurement {
+///                 // Convert scalar time-series to spectrum (simplified)
+///                 let spectrum_data = SpectrumData {
+///                     timestamp: Utc::now(),
+///                     channel: "example_fft".to_string(),
+///                     unit: "dB".to_string(),
+///                     bins: vec![FrequencyBin { frequency: 1000.0, magnitude: -20.0 }],
+///                     metadata: None,
+///                 };
+///                 spectra.push(Measurement::Spectrum(spectrum_data));
+///             }
+///         }
+///         spectra
+///     }
+/// }
+/// ```
+///
+/// # Migration Path
+///
+/// Existing `DataProcessor` implementations can be wrapped:
+///
+/// ```rust
+/// # use rust_daq::core::{MeasurementProcessor, Measurement, DataPoint, DataProcessor};
+/// # struct LegacyFilter;
+/// # impl DataProcessor for LegacyFilter {
+/// #     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint> { data.to_vec() }
+/// # }
+/// impl MeasurementProcessor for LegacyFilter {
+///     fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement> {
+///         let scalars: Vec<DataPoint> = data.iter()
+///             .filter_map(|m| if let Measurement::Scalar(dp) = m { Some(dp.clone()) } else { None })
+///             .collect();
+///         let filtered = self.process(&scalars); // Call legacy DataProcessor::process
+///         filtered.into_iter().map(Measurement::Scalar).collect()
+///     }
+/// }
+/// ```
+pub trait MeasurementProcessor: Send + Sync {
+    /// Processes a batch of measurements and returns transformed measurements.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Input slice of measurements to process. May contain mixed types.
+    ///
+    /// # Returns
+    ///
+    /// Vector of processed measurements. The processor may:
+    /// - Filter input measurements (e.g., only process Scalar measurements)
+    /// - Transform measurement types (e.g., Scalar → Spectrum via FFT)
+    /// - Combine multiple measurements into one (e.g., stereo → mono)
+    /// - Generate multiple outputs from one input (e.g., image → histogram + stats)
+    ///
+    /// # Type Conversions
+    ///
+    /// Common patterns:
+    /// - `Scalar → Scalar`: Traditional filtering, calibration
+    /// - `Scalar → Spectrum`: FFT, spectral analysis
+    /// - `Image → Scalar`: Statistics (mean, max, etc.)
+    /// - `Spectrum → Scalar`: Peak detection, power calculation
+    fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement>;
 }
 
 /// Trait for a data storage writer.
