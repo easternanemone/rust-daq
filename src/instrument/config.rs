@@ -47,11 +47,14 @@ impl MockInstrumentConfig {
     /// # Errors
     ///
     /// Returns `Err` if:
-    /// - `sample_rate_hz` is not positive
+    /// - `sample_rate_hz` is not positive and finite (rejects NaN, infinity)
     /// - `num_samples` is zero
     pub fn validate(&self) -> Result<()> {
-        if self.sample_rate_hz <= 0.0 {
-            anyhow::bail!("sample_rate_hz must be positive, got {}", self.sample_rate_hz);
+        if !self.sample_rate_hz.is_finite() || self.sample_rate_hz <= 0.0 {
+            anyhow::bail!(
+                "sample_rate_hz must be positive and finite, got {}",
+                self.sample_rate_hz
+            );
         }
         if self.num_samples == 0 {
             anyhow::bail!("num_samples must be greater than 0");
