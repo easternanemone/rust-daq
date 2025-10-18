@@ -32,9 +32,11 @@ use log::{info, LevelFilter};
 use rust_daq::{
     app::DaqApp,
     config::Settings,
+    core::V2InstrumentAdapter,
     data::registry::ProcessorRegistry,
     gui::Gui,
     instrument::{mock::MockInstrument, scpi::ScpiInstrument, InstrumentRegistry},
+    instruments_v2::mock_instrument::MockInstrumentV2,
     log_capture::{LogBuffer, LogCollector},
 };
 use std::sync::Arc;
@@ -75,6 +77,13 @@ fn main() -> Result<()> {
     // This is our static "plugin" system.
     let mut instrument_registry = InstrumentRegistry::new();
     instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
+
+    // Register V2 mock instrument via adapter (bd-49 Phase 1 validation)
+    instrument_registry.register("mock_v2", |id| {
+        let v2_instrument = Box::new(MockInstrumentV2::new(id.to_string()));
+        Box::new(V2InstrumentAdapter::new(v2_instrument))
+    });
+
     instrument_registry.register("scpi_keithley", |_id| Box::new(ScpiInstrument::new()));
 
     #[cfg(feature = "instrument_visa")]
