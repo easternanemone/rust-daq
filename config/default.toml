@@ -3,6 +3,13 @@
 # Log level: "error", "warn", "info", "debug", "trace"
 log_level = "info"
 
+[application]
+# Channel capacities for data distribution
+# Broadcast channel distributes data from instruments to GUI and storage
+# Command channel sends control commands to instrument tasks
+broadcast_channel_capacity = 1024  # Messages buffered in broadcast channel
+command_channel_capacity = 32      # Commands buffered per instrument
+
 [storage]
 default_path = "data_output"
 default_format = "csv" # "csv", "hdf5", "arrow"

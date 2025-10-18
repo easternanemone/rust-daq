@@ -44,9 +44,26 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub log_level: String,
+    pub application: ApplicationSettings,
     pub storage: StorageSettings,
     pub instruments: HashMap<String, toml::Value>,
     pub processors: Option<HashMap<String, Vec<ProcessorConfig>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ApplicationSettings {
+    #[serde(default = "default_broadcast_capacity")]
+    pub broadcast_channel_capacity: usize,
+    #[serde(default = "default_command_capacity")]
+    pub command_channel_capacity: usize,
+}
+
+fn default_broadcast_capacity() -> usize {
+    1024
+}
+
+fn default_command_capacity() -> usize {
+    32
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -87,6 +104,14 @@ impl Settings {
         if !valid_log_levels.contains(&self.log_level.to_lowercase().as_str()) {
             anyhow::bail!("Invalid log level: {}", self.log_level);
         }
+
+        // Validate channel capacities
+        is_in_range(self.application.broadcast_channel_capacity, 64..=65536)
+            .map_err(anyhow::Error::msg)
+            .context("broadcast_channel_capacity must be between 64 and 65536")?;
+        is_in_range(self.application.command_channel_capacity, 8..=4096)
+            .map_err(anyhow::Error::msg)
+            .context("command_channel_capacity must be between 8 and 4096")?;
 
         is_valid_path(&self.storage.default_path)
             .map_err(anyhow::Error::msg)

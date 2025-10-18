@@ -15,16 +15,18 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::broadcast, task::JoinHandle};
 
+use crate::measurement::Measure;
+
 /// The main application struct that holds all state.
 #[derive(Clone)]
-pub struct DaqApp {
-    inner: Arc<Mutex<DaqAppInner>>,
+pub struct DaqApp<M: Measure> {
+    inner: Arc<Mutex<DaqAppInner<M>>>,
 }
 
 /// Inner state of the DAQ application, protected by a Mutex.
-pub struct DaqAppInner {
+pub struct DaqAppInner<M: Measure> {
     pub settings: Arc<Settings>,
-    pub instrument_registry: Arc<InstrumentRegistry>,
+    pub instrument_registry: Arc<InstrumentRegistry<M>>,
     pub processor_registry: Arc<ProcessorRegistry>,
     pub instruments: HashMap<String, InstrumentHandle>,
     pub data_sender: broadcast::Sender<DataPoint>,
@@ -38,16 +40,17 @@ pub struct DaqAppInner {
     _data_receiver_keeper: broadcast::Receiver<DataPoint>,
 }
 
-impl DaqApp {
+impl<M: Measure + 'static> DaqApp<M> {
     /// Creates a new `DaqApp`.
     pub fn new(
         settings: Arc<Settings>,
-        instrument_registry: Arc<InstrumentRegistry>,
+        instrument_registry: Arc<InstrumentRegistry<M>>,
         processor_registry: Arc<ProcessorRegistry>,
         log_buffer: LogBuffer,
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().context("Failed to create Tokio runtime")?);
-        let (data_sender, data_receiver_keeper) = broadcast::channel(1024);
+        let (data_sender, data_receiver_keeper) =
+            broadcast::channel(settings.application.broadcast_channel_capacity);
         let storage_format = settings.storage.default_format.clone();
 
         let mut inner = DaqAppInner {
@@ -121,7 +124,7 @@ impl DaqApp {
     }
 }
 
-impl DaqAppInner {
+impl<M: Measure + 'static> DaqAppInner<M> {
     /// Spawns an instrument to run on the Tokio runtime.
     pub fn spawn_instrument(&mut self, id: &str) -> Result<()> {
         if self.instruments.contains_key(id) {
@@ -165,7 +168,8 @@ impl DaqAppInner {
         let id_clone = id.to_string();
 
         // Create command channel
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(32);
+        let (command_tx, mut command_rx) =
+            tokio::sync::mpsc::channel(settings.application.command_channel_capacity);
 
         let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
             instrument
@@ -231,10 +235,30 @@ impl DaqAppInner {
         let handle = self.instruments.get(id)
             .ok_or_else(|| anyhow!("Instrument '{}' is not running", id))?;
 
-        handle.command_tx.try_send(command)
-            .map_err(|e| anyhow!("Failed to send command to instrument '{}': {}", id, e))?;
+        // Retry with brief delays instead of failing immediately
+        const MAX_RETRIES: u32 = 10;
+        const RETRY_DELAY_MS: u64 = 100;
 
-        Ok(())
+        for attempt in 0..MAX_RETRIES {
+            match handle.command_tx.try_send(command.clone()) {
+                Ok(()) => return Ok(()),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    if attempt < MAX_RETRIES - 1 {
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                        continue;
+                    }
+                    return Err(anyhow!(
+                        "Command channel full for instrument '{}' after {} retries ({}ms total)",
+                        id, MAX_RETRIES, MAX_RETRIES as u64 * RETRY_DELAY_MS
+                    ));
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(anyhow!("Instrument '{}' is no longer running (channel closed)", id));
+                }
+            }
+        }
+
+        unreachable!("Retry loop should return in all cases")
     }
 
     /// Returns a list of available channel names.

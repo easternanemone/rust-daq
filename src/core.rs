@@ -71,6 +71,7 @@
 //! }
 //! ```
 use crate::config::Settings;
+use crate::measurement::Measure;
 use crate::metadata::Metadata;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -229,7 +230,7 @@ pub struct ImageData {
 /// });
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Measurement {
+pub enum Data {
     /// Scalar measurement (traditional DataPoint)
     Scalar(DataPoint),
     /// Frequency spectrum from FFT or spectral analysis
@@ -238,40 +239,40 @@ pub enum Measurement {
     Image(ImageData),
 }
 
-impl Measurement {
+impl Data {
     /// Returns the timestamp of this measurement.
     pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
         match self {
-            Measurement::Scalar(dp) => dp.timestamp,
-            Measurement::Spectrum(sd) => sd.timestamp,
-            Measurement::Image(id) => id.timestamp,
+            Data::Scalar(dp) => dp.timestamp,
+            Data::Spectrum(sd) => sd.timestamp,
+            Data::Image(id) => id.timestamp,
         }
     }
     
     /// Returns the channel identifier of this measurement.
     pub fn channel(&self) -> &str {
         match self {
-            Measurement::Scalar(dp) => &dp.channel,
-            Measurement::Spectrum(sd) => &sd.channel,
-            Measurement::Image(id) => &id.channel,
+            Data::Scalar(dp) => &dp.channel,
+            Data::Spectrum(sd) => &sd.channel,
+            Data::Image(id) => &id.channel,
         }
     }
     
     /// Returns the unit of this measurement.
     pub fn unit(&self) -> &str {
         match self {
-            Measurement::Scalar(dp) => &dp.unit,
-            Measurement::Spectrum(sd) => &sd.unit,
-            Measurement::Image(id) => &id.unit,
+            Data::Scalar(dp) => &dp.unit,
+            Data::Spectrum(sd) => &sd.unit,
+            Data::Image(id) => &id.unit,
         }
     }
     
     /// Returns the metadata of this measurement, if any.
     pub fn metadata(&self) -> Option<&serde_json::Value> {
         match self {
-            Measurement::Scalar(dp) => dp.metadata.as_ref(),
-            Measurement::Spectrum(sd) => sd.metadata.as_ref(),
-            Measurement::Image(id) => id.metadata.as_ref(),
+            Data::Scalar(dp) => dp.metadata.as_ref(),
+            Data::Spectrum(sd) => sd.metadata.as_ref(),
+            Data::Image(id) => id.metadata.as_ref(),
         }
     }
 }
@@ -450,176 +451,12 @@ pub struct InstrumentHandle {
 /// Errors should include context using `.context()` to aid debugging.
 #[async_trait]
 pub trait Instrument: Send + Sync {
-    /// Returns the unique identifier of the instrument.
-    ///
-    /// This name is used for channel naming, logging, and GUI display.
-    /// Should match the instrument's key in the configuration file.
-    ///
-    /// # Complexity
-    ///
-    /// O(1) - Simple string clone
+    type Measure: Measure;
+
     fn name(&self) -> String;
-
-    /// Connects to the instrument and prepares it for data acquisition.
-    ///
-    /// This method should:
-    /// 1. Open the hardware connection (serial port, USB, network socket)
-    /// 2. Send initialization commands to the device
-    /// 3. Create broadcast channel for data streaming
-    /// 4. Spawn async task for polling/data acquisition (if applicable)
-    /// 5. Store the broadcast sender and any connection handles
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Unique identifier for this instrument instance (used in data_point.instrument_id)
-    /// * `settings` - Application settings containing instrument configuration.
-    ///   Access instrument-specific config via `settings.instruments.get(id)`
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if:
-    /// - Configuration is missing or invalid
-    /// - Hardware connection fails (device not found, permission denied)
-    /// - Device initialization fails (invalid response, timeout)
     async fn connect(&mut self, id: &str, settings: &Arc<Settings>) -> anyhow::Result<()>;
-
-    /// Disconnects from the instrument and releases resources.
-    ///
-    /// This method should:
-    /// 1. Stop any running data acquisition tasks
-    /// 2. Send shutdown commands to the device (if needed)
-    /// 3. Close the hardware connection
-    /// 4. Drop the broadcast sender to signal end of stream
-    ///
-    /// Called automatically when:
-    /// - `Shutdown` command is received
-    /// - Instrument task is aborted due to timeout
-    /// - Application is shutting down
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if device shutdown fails, but this error is typically
-    /// logged rather than propagated. The connection is closed regardless.
-    ///
-    /// # Idempotency
-    ///
-    /// This method should be safe to call multiple times. If already disconnected,
-    /// it should succeed without side effects.
     async fn disconnect(&mut self) -> anyhow::Result<()>;
-
-    /// Returns a broadcast receiver for the instrument's data stream.
-    ///
-    /// Each call to this method creates a new receiver that subscribes to the
-    /// same underlying broadcast channel. Multiple receivers can consume data
-    /// independently (multi-consumer pattern).
-    ///
-    /// # Data Streaming Pattern
-    ///
-    /// 1. `connect()` creates a `broadcast::channel` and spawns a data task
-    /// 2. Data task polls the instrument and sends `DataPoint`s via broadcast
-    /// 3. `data_stream()` returns a new receiver for each subscriber
-    /// 4. Receivers buffer data independently (channel capacity: 1024)
-    /// 5. If a receiver lags, oldest data is dropped (`RecvError::Lagged`)
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if:
-    /// - Instrument is not connected (no broadcast sender exists)
-    /// - Connection was lost (sender dropped)
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use rust_daq::core::{Instrument, DataPoint};
-    /// # async fn example(instrument: &mut dyn Instrument) -> anyhow::Result<()> {
-    /// let mut stream = instrument.data_stream().await?;
-    ///
-    /// // Receive data points (non-blocking)
-    /// match stream.try_recv() {
-    ///     Ok(dp) => println!("Received: {} = {}", dp.channel, dp.value),
-    ///     Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-    ///         // No data available yet
-    ///     },
-    ///     Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-    ///         println!("Warning: Dropped {} data points (receiver too slow)", n);
-    ///     },
-    ///     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-    ///         println!("Stream closed (instrument disconnected)");
-    ///     }
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    async fn data_stream(&mut self) -> anyhow::Result<broadcast::Receiver<DataPoint>>;
-
-    /// Handles a command sent to the instrument.
-    ///
-    /// This method processes [`InstrumentCommand`]s sent via the instrument's
-    /// command channel. The default implementation does nothing, which is
-    /// appropriate for read-only instruments.
-    ///
-    /// # Command Types
-    ///
-    /// - `SetParameter(key, value)` - Change instrument parameter (e.g., wavelength)
-    /// - `QueryParameter(key)` - Request current parameter value (send via data stream)
-    /// - `Execute(command, args)` - Execute complex operations (e.g., calibration)
-    /// - `Shutdown` - Handled by framework, not passed to this method
-    ///
-    /// # Implementation Guidelines
-    ///
-    /// - Parse command parameters with proper error handling
-    /// - Validate parameter ranges before sending to hardware
-    /// - Add context to errors for debugging: `.context("Failed to set wavelength")`
-    /// - Log command execution at INFO level
-    /// - For query responses, send `DataPoint` via broadcast channel
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if:
-    /// - Command is malformed or missing required parameters
-    /// - Parameter value is out of range
-    /// - Hardware communication fails
-    /// - Command is not supported by this instrument
-    ///
-    /// Errors are logged but don't terminate the instrument task.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use rust_daq::core::{Instrument, InstrumentCommand};
-    /// # use anyhow::{Context, Result};
-    /// # use async_trait::async_trait;
-    /// # struct MyInstrument;
-    /// # #[async_trait]
-    /// # impl Instrument for MyInstrument {
-    /// # fn name(&self) -> String { "test".to_string() }
-    /// # async fn connect(&mut self, _: &std::sync::Arc<rust_daq::config::Settings>) -> Result<()> { Ok(()) }
-    /// # async fn disconnect(&mut self) -> Result<()> { Ok(()) }
-    /// # async fn data_stream(&mut self) -> Result<tokio::sync::broadcast::Receiver<rust_daq::core::DataPoint>> {
-    /// #     Err(anyhow::anyhow!("not implemented"))
-    /// # }
-    /// async fn handle_command(&mut self, command: InstrumentCommand) -> Result<()> {
-    ///     match command {
-    ///         InstrumentCommand::SetParameter(key, value) => {
-    ///             if key == "wavelength" {
-    ///                 let wl: f64 = value.parse()
-    ///                     .context("Invalid wavelength value")?;
-    ///                 // Send to hardware...
-    ///                 log::info!("Set wavelength to {} nm", wl);
-    ///             }
-    ///         }
-    ///         InstrumentCommand::Execute(cmd, args) => {
-    ///             if cmd == "calibrate" {
-    ///                 // Perform calibration...
-    ///                 log::info!("Calibration complete");
-    ///             }
-    ///         }
-    ///         _ => {}
-    ///     }
-    ///     Ok(())
-    /// }
-    /// # }
-    /// ```
+    fn measure(&self) -> &Self::Measure;
     async fn handle_command(&mut self, _command: InstrumentCommand) -> anyhow::Result<()> {
         Ok(())
     }
@@ -814,7 +651,7 @@ pub trait MeasurementProcessor: Send + Sync {
     /// - `Scalar → Spectrum`: FFT, spectral analysis
     /// - `Image → Scalar`: Statistics (mean, max, etc.)
     /// - `Spectrum → Scalar`: Peak detection, power calculation
-    fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement>;
+    fn process_measurements(&mut self, data: &[Data]) -> Vec<Data>;
 }
 
 /// Trait for a data storage writer.
@@ -1159,14 +996,14 @@ impl Instrument for V2InstrumentAdapter {
                         }
                     }
                     daq_core::Measurement::Spectrum(_) => {
-                        log::warn!(
-                            "V2InstrumentAdapter: Dropping Spectrum data from '{}' (V1 doesn't support spectra)",
+                        log::error!(
+                            "CRITICAL: V2InstrumentAdapter dropping Spectrum data from '{}' - upgrade to V2 native!",
                             instrument_id
                         );
                     }
                     daq_core::Measurement::Image(_) => {
-                        log::warn!(
-                            "V2InstrumentAdapter: Dropping Image data from '{}' (V1 doesn't support images)",
+                        log::error!(
+                            "CRITICAL: V2InstrumentAdapter dropping Image data from '{}' - upgrade to V2 native!",
                             instrument_id
                         );
                     }
@@ -1190,9 +1027,7 @@ impl Instrument for V2InstrumentAdapter {
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> anyhow::Result<broadcast::Receiver<DataPoint>> {
-        Ok(self.data_tx.subscribe())
-    }
+
 
     async fn handle_command(&mut self, cmd: InstrumentCommand) -> anyhow::Result<()> {
         // Convert V1 commands to V2 commands
