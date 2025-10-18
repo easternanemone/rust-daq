@@ -26,6 +26,7 @@
 //! by the user.
 
 use crate::app::DaqApp;
+use crate::measurement::Measure;
 #[cfg(feature = "storage_arrow")]
 use arrow2::io::ipc::read;
 use csv;
