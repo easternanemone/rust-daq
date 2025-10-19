@@ -20,6 +20,7 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -37,6 +38,7 @@ pub struct Newport1830C {
     #[cfg(feature = "instrument_serial")]
     port: Option<Arc<tokio::sync::Mutex<Box<dyn SerialPort>>>>,
     sender: Option<broadcast::Sender<DataPoint>>,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl Newport1830C {
@@ -47,6 +49,7 @@ impl Newport1830C {
             #[cfg(feature = "instrument_serial")]
             port: None,
             sender: None,
+            measurement: None,
         }
     }
 
@@ -55,7 +58,9 @@ impl Newport1830C {
         use super::serial_helper;
         use std::time::Duration;
 
-        let port = self.port.as_ref()
+        let port = self
+            .port
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to Newport 1830-C '{}'", self.id))?;
 
         serial_helper::send_command_async(
@@ -65,12 +70,15 @@ impl Newport1830C {
             "\r\n".to_string(),
             Duration::from_secs(1),
             '\n',
-        ).await
+        )
+        .await
     }
 }
 
 #[async_trait]
 impl Instrument for Newport1830C {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         self.id.clone()
     }
@@ -99,25 +107,36 @@ impl Instrument for Newport1830C {
         let port = serialport::new(port_name, baud_rate)
             .timeout(std::time::Duration::from_millis(100))
             .open()
-            .with_context(|| format!("Failed to open serial port '{}' for Newport 1830-C", port_name))?;
+            .with_context(|| {
+                format!(
+                    "Failed to open serial port '{}' for Newport 1830-C",
+                    port_name
+                )
+            })?;
 
         self.port = Some(Arc::new(tokio::sync::Mutex::new(port)));
 
         // Configure wavelength if specified
-        if let Some(wavelength) = instrument_config.get("wavelength").and_then(|v| v.as_float()) {
-            self.send_command_async(&format!("PM:Lambda {}", wavelength)).await?;
+        if let Some(wavelength) = instrument_config
+            .get("wavelength")
+            .and_then(|v| v.as_float())
+        {
+            self.send_command_async(&format!("PM:Lambda {}", wavelength))
+                .await?;
             info!("Set wavelength to {} nm", wavelength);
         }
 
         // Configure range if specified
         if let Some(range) = instrument_config.get("range").and_then(|v| v.as_integer()) {
-            self.send_command_async(&format!("PM:Range {}", range)).await?;
+            self.send_command_async(&format!("PM:Range {}", range))
+                .await?;
             info!("Set range to {}", range);
         }
 
         // Configure units if specified
         if let Some(units) = instrument_config.get("units").and_then(|v| v.as_integer()) {
-            self.send_command_async(&format!("PM:Units {}", units)).await?;
+            self.send_command_async(&format!("PM:Units {}", units))
+                .await?;
             let unit_str = match units {
                 0 => "Watts",
                 1 => "dBm",
@@ -128,9 +147,11 @@ impl Instrument for Newport1830C {
             info!("Set units to {}", unit_str);
         }
 
-        // Create broadcast channel
-        let (sender, _) = broadcast::channel(1024);
+        // Create broadcast channel with configured capacity
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
         self.sender = Some(sender.clone());
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         // Spawn polling task
         let instrument = self.clone();
@@ -140,9 +161,8 @@ impl Instrument for Newport1830C {
             .unwrap_or(10.0);
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                std::time::Duration::from_secs_f64(1.0 / polling_rate)
-            );
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / polling_rate));
 
             loop {
                 interval.tick().await;
@@ -180,7 +200,9 @@ impl Instrument for Newport1830C {
     #[cfg(not(feature = "instrument_serial"))]
     async fn connect(&mut self, id: &str, _settings: &Arc<Settings>) -> Result<()> {
         self.id = id.to_string();
-        Err(anyhow!("Serial support not enabled. Rebuild with --features instrument_serial"))
+        Err(anyhow!(
+            "Serial support not enabled. Rebuild with --features instrument_serial"
+        ))
     }
 
     async fn disconnect(&mut self) -> Result<()> {
@@ -190,44 +212,48 @@ impl Instrument for Newport1830C {
             self.port = None;
         }
         self.sender = None;
+        self.measurement = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
+    fn measure(&self) -> &Self::Measure {
+        self.measurement
             .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to Newport 1830-C '{}'", self.id))
+            .expect("Newport 1830-C measurement not initialised")
     }
 
     #[cfg(feature = "instrument_serial")]
     async fn handle_command(&mut self, command: InstrumentCommand) -> Result<()> {
         match command {
-            InstrumentCommand::SetParameter(key, value) => {
-                match key.as_str() {
-                    "wavelength" => {
-                        let wavelength: f64 = value.parse()
-                            .with_context(|| format!("Invalid wavelength value: {}", value))?;
-                        self.send_command_async(&format!("PM:Lambda {}", wavelength)).await?;
-                        info!("Set Newport 1830-C wavelength to {} nm", wavelength);
-                    }
-                    "range" => {
-                        let range: i32 = value.parse()
-                            .with_context(|| format!("Invalid range value: {}", value))?;
-                        self.send_command_async(&format!("PM:Range {}", range)).await?;
-                        info!("Set Newport 1830-C range to {}", range);
-                    }
-                    "units" => {
-                        let units: i32 = value.parse()
-                            .with_context(|| format!("Invalid units value: {}", value))?;
-                        self.send_command_async(&format!("PM:Units {}", units)).await?;
-                        info!("Set Newport 1830-C units to {}", units);
-                    }
-                    _ => {
-                        warn!("Unknown parameter '{}' for Newport 1830-C", key);
-                    }
+            InstrumentCommand::SetParameter(key, value) => match key.as_str() {
+                "wavelength" => {
+                    let wavelength: f64 = value
+                        .parse()
+                        .with_context(|| format!("Invalid wavelength value: {}", value))?;
+                    self.send_command_async(&format!("PM:Lambda {}", wavelength))
+                        .await?;
+                    info!("Set Newport 1830-C wavelength to {} nm", wavelength);
                 }
-            }
+                "range" => {
+                    let range: i32 = value
+                        .parse()
+                        .with_context(|| format!("Invalid range value: {}", value))?;
+                    self.send_command_async(&format!("PM:Range {}", range))
+                        .await?;
+                    info!("Set Newport 1830-C range to {}", range);
+                }
+                "units" => {
+                    let units: i32 = value
+                        .parse()
+                        .with_context(|| format!("Invalid units value: {}", value))?;
+                    self.send_command_async(&format!("PM:Units {}", units))
+                        .await?;
+                    info!("Set Newport 1830-C units to {}", units);
+                }
+                _ => {
+                    warn!("Unknown parameter '{}' for Newport 1830-C", key);
+                }
+            },
             InstrumentCommand::Execute(cmd, _) => {
                 if cmd == "zero" {
                     self.send_command_async("PM:DS:Clear").await?;

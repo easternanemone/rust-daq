@@ -43,14 +43,24 @@ pub struct MockInstrumentV2 {
 }
 
 impl MockInstrumentV2 {
-    /// Create a new mock instrument with default MockAdapter
+    /// Create a new mock instrument with default MockAdapter and default capacity (1024)
     pub fn new(id: String) -> Self {
-        Self::with_adapter(id, Box::new(MockAdapter::new()))
+        Self::with_capacity(id, 1024)
     }
 
-    /// Create a new mock instrument with custom adapter (for testing)
+    /// Create a new mock instrument with specified broadcast capacity
+    pub fn with_capacity(id: String, capacity: usize) -> Self {
+        Self::with_adapter_and_capacity(id, Box::new(MockAdapter::new()), capacity)
+    }
+
+    /// Create a new mock instrument with custom adapter (for testing) and default capacity
     pub fn with_adapter(id: String, adapter: Box<dyn HardwareAdapter>) -> Self {
-        let (measurement_tx, measurement_rx) = measurement_channel(1024);
+        Self::with_adapter_and_capacity(id, adapter, 1024)
+    }
+
+    /// Create a new mock instrument with custom adapter and specified capacity
+    pub fn with_adapter_and_capacity(id: String, adapter: Box<dyn HardwareAdapter>, capacity: usize) -> Self {
+        let (measurement_tx, measurement_rx) = measurement_channel(capacity);
 
         Self {
             id,

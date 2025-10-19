@@ -20,6 +20,7 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -34,6 +35,7 @@ pub struct PVCAMCamera {
     sender: Option<broadcast::Sender<DataPoint>>,
     camera_name: String,
     exposure_ms: f64,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl PVCAMCamera {
@@ -44,6 +46,7 @@ impl PVCAMCamera {
             sender: None,
             camera_name: "PrimeBSI".to_string(),
             exposure_ms: 100.0,
+            measurement: None,
         }
     }
 
@@ -83,6 +86,8 @@ impl PVCAMCamera {
 
 #[async_trait]
 impl Instrument for PVCAMCamera {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         self.id.clone()
     }
@@ -116,9 +121,11 @@ impl Instrument for PVCAMCamera {
 
         warn!("PVCAM SDK integration not yet implemented - using simulated data");
 
-        // Create broadcast channel
-        let (sender, _) = broadcast::channel(1024);
+        // Create broadcast channel with configured capacity
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
         self.sender = Some(sender.clone());
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         // Spawn acquisition task
         let instrument = self.clone();
@@ -199,14 +206,12 @@ impl Instrument for PVCAMCamera {
         // pl_pvcam_uninit()
 
         self.sender = None;
+        self.measurement = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
-            .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to PVCAM camera '{}'", self.id))
+    fn measure(&self) -> &Self::Measure {
+        self.measurement.as_ref().unwrap()
     }
 
     async fn handle_command(&mut self, command: InstrumentCommand) -> Result<()> {

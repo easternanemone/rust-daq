@@ -17,6 +17,7 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -34,6 +35,7 @@ pub struct MaiTai {
     #[cfg(feature = "instrument_serial")]
     port: Option<Arc<tokio::sync::Mutex<Box<dyn SerialPort>>>>,
     sender: Option<broadcast::Sender<DataPoint>>,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl MaiTai {
@@ -44,6 +46,7 @@ impl MaiTai {
             #[cfg(feature = "instrument_serial")]
             port: None,
             sender: None,
+            measurement: None,
         }
     }
 
@@ -52,7 +55,9 @@ impl MaiTai {
         use super::serial_helper;
         use std::time::Duration;
 
-        let port = self.port.as_ref()
+        let port = self
+            .port
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to MaiTai '{}'", self.id))?;
 
         serial_helper::send_command_async(
@@ -62,7 +67,8 @@ impl MaiTai {
             "\r".to_string(),
             Duration::from_secs(2),
             '\r',
-        ).await
+        )
+        .await
     }
 
     #[cfg(feature = "instrument_serial")]
@@ -70,13 +76,17 @@ impl MaiTai {
         let response = self.send_command_async(command).await?;
         // Remove command echo if present
         let value_str = response.split(':').next_back().unwrap_or(&response);
-        value_str.trim().parse::<f64>()
+        value_str
+            .trim()
+            .parse::<f64>()
             .with_context(|| format!("Failed to parse response '{}' as float", response))
     }
 }
 
 #[async_trait]
 impl Instrument for MaiTai {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         self.id.clone()
     }
@@ -114,14 +124,20 @@ impl Instrument for MaiTai {
         info!("MaiTai identity: {}", id_response);
 
         // Set wavelength if specified
-        if let Some(wavelength) = instrument_config.get("wavelength").and_then(|v| v.as_float()) {
-            self.send_command_async(&format!("WAVELENGTH:{}", wavelength)).await?;
+        if let Some(wavelength) = instrument_config
+            .get("wavelength")
+            .and_then(|v| v.as_float())
+        {
+            self.send_command_async(&format!("WAVELENGTH:{}", wavelength))
+                .await?;
             info!("Set wavelength to {} nm", wavelength);
         }
 
-        // Create broadcast channel
-        let (sender, _) = broadcast::channel(1024);
+        // Create broadcast channel with configured capacity
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
         self.sender = Some(sender.clone());
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         // Spawn polling task
         let instrument = self.clone();
@@ -131,9 +147,8 @@ impl Instrument for MaiTai {
             .unwrap_or(1.0);
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                std::time::Duration::from_secs_f64(1.0 / polling_rate)
-            );
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / polling_rate));
 
             loop {
                 interval.tick().await;
@@ -191,7 +206,9 @@ impl Instrument for MaiTai {
     #[cfg(not(feature = "instrument_serial"))]
     async fn connect(&mut self, id: &str, _settings: &Arc<Settings>) -> Result<()> {
         self.id = id.to_string();
-        Err(anyhow!("Serial support not enabled. Rebuild with --features instrument_serial"))
+        Err(anyhow!(
+            "Serial support not enabled. Rebuild with --features instrument_serial"
+        ))
     }
 
     async fn disconnect(&mut self) -> Result<()> {
@@ -201,50 +218,50 @@ impl Instrument for MaiTai {
             self.port = None;
         }
         self.sender = None;
+        self.measurement = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
+    fn measure(&self) -> &Self::Measure {
+        self.measurement
             .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to MaiTai '{}'", self.id))
+            .expect("MaiTai measurement not initialised")
     }
 
     #[cfg(feature = "instrument_serial")]
     async fn handle_command(&mut self, command: InstrumentCommand) -> Result<()> {
         match command {
-            InstrumentCommand::SetParameter(key, value) => {
-                match key.as_str() {
-                    "wavelength" => {
-                        let wavelength: f64 = value.parse()
-                            .with_context(|| format!("Invalid wavelength value: {}", value))?;
-                        self.send_command_async(&format!("WAVELENGTH:{}", wavelength)).await?;
-                        info!("Set MaiTai wavelength to {} nm", wavelength);
-                    }
-                    "shutter" => {
-                        let cmd = match value.as_str() {
-                            "open" => "SHUTTER:1",
-                            "close" => "SHUTTER:0",
-                            _ => return Err(anyhow!("Invalid shutter value: {}", value)),
-                        };
-                        self.send_command_async(cmd).await?;
-                        info!("MaiTai shutter: {}", value);
-                    }
-                    "laser" => {
-                        let cmd = match value.as_str() {
-                            "on" => "ON",
-                            "off" => "OFF",
-                            _ => return Err(anyhow!("Invalid laser value: {}", value)),
-                        };
-                        self.send_command_async(cmd).await?;
-                        info!("MaiTai laser: {}", value);
-                    }
-                    _ => {
-                        warn!("Unknown parameter '{}' for MaiTai", key);
-                    }
+            InstrumentCommand::SetParameter(key, value) => match key.as_str() {
+                "wavelength" => {
+                    let wavelength: f64 = value
+                        .parse()
+                        .with_context(|| format!("Invalid wavelength value: {}", value))?;
+                    self.send_command_async(&format!("WAVELENGTH:{}", wavelength))
+                        .await?;
+                    info!("Set MaiTai wavelength to {} nm", wavelength);
                 }
-            }
+                "shutter" => {
+                    let cmd = match value.as_str() {
+                        "open" => "SHUTTER:1",
+                        "close" => "SHUTTER:0",
+                        _ => return Err(anyhow!("Invalid shutter value: {}", value)),
+                    };
+                    self.send_command_async(cmd).await?;
+                    info!("MaiTai shutter: {}", value);
+                }
+                "laser" => {
+                    let cmd = match value.as_str() {
+                        "on" => "ON",
+                        "off" => "OFF",
+                        _ => return Err(anyhow!("Invalid laser value: {}", value)),
+                    };
+                    self.send_command_async(cmd).await?;
+                    info!("MaiTai laser: {}", value);
+                }
+                _ => {
+                    warn!("Unknown parameter '{}' for MaiTai", key);
+                }
+            },
             _ => {
                 warn!("Unsupported command type for MaiTai");
             }

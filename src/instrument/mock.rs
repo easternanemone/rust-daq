@@ -1,7 +1,8 @@
 //! A mock instrument that generates synthetic data.
 use crate::{
     config::Settings,
-    core::{DataPoint, Instrument},
+    core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ use tokio::time::{interval, Duration};
 
 pub struct MockInstrument {
     id: String,
-    sender: Option<broadcast::Sender<DataPoint>>,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl Default for MockInstrument {
@@ -25,13 +26,15 @@ impl MockInstrument {
     pub fn new() -> Self {
         Self {
             id: String::new(),
-            sender: None,
+            measurement: None,
         }
     }
 }
 
 #[async_trait]
 impl Instrument for MockInstrument {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         "Mock Instrument".to_string()
     }
@@ -39,8 +42,9 @@ impl Instrument for MockInstrument {
     async fn connect(&mut self, id: &str, settings: &Arc<Settings>) -> Result<()> {
         info!("Connecting to Mock Instrument '{}'...", id);
         self.id = id.to_string();
-        let (sender, _) = broadcast::channel(1024);
-        self.sender = Some(sender.clone());
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         let settings = settings.clone();
         let instrument_id = self.id.clone();
@@ -94,14 +98,11 @@ impl Instrument for MockInstrument {
 
     async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from Mock Instrument.");
-        self.sender = None;
+        self.measurement = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
-            .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to mock instrument"))
+    fn measure(&self) -> &Self::Measure {
+        self.measurement.as_ref().unwrap()
     }
 }

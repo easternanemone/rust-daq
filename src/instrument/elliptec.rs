@@ -17,6 +17,7 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -35,6 +36,7 @@ pub struct Elliptec {
     port: Option<Arc<tokio::sync::Mutex<Box<dyn SerialPort>>>>,
     sender: Option<broadcast::Sender<DataPoint>>,
     device_addresses: Vec<u8>,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl Elliptec {
@@ -46,6 +48,7 @@ impl Elliptec {
             port: None,
             sender: None,
             device_addresses: vec![0], // Default to address 0
+            measurement: None,
         }
     }
 
@@ -54,7 +57,9 @@ impl Elliptec {
         use super::serial_helper;
         use std::time::Duration;
 
-        let port = self.port.as_ref()
+        let port = self
+            .port
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to Elliptec '{}'", self.id))?;
 
         // Elliptec protocol: address + command
@@ -67,7 +72,8 @@ impl Elliptec {
             "".to_string(),
             Duration::from_millis(500),
             '\r',
-        ).await
+        )
+        .await
     }
 
     #[cfg(feature = "instrument_serial")]
@@ -97,13 +103,16 @@ impl Elliptec {
         let hex_pos = format!("{:08X}", counts);
 
         // 'ma' command - move absolute
-        self.send_command_async(address, &format!("ma{}", hex_pos)).await?;
+        self.send_command_async(address, &format!("ma{}", hex_pos))
+            .await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl Instrument for Elliptec {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         self.id.clone()
     }
@@ -156,9 +165,11 @@ impl Instrument for Elliptec {
             info!("Elliptec device {} info: {}", addr, response);
         }
 
-        // Create broadcast channel
-        let (sender, _) = broadcast::channel(1024);
+        // Create broadcast channel with configured capacity
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
         self.sender = Some(sender.clone());
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         // Spawn polling task
         let instrument = self.clone();
@@ -168,9 +179,8 @@ impl Instrument for Elliptec {
             .unwrap_or(2.0);
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                std::time::Duration::from_secs_f64(1.0 / polling_rate)
-            );
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs_f64(1.0 / polling_rate));
 
             loop {
                 interval.tick().await;
@@ -196,7 +206,10 @@ impl Instrument for Elliptec {
                             }
                         }
                         Err(e) => {
-                            warn!("Failed to read position from Elliptec device {}: {}", addr, e);
+                            warn!(
+                                "Failed to read position from Elliptec device {}: {}",
+                                addr, e
+                            );
                         }
                     }
                 }
@@ -210,7 +223,9 @@ impl Instrument for Elliptec {
     #[cfg(not(feature = "instrument_serial"))]
     async fn connect(&mut self, id: &str, _settings: &Arc<Settings>) -> Result<()> {
         self.id = id.to_string();
-        Err(anyhow!("Serial support not enabled. Rebuild with --features instrument_serial"))
+        Err(anyhow!(
+            "Serial support not enabled. Rebuild with --features instrument_serial"
+        ))
     }
 
     async fn disconnect(&mut self) -> Result<()> {
@@ -220,14 +235,14 @@ impl Instrument for Elliptec {
             self.port = None;
         }
         self.sender = None;
+        self.measurement = None;
         Ok(())
     }
 
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
+    fn measure(&self) -> &Self::Measure {
+        self.measurement
             .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to Elliptec '{}'", self.id))
+            .expect("Elliptec measurement not initialised")
     }
 
     #[cfg(feature = "instrument_serial")]
@@ -237,11 +252,13 @@ impl Instrument for Elliptec {
                 // Parse device_address:parameter format
                 let parts: Vec<&str> = key.split(':').collect();
                 if parts.len() == 2 {
-                    let addr: u8 = parts[0].parse()
+                    let addr: u8 = parts[0]
+                        .parse()
                         .with_context(|| format!("Invalid device address: {}", parts[0]))?;
 
                     if parts[1] == "position" {
-                        let degrees: f64 = value.parse()
+                        let degrees: f64 = value
+                            .parse()
                             .with_context(|| format!("Invalid position value: {}", value))?;
                         self.set_position(addr, degrees).await?;
                         info!("Set Elliptec device {} to {} degrees", addr, degrees);
@@ -260,7 +277,8 @@ impl Instrument for Elliptec {
                         info!("Homed all Elliptec devices");
                     } else {
                         // Home specific device
-                        let addr: u8 = args[0].parse()
+                        let addr: u8 = args[0]
+                            .parse()
                             .with_context(|| format!("Invalid device address: {}", args[0]))?;
                         self.send_command_async(addr, "ho").await?;
                         info!("Homed Elliptec device {}", addr);

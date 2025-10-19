@@ -21,6 +21,7 @@
 use crate::{
     config::Settings,
     core::{DataPoint, Instrument, InstrumentCommand},
+    measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -39,6 +40,7 @@ pub struct ESP300 {
     port: Option<Arc<tokio::sync::Mutex<Box<dyn SerialPort>>>>,
     sender: Option<broadcast::Sender<DataPoint>>,
     num_axes: u8,
+    measurement: Option<InstrumentMeasurement>,
 }
 
 impl ESP300 {
@@ -50,6 +52,7 @@ impl ESP300 {
             port: None,
             sender: None,
             num_axes: 3, // ESP300 has 3 axes
+            measurement: None,
         }
     }
 
@@ -100,8 +103,14 @@ impl ESP300 {
 
 #[async_trait]
 impl Instrument for ESP300 {
+    type Measure = InstrumentMeasurement;
+
     fn name(&self) -> String {
         self.id.clone()
+    }
+
+    fn measure(&self) -> &Self::Measure {
+        self.measurement.as_ref().unwrap()
     }
 
     #[cfg(feature = "instrument_serial")]
@@ -166,9 +175,11 @@ impl Instrument for ESP300 {
             }
         }
 
-        // Create broadcast channel
-        let (sender, _) = broadcast::channel(1024);
+        // Create broadcast channel with configured capacity
+        let capacity = settings.application.broadcast_channel_capacity;
+        let (sender, _) = broadcast::channel(capacity);
         self.sender = Some(sender.clone());
+        self.measurement = Some(InstrumentMeasurement::new(sender.clone(), self.id.clone()));
 
         // Spawn polling task
         let instrument = self.clone();
@@ -238,14 +249,8 @@ impl Instrument for ESP300 {
             self.port = None;
         }
         self.sender = None;
+        self.measurement = None;
         Ok(())
-    }
-
-    async fn data_stream(&mut self) -> Result<broadcast::Receiver<DataPoint>> {
-        self.sender
-            .as_ref()
-            .map(|s| s.subscribe())
-            .ok_or_else(|| anyhow!("Not connected to ESP300 '{}'", self.id))
     }
 
     #[cfg(feature = "instrument_serial")]

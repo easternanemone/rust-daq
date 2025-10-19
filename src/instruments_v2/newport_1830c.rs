@@ -98,12 +98,23 @@ impl Newport1830CV2 {
     /// * `port` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
     /// * `baud_rate` - Communication speed (typically 9600)
     pub fn new(id: String, port: String, baud_rate: u32) -> Self {
+        Self::with_capacity(id, port, baud_rate, 1024)
+    }
+
+    /// Create a new Newport 1830C V2 instrument with SerialAdapter and specified capacity
+    ///
+    /// # Arguments
+    /// * `id` - Unique instrument identifier
+    /// * `port` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    /// * `baud_rate` - Communication speed (typically 9600)
+    /// * `capacity` - Broadcast channel capacity for data distribution
+    pub fn with_capacity(id: String, port: String, baud_rate: u32, capacity: usize) -> Self {
         let serial = SerialAdapter::new(port, baud_rate)
             .with_timeout(Duration::from_secs(1))
             .with_line_terminator("\r\n".to_string())
             .with_response_delimiter('\n');
 
-        let (tx, rx) = broadcast::channel(1024);
+        let (tx, rx) = broadcast::channel(capacity);
 
         Self {
             id,

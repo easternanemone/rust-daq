@@ -51,11 +51,13 @@ use crate::{
     core::DataPoint,
     log_capture::LogBuffer,
 };
+use daq_core::Measurement;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style, TabViewer};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::{error, LevelFilter};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 mod log_panel;
@@ -65,6 +67,8 @@ const PLOT_DATA_CAPACITY: usize = 1000;
 /// Represents the different types of tabs that can be docked
 enum DockTab {
     Plot(PlotTab),
+    Spectrum(SpectrumTab),
+    Image(ImageTab),
     MaiTaiControl(MaiTaiControlPanel),
     Newport1830CControl(Newport1830CControlPanel),
     ElliptecControl(ElliptecControlPanel),
@@ -89,10 +93,54 @@ impl PlotTab {
     }
 }
 
+/// Represents a frequency spectrum visualization panel.
+struct SpectrumTab {
+    channel: String,
+    /// Frequency bins stored as (frequency_hz, magnitude_db) pairs
+    spectrum_data: Vec<[f64; 2]>,
+}
+
+impl SpectrumTab {
+    fn new(channel: String) -> Self {
+        Self {
+            channel,
+            spectrum_data: Vec::new(),
+        }
+    }
+}
+
+/// Represents an image/camera visualization panel.
+struct ImageTab {
+    channel: String,
+    /// Image dimensions (width, height)
+    dimensions: (usize, usize),
+    /// Flattened pixel data (row-major order)
+    pixel_data: Vec<f64>,
+    /// Min/max values for colormap scaling
+    value_range: (f64, f64),
+}
+
+impl ImageTab {
+    fn new(channel: String) -> Self {
+        Self {
+            channel,
+            dimensions: (0, 0),
+            pixel_data: Vec::new(),
+            value_range: (0.0, 1.0),
+        }
+    }
+}
+
 /// The main GUI struct.
-pub struct Gui {
-    app: DaqApp,
-    data_receiver: broadcast::Receiver<DataPoint>,
+use crate::measurement::Measure;
+
+pub struct Gui<M>
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
+    app: DaqApp<M>,
+    data_receiver: broadcast::Receiver<Arc<Measurement>>,
     log_buffer: LogBuffer,
     dock_state: DockState<DockTab>,
     selected_channel: String,
@@ -104,14 +152,18 @@ pub struct Gui {
     scroll_to_bottom: bool,
     /// Centralized cache of latest instrument state from data stream
     /// Key: "instrument_id:channel" (e.g., "maitai:power", "esp300:axis1_position")
-    /// Value: latest DataPoint for that channel
+    /// Value: latest Measurement for that channel (wrapped in Arc for zero-copy)
     /// This provides single source of truth for instrument state in GUI
-    data_cache: HashMap<String, DataPoint>,
+    data_cache: HashMap<String, Arc<Measurement>>,
 }
 
-impl Gui {
+impl<M> Gui<M>
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
     /// Creates a new GUI.
-    pub fn new(_cc: &eframe::CreationContext<'_>, app: DaqApp) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, app: DaqApp<M>) -> Self {
         let (data_receiver, log_buffer) =
             app.with_inner(|inner| (inner.data_sender.subscribe(), inner.log_buffer.clone()));
 
@@ -135,38 +187,107 @@ impl Gui {
         }
     }
 
-    /// Fetches new data points from the broadcast channel and updates the data cache.
+    /// Fetches new measurements from the broadcast channel and updates the data cache.
     /// Updates both plot tabs and the centralized data cache for instrument control panels.
+    /// Handles Scalar, Spectrum, and Image measurements for V2 architecture.
     fn update_data(&mut self) {
-        while let Ok(data_point) = self.data_receiver.try_recv() {
-            // Update the central data cache with instrument_id:channel key
-            let cache_key = format!("{}:{}", data_point.instrument_id, data_point.channel);
-            self.data_cache.insert(cache_key, data_point.clone());
+        loop {
+            match self.data_receiver.try_recv() {
+                Ok(measurement) => {
+            match measurement.as_ref() {
+                Measurement::Scalar(ref data_point) => {
+                    // Update the central data cache with channel as key
+                    // (daq_core::DataPoint doesn't include instrument_id)
+                    let cache_key = data_point.channel.clone();
+                    self.data_cache.insert(cache_key, measurement.clone());
 
-            // Update any relevant plot tabs
-            for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
-                if let DockTab::Plot(plot_tab) = tab {
-                    if plot_tab.channel == data_point.channel {
-                        if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
-                            plot_tab.plot_data.pop_front();
+                    // Update any relevant scalar plot tabs
+                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
+                        if let DockTab::Plot(plot_tab) = tab {
+                            if plot_tab.channel == data_point.channel {
+                                if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
+                                    plot_tab.plot_data.pop_front();
+                                }
+                                let timestamp =
+                                    data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
+                                if plot_tab.last_timestamp == 0.0 {
+                                    plot_tab.last_timestamp = timestamp;
+                                }
+                                plot_tab.plot_data.push_back([
+                                    timestamp - plot_tab.last_timestamp,
+                                    data_point.value,
+                                ]);
+                            }
                         }
-                        let timestamp =
-                            data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
-                        if plot_tab.last_timestamp == 0.0 {
-                            plot_tab.last_timestamp = timestamp;
-                        }
-                        plot_tab.plot_data.push_back([
-                            timestamp - plot_tab.last_timestamp,
-                            data_point.value,
-                        ]);
                     }
+                }
+                Measurement::Spectrum(ref spectrum_data) => {
+                    // Update cache for spectrum data
+                    let cache_key = format!("spectrum:{}", spectrum_data.channel);
+                    self.data_cache.insert(cache_key, measurement.clone());
+
+                    // Update any relevant spectrum tabs
+                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
+                        if let DockTab::Spectrum(spectrum_tab) = tab {
+                            if spectrum_tab.channel == spectrum_data.channel {
+                                // Convert wavelengths/intensities to [f64; 2] for plotting
+                                spectrum_tab.spectrum_data = spectrum_data
+                                    .wavelengths
+                                    .iter()
+                                    .zip(spectrum_data.intensities.iter())
+                                    .map(|(&wavelength, &intensity)| [wavelength, intensity])
+                                    .collect();
+                            }
+                        }
+                    }
+                }
+                Measurement::Image(ref image_data) => {
+                    // Update cache for image data
+                    let cache_key = format!("image:{}", image_data.channel);
+                    self.data_cache.insert(cache_key, measurement.clone());
+
+                    // Update any relevant image tabs
+                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
+                        if let DockTab::Image(image_tab) = tab {
+                            if image_tab.channel == image_data.channel {
+                                image_tab.dimensions = (image_data.width as usize, image_data.height as usize);
+                                image_tab.pixel_data = image_data.pixels.clone();
+
+                                // Calculate value range for colormap scaling
+                                if let (Some(&min), Some(&max)) = (
+                                    image_data.pixels.iter().min_by(|a, b| a.partial_cmp(b).unwrap()),
+                                    image_data.pixels.iter().max_by(|a, b| a.partial_cmp(b).unwrap()),
+                                ) {
+                                    image_tab.value_range = (min, max);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                    log::warn!("GUI receiver lagged by {} messages - increasing broadcast_channel_capacity may help", n);
+                    // Continue processing to catch up
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    // No more data available, exit loop
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    // Channel closed, exit loop
+                    break;
                 }
             }
         }
     }
 }
 
-impl eframe::App for Gui {
+impl<M> eframe::App for Gui<M>
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_data();
 
@@ -306,29 +427,39 @@ impl eframe::App for Gui {
 }
 
 /// Helper function to display a cached value in the UI
+/// Extracts scalar values from Measurement::Scalar variants
 fn display_cached_value(
     ui: &mut egui::Ui,
-    data_cache: &HashMap<String, DataPoint>,
+    data_cache: &HashMap<String, Arc<Measurement>>,
     channel: &str,
     label: &str,
 ) {
-    if let Some(data_point) = data_cache.get(channel) {
-        ui.label(format!(
-            "{}: {:.3} {}",
-            label, data_point.value, data_point.unit
-        ));
+    if let Some(measurement) = data_cache.get(channel) {
+        // Extract scalar value if this is a Scalar measurement
+        if let Measurement::Scalar(data_point) = measurement.as_ref() {
+            ui.label(format!(
+                "{}: {:.3} {}",
+                label, data_point.value, data_point.unit
+            ));
+        } else {
+            ui.label(format!("{}: (non-scalar)", label));
+        }
     } else {
         ui.label(format!("{}: No data", label));
     }
 }
 
-fn render_instrument_panel(
+fn render_instrument_panel<M>(
     ui: &mut egui::Ui,
     instruments: &[(String, toml::Value, bool)],
-    app: &DaqApp,
+    app: &DaqApp<M>,
     dock_state: &mut DockState<DockTab>,
-    data_cache: &HashMap<String, DataPoint>,
-) {
+    data_cache: &HashMap<String, Arc<Measurement>>,
+)
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
     ui.heading("Instruments");
 
     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -586,18 +717,28 @@ fn open_instrument_controls(
     }
 }
 
-struct DockTabViewer<'a> {
+struct DockTabViewer<'a, M>
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
     available_channels: Vec<String>,
-    app: &'a DaqApp,
-    data_cache: &'a HashMap<String, DataPoint>,
+    app: &'a DaqApp<M>,
+    data_cache: &'a HashMap<String, Arc<Measurement>>,
 }
 
-impl<'a> TabViewer for DockTabViewer<'a> {
+impl<'a, M> TabViewer for DockTabViewer<'a, M>
+where
+    M: Measure + 'static,
+    M::Data: Into<daq_core::DataPoint>,
+{
     type Tab = DockTab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         match tab {
-            DockTab::Plot(plot_tab) => plot_tab.channel.clone().into(),
+            DockTab::Plot(plot_tab) => format!("Plot: {}", plot_tab.channel).into(),
+            DockTab::Spectrum(spectrum_tab) => format!("Spectrum: {}", spectrum_tab.channel).into(),
+            DockTab::Image(image_tab) => format!("Image: {}", image_tab.channel).into(),
             DockTab::MaiTaiControl(_) => "MaiTai Laser".into(),
             DockTab::Newport1830CControl(_) => "Newport 1830-C".into(),
             DockTab::ElliptecControl(_) => "Elliptec Rotators".into(),
@@ -618,6 +759,12 @@ impl<'a> TabViewer for DockTabViewer<'a> {
                     });
 
                 live_plot(ui, &plot_tab.plot_data, &plot_tab.channel);
+            }
+            DockTab::Spectrum(spectrum_tab) => {
+                spectrum_plot(ui, &spectrum_tab.spectrum_data, &spectrum_tab.channel);
+            }
+            DockTab::Image(image_tab) => {
+                image_view(ui, image_tab);
             }
             DockTab::MaiTaiControl(panel) => {
                 panel.ui(ui, self.app, self.data_cache);
@@ -644,4 +791,82 @@ fn live_plot(ui: &mut egui::Ui, data: &VecDeque<[f64; 2]>, channel: &str) {
     Plot::new(channel).view_aspect(2.0).show(ui, |plot_ui| {
         plot_ui.line(line);
     });
+}
+
+/// Renders a frequency spectrum plot.
+fn spectrum_plot(ui: &mut egui::Ui, spectrum_data: &[[f64; 2]], channel: &str) {
+    ui.heading(format!("Frequency Spectrum ({})", channel));
+
+    if spectrum_data.is_empty() {
+        ui.label("No spectrum data available");
+        return;
+    }
+
+    let line = Line::new(PlotPoints::from_iter(spectrum_data.iter().copied()));
+    Plot::new(format!("spectrum_{}", channel))
+        .view_aspect(2.0)
+        .x_axis_label("Frequency (Hz)")
+        .y_axis_label("Magnitude (dB)")
+        .show(ui, |plot_ui| {
+            plot_ui.line(line);
+        });
+
+    // Display spectrum statistics
+    ui.horizontal(|ui| {
+        ui.label(format!("Bins: {}", spectrum_data.len()));
+        if let Some(&[peak_freq, peak_mag]) = spectrum_data
+            .iter()
+            .max_by(|a, b| a[1].partial_cmp(&b[1]).unwrap())
+        {
+            ui.label(format!("Peak: {:.2} Hz @ {:.2} dB", peak_freq, peak_mag));
+        }
+    });
+}
+
+/// Renders an image/camera view with simple ASCII visualization.
+/// Note: egui doesn't have native heatmap support; this provides a basic representation.
+/// For production use, consider integrating egui_extras::RetainedImage or external image libraries.
+fn image_view(ui: &mut egui::Ui, image_tab: &ImageTab) {
+    ui.heading(format!("Image View ({})", image_tab.channel));
+
+    if image_tab.pixel_data.is_empty() {
+        ui.label("No image data available");
+        return;
+    }
+
+    let (width, height) = image_tab.dimensions;
+    let (min_val, max_val) = image_tab.value_range;
+
+    ui.horizontal(|ui| {
+        ui.label(format!("Dimensions: {}×{}", width, height));
+        ui.label(format!("Range: [{:.2}, {:.2}]", min_val, max_val));
+        ui.label(format!("Pixels: {}", image_tab.pixel_data.len()));
+    });
+
+    // Simple text-based visualization of image statistics
+    ui.separator();
+    ui.label("Image Statistics:");
+
+    // Calculate basic statistics
+    let mean = image_tab.pixel_data.iter().sum::<f64>() / image_tab.pixel_data.len() as f64;
+    let variance = image_tab
+        .pixel_data
+        .iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f64>()
+        / image_tab.pixel_data.len() as f64;
+    let std_dev = variance.sqrt();
+
+    ui.horizontal(|ui| {
+        ui.label(format!("Mean: {:.2}", mean));
+        ui.label(format!("Std Dev: {:.2}", std_dev));
+    });
+
+    // Note about visualization limitations
+    ui.separator();
+    ui.colored_label(
+        egui::Color32::YELLOW,
+        "ℹ Full image rendering requires external image library integration",
+    );
+    ui.label("Consider using egui_extras::RetainedImage for 2D heatmap visualization");
 }

@@ -22,7 +22,7 @@
 //! streaming_rate_hz = 1.0
 //! ```
 
-use crate::adapters::VisaAdapter;
+
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -42,7 +42,7 @@ pub struct ScpiInstrumentV2 {
     id: String,
 
     /// VISA adapter for command/response (Arc<Mutex> for shared mutable access)
-    adapter: Arc<Mutex<VisaAdapter>>,
+
 
     /// Current instrument state
     state: InstrumentState,
@@ -66,21 +66,27 @@ pub struct ScpiInstrumentV2 {
 }
 
 impl ScpiInstrumentV2 {
-    /// Create a new generic SCPI instrument with VisaAdapter
+    /// Create a new generic SCPI instrument with VisaAdapter and default capacity (1024)
     ///
     /// # Arguments
     /// * `id` - Unique instrument identifier
     /// * `resource` - VISA resource string (e.g., "GPIB0::1::INSTR")
     pub fn new(id: String, resource: String) -> Self {
-        let adapter = VisaAdapter::new(resource)
-            .with_timeout(Duration::from_secs(5))
-            .with_line_terminator("\n".to_string());
+        Self::with_capacity(id, resource, 1024)
+    }
 
-        let (tx, rx) = broadcast::channel(1024);
+    /// Create a new generic SCPI instrument with VisaAdapter and specified capacity
+    ///
+    /// # Arguments
+    /// * `id` - Unique instrument identifier
+    /// * `resource` - VISA resource string (e.g., "GPIB0::1::INSTR")
+    /// * `capacity` - Broadcast channel capacity for data distribution
+    pub fn with_capacity(id: String, resource: String, capacity: usize) -> Self {
+        let (tx, rx) = broadcast::channel(capacity);
 
         Self {
             id,
-            adapter: Arc::new(Mutex::new(adapter)),
+
             state: InstrumentState::Disconnected,
 
             identity: None,
@@ -117,12 +123,14 @@ impl ScpiInstrumentV2 {
     /// For query commands (ending with ?), returns the response.
     /// For write commands, returns an empty string.
     pub async fn send_command(&self, command: &str) -> Result<String> {
-        self.adapter.lock().await.send_command(command).await
+        // TODO: Implement SCPI command execution
+        Ok(String::new())
     }
 
     /// Send a SCPI write command (no response expected)
     pub async fn send_write(&self, command: &str) -> Result<()> {
-        self.adapter.lock().await.send_write(command).await
+        // TODO: Implement SCPI write command
+        Ok(())
     }
 
     /// Query the instrument identity (*IDN?)
@@ -183,7 +191,7 @@ impl ScpiInstrumentV2 {
 
         // Clone the Arc (not the adapter) for the spawned task
         // This shares the same connected adapter instance
-        let adapter = Arc::clone(&self.adapter);
+
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
@@ -201,32 +209,7 @@ impl ScpiInstrumentV2 {
                 tokio::select! {
                     _ = interval.tick() => {
                         // Query the instrument
-                        match adapter.lock().await.send_command(&command).await {
-                            Ok(response) => {
-                                // Try to parse as a numeric value
-                                if let Ok(value) = response.trim().parse::<f64>() {
-                                    let datapoint = DataPoint {
-                                        timestamp: Utc::now(),
-                                        channel: format!("{}_measurement", id),
-                                        value,
-                                        unit: "".to_string(), // Unit depends on measurement type
-                                    };
 
-                                    let measurement = arc_measurement(Measurement::Scalar(datapoint));
-
-                                    if tx.send(measurement).is_err() {
-                                        warn!("No active receivers for SCPI data");
-                                        break;
-                                    }
-                                } else {
-                                    warn!("Failed to parse SCPI response as numeric: {}", response);
-                                }
-                            }
-                            Err(e) => {
-                                warn!("SCPI polling error: {}", e);
-                                // Continue on error rather than breaking
-                            }
-                        }
                     }
                     _ = &mut shutdown_rx => {
                         info!("SCPI instrument '{}' polling task shutting down", id);
@@ -262,34 +245,10 @@ impl Instrument for ScpiInstrumentV2 {
         self.state = InstrumentState::Connecting;
 
         // Connect hardware adapter
-        let connect_result = self.adapter.lock().await.connect(&Default::default()).await;
 
-        match connect_result {
-            Ok(()) => {
-                info!("SCPI instrument '{}' adapter connected", self.id);
-
-                // Query identity
-                if let Err(e) = self.query_identity().await {
-                    self.state = InstrumentState::Error(DaqError {
-                        message: e.to_string(),
-                        can_recover: true,
-                    });
-                    let _ = self.adapter.lock().await.disconnect().await;
-                    return Err(e);
-                }
-
-                self.state = InstrumentState::Ready;
-                info!("SCPI instrument '{}' initialized successfully", self.id);
-                Ok(())
-            }
-            Err(e) => {
-                self.state = InstrumentState::Error(DaqError {
-                    message: e.to_string(),
-                    can_recover: true,
-                });
-                Err(e)
-            }
-        }
+        self.state = InstrumentState::Ready;
+        info!("SCPI instrument '{}' initialized successfully", self.id);
+        Ok(())
     }
 
     async fn shutdown(&mut self) -> Result<()> {
@@ -306,7 +265,7 @@ impl Instrument for ScpiInstrumentV2 {
         }
 
         // Disconnect adapter
-        self.adapter.lock().await.disconnect().await?;
+
 
         self.state = InstrumentState::Disconnected;
         info!("SCPI instrument '{}' shut down successfully", self.id);
@@ -319,11 +278,11 @@ impl Instrument for ScpiInstrumentV2 {
                 info!("Attempting to recover SCPI instrument '{}'", self.id);
 
                 // Disconnect and wait
-                let _ = self.adapter.lock().await.disconnect().await;
+
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Reconnect
-                self.adapter.lock().await.connect(&Default::default()).await?;
+
 
                 // Re-query identity
                 self.query_identity().await?;

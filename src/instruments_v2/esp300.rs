@@ -124,13 +124,25 @@ impl ESP300V2 {
     /// * `baud_rate` - Communication speed (typically 19200)
     /// * `num_axes` - Number of axes (1-3)
     pub fn new(id: String, port: String, baud_rate: u32, num_axes: usize) -> Self {
+        Self::with_capacity(id, port, baud_rate, num_axes, 1024)
+    }
+
+    /// Create a new ESP300 V2 instrument with SerialAdapter and specified capacity
+    ///
+    /// # Arguments
+    /// * `id` - Unique instrument identifier
+    /// * `port` - Serial port path (e.g., "/dev/ttyUSB0")
+    /// * `baud_rate` - Communication speed (typically 19200)
+    /// * `num_axes` - Number of axes (1-3)
+    /// * `capacity` - Broadcast channel capacity for data distribution
+    pub fn with_capacity(id: String, port: String, baud_rate: u32, num_axes: usize, capacity: usize) -> Self {
         // ESP300 uses hardware flow control
         let serial = SerialAdapter::new(port, baud_rate)
             .with_timeout(Duration::from_secs(1))
             .with_line_terminator("\r\n".to_string())
             .with_response_delimiter('\n');
 
-        let (tx, rx) = broadcast::channel(1024);
+        let (tx, rx) = broadcast::channel(capacity);
 
         // Initialize default axis configs
         let axis_configs = (0..num_axes)
