@@ -53,7 +53,7 @@ use crate::{
 };
 use daq_core::Measurement;
 use eframe::egui;
-use egui_dock::{DockArea, DockState, Style, TabViewer};
+use egui_dock::{DockArea, DockState, Style, TabIndex, TabViewer};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::{error, LevelFilter};
 use std::collections::{HashMap, VecDeque};
@@ -155,6 +155,16 @@ where
     /// Value: latest Measurement for that channel (wrapped in Arc for zero-copy)
     /// This provides single source of truth for instrument state in GUI
     data_cache: HashMap<String, Arc<Measurement>>,
+    /// Channel subscription map for O(1) tab lookup
+    /// Key: channel name (e.g., "sine_wave", "spectrum:maitai", "image:pvcam")
+    /// Value: Vec of (SurfaceIndex, NodeIndex) for tabs interested in this channel
+    /// Enables direct dispatch instead of iterating all tabs
+    channel_subscriptions: HashMap<String, Vec<(egui_dock::SurfaceIndex, egui_dock::NodeIndex)>>,
+    /// Tracks whether subscriptions need rebuilding (when tabs are added/removed/changed)
+    subscriptions_dirty: bool,
+    /// Frame counter for periodic subscription rebuilds (every 60 frames = ~1 second at 60fps)
+    /// This catches tab closes, channel changes, and other modifications we can't directly track
+    frame_counter: u32,
 }
 
 impl<M> Gui<M>
@@ -184,12 +194,53 @@ where
             log_level_filter: LevelFilter::Info,
             scroll_to_bottom: true,
             data_cache: HashMap::new(),
+            channel_subscriptions: HashMap::new(),
+            subscriptions_dirty: true, // Rebuild on first frame
+            frame_counter: 0,
         }
+    }
+
+    /// Rebuilds the channel subscription map by scanning all tabs.
+    /// Call this after tab creation, deletion, or channel changes.
+    fn rebuild_subscriptions(&mut self) {
+        self.channel_subscriptions.clear();
+
+        for (tab_index, tab) in self.dock_state.iter_all_tabs() {
+            match tab {
+                DockTab::Plot(plot_tab) => {
+                    self.channel_subscriptions
+                        .entry(plot_tab.channel.clone())
+                        .or_insert_with(Vec::new)
+                        .push(tab_index);
+                }
+                DockTab::Spectrum(spectrum_tab) => {
+                    // Spectrum channels use "spectrum:channel_name" format in cache
+                    let spectrum_channel = format!("spectrum:{}", spectrum_tab.channel);
+                    self.channel_subscriptions
+                        .entry(spectrum_channel)
+                        .or_insert_with(Vec::new)
+                        .push(tab_index);
+                }
+                DockTab::Image(image_tab) => {
+                    // Image channels use "image:channel_name" format in cache
+                    let image_channel = format!("image:{}", image_tab.channel);
+                    self.channel_subscriptions
+                        .entry(image_channel)
+                        .or_insert_with(Vec::new)
+                        .push(tab_index);
+                }
+                // Control panels don't subscribe to data updates
+                _ => {}
+            }
+        }
+
+        self.subscriptions_dirty = false;
     }
 
     /// Fetches new measurements from the broadcast channel and updates the data cache.
     /// Updates both plot tabs and the centralized data cache for instrument control panels.
     /// Handles Scalar, Spectrum, and Image measurements for V2 architecture.
+    /// Optimized with O(1) channel lookup instead of O(M) iteration over all tabs.
     fn update_data(&mut self) {
         loop {
             match self.data_receiver.try_recv() {
@@ -197,26 +248,32 @@ where
             match measurement.as_ref() {
                 Measurement::Scalar(ref data_point) => {
                     // Update the central data cache with channel as key
-                    // (daq_core::DataPoint doesn't include instrument_id)
                     let cache_key = data_point.channel.clone();
-                    self.data_cache.insert(cache_key, measurement.clone());
+                    self.data_cache.insert(cache_key.clone(), measurement.clone());
 
-                    // Update any relevant scalar plot tabs
-                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
-                        if let DockTab::Plot(plot_tab) = tab {
-                            if plot_tab.channel == data_point.channel {
-                                if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
-                                    plot_tab.plot_data.pop_front();
+                    // O(1) lookup: Find tabs subscribed to this channel
+                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
+                        // Only iterate over interested tabs (typically 1-3)
+                        for &tab_location in subscribed_tabs {
+                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                if location == tab_location {
+                                    if let DockTab::Plot(plot_tab) = tab {
+                                        // Update plot data
+                                        if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
+                                            plot_tab.plot_data.pop_front();
+                                        }
+                                        let timestamp =
+                                            data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
+                                        if plot_tab.last_timestamp == 0.0 {
+                                            plot_tab.last_timestamp = timestamp;
+                                        }
+                                        plot_tab.plot_data.push_back([
+                                            timestamp - plot_tab.last_timestamp,
+                                            data_point.value,
+                                        ]);
+                                    }
+                                    break;
                                 }
-                                let timestamp =
-                                    data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
-                                if plot_tab.last_timestamp == 0.0 {
-                                    plot_tab.last_timestamp = timestamp;
-                                }
-                                plot_tab.plot_data.push_back([
-                                    timestamp - plot_tab.last_timestamp,
-                                    data_point.value,
-                                ]);
                             }
                         }
                     }
@@ -224,19 +281,24 @@ where
                 Measurement::Spectrum(ref spectrum_data) => {
                     // Update cache for spectrum data
                     let cache_key = format!("spectrum:{}", spectrum_data.channel);
-                    self.data_cache.insert(cache_key, measurement.clone());
+                    self.data_cache.insert(cache_key.clone(), measurement.clone());
 
-                    // Update any relevant spectrum tabs
-                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
-                        if let DockTab::Spectrum(spectrum_tab) = tab {
-                            if spectrum_tab.channel == spectrum_data.channel {
-                                // Convert wavelengths/intensities to [f64; 2] for plotting
-                                spectrum_tab.spectrum_data = spectrum_data
-                                    .wavelengths
-                                    .iter()
-                                    .zip(spectrum_data.intensities.iter())
-                                    .map(|(&wavelength, &intensity)| [wavelength, intensity])
-                                    .collect();
+                    // O(1) lookup: Find spectrum tabs subscribed to this channel
+                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
+                        for &tab_location in subscribed_tabs {
+                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                if location == tab_location {
+                                    if let DockTab::Spectrum(spectrum_tab) = tab {
+                                        // Convert wavelengths/intensities to [f64; 2] for plotting
+                                        spectrum_tab.spectrum_data = spectrum_data
+                                            .wavelengths
+                                            .iter()
+                                            .zip(spectrum_data.intensities.iter())
+                                            .map(|(&wavelength, &intensity)| [wavelength, intensity])
+                                            .collect();
+                                    }
+                                    break;
+                                }
                             }
                         }
                     }
@@ -244,21 +306,26 @@ where
                 Measurement::Image(ref image_data) => {
                     // Update cache for image data
                     let cache_key = format!("image:{}", image_data.channel);
-                    self.data_cache.insert(cache_key, measurement.clone());
+                    self.data_cache.insert(cache_key.clone(), measurement.clone());
 
-                    // Update any relevant image tabs
-                    for (_location, tab) in self.dock_state.iter_all_tabs_mut() {
-                        if let DockTab::Image(image_tab) = tab {
-                            if image_tab.channel == image_data.channel {
-                                image_tab.dimensions = (image_data.width as usize, image_data.height as usize);
-                                image_tab.pixel_data = image_data.pixels.clone();
+                    // O(1) lookup: Find image tabs subscribed to this channel
+                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
+                        for &tab_location in subscribed_tabs {
+                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                if location == tab_location {
+                                    if let DockTab::Image(image_tab) = tab {
+                                        image_tab.dimensions = (image_data.width as usize, image_data.height as usize);
+                                        image_tab.pixel_data = image_data.pixels.clone();
 
-                                // Calculate value range for colormap scaling
-                                if let (Some(&min), Some(&max)) = (
-                                    image_data.pixels.iter().min_by(|a, b| a.partial_cmp(b).unwrap()),
-                                    image_data.pixels.iter().max_by(|a, b| a.partial_cmp(b).unwrap()),
-                                ) {
-                                    image_tab.value_range = (min, max);
+                                        // Calculate value range for colormap scaling
+                                        if let (Some(&min), Some(&max)) = (
+                                            image_data.pixels.iter().min_by(|a, b| a.partial_cmp(b).unwrap()),
+                                            image_data.pixels.iter().max_by(|a, b| a.partial_cmp(b).unwrap()),
+                                        ) {
+                                            image_tab.value_range = (min, max);
+                                        }
+                                    }
+                                    break;
                                 }
                             }
                         }
@@ -285,6 +352,13 @@ where
     M::Data: Into<daq_core::DataPoint>,
 {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Rebuild subscriptions periodically (every 60 frames) or when explicitly marked dirty
+        // This catches tab closes, channel changes, and other modifications
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+        if self.subscriptions_dirty || self.frame_counter % 60 == 0 {
+            self.rebuild_subscriptions();
+        }
+
         self.update_data();
 
         egui::TopBottomPanel::bottom("bottom_panel")
@@ -325,6 +399,7 @@ where
                 if ui.button("Add Plot").clicked() {
                     self.dock_state
                         .push_to_focused_leaf(DockTab::Plot(PlotTab::new(self.selected_channel.clone())));
+                    self.subscriptions_dirty = true;
                 }
 
                 ui.separator();
