@@ -51,3 +51,7 @@ pub mod validation;
 // New v2 architecture modules (Phase 1)
 pub mod adapters;
 pub mod instruments_v2;
+
+// Phase 2: Networking layer (bd-63)
+#[cfg(feature = "networking")]
+pub mod network;
