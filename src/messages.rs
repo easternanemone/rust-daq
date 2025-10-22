@@ -266,6 +266,75 @@ pub enum DaqCommand {
         response: oneshot::Sender<mpsc::Receiver<Arc<Measurement>>>,
     },
 
+    /// Spawns a new module instance from the module registry.
+    ///
+    /// The actor will:
+    /// 1. Create module instance from registry
+    /// 2. Initialize with configuration
+    /// 3. Optionally spawn async task if module requires background processing
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Module spawned and initialized successfully
+    /// - `Err(DaqError)`: Module type not registered, init failed, or spawn failed
+    SpawnModule {
+        /// Module instance name
+        id: String,
+        /// Module type (e.g., "power_meter", "camera")
+        module_type: String,
+        /// Module configuration
+        config: crate::modules::ModuleConfig,
+        /// Response channel for spawn result
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Assigns an instrument to a module.
+    ///
+    /// The actor will:
+    /// 1. Get the running module
+    /// 2. Get the running instrument
+    /// 3. Downcast module to the appropriate concrete type
+    /// 4. Assign instrument to module
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Instrument assigned successfully
+    /// - `Err(DaqError)`: Module/instrument not found, assignment failed, or type mismatch
+    AssignInstrumentToModule {
+        /// Module instance ID
+        module_id: String,
+        /// Instrument ID to assign
+        instrument_id: String,
+        /// Response channel for assignment result
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Starts a module's experiment logic.
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Module started successfully
+    /// - `Err(DaqError)`: Module not found or start failed
+    StartModule {
+        /// Module instance ID
+        id: String,
+        /// Response channel for start result
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Stops a module's experiment logic.
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Module stopped successfully
+    /// - `Err(DaqError)`: Module not found or stop failed
+    StopModule {
+        /// Module instance ID
+        id: String,
+        /// Response channel for stop result
+        response: oneshot::Sender<Result<()>>,
+    },
+
     /// Initiates graceful shutdown of the entire DAQ system.
     ///
     /// Shutdown sequence:
@@ -374,6 +443,52 @@ impl DaqCommand {
     pub fn subscribe_to_data() -> (Self, oneshot::Receiver<mpsc::Receiver<Arc<Measurement>>>) {
         let (tx, rx) = oneshot::channel();
         (Self::SubscribeToData { response: tx }, rx)
+    }
+
+    /// Helper to create a SpawnModule command
+    pub fn spawn_module(
+        id: String,
+        module_type: String,
+        config: crate::modules::ModuleConfig,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::SpawnModule {
+                id,
+                module_type,
+                config,
+                response: tx,
+            },
+            rx,
+        )
+    }
+
+    /// Helper to create an AssignInstrumentToModule command
+    pub fn assign_instrument_to_module(
+        module_id: String,
+        instrument_id: String,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::AssignInstrumentToModule {
+                module_id,
+                instrument_id,
+                response: tx,
+            },
+            rx,
+        )
+    }
+
+    /// Helper to create a StartModule command
+    pub fn start_module(id: String) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::StartModule { id, response: tx }, rx)
+    }
+
+    /// Helper to create a StopModule command
+    pub fn stop_module(id: String) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::StopModule { id, response: tx }, rx)
     }
 
     /// Helper to create a Shutdown command

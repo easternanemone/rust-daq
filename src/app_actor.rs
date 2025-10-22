@@ -87,6 +87,7 @@ use crate::{
     measurement::{DataDistributor, Measure},
     messages::{DaqCommand, SpawnError},
     metadata::Metadata,
+    modules::{Module, ModuleConfig},
     session::{self, Session},
 };
 use daq_core::Measurement;
@@ -139,6 +140,7 @@ where
     instrument_registry: Arc<InstrumentRegistry<M>>,
     processor_registry: Arc<ProcessorRegistry>,
     instruments: HashMap<String, InstrumentHandle>,
+    modules: HashMap<String, Arc<Mutex<Box<dyn Module>>>>,
     data_distributor: Arc<DataDistributor<Arc<Measurement>>>,
     log_buffer: LogBuffer,
     metadata: Metadata,
@@ -183,6 +185,7 @@ where
             instrument_registry,
             processor_registry,
             instruments: HashMap::new(),
+            modules: HashMap::new(),
             data_distributor,
             log_buffer,
             metadata: Metadata::default(),
@@ -280,6 +283,35 @@ where
                 DaqCommand::SubscribeToData { response } => {
                     let receiver = self.data_distributor.subscribe().await;
                     let _ = response.send(receiver);
+                }
+
+                DaqCommand::SpawnModule {
+                    id,
+                    module_type,
+                    config,
+                    response,
+                } => {
+                    let result = self.spawn_module(&id, &module_type, config);
+                    let _ = response.send(result);
+                }
+
+                DaqCommand::AssignInstrumentToModule {
+                    module_id,
+                    instrument_id,
+                    response,
+                } => {
+                    let result = self.assign_instrument_to_module(&module_id, &instrument_id);
+                    let _ = response.send(result);
+                }
+
+                DaqCommand::StartModule { id, response } => {
+                    let result = self.start_module(&id);
+                    let _ = response.send(result);
+                }
+
+                DaqCommand::StopModule { id, response } => {
+                    let result = self.stop_module(&id);
+                    let _ = response.send(result);
                 }
 
                 DaqCommand::Shutdown { response } => {
@@ -568,6 +600,146 @@ where
         }
 
         unreachable!("Retry loop should return in all cases")
+    }
+
+    /// Spawns a new module instance.
+    ///
+    /// This method:
+    /// 1. Creates a default module instance for the given type
+    /// 2. Initializes it with the provided configuration
+    /// 3. Stores it in the modules HashMap
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Module type is not registered (only built-in types are supported currently)
+    /// - Initialization fails
+    /// - Module already exists with the same ID
+    fn spawn_module(
+        &mut self,
+        id: &str,
+        module_type: &str,
+        mut config: ModuleConfig,
+    ) -> Result<()> {
+        if self.modules.contains_key(id) {
+            return Err(anyhow!(
+                "Module '{}' is already spawned",
+                id
+            ));
+        }
+
+        // Create module based on type
+        // Currently supports power_meter as a proof-of-concept
+        use crate::modules::power_meter::PowerMeterModule;
+
+        let mut module: Box<dyn Module> = match module_type {
+            "power_meter" => {
+                Box::new(PowerMeterModule::new(id.to_string()))
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Unknown module type: '{}' (supported: power_meter)",
+                    module_type
+                ))
+            }
+        };
+
+        // Initialize module
+        module.init(config)?;
+
+        // Store module
+        self.modules.insert(id.to_string(), Arc::new(Mutex::new(module)));
+        info!("Module '{}' spawned and initialized", id);
+        Ok(())
+    }
+
+    /// Assigns an instrument to a module.
+    ///
+    /// This method:
+    /// 1. Gets the module from the modules HashMap
+    /// 2. Gets the instrument from the instruments HashMap
+    /// 3. Attempts to assign the instrument to the module
+    ///
+    /// The assignment is type-safe at compile time but uses dynamic dispatch at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Module is not found
+    /// - Instrument is not found
+    /// - Module does not support instrument assignment (not a ModuleWithInstrument)
+    /// - Assignment is rejected (e.g., module is running, incompatible type)
+    fn assign_instrument_to_module(
+        &mut self,
+        module_id: &str,
+        instrument_id: &str,
+    ) -> Result<()> {
+        let _module = self.modules.get(module_id)
+            .ok_or_else(|| anyhow!(
+                "Module '{}' is not spawned",
+                module_id
+            ))?;
+
+        let _instrument = self.instruments.get(instrument_id)
+            .ok_or_else(|| anyhow!(
+                "Instrument '{}' is not running",
+                instrument_id
+            ))?;
+
+        // For now, we don't support instrument assignment through the generic Module trait
+        // This is a limitation of the downcast pattern with dynamic dispatch
+        // In a future implementation, modules could register their instrument types
+        // or we could use a specialized assignment protocol
+        Err(anyhow!(
+            "Instrument assignment to modules requires type-specific implementation. \
+             Use module-specific APIs or extend the module system."
+        ))
+    }
+
+    /// Starts a module's experiment logic.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Module is not found
+    /// - Module is already running
+    /// - Start operation fails (e.g., missing instrument)
+    fn start_module(&mut self, id: &str) -> Result<()> {
+        let module = self.modules.get_mut(id)
+            .ok_or_else(|| anyhow!("Module '{}' is not spawned", id))?;
+
+        // We need to use block_on to get mutable access from Arc<Mutex<>>
+        let module_clone = module.clone();
+        self.runtime.block_on(async {
+            let mut mod_guard = module_clone.lock().await;
+            mod_guard.start()
+        })?;
+
+        info!("Module '{}' started", id);
+        Ok(())
+    }
+
+    /// Stops a module's experiment logic.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Module is not found
+    /// - Module is not running
+    /// - Stop operation fails
+    fn stop_module(&mut self, id: &str) -> Result<()> {
+        let module = self.modules.get_mut(id)
+            .ok_or_else(|| anyhow!("Module '{}' is not spawned", id))?;
+
+        // We need to use block_on to get mutable access from Arc<Mutex<>>
+        let module_clone = module.clone();
+        self.runtime.block_on(async {
+            let mut mod_guard = module_clone.lock().await;
+            mod_guard.stop()
+        })?;
+
+        info!("Module '{}' stopped", id);
+        Ok(())
     }
 
     /// Starts the data recording process by spawning a storage writer task.

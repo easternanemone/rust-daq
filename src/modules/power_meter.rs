@@ -300,6 +300,53 @@ impl<M: Measure + 'static> Module for PowerMeterModule<M> {
         Ok(())
     }
 
+    fn start(&mut self) -> Result<()> {
+        if self.status != ModuleStatus::Initialized && self.status != ModuleStatus::Paused {
+            return Err(anyhow!(
+                "Cannot start module in {:?} state. Must be Initialized or Paused.",
+                self.status
+            ));
+        }
+
+        if self.power_meter.is_none() {
+            return Err(anyhow!(
+                "Cannot start module '{}': no power meter instrument assigned",
+                self.name
+            ));
+        }
+
+        self.status = ModuleStatus::Running;
+        log::info!("Module '{}' started", self.name);
+        Ok(())
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        if self.status != ModuleStatus::Running {
+            return Err(anyhow!(
+                "Cannot pause module in {:?} state. Must be Running.",
+                self.status
+            ));
+        }
+
+        self.status = ModuleStatus::Paused;
+        log::info!("Module '{}' paused", self.name);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        if self.status == ModuleStatus::Stopped || self.status == ModuleStatus::Idle {
+            return Err(anyhow!(
+                "Cannot stop module in {:?} state. Already stopped or not initialized.",
+                self.status
+            ));
+        }
+
+        self.status = ModuleStatus::Stopped;
+        self.reset_statistics();
+        log::info!("Module '{}' stopped", self.name);
+        Ok(())
+    }
+
     fn status(&self) -> ModuleStatus {
         self.status
     }

@@ -489,6 +489,63 @@ impl<M: Measure + 'static> Default for ModuleRegistry<M> {
     }
 }
 
+/// Handle for lifecycle management of a running module.
+///
+/// Modules can optionally run in a separate Tokio task for background processing.
+/// When a module is spawned with a task, this handle provides access to:
+/// - Command channel for control messages
+/// - Task handle for waiting on completion
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // If module runs in background task
+/// let handle = ModuleHandle { task, command_tx };
+/// // Later: send commands or wait for completion
+/// handle.command_tx.send(ModuleCommand::Pause)?;
+/// handle.task.await?;
+/// ```
+pub struct ModuleHandle {
+    /// Task handle if module runs asynchronously (None for synchronous modules)
+    pub task: Option<tokio::task::JoinHandle<Result<()>>>,
+    /// Optional command channel for control messages
+    pub command_tx: Option<tokio::sync::mpsc::Sender<ModuleCommand>>,
+}
+
+impl ModuleHandle {
+    /// Creates a handle for synchronous modules (no background task)
+    pub fn synchronous() -> Self {
+        Self {
+            task: None,
+            command_tx: None,
+        }
+    }
+
+    /// Creates a handle for async modules with task and command channel
+    pub fn async_with_task(
+        task: tokio::task::JoinHandle<Result<()>>,
+        command_tx: tokio::sync::mpsc::Sender<ModuleCommand>,
+    ) -> Self {
+        Self {
+            task: Some(task),
+            command_tx: Some(command_tx),
+        }
+    }
+}
+
+/// Commands that can be sent to a module's event loop.
+///
+/// Used for control messages sent via the module's command channel.
+#[derive(Clone, Debug)]
+pub enum ModuleCommand {
+    /// Pause module execution
+    Pause,
+    /// Resume module execution
+    Resume,
+    /// Stop module and cleanup
+    Stop,
+}
+
 // Concrete module implementations
 pub mod power_meter;
 
