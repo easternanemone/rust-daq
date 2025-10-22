@@ -170,7 +170,7 @@
 
 use crate::core::Instrument;
 use crate::measurement::Measure;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -264,7 +264,7 @@ pub enum ModuleStatus {
 /// # Examples
 ///
 /// See module-level documentation for complete examples.
-pub trait Module: Send + Sync {
+pub trait Module: Send {
     /// Returns the unique name/identifier for this module.
     ///
     /// This name is used for module registration and command routing.
@@ -299,6 +299,18 @@ pub trait Module: Send + Sync {
     /// This method is used by the DAQ system to monitor module health
     /// and enforce state transitions.
     fn status(&self) -> ModuleStatus;
+    
+    fn start(&mut self) -> Result<()> {
+        Err(anyhow!("Module does not support start operation"))
+    }
+    
+    fn pause(&mut self) -> Result<()> {
+        Err(anyhow!("Module does not support pause operation"))
+    }
+    
+    fn stop(&mut self) -> Result<()> {
+        Err(anyhow!("Module does not support stop operation"))
+    }
 }
 
 /// Extension trait for modules that control instruments.
