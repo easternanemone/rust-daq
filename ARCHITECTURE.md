@@ -244,7 +244,32 @@ The previous architecture used `Arc<Mutex<DaqAppInner>>` for shared state manage
 | Blocking GUI on lock acquisition | Non-blocking message passing |
 | Hard to add new consumers | Easy to add subscribers |
 
-### 8.2. Why Message-Passing Over Callbacks?
+### 8.2. Acceptable Use of Arc\\<Mutex\\<T\\>\\>
+
+While the actor pattern eliminates locks from application state management, certain shared resources still require `Arc<Mutex<T>>`:
+
+**Hardware Adapters (8 instances):**
+- Serial ports and VISA instruments are external trait objects (`dyn SerialPort`, `dyn Instrument`)
+- Multiple async tasks need mutable access to hardware I/O
+- No actor-based alternative for third-party hardware APIs
+- Examples: `serial_adapter.rs`, `visa_adapter.rs`, V2 instruments
+
+**Infrastructure (2 instances):**
+- `LogBuffer`: Shared logging across threads (not actor-managed)
+- `MockAdapter::call_log`: Test infrastructure for call tracing
+
+**Module System (1 instance):**
+- `CameraModule`: Shares `dyn Camera` trait object between module and acquisition task
+- Similar to hardware adapter pattern - trait object needs shared mutable access
+
+**Eliminated Arc\\<Mutex\\<T\\>\\>:**
+- Application state (`DaqManagerActor` owns exclusively)
+- Data distribution (`DataDistributor` uses interior mutability)
+- GUI state (GUI thread owns exclusively)
+
+The actor pattern eliminates locks from the **application architecture** while preserving them only where hardware constraints require shared mutable access to trait objects.
+
+### 8.3. Why Message-Passing Over Callbacks?
 
 Message-passing provides:
 - **Decoupling**: Sender doesn't need to know about receiver implementation
@@ -252,7 +277,7 @@ Message-passing provides:
 - **Testability**: Easy to mock actors in tests
 - **Composability**: Can add logging, tracing, or validation layers
 
-### 8.3. Why Broadcast Channel for Data?
+### 8.4. Why Broadcast Channel for Data?
 
 The broadcast channel provides:
 - **Multiple Consumers**: GUI and storage both get the same data
@@ -260,7 +285,7 @@ The broadcast channel provides:
 - **Extensibility**: Easy to add new data consumers
 - **Backpressure**: Lagging receivers are pruned automatically
 
-### 8.4. Why Separate Tasks for Each Instrument?
+### 8.5. Why Separate Tasks for Each Instrument?
 
 Isolation benefits:
 - **Fault Tolerance**: One instrument crash doesn't affect others
