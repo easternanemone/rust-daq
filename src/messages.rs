@@ -52,6 +52,7 @@
 
 use crate::{
     core::InstrumentCommand,
+    error::DaqError,
     session::GuiState,
 };
 use anyhow::Result;
@@ -277,10 +278,11 @@ pub enum DaqCommand {
     ///
     /// # Response
     ///
-    /// Always succeeds (sent after shutdown sequence completes).
+    /// - `Ok(())`: All shutdown operations completed successfully
+    /// - `Err(DaqError::ShutdownFailed(errors))`: One or more shutdown operations failed
     Shutdown {
-        /// Response channel (acknowledges shutdown completion)
-        response: oneshot::Sender<()>,
+        /// Response channel (returns result of shutdown sequence)
+        response: oneshot::Sender<Result<(), DaqError>>,
     },
 }
 
@@ -375,7 +377,7 @@ impl DaqCommand {
     }
 
     /// Helper to create a Shutdown command
-    pub fn shutdown() -> (Self, oneshot::Receiver<()>) {
+    pub fn shutdown() -> (Self, oneshot::Receiver<Result<(), DaqError>>) {
         let (tx, rx) = oneshot::channel();
         (Self::Shutdown { response: tx }, rx)
     }

@@ -104,11 +104,16 @@ where
     }
 
     /// Shuts down the application
-    pub fn shutdown(&self) {
+    pub fn shutdown(&self) -> Result<()> {
         let (cmd, rx) = DaqCommand::shutdown();
-        let _ = self.command_tx.blocking_send(cmd);
-        let _ = rx.blocking_recv();
+        self.command_tx
+            .blocking_send(cmd)
+            .map_err(|_| anyhow::anyhow!("Failed to send shutdown command"))?;
+        rx.blocking_recv()
+            .map_err(|_| anyhow::anyhow!("Failed to receive shutdown response"))?
+            .map_err(|e| anyhow::anyhow!("Shutdown error: {}", e))?;
         info!("Application shutdown complete");
+        Ok(())
     }
 
     /// Saves the current application state to a session file

@@ -139,7 +139,7 @@ fn main() -> Result<()> {
     // The GUI event loop has finished.
     // We can now gracefully shut down the application.
     info!("GUI closed. Shutting down.");
-    app.shutdown();
+    app.shutdown()?;
 
     Ok(())
 }

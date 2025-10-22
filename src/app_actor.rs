@@ -284,8 +284,8 @@ where
 
                 DaqCommand::Shutdown { response } => {
                     info!("Shutdown command received");
-                    self.shutdown();
-                    let _ = response.send(());
+                    let result = self.shutdown();
+                    let _ = response.send(result);
                     break; // Exit event loop
                 }
             }
@@ -472,14 +472,15 @@ where
     /// - Exit gracefully
     ///
     /// If the command channel is closed or full, the task is aborted immediately.
-    fn stop_instrument(&mut self, id: &str) {
+    fn stop_instrument(&mut self, id: &str) -> Result<(), crate::error::DaqError> {
         if let Some(handle) = self.instruments.remove(id) {
             // Try graceful shutdown first
             info!("Sending shutdown command to instrument '{}'", id);
             if let Err(e) = handle.command_tx.try_send(crate::core::InstrumentCommand::Shutdown) {
-                log::warn!("Failed to send shutdown command to '{}': {}. Aborting task.", id, e);
+                let error_msg = format!("Failed to send shutdown command to '{}': {}. Aborting task.", id, e);
+                log::warn!("{}", error_msg);
                 handle.task.abort();
-                return;
+                return Err(crate::error::DaqError::Instrument(error_msg));
             }
 
             // Wait up to 5 seconds for graceful shutdown
@@ -491,20 +492,27 @@ where
                 match tokio::time::timeout(timeout_duration, task_handle).await {
                     Ok(Ok(Ok(()))) => {
                         info!("Instrument '{}' stopped gracefully", id);
+                        Ok(())
                     }
                     Ok(Ok(Err(e))) => {
-                        log::warn!("Instrument '{}' task failed during shutdown: {}", id, e);
+                        let error_msg = format!("Instrument '{}' task failed during shutdown: {}", id, e);
+                        log::warn!("{}", error_msg);
+                        Err(crate::error::DaqError::Instrument(error_msg))
                     }
                     Ok(Err(e)) => {
-                        log::warn!("Instrument '{}' task panicked during shutdown: {}", id, e);
+                        let error_msg = format!("Instrument '{}' task panicked during shutdown: {}", id, e);
+                        log::warn!("{}", error_msg);
+                        Err(crate::error::DaqError::Instrument(error_msg))
                     }
                     Err(_) => {
-                        log::warn!("Instrument '{}' did not stop within {:?}, aborting", id, timeout_duration);
-                        // Note: tokio::time::timeout doesn't abort the task, but since we own task_handle
-                        // and it goes out of scope here, the task will be aborted when task_handle is dropped
+                        let error_msg = format!("Instrument '{}' did not stop within {:?}, aborting", id, timeout_duration);
+                        log::warn!("{}", error_msg);
+                        Err(crate::error::DaqError::Instrument(error_msg))
                     }
                 }
-            });
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -650,15 +658,16 @@ where
     ///
     /// The storage writer will call `writer.shutdown()` to ensure
     /// all buffered data is flushed to disk before terminating.
-    fn stop_recording(&mut self) {
+    fn stop_recording(&mut self) -> Result<(), crate::error::DaqError> {
         if let Some(task) = self.writer_task.take() {
             // Try graceful shutdown first
             info!("Sending shutdown signal to storage writer");
             if let Some(shutdown_tx) = self.writer_shutdown_tx.take() {
                 if shutdown_tx.send(()).is_err() {
-                    log::warn!("Failed to send shutdown signal to storage writer (receiver dropped). Aborting task.");
+                    let error_msg = "Failed to send shutdown signal to storage writer (receiver dropped). Aborting task.";
+                    log::warn!("{}", error_msg);
                     task.abort();
-                    return;
+                    return Err(crate::error::DaqError::Processing(error_msg.to_string()));
                 }
 
                 // Wait up to 5 seconds for graceful shutdown
@@ -669,24 +678,34 @@ where
                     match tokio::time::timeout(timeout_duration, task).await {
                         Ok(Ok(Ok(()))) => {
                             info!("Storage writer stopped gracefully");
+                            Ok(())
                         }
                         Ok(Ok(Err(e))) => {
-                            log::warn!("Storage writer task failed during shutdown: {}", e);
+                            let error_msg = format!("Storage writer task failed during shutdown: {}", e);
+                            log::warn!("{}", error_msg);
+                            Err(crate::error::DaqError::Processing(error_msg))
                         }
                         Ok(Err(e)) => {
-                            log::warn!("Storage writer task panicked during shutdown: {}", e);
+                            let error_msg = format!("Storage writer task panicked during shutdown: {}", e);
+                            log::warn!("{}", error_msg);
+                            Err(crate::error::DaqError::Processing(error_msg))
                         }
                         Err(_) => {
-                            log::warn!("Storage writer did not stop within {:?}, aborting", timeout_duration);
-                            // Task will be aborted when it goes out of scope
+                            let error_msg = format!("Storage writer did not stop within {:?}, aborting", timeout_duration);
+                            log::warn!("{}", error_msg);
+                            Err(crate::error::DaqError::Processing(error_msg))
                         }
                     }
-                });
+                })
             } else {
                 // No shutdown channel, just abort
-                log::warn!("No shutdown channel for storage writer, aborting task");
+                let error_msg = "No shutdown channel for storage writer, aborting task";
+                log::warn!("{}", error_msg);
                 task.abort();
+                Err(crate::error::DaqError::Processing(error_msg.to_string()))
             }
+        } else {
+            Ok(())
         }
     }
 
@@ -759,22 +778,34 @@ where
     /// 2. Stop all instruments (5s timeout each)
     ///
     /// This method is idempotent - subsequent calls are no-ops.
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<(), crate::error::DaqError> {
         if self.shutdown_flag {
-            return;
+            return Ok(());
         }
         info!("Shutting down application...");
         self.shutdown_flag = true;
 
+        let mut errors: Vec<crate::error::DaqError> = Vec::new();
+
         // Stop recording first
-        self.stop_recording();
+        if let Err(e) = self.stop_recording() {
+            errors.push(e);
+        }
 
         // Stop all instruments gracefully
         let instrument_ids: Vec<String> = self.instruments.keys().cloned().collect();
         for id in instrument_ids {
-            self.stop_instrument(&id);
+            if let Err(e) = self.stop_instrument(&id) {
+                errors.push(e);
+            }
         }
 
         info!("Application shutdown complete");
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::error::DaqError::ShutdownFailed(errors))
+        }
     }
 }
