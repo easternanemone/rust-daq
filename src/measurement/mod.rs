@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::future::join_all;
 use tokio::sync::Mutex;
 
 use crate::core::DataPoint;
@@ -36,16 +37,28 @@ impl<T: Clone> DataDistributor<T> {
         rx
     }
 
-    /// Broadcast data to all subscribers with automatic dead subscriber cleanup
+    /// Broadcast data to all subscribers with automatic dead subscriber cleanup.
+    ///
+    /// Sends to all subscribers in parallel using `futures::join_all` to prevent
+    /// head-of-line blocking. Slow subscribers no longer block fast ones.
     pub async fn broadcast(&self, data: T) -> Result<()> {
         let mut subscribers = self.subscribers.lock().await;
-        let mut dead_indices = Vec::new();
 
-        for (i, sender) in subscribers.iter().enumerate() {
-            if sender.send(data.clone()).await.is_err() {
-                dead_indices.push(i);
-            }
-        }
+        // Create parallel send futures for all subscribers
+        let send_futures: Vec<_> = subscribers
+            .iter()
+            .map(|sender| sender.send(data.clone()))
+            .collect();
+
+        // Execute all sends in parallel and collect results
+        let results = join_all(send_futures).await;
+
+        // Identify dead subscribers (send failed)
+        let dead_indices: Vec<usize> = results
+            .iter()
+            .enumerate()
+            .filter_map(|(i, result)| if result.is_err() { Some(i) } else { None })
+            .collect();
 
         // Remove dead subscribers in reverse order to maintain indices
         for i in dead_indices.iter().rev() {
