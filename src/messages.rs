@@ -50,7 +50,12 @@
 //!
 //! This pattern ensures the GUI always gets a receiver to await the response.
 
-use crate::{core::InstrumentCommand, error::DaqError, session::GuiState};
+use crate::{
+    config::versioning::{VersionId, VersionInfo},
+    core::InstrumentCommand,
+    error::DaqError,
+    session::GuiState,
+};
 use anyhow::Result;
 use daq_core::Measurement;
 use std::path::PathBuf;
@@ -419,6 +424,23 @@ pub enum DaqCommand {
         /// Response channel (returns result of shutdown sequence)
         response: oneshot::Sender<Result<(), DaqError>>,
     },
+
+    CreateConfigSnapshot {
+        label: Option<String>,
+        response: oneshot::Sender<Result<VersionId>>,
+    },
+    ListConfigVersions {
+        response: oneshot::Sender<Result<Vec<VersionInfo>>>,
+    },
+    RollbackToVersion {
+        version_id: VersionId,
+        response: oneshot::Sender<Result<()>>,
+    },
+    CompareConfigVersions {
+        version_a: VersionId,
+        version_b: VersionId,
+        response: oneshot::Sender<Result<String>>,
+    },
 }
 
 impl DaqCommand {
@@ -624,5 +646,41 @@ impl DaqCommand {
     pub fn shutdown() -> (Self, oneshot::Receiver<Result<(), DaqError>>) {
         let (tx, rx) = oneshot::channel();
         (Self::Shutdown { response: tx }, rx)
+    }
+
+    /// Helper to create a CreateConfigSnapshot command
+    pub fn create_config_snapshot(
+        label: Option<String>,
+    ) -> (Self, oneshot::Receiver<Result<VersionId>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::CreateConfigSnapshot { label, response: tx }, rx)
+    }
+
+    /// Helper to create a ListConfigVersions command
+    pub fn list_config_versions() -> (Self, oneshot::Receiver<Result<Vec<VersionInfo>>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::ListConfigVersions { response: tx }, rx)
+    }
+
+    /// Helper to create a RollbackToVersion command
+    pub fn rollback_to_version(version_id: VersionId) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::RollbackToVersion { version_id, response: tx }, rx)
+    }
+
+    /// Helper to create a CompareConfigVersions command
+    pub fn compare_config_versions(
+        version_a: VersionId,
+        version_b: VersionId,
+    ) -> (Self, oneshot::Receiver<Result<String>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::CompareConfigVersions {
+                version_a,
+                version_b,
+                response: tx,
+            },
+            rx,
+        )
     }
 }

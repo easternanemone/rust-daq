@@ -56,7 +56,7 @@
 //! let (cmd_tx, cmd_rx) = mpsc::channel(32);
 //!
 //! // Spawn actor task
-//! # let settings = std::sync::Arc::new(rust_daq::config::Settings::default());
+//! # let settings = rust_daq::config::Settings::default();
 //! # let instrument_registry = std::sync::Arc::new(rust_daq::instrument::InstrumentRegistry::new());
 //! # let processor_registry = std::sync::Arc::new(rust_daq::data::registry::ProcessorRegistry::new());
 //! # let log_buffer = rust_daq::log_capture::LogBuffer::new();
@@ -79,7 +79,7 @@
 //! ```
 
 use crate::{
-    config::{dependencies::DependencyGraph, Settings},
+    config::{dependencies::DependencyGraph, versioning::VersionManager, Settings},
     core::{DataPoint, InstrumentHandle, MeasurementProcessor},
     data::registry::ProcessorRegistry,
     instrument::InstrumentRegistry,
@@ -136,7 +136,7 @@ where
     M: Measure + 'static,
     M::Data: Into<daq_core::Measurement>,
 {
-    settings: Arc<Settings>,
+    settings: Settings,
     instrument_registry: Arc<InstrumentRegistry<M>>,
     processor_registry: Arc<ProcessorRegistry>,
     module_registry: Arc<crate::modules::ModuleRegistry<M>>,
@@ -151,6 +151,7 @@ where
     storage_format: String,
     runtime: Arc<Runtime>,
     shutdown_flag: bool,
+    version_manager: VersionManager,
 }
 
 impl<M> DaqManagerActor<M>
@@ -171,7 +172,7 @@ where
     /// - `log_buffer`: Shared buffer for application logs
     /// - `runtime`: Tokio runtime handle for spawning instrument tasks
     pub fn new(
-        settings: Arc<Settings>,
+        settings: Settings,
         instrument_registry: Arc<InstrumentRegistry<M>>,
         processor_registry: Arc<ProcessorRegistry>,
         module_registry: Arc<crate::modules::ModuleRegistry<M>>,
@@ -182,6 +183,9 @@ where
             settings.application.broadcast_channel_capacity,
         ));
         let storage_format = settings.storage.default_format.clone();
+
+        std::fs::create_dir_all(".daq/config_versions")?;
+        let version_manager = VersionManager::new(".daq/config_versions".into());
 
         Ok(Self {
             settings,
@@ -199,6 +203,7 @@ where
             storage_format,
             runtime,
             shutdown_flag: false,
+            version_manager,
         })
     }
 
@@ -347,6 +352,25 @@ where
                     let _ = response.send(result);
                 }
 
+                DaqCommand::CreateConfigSnapshot { label, response } => {
+                    let result = self.version_manager.create_snapshot(&self.settings, label).await;
+                    let _ = response.send(result);
+                }
+                DaqCommand::ListConfigVersions { response } => {
+                    let result = self.version_manager.list_versions().await;
+                    let _ = response.send(result);
+                }
+                DaqCommand::RollbackToVersion { version_id, response } => {
+                    let result = self.version_manager.rollback(&version_id).await;
+                    if let Ok(settings) = result {
+                        self.settings = settings;
+                    }
+                    let _ = response.send(Ok(()));
+                }
+                DaqCommand::CompareConfigVersions { version_a, version_b, response } => {
+                    let result = self.version_manager.diff_versions(&version_a, &version_b).await;
+                    let _ = response.send(result);
+                }
                 DaqCommand::GetInstrumentDependencies { id, response } => {
                     let deps = self.dependency_graph.get_dependents(&id);
                     let _ = response.send(deps);
@@ -437,7 +461,7 @@ where
         }
 
         let data_distributor = self.data_distributor.clone();
-        let settings = self.settings.clone();
+        let settings = Arc::new(self.settings.clone());
         let id_clone = id.to_string();
 
         // Create command channel
@@ -810,7 +834,7 @@ where
     ///
     /// The storage writer:
     /// - Subscribes to the `DataDistributor` to receive all measurements
-    /// - Creates a storage writer based on current format (CSV, HDF5, Arrow)
+    /// - Creates a storage writer based on current storage format (CSV, HDF5, Arrow)
     /// - Writes measurements to disk asynchronously
     /// - Handles shutdown signal via oneshot channel
     ///
@@ -826,7 +850,7 @@ where
             return Err(anyhow!("Recording is already in progress."));
         }
 
-        let settings = self.settings.clone();
+        let settings = Arc::new(self.settings.clone());
         let metadata = self.metadata.clone();
         let mut rx = self.data_distributor.subscribe().await;
         let storage_format_for_task = self.storage_format.clone();
@@ -1075,6 +1099,7 @@ where
         instrument_type: &str,
         config: toml::Value,
     ) -> Result<()> {
+        self.version_manager.create_snapshot(&self.settings, None).await?;
         if self.instruments.contains_key(id) {
             return Err(anyhow!(
                 "Instrument '{}' is already running - cannot add duplicate",
@@ -1099,7 +1124,7 @@ where
         );
 
         let data_distributor = self.data_distributor.clone();
-        let settings = self.settings.clone();
+        let settings = Arc::new(self.settings.clone());
         let id_clone = id.to_string();
 
         // Create command channel
@@ -1203,6 +1228,7 @@ where
     /// - Instrument is assigned to a module (when force=false)
     /// - Graceful shutdown fails
     pub async fn remove_instrument_dynamic(&mut self, id: &str, force: bool) -> Result<()> {
+        self.version_manager.create_snapshot(&self.settings, None).await?;
         // Check if instrument exists
         if !self.instruments.contains_key(id) {
             return Err(anyhow!("Instrument '{}' is not running", id));
@@ -1259,6 +1285,7 @@ where
         parameter: &str,
         value: &str,
     ) -> Result<()> {
+        self.version_manager.create_snapshot(&self.settings, None).await?;
         info!(
             "Updating instrument '{}' parameter '{}' to '{}'",
             id, parameter, value
@@ -1355,7 +1382,7 @@ mod tests {
         };
 
         let mut actor = DaqManagerActor::<InstrumentMeasurement>::new(
-            Arc::new(settings),
+            settings,
             Arc::new(InstrumentRegistry::new()),
             Arc::new(ProcessorRegistry::new()),
             Arc::new(crate::modules::ModuleRegistry::new()),

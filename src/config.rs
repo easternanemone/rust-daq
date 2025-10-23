@@ -42,7 +42,9 @@ use config::Config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
+pub mod versioning;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub log_level: String,
     pub application: ApplicationSettings,
@@ -67,7 +69,7 @@ fn default_command_capacity() -> usize {
     32
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProcessorConfig {
     pub r#type: String,
     #[serde(flatten)]

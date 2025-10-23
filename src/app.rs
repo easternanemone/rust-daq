@@ -29,7 +29,7 @@ where
     command_tx: mpsc::Sender<DaqCommand>,
     runtime: Arc<Runtime>,
     // Immutable shared state for GUI access
-    settings: Arc<Settings>,
+    settings: Settings,
     log_buffer: LogBuffer,
     instrument_registry: Arc<InstrumentRegistry<M>>,
     _phantom: std::marker::PhantomData<M>,
@@ -42,7 +42,7 @@ where
 {
     /// Creates a new `DaqApp` with actor-based state management
     pub fn new(
-        settings: Arc<Settings>,
+        settings: Settings,
         instrument_registry: Arc<InstrumentRegistry<M>>,
         processor_registry: Arc<ProcessorRegistry>,
         module_registry: Arc<crate::modules::ModuleRegistry<M>>,
@@ -144,7 +144,7 @@ where
     {
         let mut compat = DaqAppCompat {
             command_tx: self.command_tx.clone(),
-            settings: self.settings.clone(),
+            settings: Arc::new(self.settings.clone()),
             log_buffer: self.log_buffer.clone(),
             instrument_registry: self.instrument_registry.clone(),
             data_sender: DaqDataSender {

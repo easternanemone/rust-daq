@@ -75,6 +75,8 @@ opener = "0.7.0"
 biquad = "0.4.1"
 humantime-serde = "1.1.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
+similar = "2.3"
+sha2 = "0.10"
 
 [build-dependencies]
 flatbuffers = "24.3.25"

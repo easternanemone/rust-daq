@@ -71,7 +71,7 @@ fn main() -> Result<()> {
     // --- End of Log Initialization ---
 
     // Load configuration
-    let settings = Arc::new(Settings::new(None)?);
+    let settings = Settings::new(None)?;
     info!("Configuration loaded successfully.");
 
     // Create a registry and register available instruments.
@@ -121,7 +121,7 @@ fn main() -> Result<()> {
 
     // Create the core application state
     let app = DaqApp::<InstrumentMeasurement>::new(
-        settings.clone(),
+        settings,
         instrument_registry,
         processor_registry,
         module_registry,
