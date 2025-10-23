@@ -1,6 +1,9 @@
 use crate::messages::DaqCommand;
-use crate::network::protocol::{ControlRequest, ControlResponse, Heartbeat, RequestType, ResponseStatus};
+use crate::network::protocol::{
+    ControlRequest, ControlResponse, Heartbeat, RequestType, ResponseStatus,
+};
 use crate::network::session::SessionManager;
+use crate::core::{InstrumentCommand, ParameterValue};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -155,7 +158,11 @@ impl NetworkServerActor {
                 Err(_) => {
                     warn!("Read timeout for client {}", addr);
 
-                    if !session_manager.get_session(&session_id).await.map_or(false, |s| s.is_active()) {
+                    if !session_manager
+                        .get_session(&session_id)
+                        .await
+                        .map_or(false, |s| s.is_active())
+                    {
                         info!("Session {} timeout", session_id);
                         break;
                     }
@@ -185,7 +192,9 @@ impl NetworkServerActor {
             RequestType::StartRecording => {
                 Self::handle_start_recording(req.request_id, req.payload, daq_sender).await
             }
-            RequestType::StopRecording => Self::handle_stop_recording(req.request_id, daq_sender).await,
+            RequestType::StopRecording => {
+                Self::handle_stop_recording(req.request_id, daq_sender).await
+            }
             RequestType::SpawnInstrument => {
                 Self::handle_spawn_instrument(req.request_id, req.payload, daq_sender).await
             }
@@ -203,26 +212,20 @@ impl NetworkServerActor {
         daq_sender: &mpsc::Sender<DaqCommand>,
     ) -> ControlResponse {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let cmd = DaqCommand::GetInstrumentList(tx);
+        let cmd = DaqCommand::GetInstrumentList { response: tx };
 
         match daq_sender.send(cmd).await {
-            Ok(_) => {
-                match timeout(Duration::from_secs(5), rx).await {
-                    Ok(Ok(instruments)) => {
-                        let payload = serde_json::to_vec(&instruments).unwrap_or_default();
-                        ControlResponse::new(request_id, ResponseStatus::Success, payload)
-                    }
-                    Ok(Err(_)) => {
-                        ControlResponse::error(request_id, "Failed to get instruments".to_string())
-                    }
-                    Err(_) => {
-                        ControlResponse::error(request_id, "Request timeout".to_string())
-                    }
+            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                Ok(Ok(instruments)) => {
+                    let payload = serde_json::to_vec(&instruments).unwrap_or_default();
+                    ControlResponse::new(request_id, ResponseStatus::Success, payload)
                 }
-            }
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
-            }
+                Ok(Err(_)) => {
+                    ControlResponse::error(request_id, "Failed to get instruments".to_string())
+                }
+                Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
+            },
+            Err(e) => ControlResponse::error(request_id, format!("Failed to send command: {}", e)),
         }
     }
 
@@ -237,32 +240,23 @@ impl NetworkServerActor {
         payload: Vec<u8>,
         daq_sender: &mpsc::Sender<DaqCommand>,
     ) -> ControlResponse {
-        match String::from_utf8(payload) {
-            Ok(config) => {
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                let cmd = DaqCommand::StartRecording(config, tx);
+        // Payload is ignored - configuration is in settings
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let cmd = DaqCommand::StartRecording { response: tx };
 
-                match daq_sender.send(cmd).await {
-                    Ok(_) => {
-                        match timeout(Duration::from_secs(5), rx).await {
-                            Ok(Ok(())) => {
-                                ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                            }
-                            Ok(Err(_)) => {
-                                ControlResponse::error(request_id, "Failed to start recording".to_string())
-                            }
-                            Err(_) => {
-                                ControlResponse::error(request_id, "Request timeout".to_string())
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        ControlResponse::error(request_id, format!("Failed to send command: {}", e))
-                    }
+        match daq_sender.send(cmd).await {
+            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                Ok(Ok(())) => {
+                    ControlResponse::new(request_id, ResponseStatus::Success, vec![])
                 }
-            }
+                Ok(Err(_)) => ControlResponse::error(
+                    request_id,
+                    "Failed to start recording".to_string(),
+                ),
+                Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
+            },
             Err(e) => {
-                ControlResponse::error(request_id, format!("Invalid payload: {}", e))
+                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
             }
         }
     }
@@ -272,25 +266,17 @@ impl NetworkServerActor {
         daq_sender: &mpsc::Sender<DaqCommand>,
     ) -> ControlResponse {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let cmd = DaqCommand::StopRecording(tx);
+        let cmd = DaqCommand::StopRecording { response: tx };
 
         match daq_sender.send(cmd).await {
-            Ok(_) => {
-                match timeout(Duration::from_secs(5), rx).await {
-                    Ok(Ok(())) => {
-                        ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                    }
-                    Ok(Err(_)) => {
-                        ControlResponse::error(request_id, "Failed to stop recording".to_string())
-                    }
-                    Err(_) => {
-                        ControlResponse::error(request_id, "Request timeout".to_string())
-                    }
+            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                Ok(Ok(())) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
+                Ok(Err(_)) => {
+                    ControlResponse::error(request_id, "Failed to stop recording".to_string())
                 }
-            }
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
-            }
+                Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
+            },
+            Err(e) => ControlResponse::error(request_id, format!("Failed to send command: {}", e)),
         }
     }
 
@@ -300,48 +286,33 @@ impl NetworkServerActor {
         daq_sender: &mpsc::Sender<DaqCommand>,
     ) -> ControlResponse {
         match String::from_utf8(payload) {
-            Ok(config) => {
-                match serde_json::from_str::<serde_json::Value>(&config) {
-                    Ok(config_json) => {
-                        let id = config_json
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
+            Ok(instrument_id) => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let cmd = DaqCommand::SpawnInstrument {
+                    id: instrument_id,
+                    response: tx,
+                };
 
-                        let (tx, rx) = tokio::sync::oneshot::channel();
-                        let cmd = DaqCommand::SpawnInstrument(id.clone(), config_json, tx);
-
-                        match daq_sender.send(cmd).await {
-                            Ok(_) => {
-                                match timeout(Duration::from_secs(5), rx).await {
-                                    Ok(Ok(())) => {
-                                        ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                                    }
-                                    Ok(Err(_)) => {
-                                        ControlResponse::error(
-                                            request_id,
-                                            "Failed to spawn instrument".to_string(),
-                                        )
-                                    }
-                                    Err(_) => {
-                                        ControlResponse::error(request_id, "Request timeout".to_string())
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
-                            }
+                match daq_sender.send(cmd).await {
+                    Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                        Ok(Ok(())) => {
+                            ControlResponse::new(request_id, ResponseStatus::Success, vec![])
                         }
-                    }
-                    Err(e) => {
-                        ControlResponse::error(request_id, format!("Invalid JSON config: {}", e))
-                    }
+                        Ok(Err(e)) => ControlResponse::error(
+                            request_id,
+                            format!("Failed to spawn instrument: {}", e),
+                        ),
+                        Err(_) => {
+                            ControlResponse::error(request_id, "Request timeout".to_string())
+                        }
+                    },
+                    Err(e) => ControlResponse::error(
+                        request_id,
+                        format!("Failed to send command: {}", e),
+                    ),
                 }
             }
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Invalid payload: {}", e))
-            }
+            Err(e) => ControlResponse::error(request_id, format!("Invalid payload: {}", e)),
         }
     }
 
@@ -353,33 +324,80 @@ impl NetworkServerActor {
         match String::from_utf8(payload) {
             Ok(instrument_id) => {
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let cmd = DaqCommand::StopInstrument(instrument_id, tx);
+                let cmd = DaqCommand::StopInstrument {
+                    id: instrument_id,
+                    response: tx,
+                };
 
                 match daq_sender.send(cmd).await {
-                    Ok(_) => {
-                        match timeout(Duration::from_secs(5), rx).await {
-                            Ok(Ok(())) => {
-                                ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                            }
-                            Ok(Err(_)) => {
-                                ControlResponse::error(
-                                    request_id,
-                                    "Failed to stop instrument".to_string(),
-                                )
-                            }
-                            Err(_) => {
-                                ControlResponse::error(request_id, "Request timeout".to_string())
-                            }
+                    Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                        Ok(()) => {
+                            ControlResponse::new(request_id, ResponseStatus::Success, vec![])
                         }
-                    }
+                        Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
+                    },
                     Err(e) => {
                         ControlResponse::error(request_id, format!("Failed to send command: {}", e))
                     }
                 }
             }
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Invalid payload: {}", e))
+            Err(e) => ControlResponse::error(request_id, format!("Invalid payload: {}", e)),
+        }
+    }
+
+    /// Parse JSON payload into InstrumentCommand enum
+    fn parse_instrument_command(cmd_json: &serde_json::Value) -> Result<InstrumentCommand, String> {
+        let command_type = cmd_json
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'type' field in command".to_string())?;
+
+        match command_type {
+            "set_parameter" => {
+                let key = cmd_json
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing 'key' field".to_string())?
+                    .to_string();
+                
+                let value_json = cmd_json
+                    .get("value")
+                    .ok_or_else(|| "Missing 'value' field".to_string())?;
+                
+                let value = ParameterValue::from_json(value_json)
+                    .map_err(|e| format!("Invalid parameter value: {}", e))?;
+                
+                Ok(InstrumentCommand::SetParameter(key, value))
             }
+            "query_parameter" => {
+                let key = cmd_json
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing 'key' field".to_string())?
+                    .to_string();
+                
+                Ok(InstrumentCommand::QueryParameter(key))
+            }
+            "execute" => {
+                let cmd = cmd_json
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing 'command' field".to_string())?
+                    .to_string();
+                
+                let args = cmd_json
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                
+                Ok(InstrumentCommand::Execute(cmd, args))
+            }
+            _ => Err(format!("Unknown command type: {}", command_type)),
         }
     }
 
@@ -389,59 +407,50 @@ impl NetworkServerActor {
         daq_sender: &mpsc::Sender<DaqCommand>,
     ) -> ControlResponse {
         match String::from_utf8(payload) {
-            Ok(command_json) => {
-                match serde_json::from_str::<serde_json::Value>(&command_json) {
-                    Ok(cmd_json) => {
-                        let instrument_id = cmd_json
-                            .get("instrument_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
+            Ok(command_json) => match serde_json::from_str::<serde_json::Value>(&command_json) {
+                Ok(cmd_json) => {
+                    let instrument_id = cmd_json
+                        .get("instrument_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-                        let command_name = cmd_json
-                            .get("command")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
+                    match Self::parse_instrument_command(&cmd_json) {
+                        Ok(instrument_command) => {
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            let cmd = DaqCommand::SendInstrumentCommand {
+                                id: instrument_id,
+                                command: instrument_command,
+                                response: tx,
+                            };
 
-                        let (tx, rx) = tokio::sync::oneshot::channel();
-                        let cmd = DaqCommand::SendInstrumentCommand(
-                            instrument_id,
-                            command_name,
-                            cmd_json,
-                            tx,
-                        );
-
-                        match daq_sender.send(cmd).await {
-                            Ok(_) => {
-                                match timeout(Duration::from_secs(5), rx).await {
+                            match daq_sender.send(cmd).await {
+                                Ok(_) => match timeout(Duration::from_secs(5), rx).await {
                                     Ok(Ok(())) => {
                                         ControlResponse::new(request_id, ResponseStatus::Success, vec![])
                                     }
-                                    Ok(Err(_)) => {
-                                        ControlResponse::error(
-                                            request_id,
-                                            "Failed to send command".to_string(),
-                                        )
-                                    }
+                                    Ok(Err(_)) => ControlResponse::error(
+                                        request_id,
+                                        "Failed to send command".to_string(),
+                                    ),
                                     Err(_) => {
                                         ControlResponse::error(request_id, "Request timeout".to_string())
                                     }
-                                }
-                            }
-                            Err(e) => {
-                                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
+                                },
+                                Err(e) => ControlResponse::error(
+                                    request_id,
+                                    format!("Failed to send command: {}", e),
+                                ),
                             }
                         }
-                    }
-                    Err(e) => {
-                        ControlResponse::error(request_id, format!("Invalid JSON command: {}", e))
+                        Err(e) => ControlResponse::error(request_id, format!("Invalid command: {}", e)),
                     }
                 }
-            }
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Invalid payload: {}", e))
-            }
+                Err(e) => {
+                    ControlResponse::error(request_id, format!("Invalid JSON command: {}", e))
+                }
+            },
+            Err(e) => ControlResponse::error(request_id, format!("Invalid payload: {}", e)),
         }
     }
 }
