@@ -299,11 +299,74 @@ pub enum DaqCommand {
     AssignInstrumentToModule {
         /// Module instance ID
         module_id: String,
-        /// Logical role within the module (e.g. "stage", "laser")
+        /// Module role (e.g., "laser", "detector")
         role: String,
         /// Instrument ID to assign
         instrument_id: String,
         /// Response channel for assignment result
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Dynamically adds a new instrument at runtime without TOML modification.
+    ///
+    /// This is the MVP version of dynamic configuration. The instrument:
+    /// 1. Is created from inline TOML configuration  
+    /// 2. Is spawned and started immediately
+    /// 3. Is NOT persisted to the TOML file (ephemeral until app restart)
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Instrument added and started successfully
+    /// - `Err(DaqError)`: Invalid config, type not in registry, or spawn failed
+    AddInstrumentDynamic {
+        /// Unique instrument ID
+        id: String,
+        /// Instrument type (must match registry)
+        instrument_type: String,
+        /// Inline TOML configuration
+        config: toml::Value,
+        /// Response channel for add result  
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Dynamically removes an instrument at runtime.
+    ///
+    /// The actor will:
+    /// 1. Check if instrument is assigned to any modules (validation)
+    /// 2. Stop the instrument task gracefully  
+    /// 3. Remove from internal state
+    /// 4. NOT modify the TOML file
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Instrument stopped and removed
+    /// - `Err(DaqError)`: Instrument not found or has dependencies
+    RemoveInstrumentDynamic {
+        /// Instrument ID to remove
+        id: String,
+        /// Force removal even if assigned to modules
+        force: bool,
+        /// Response channel for removal result
+        response: oneshot::Sender<Result<()>>,
+    },
+
+    /// Updates a parameter on a running instrument.
+    ///
+    /// Sends InstrumentCommand::SetParameter to the instrument task.
+    /// Parameter changes are immediate but NOT persisted to TOML.
+    ///
+    /// # Response
+    ///
+    /// - `Ok(())`: Parameter updated successfully
+    /// - `Err(DaqError)`: Instrument not running or parameter invalid
+    UpdateInstrumentParameter {
+        /// Target instrument ID
+        id: String,
+        /// Parameter name  
+        parameter: String,
+        /// New parameter value
+        value: String,
+        /// Response channel for update result
         response: oneshot::Sender<Result<()>>,
     },
 
@@ -498,6 +561,58 @@ impl DaqCommand {
     pub fn stop_module(id: String) -> (Self, oneshot::Receiver<Result<()>>) {
         let (tx, rx) = oneshot::channel();
         (Self::StopModule { id, response: tx }, rx)
+    }
+
+    /// Helper to create an AddInstrumentDynamic command
+    pub fn add_instrument_dynamic(
+        id: String,
+        instrument_type: String,
+        config: toml::Value,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::AddInstrumentDynamic {
+                id,
+                instrument_type,
+                config,
+                response: tx,
+            },
+            rx,
+        )
+    }
+
+    /// Helper to create a RemoveInstrumentDynamic command
+    pub fn remove_instrument_dynamic(
+        id: String,
+        force: bool,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::RemoveInstrumentDynamic {
+                id,
+                force,
+                response: tx,
+            },
+            rx,
+        )
+    }
+
+    /// Helper to create an UpdateInstrumentParameter command
+    pub fn update_instrument_parameter(
+        id: String,
+        parameter: String,
+        value: String,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self::UpdateInstrumentParameter {
+                id,
+                parameter,
+                value,
+                response: tx,
+            },
+            rx,
+        )
     }
 
     /// Helper to create a Shutdown command

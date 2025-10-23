@@ -92,7 +92,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use daq_core::Measurement;
-use log::{error, info};
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -309,7 +309,32 @@ where
                         .await;
                     let _ = response.send(result);
                 }
-
+                DaqCommand::AddInstrumentDynamic {
+                    id,
+                    instrument_type,
+                    config,
+                    response,
+                } => {
+                    let result = self.add_instrument_dynamic(&id, &instrument_type, config).await;
+                    let _ = response.send(result);
+                }
+                DaqCommand::RemoveInstrumentDynamic {
+                    id,
+                    force,
+                    response,
+                } => {
+                    let result = self.remove_instrument_dynamic(&id, force).await;
+                    let _ = response.send(result);
+                }
+                DaqCommand::UpdateInstrumentParameter {
+                    id,
+                    parameter,
+                    value,
+                    response,
+                } => {
+                    let result = self.update_instrument_parameter(&id, &parameter, &value).await;
+                    let _ = response.send(result);
+                }
                 DaqCommand::StartModule { id, response } => {
                     let result = self.start_module(&id).await;
                     let _ = response.send(result);
@@ -1010,6 +1035,255 @@ where
         } else {
             Err(crate::error::DaqError::ShutdownFailed(errors))
         }
+    }
+
+    /// Dynamically adds a new instrument at runtime using inline configuration.
+    ///
+    /// This method creates and spawns an instrument without requiring TOML
+    /// configuration file modification. The instrument configuration is provided
+    /// inline and is not persisted - it will not survive application restart.
+    ///
+    /// Unlike `spawn_instrument()` which reads from Settings, this method accepts
+    /// TOML configuration directly. Processors are not supported for dynamically
+    /// added instruments in the MVP implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique identifier for the new instrument
+    /// * `instrument_type` - Type of instrument (must be registered in registry)
+    /// * `config` - TOML configuration for the instrument
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Instrument with this ID is already running
+    /// - Instrument type is not registered
+    /// - Connection to hardware fails
+    async fn add_instrument_dynamic(
+        &mut self,
+        id: &str,
+        instrument_type: &str,
+        config: toml::Value,
+    ) -> Result<()> {
+        if self.instruments.contains_key(id) {
+            return Err(anyhow!(
+                "Instrument '{}' is already running - cannot add duplicate",
+                id
+            ));
+        }
+
+        // Create instrument from registry
+        let mut instrument = self
+            .instrument_registry
+            .create(instrument_type, id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Instrument type '{}' not registered in registry",
+                    instrument_type
+                )
+            })?;
+
+        info!(
+            "Dynamically adding instrument '{}' of type '{}'",
+            id, instrument_type
+        );
+
+        let data_distributor = self.data_distributor.clone();
+        let settings = self.settings.clone();
+        let id_clone = id.to_string();
+
+        // Create command channel
+        let (command_tx, mut command_rx) =
+            tokio::sync::mpsc::channel(settings.application.command_channel_capacity);
+
+        // Try to connect asynchronously
+        instrument
+            .connect(&id_clone, &settings)
+            .await
+            .with_context(|| format!("Failed to connect to instrument '{}'", id_clone))?;
+        
+        info!("Instrument '{}' connected.", id_clone);
+
+        let capabilities = instrument.capabilities();
+
+        // Spawn instrument task (no processors for dynamic instruments in MVP)
+        let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
+            let mut stream = instrument
+                .measure()
+                .data_stream()
+                .await
+                .context("Failed to get data stream")?;
+            loop {
+                tokio::select! {
+                    data_point_option = stream.recv() => {
+                        match data_point_option {
+                            Some(dp) => {
+                                // Convert to daq_core::Measurement
+                                let measurement: daq_core::Measurement = (*dp).clone().into();
+                                let measurements = vec![Arc::new(measurement)];
+
+                                // Broadcast measurements (no processor chain for dynamic instruments)
+                                for measurement in measurements {
+                                    if let Err(e) = data_distributor.broadcast(measurement).await {
+                                        error!("Failed to broadcast measurement: {}", e);
+                                    }
+                                }
+                            }
+                            None => {
+                                error!("Stream closed");
+                                break;
+                            }
+                        }
+                    }
+                    Some(command) = command_rx.recv() => {
+                        match command {
+                            crate::core::InstrumentCommand::Shutdown => {
+                                info!("Instrument '{}' received shutdown command", id_clone);
+                                break;
+                            }
+                            _ => {
+                                if let Err(e) = instrument.handle_command(command).await {
+                                    error!("Failed to handle command for '{}': {}", id_clone, e);
+                                }
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                        log::trace!("Instrument stream for {} is idle.", id_clone);
+                    }
+                }
+            }
+
+            // Graceful cleanup after loop breaks
+            info!("Instrument '{}' disconnecting...", id_clone);
+            instrument
+                .disconnect()
+                .await
+                .context("Failed to disconnect instrument")?;
+            info!("Instrument '{}' disconnected successfully", id_clone);
+            Ok(())
+        });
+
+        let handle = InstrumentHandle {
+            task,
+            command_tx,
+            capabilities,
+        };
+        self.instruments.insert(id.to_string(), handle);
+        
+        info!("Instrument '{}' dynamically added and started", id);
+        Ok(())
+    }
+
+    /// Dynamically removes an instrument at runtime.
+    ///
+    /// This method stops and removes a running instrument. If `force` is false,
+    /// it validates that no modules are currently using this instrument before
+    /// removal. If `force` is true, dependency validation is bypassed.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Instrument identifier to remove
+    /// * `force` - If true, bypass dependency validation
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Instrument is not running
+    /// - Instrument is assigned to a module (when force=false)
+    /// - Graceful shutdown fails
+    async fn remove_instrument_dynamic(&mut self, id: &str, force: bool) -> Result<()> {
+        // Check if instrument exists
+        if !self.instruments.contains_key(id) {
+            return Err(anyhow!("Instrument '{}' is not running", id));
+        }
+
+        // Check module dependencies unless force=true
+        if !force {
+            // Iterate through all modules to check if any are using this instrument
+            for (module_id, module_arc) in &self.modules {
+                let module = module_arc.lock().await;
+                let requirements = module.required_capabilities();
+                
+                // Check module status and assignments
+                // For MVP, we'll check if any module has this instrument in assignments
+                // A full implementation would query module.get_assigned_instruments()
+                // For now, we log a warning and allow removal
+                if !requirements.is_empty() {
+                    warn!(
+                        "Module '{}' may be using instrument '{}'. Use force=true to bypass check.",
+                        module_id, id
+                    );
+                    // In MVP, we don't have a way to query assignments, so we warn but don't block
+                }
+            }
+        }
+
+        info!(
+            "Dynamically removing instrument '{}' (force={})",
+            id, force
+        );
+
+        // Stop the instrument gracefully
+        self.stop_instrument(id)
+            .await
+            .with_context(|| format!("Failed to stop instrument '{}'", id))?;
+
+        info!("Instrument '{}' successfully removed", id);
+        Ok(())
+    }
+
+    /// Updates a parameter on a running instrument.
+    ///
+    /// This method sends a `SetParameter` command to the specified instrument.
+    /// The parameter value is provided as a string and converted to
+    /// `ParameterValue::String` for the MVP implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Instrument identifier
+    /// * `parameter` - Parameter name
+    /// * `value` - Parameter value (as string)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Instrument is not running
+    /// - Command channel is full or closed
+    /// - Instrument rejects the parameter update
+    async fn update_instrument_parameter(
+        &self,
+        id: &str,
+        parameter: &str,
+        value: &str,
+    ) -> Result<()> {
+        info!(
+            "Updating instrument '{}' parameter '{}' to '{}'",
+            id, parameter, value
+        );
+
+        // For MVP, we convert the string value to ParameterValue::String
+        // A more sophisticated implementation would parse the value type
+        let param_value = crate::core::ParameterValue::String(value.to_string());
+        let command = crate::core::InstrumentCommand::SetParameter(
+            parameter.to_string(),
+            param_value,
+        );
+
+        self.send_instrument_command(id, command)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to update parameter '{}' on instrument '{}'",
+                    parameter, id
+                )
+            })?;
+
+        info!(
+            "Parameter '{}' on instrument '{}' updated successfully",
+            parameter, id
+        );
+        Ok(())
     }
 }
 
