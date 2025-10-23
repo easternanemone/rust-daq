@@ -200,7 +200,9 @@ This project uses **[beads](https://github.com/steveyegge/beads)** as an AI-frie
 
 ### Installation
 
-Beads requires both the `bd` CLI tool and optionally the `beads-mcp` MCP server for Claude Code integration.
+Beads requires both the `bd` CLI tool and the `beads-mcp` MCP server for Claude Code integration.
+
+**📋 For detailed installation instructions, troubleshooting, and environment-specific guidance, see [BEADS_INSTALLATION.md](BEADS_INSTALLATION.md)**
 
 #### Option 1: Quick Install (Recommended)
 
