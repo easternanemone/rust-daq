@@ -1,0 +1,32 @@
+name: Hardware-in-the-Loop CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    name: Hardware-in-the-Loop Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci
+
+      - name: Verify Tailscale status
+        run: tailscale status
+
+      - name: Ping hardware device
+        # Replace 'your-hardware-device-name' with the actual Tailscale hostname of your hardware.
+        run: tailscale ping -c 1 your-hardware-device-name
+
+      - name: Run hardware-in-the-loop tests
+        run: |
+          echo "Running hardware-in-the-loop tests..."
+          # Add your test commands here.
