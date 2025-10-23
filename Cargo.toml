@@ -2,6 +2,7 @@
 members = [
     "crates/daq-core",
 ]
+exclude = ["python"]
 
 # Keep the main crate at root for compatibility
 [package]
