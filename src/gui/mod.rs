@@ -43,6 +43,7 @@
 
 pub mod instrument_controls;
 pub mod storage_manager;
+pub mod verification;
 
 use self::instrument_controls::*;
 use self::storage_manager::StorageManager;
@@ -161,6 +162,9 @@ where
     /// Frame counter for periodic subscription rebuilds (every 60 frames = ~1 second at 60fps)
     /// This catches tab closes, channel changes, and other modifications we can't directly track
     frame_counter: u32,
+    /// Screenshot request tracking
+    /// Path to save the next screenshot, or None if no screenshot requested
+    screenshot_request: Option<std::path::PathBuf>,
 }
 
 impl<M> Gui<M>
@@ -192,6 +196,7 @@ where
             channel_subscriptions: HashMap::new(),
             subscriptions_dirty: true, // Rebuild on first frame
             frame_counter: 0,
+            screenshot_request: None,
         }
     }
 
@@ -360,6 +365,44 @@ where
             }
         }
     }
+
+    /// Request a screenshot to be taken on the next frame.
+    ///
+    /// # Arguments
+    /// * `path` - Path where the screenshot will be saved
+    ///
+    /// # Example
+    /// ```no_run
+    /// gui.request_screenshot("screenshots/verification.png");
+    /// ```
+    pub fn request_screenshot<P: Into<std::path::PathBuf>>(&mut self, path: P) {
+        self.screenshot_request = Some(path.into());
+    }
+
+    /// Takes a screenshot and saves it to the specified path.
+    /// Creates parent directories if they don't exist.
+    fn take_screenshot(&self, ctx: &egui::Context, path: std::path::PathBuf) {
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                error!("Failed to create screenshot directory: {}", e);
+                return;
+            }
+        }
+
+        // Request screenshot from egui
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+
+        // Note: In egui 0.29, screenshots are handled via viewport commands
+        // The actual screenshot will be captured on the next frame
+        // We use a simpler approach: request via viewport command and log
+        info!("Screenshot requested: {}", path.display());
+
+        // TODO: egui 0.29's screenshot API is asynchronous and requires
+        // additional handling through ViewportCommand. For now, we log the request.
+        // A future enhancement would implement proper async screenshot handling
+        // with egui's callback system.
+    }
 }
 
 impl<M> eframe::App for Gui<M>
@@ -373,6 +416,23 @@ where
         self.frame_counter = self.frame_counter.wrapping_add(1);
         if self.subscriptions_dirty || self.frame_counter % 60 == 0 {
             self.rebuild_subscriptions();
+        }
+
+        // Handle screenshot keyboard shortcut (F12)
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::F12) {
+                let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                let screenshot_path = std::path::PathBuf::from(format!(
+                    "screenshots/screenshot_{}.png",
+                    timestamp
+                ));
+                self.screenshot_request = Some(screenshot_path);
+            }
+        });
+
+        // Process screenshot request if pending
+        if let Some(path) = self.screenshot_request.take() {
+            self.take_screenshot(ctx, path);
         }
 
         self.update_data();

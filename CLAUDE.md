@@ -175,6 +175,10 @@ Shutdown command breaks the loop, then `disconnect()` is called outside for guar
 - **Integration tests**: tests/*.rs (integration_test, storage_shutdown_test, measurement_enum_test)
 - **Mock instruments**: src/instrument/mock.rs for testing without hardware
 - **Test helpers**: Use `tempfile` crate for temporary storage, `serial_test` for shared resource tests
+- **GUI verification**: Screenshot capability for visual testing (F12 key or programmatic API)
+  - Screenshots saved to `screenshots/` directory with timestamp
+  - Verification scripts in `jules-scratch/verification/` for agent workflows
+  - See `src/gui/verification.rs` for programmatic testing support
 
 ## Multi-Agent Coordination
 

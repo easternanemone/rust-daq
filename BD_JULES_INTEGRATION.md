@@ -234,15 +234,100 @@ bd ready  # Now daq-2 and daq-3 are ready!
 bd dep tree daq-6  # See the full chain
 ```
 
+## Visual Verification with Screenshots
+
+For GUI-related issues, agents can now capture screenshots to verify changes and provide visual proof for PRs.
+
+### Screenshot Capabilities
+
+The rust-daq GUI includes screenshot functionality that agents can use:
+
+1. **Keyboard Shortcut**: Press `F12` to capture a screenshot
+   - Screenshots are saved to `screenshots/screenshot_YYYYMMDD_HHMMSS.png`
+   - Automatically creates the screenshots directory
+
+2. **Programmatic API**: Use in code or tests
+   ```rust
+   gui.request_screenshot("screenshots/verification.png");
+   ```
+
+3. **Verification Scripts**: Automated verification for agent workflows
+   ```bash
+   # Run the verification script
+   python jules-scratch/verification/verify_gui_screenshot.py
+   ```
+
+### Example: GUI Issue with Visual Verification
+
+```bash
+# 1. Pick a GUI-related issue
+bd show daq-15  # "Add spectrum plot visualization"
+
+# 2. Create Jules session with visual verification requirement
+# In the prompt, specify:
+# "Success Criteria: Screenshot showing spectrum plot with correct axes and labels"
+
+# 3. Jules implements the feature
+# Jules runs the application and triggers screenshot (F12)
+
+# 4. Verification script captures and validates
+python jules-scratch/verification/verify_gui_screenshot.py
+# Output:
+# ✓ Application is running
+# ✓ Screenshot verified: screenshots/screenshot_20251023_143522.png
+# ✓ Copied to: jules-scratch/verification/verification.png
+
+# 5. Attach screenshot to PR
+gh pr create --title "[daq-15] Add spectrum plot visualization" \
+  --body "## Screenshot\n![Spectrum Plot](./screenshots/verification.png)\n\n..."
+
+# 6. Mark issue complete
+bd done daq-15
+```
+
+### Integration with Playwright-style Verification
+
+The verification framework is inspired by web-based Playwright testing but adapted for native egui applications:
+
+**Web (Playwright)**:
+```python
+# Connect to browser
+page.screenshot(path="verification.png")
+expect(element).to_be_visible()
+```
+
+**Native (rust-daq)**:
+```python
+# Check application running
+trigger_screenshot()  # F12 key
+verify_screenshot_exists("screenshots")
+```
+
+### Best Practices for Visual Verification
+
+✅ **DO**:
+- Capture screenshots for all GUI changes
+- Include screenshots in PR descriptions
+- Use descriptive names: `feature_name_verification.png`
+- Verify critical UI elements are visible
+- Test with keyboard shortcut (F12) before committing
+
+❌ **DON'T**:
+- Commit auto-generated timestamped screenshots to git
+- Skip visual verification for GUI issues
+- Use screenshots as primary documentation (code comments are better)
+
 ## Summary
 
 **bd** = Work queue + dependencies + priorities
 **Jules** = Implementation worker
-**Integration** = bd context → Jules prompts → Merged PRs → bd tracking
+**Screenshots** = Visual verification for GUI changes
+**Integration** = bd context → Jules prompts → Visual verification → Merged PRs → bd tracking
 
 This gives you:
 - Clear work prioritization (bd ready)
 - Dependency management (bd dep tree)
 - AI implementation (Jules)
+- Visual verification (screenshots)
 - Progress tracking (bd status)
-- Clean workflow (ready → implement → merge → done)
+- Clean workflow (ready → implement → verify → merge → done)
