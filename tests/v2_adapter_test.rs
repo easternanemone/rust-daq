@@ -64,7 +64,7 @@ async fn test_v2_adapter_command_translation() {
     let result = adapter
         .handle_command(InstrumentCommand::SetParameter(
             "exposure_ms".to_string(),
-            "200.0".to_string(),
+            rust_daq::core::ParameterValue::String("200.0".to_string()),
         ))
         .await;
 

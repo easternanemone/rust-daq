@@ -211,8 +211,9 @@ impl StorageWriter for Hdf5Writer {
             // using self.file.as_ref().unwrap() and file.new_attr::<String>() methods
             Err(DaqError::FeatureIncomplete(
                 "storage_hdf5".to_string(),
-                "HDF5 metadata writing is not implemented. Use CSV storage for now.".to_string()
-            ).into())
+                "HDF5 metadata writing is not implemented. Use CSV storage for now.".to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_hdf5"))]
         Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
@@ -228,8 +229,10 @@ impl StorageWriter for Hdf5Writer {
             // 4. Use chunked storage for efficient appends
             Err(DaqError::FeatureIncomplete(
                 "storage_hdf5".to_string(),
-                "HDF5 data writing is not implemented. Use CSV storage for scalar data.".to_string()
-            ).into())
+                "HDF5 data writing is not implemented. Use CSV storage for scalar data."
+                    .to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_hdf5"))]
         Err(DaqError::FeatureNotEnabled("storage_hdf5".to_string()).into())
@@ -293,8 +296,9 @@ impl StorageWriter for ArrowWriter {
             // 3. Set up record batch builders for streaming writes
             Err(DaqError::FeatureIncomplete(
                 "storage_arrow".to_string(),
-                "Arrow storage is not implemented. Use CSV storage for scalar data.".to_string()
-            ).into())
+                "Arrow storage is not implemented. Use CSV storage for scalar data.".to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_arrow"))]
         Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
@@ -307,8 +311,9 @@ impl StorageWriter for ArrowWriter {
             // using Schema::with_metadata() before creating the IPC writer
             Err(DaqError::FeatureIncomplete(
                 "storage_arrow".to_string(),
-                "Arrow metadata writing is not implemented. Use CSV storage for now.".to_string()
-            ).into())
+                "Arrow metadata writing is not implemented. Use CSV storage for now.".to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_arrow"))]
         Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
@@ -324,8 +329,10 @@ impl StorageWriter for ArrowWriter {
             // 4. Handle efficient columnar storage for high-throughput data
             Err(DaqError::FeatureIncomplete(
                 "storage_arrow".to_string(),
-                "Arrow data writing is not implemented. Use CSV storage for scalar data.".to_string()
-            ).into())
+                "Arrow data writing is not implemented. Use CSV storage for scalar data."
+                    .to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_arrow"))]
         Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
@@ -337,8 +344,9 @@ impl StorageWriter for ArrowWriter {
             // To fully implement: Flush and close the IPC writer
             Err(DaqError::FeatureIncomplete(
                 "storage_arrow".to_string(),
-                "Arrow shutdown is not implemented. Use CSV storage for now.".to_string()
-            ).into())
+                "Arrow shutdown is not implemented. Use CSV storage for now.".to_string(),
+            )
+            .into())
         }
         #[cfg(not(feature = "storage_arrow"))]
         Err(DaqError::FeatureNotEnabled("storage_arrow".to_string()).into())
@@ -348,8 +356,8 @@ impl StorageWriter for ArrowWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daq_core::{Measurement, DataPoint};
     use chrono::Utc;
+    use daq_core::{DataPoint, Measurement};
 
     #[tokio::test]
     async fn test_hdf5_writer_returns_proper_errors() {
@@ -379,7 +387,7 @@ mod tests {
         let mut writer = ArrowWriter::new();
 
         // Create a minimal Settings object for testing
-        use crate::config::{StorageSettings, ApplicationSettings};
+        use crate::config::{ApplicationSettings, StorageSettings};
         let settings = Arc::new(crate::config::Settings {
             log_level: "info".to_string(),
             application: ApplicationSettings {
@@ -429,6 +437,9 @@ mod tests {
         // Test that Arrow write fails with error, not Ok(())
         let mut arrow_writer = ArrowWriter::new();
         let result = arrow_writer.write(&test_data).await;
-        assert!(result.is_err(), "Arrow write should fail, not return Ok(())");
+        assert!(
+            result.is_err(),
+            "Arrow write should fail, not return Ok(())"
+        );
     }
 }

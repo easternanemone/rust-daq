@@ -41,16 +41,12 @@
 //! - `log_panel`: Implements the UI for the filterable log view at the bottom of the screen.
 //! - `storage_manager`: Provides the UI for creating, managing, and saving data acquisition sessions.
 
-pub mod storage_manager;
 pub mod instrument_controls;
+pub mod storage_manager;
 
-use self::storage_manager::StorageManager;
 use self::instrument_controls::*;
-use crate::{
-    app::DaqApp,
-    core::DataPoint,
-    log_capture::LogBuffer,
-};
+use self::storage_manager::StorageManager;
+use crate::{app::DaqApp, core::DataPoint, log_capture::LogBuffer};
 use daq_core::Measurement;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style, TabIndex, TabViewer};
@@ -177,9 +173,8 @@ where
         let (data_receiver, log_buffer) =
             app.with_inner(|inner| (inner.data_sender.subscribe(), inner.log_buffer.clone()));
 
-        let mut dock_state = DockState::new(vec![
-            DockTab::Plot(PlotTab::new("sine_wave".to_string()))
-        ]);
+        let mut dock_state =
+            DockState::new(vec![DockTab::Plot(PlotTab::new("sine_wave".to_string()))]);
         dock_state.push_to_focused_leaf(DockTab::Plot(PlotTab::new("cosine_wave".to_string())));
 
         Self {
@@ -245,93 +240,114 @@ where
         loop {
             match self.data_receiver.try_recv() {
                 Ok(measurement) => {
-            match measurement.as_ref() {
-                Measurement::Scalar(ref data_point) => {
-                    // Update the central data cache with channel as key
-                    let cache_key = data_point.channel.clone();
-                    self.data_cache.insert(cache_key.clone(), measurement.clone());
+                    match measurement.as_ref() {
+                        Measurement::Scalar(ref data_point) => {
+                            // Update the central data cache with channel as key
+                            let cache_key = data_point.channel.clone();
+                            self.data_cache
+                                .insert(cache_key.clone(), measurement.clone());
 
-                    // O(1) lookup: Find tabs subscribed to this channel
-                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
-                        // Only iterate over interested tabs (typically 1-3)
-                        for &tab_location in subscribed_tabs {
-                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
-                                if location == tab_location {
-                                    if let DockTab::Plot(plot_tab) = tab {
-                                        // Update plot data
-                                        if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
-                                            plot_tab.plot_data.pop_front();
+                            // O(1) lookup: Find tabs subscribed to this channel
+                            if let Some(subscribed_tabs) =
+                                self.channel_subscriptions.get(&cache_key)
+                            {
+                                // Only iterate over interested tabs (typically 1-3)
+                                for &tab_location in subscribed_tabs {
+                                    for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                        if location == tab_location {
+                                            if let DockTab::Plot(plot_tab) = tab {
+                                                // Update plot data
+                                                if plot_tab.plot_data.len() >= PLOT_DATA_CAPACITY {
+                                                    plot_tab.plot_data.pop_front();
+                                                }
+                                                let timestamp =
+                                                    data_point.timestamp.timestamp_micros() as f64
+                                                        / 1_000_000.0;
+                                                if plot_tab.last_timestamp == 0.0 {
+                                                    plot_tab.last_timestamp = timestamp;
+                                                }
+                                                plot_tab.plot_data.push_back([
+                                                    timestamp - plot_tab.last_timestamp,
+                                                    data_point.value,
+                                                ]);
+                                            }
+                                            break;
                                         }
-                                        let timestamp =
-                                            data_point.timestamp.timestamp_micros() as f64 / 1_000_000.0;
-                                        if plot_tab.last_timestamp == 0.0 {
-                                            plot_tab.last_timestamp = timestamp;
-                                        }
-                                        plot_tab.plot_data.push_back([
-                                            timestamp - plot_tab.last_timestamp,
-                                            data_point.value,
-                                        ]);
                                     }
-                                    break;
+                                }
+                            }
+                        }
+                        Measurement::Spectrum(ref spectrum_data) => {
+                            // Update cache for spectrum data
+                            let cache_key = format!("spectrum:{}", spectrum_data.channel);
+                            self.data_cache
+                                .insert(cache_key.clone(), measurement.clone());
+
+                            // O(1) lookup: Find spectrum tabs subscribed to this channel
+                            if let Some(subscribed_tabs) =
+                                self.channel_subscriptions.get(&cache_key)
+                            {
+                                for &tab_location in subscribed_tabs {
+                                    for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                        if location == tab_location {
+                                            if let DockTab::Spectrum(spectrum_tab) = tab {
+                                                // Convert wavelengths/intensities to [f64; 2] for plotting
+                                                spectrum_tab.spectrum_data = spectrum_data
+                                                    .wavelengths
+                                                    .iter()
+                                                    .zip(spectrum_data.intensities.iter())
+                                                    .map(|(&wavelength, &intensity)| {
+                                                        [wavelength, intensity]
+                                                    })
+                                                    .collect();
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Measurement::Image(ref image_data) => {
+                            // Update cache for image data
+                            let cache_key = format!("image:{}", image_data.channel);
+                            self.data_cache
+                                .insert(cache_key.clone(), measurement.clone());
+
+                            // O(1) lookup: Find image tabs subscribed to this channel
+                            if let Some(subscribed_tabs) =
+                                self.channel_subscriptions.get(&cache_key)
+                            {
+                                for &tab_location in subscribed_tabs {
+                                    for (location, tab) in self.dock_state.iter_all_tabs_mut() {
+                                        if location == tab_location {
+                                            if let DockTab::Image(image_tab) = tab {
+                                                image_tab.dimensions = (
+                                                    image_data.width as usize,
+                                                    image_data.height as usize,
+                                                );
+                                                image_tab.pixel_data = image_data.pixels.clone();
+
+                                                // Calculate value range for colormap scaling
+                                                if let (Some(&min), Some(&max)) =
+                                                    (
+                                                        image_data.pixels.iter().min_by(|a, b| {
+                                                            a.partial_cmp(b).unwrap()
+                                                        }),
+                                                        image_data.pixels.iter().max_by(|a, b| {
+                                                            a.partial_cmp(b).unwrap()
+                                                        }),
+                                                    )
+                                                {
+                                                    image_tab.value_range = (min, max);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                Measurement::Spectrum(ref spectrum_data) => {
-                    // Update cache for spectrum data
-                    let cache_key = format!("spectrum:{}", spectrum_data.channel);
-                    self.data_cache.insert(cache_key.clone(), measurement.clone());
-
-                    // O(1) lookup: Find spectrum tabs subscribed to this channel
-                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
-                        for &tab_location in subscribed_tabs {
-                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
-                                if location == tab_location {
-                                    if let DockTab::Spectrum(spectrum_tab) = tab {
-                                        // Convert wavelengths/intensities to [f64; 2] for plotting
-                                        spectrum_tab.spectrum_data = spectrum_data
-                                            .wavelengths
-                                            .iter()
-                                            .zip(spectrum_data.intensities.iter())
-                                            .map(|(&wavelength, &intensity)| [wavelength, intensity])
-                                            .collect();
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Measurement::Image(ref image_data) => {
-                    // Update cache for image data
-                    let cache_key = format!("image:{}", image_data.channel);
-                    self.data_cache.insert(cache_key.clone(), measurement.clone());
-
-                    // O(1) lookup: Find image tabs subscribed to this channel
-                    if let Some(subscribed_tabs) = self.channel_subscriptions.get(&cache_key) {
-                        for &tab_location in subscribed_tabs {
-                            for (location, tab) in self.dock_state.iter_all_tabs_mut() {
-                                if location == tab_location {
-                                    if let DockTab::Image(image_tab) = tab {
-                                        image_tab.dimensions = (image_data.width as usize, image_data.height as usize);
-                                        image_tab.pixel_data = image_data.pixels.clone();
-
-                                        // Calculate value range for colormap scaling
-                                        if let (Some(&min), Some(&max)) = (
-                                            image_data.pixels.iter().min_by(|a, b| a.partial_cmp(b).unwrap()),
-                                            image_data.pixels.iter().max_by(|a, b| a.partial_cmp(b).unwrap()),
-                                        ) {
-                                            image_tab.value_range = (min, max);
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     // No more data available, exit loop
@@ -398,7 +414,9 @@ where
 
                 if ui.button("Add Plot").clicked() {
                     self.dock_state
-                        .push_to_focused_leaf(DockTab::Plot(PlotTab::new(self.selected_channel.clone())));
+                        .push_to_focused_leaf(DockTab::Plot(PlotTab::new(
+                            self.selected_channel.clone(),
+                        )));
                     self.subscriptions_dirty = true;
                 }
 
@@ -407,33 +425,35 @@ where
                 // Instrument control buttons
                 egui::menu::menu_button(ui, "Instrument Controls", |ui| {
                     if ui.button("🔬 MaiTai Laser").clicked() {
-                        self.dock_state.push_to_focused_leaf(
-                            DockTab::MaiTaiControl(MaiTaiControlPanel::new("maitai".to_string()))
-                        );
+                        self.dock_state.push_to_focused_leaf(DockTab::MaiTaiControl(
+                            MaiTaiControlPanel::new("maitai".to_string()),
+                        ));
                         ui.close_menu();
                     }
                     if ui.button("📊 Newport 1830-C").clicked() {
-                        self.dock_state.push_to_focused_leaf(
-                            DockTab::Newport1830CControl(Newport1830CControlPanel::new("newport_1830c".to_string()))
-                        );
+                        self.dock_state
+                            .push_to_focused_leaf(DockTab::Newport1830CControl(
+                                Newport1830CControlPanel::new("newport_1830c".to_string()),
+                            ));
                         ui.close_menu();
                     }
                     if ui.button("🔄 Elliptec Rotators").clicked() {
-                        self.dock_state.push_to_focused_leaf(
-                            DockTab::ElliptecControl(ElliptecControlPanel::new("elliptec".to_string(), vec![0, 1]))
-                        );
+                        self.dock_state
+                            .push_to_focused_leaf(DockTab::ElliptecControl(
+                                ElliptecControlPanel::new("elliptec".to_string(), vec![0, 1]),
+                            ));
                         ui.close_menu();
                     }
                     if ui.button("⚙️ ESP300 Motion").clicked() {
-                        self.dock_state.push_to_focused_leaf(
-                            DockTab::ESP300Control(ESP300ControlPanel::new("esp300".to_string(), 3))
-                        );
+                        self.dock_state.push_to_focused_leaf(DockTab::ESP300Control(
+                            ESP300ControlPanel::new("esp300".to_string(), 3),
+                        ));
                         ui.close_menu();
                     }
                     if ui.button("📷 PVCAM Camera").clicked() {
-                        self.dock_state.push_to_focused_leaf(
-                            DockTab::PVCAMControl(PVCAMControlPanel::new("pvcam".to_string()))
-                        );
+                        self.dock_state.push_to_focused_leaf(DockTab::PVCAMControl(
+                            PVCAMControlPanel::new("pvcam".to_string()),
+                        ));
                         ui.close_menu();
                     }
                 });
@@ -465,7 +485,13 @@ where
             .resizable(true)
             .min_width(200.0)
             .show(ctx, |ui| {
-                render_instrument_panel(ui, &instruments, &self.app, &mut self.dock_state, &self.data_cache);
+                render_instrument_panel(
+                    ui,
+                    &instruments,
+                    &self.app,
+                    &mut self.dock_state,
+                    &self.data_cache,
+                );
             });
 
         let mut tab_viewer = DockTabViewer {
@@ -476,14 +502,12 @@ where
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Check for dropped instruments
-            let (_inner_response, dropped_payload) = ui.dnd_drop_zone::<(String, String, toml::Value), _>(
-                egui::Frame::none(),
-                |ui| {
+            let (_inner_response, dropped_payload) = ui
+                .dnd_drop_zone::<(String, String, toml::Value), _>(egui::Frame::none(), |ui| {
                     DockArea::new(&mut self.dock_state)
                         .style(Style::from_egui(ctx.style().as_ref()))
                         .show_inside(ui, &mut tab_viewer);
-                },
-            );
+                });
 
             // If something was dropped, open its controls
             if let Some(payload) = dropped_payload {
@@ -526,8 +550,7 @@ fn render_instrument_panel<M>(
     app: &DaqApp<M>,
     dock_state: &mut DockState<DockTab>,
     data_cache: &HashMap<String, Arc<Measurement>>,
-)
-where
+) where
     M: Measure + 'static,
     M::Data: Into<daq_core::Measurement>,
 {
@@ -541,194 +564,230 @@ where
             let drag_id = egui::Id::new(format!("drag_{}", id));
             let drag_payload = (inst_type.to_string(), id.clone(), config.clone());
 
-            let response = ui.dnd_drag_source(drag_id, drag_payload, |ui| {
-                egui::Frame::group(ui.style())
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.strong(id);
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if *is_running {
-                                    ui.colored_label(egui::Color32::GREEN, "● Running");
-                                    if ui.button("Stop").clicked() {
-                                        app.with_inner(|inner| inner.stop_instrument(id));
-                                    }
-                                } else {
-                                    ui.colored_label(egui::Color32::GRAY, "● Stopped");
-                                    if ui.button("Start").clicked() {
-                                        app.with_inner(|inner| {
-                                            if let Err(e) = inner.spawn_instrument(id) {
-                                                error!("Failed to start instrument '{}': {}", id, e);
+            let response = ui
+                .dnd_drag_source(drag_id, drag_payload, |ui| {
+                    egui::Frame::group(ui.style())
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.strong(id);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if *is_running {
+                                            ui.colored_label(egui::Color32::GREEN, "● Running");
+                                            if ui.button("Stop").clicked() {
+                                                app.with_inner(|inner| inner.stop_instrument(id));
                                             }
-                                        });
+                                        } else {
+                                            ui.colored_label(egui::Color32::GRAY, "● Stopped");
+                                            if ui.button("Start").clicked() {
+                                                app.with_inner(|inner| {
+                                                    if let Err(e) = inner.spawn_instrument(id) {
+                                                        error!(
+                                                            "Failed to start instrument '{}': {}",
+                                                            id, e
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+
+                            ui.separator();
+
+                            // Display instrument type
+                            ui.label(format!("Type: {}", inst_type));
+
+                            // Display instrument name
+                            if let Some(name) = config.get("name").and_then(|v| v.as_str()) {
+                                ui.label(format!("Name: {}", name));
+                            }
+
+                            // Display specific parameters based on instrument type
+                            match inst_type {
+                                "mock" => {
+                                    ui.separator();
+                                    if let Some(rate) =
+                                        config.get("sample_rate_hz").and_then(|v| v.as_float())
+                                    {
+                                        ui.label(format!("Sample Rate: {} Hz", rate));
+                                    }
+                                    if let Some(channels) =
+                                        config.get("channels").and_then(|v| v.as_array())
+                                    {
+                                        let channel_names: Vec<String> = channels
+                                            .iter()
+                                            .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                                            .collect();
+                                        ui.label(format!("Channels: {}", channel_names.join(", ")));
                                     }
                                 }
-                            });
-                        });
+                                "scpi_keithley" => {
+                                    ui.separator();
+                                    if let Some(addr) =
+                                        config.get("address").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Address: {}", addr));
+                                    }
+                                    if let Some(port) =
+                                        config.get("port").and_then(|v| v.as_integer())
+                                    {
+                                        ui.label(format!("Port: {}", port));
+                                    }
+                                }
+                                "maitai" => {
+                                    ui.separator();
+                                    if let Some(wl) =
+                                        config.get("wavelength").and_then(|v| v.as_float())
+                                    {
+                                        ui.label(format!("Wavelength: {:.1} nm", wl));
+                                    }
+                                    if let Some(port) = config.get("port").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Port: {}", port));
+                                    }
 
-                    ui.separator();
-
-                    // Display instrument type
-                    ui.label(format!("Type: {}", inst_type));
-
-                    // Display instrument name
-                    if let Some(name) = config.get("name").and_then(|v| v.as_str()) {
-                        ui.label(format!("Name: {}", name));
-                    }
-
-                    // Display specific parameters based on instrument type
-                    match inst_type {
-                        "mock" => {
-                            ui.separator();
-                            if let Some(rate) = config.get("sample_rate_hz").and_then(|v| v.as_float()) {
-                                ui.label(format!("Sample Rate: {} Hz", rate));
-                            }
-                            if let Some(channels) = config.get("channels").and_then(|v| v.as_array()) {
-                                let channel_names: Vec<String> = channels
-                                    .iter()
-                                    .filter_map(|c| c.as_str().map(|s| s.to_string()))
-                                    .collect();
-                                ui.label(format!("Channels: {}", channel_names.join(", ")));
-                            }
-                        }
-                        "scpi_keithley" => {
-                            ui.separator();
-                            if let Some(addr) = config.get("address").and_then(|v| v.as_str()) {
-                                ui.label(format!("Address: {}", addr));
-                            }
-                            if let Some(port) = config.get("port").and_then(|v| v.as_integer()) {
-                                ui.label(format!("Port: {}", port));
-                            }
-                        }
-                        "maitai" => {
-                            ui.separator();
-                            if let Some(wl) = config.get("wavelength").and_then(|v| v.as_float()) {
-                                ui.label(format!("Wavelength: {:.1} nm", wl));
-                            }
-                            if let Some(port) = config.get("port").and_then(|v| v.as_str()) {
-                                ui.label(format!("Port: {}", port));
-                            }
-
-                            // Display real-time power and wavelength from data stream
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:power", id),
-                                "Power",
-                            );
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:wavelength", id),
-                                "Wavelength",
-                            );
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:shutter", id),
-                                "Shutter",
-                            );
-                            ui.label("💡 Drag to main area or double-click");
-                        }
-                        "newport_1830c" => {
-                            ui.separator();
-                            if let Some(wl) = config.get("wavelength").and_then(|v| v.as_float()) {
-                                ui.label(format!("Wavelength: {:.1} nm", wl));
-                            }
-                            if let Some(port) = config.get("port").and_then(|v| v.as_str()) {
-                                ui.label(format!("Port: {}", port));
-                            }
-                            // Display real-time power reading
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:power", id),
-                                "Power",
-                            );
-                            ui.label("💡 Drag to main area or double-click");
-                        }
-                        "elliptec" => {
-                            ui.separator();
-                            if let Some(port) = config.get("port").and_then(|v| v.as_str()) {
-                                ui.label(format!("Port: {}", port));
-                            }
-                            if let Some(addrs) = config.get("device_addresses").and_then(|v| v.as_array()) {
-                                ui.label(format!("Devices: {}", addrs.len()));
-                                for addr in addrs.iter().filter_map(|a| a.as_integer()) {
+                                    // Display real-time power and wavelength from data stream
                                     display_cached_value(
                                         ui,
                                         data_cache,
-                                        &format!("{}:device{}_position", id, addr),
-                                        &format!("Device {}", addr),
+                                        &format!("{}:power", id),
+                                        "Power",
                                     );
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:wavelength", id),
+                                        "Wavelength",
+                                    );
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:shutter", id),
+                                        "Shutter",
+                                    );
+                                    ui.label("💡 Drag to main area or double-click");
                                 }
+                                "newport_1830c" => {
+                                    ui.separator();
+                                    if let Some(wl) =
+                                        config.get("wavelength").and_then(|v| v.as_float())
+                                    {
+                                        ui.label(format!("Wavelength: {:.1} nm", wl));
+                                    }
+                                    if let Some(port) = config.get("port").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Port: {}", port));
+                                    }
+                                    // Display real-time power reading
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:power", id),
+                                        "Power",
+                                    );
+                                    ui.label("💡 Drag to main area or double-click");
+                                }
+                                "elliptec" => {
+                                    ui.separator();
+                                    if let Some(port) = config.get("port").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Port: {}", port));
+                                    }
+                                    if let Some(addrs) =
+                                        config.get("device_addresses").and_then(|v| v.as_array())
+                                    {
+                                        ui.label(format!("Devices: {}", addrs.len()));
+                                        for addr in addrs.iter().filter_map(|a| a.as_integer()) {
+                                            display_cached_value(
+                                                ui,
+                                                data_cache,
+                                                &format!("{}:device{}_position", id, addr),
+                                                &format!("Device {}", addr),
+                                            );
+                                        }
+                                    }
+                                    ui.label("💡 Drag to main area or double-click");
+                                }
+                                "esp300" => {
+                                    ui.separator();
+                                    if let Some(port) = config.get("port").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Port: {}", port));
+                                    }
+                                    let num_axes = config
+                                        .get("num_axes")
+                                        .and_then(|v| v.as_integer())
+                                        .unwrap_or(3)
+                                        as usize;
+                                    ui.label(format!("Axes: {}", num_axes));
+                                    for axis in 1..=num_axes as u8 {
+                                        display_cached_value(
+                                            ui,
+                                            data_cache,
+                                            &format!("{}:axis{}_position", id, axis),
+                                            &format!("Axis {} Pos", axis),
+                                        );
+                                        display_cached_value(
+                                            ui,
+                                            data_cache,
+                                            &format!("{}:axis{}_velocity", id, axis),
+                                            &format!("Axis {} Vel", axis),
+                                        );
+                                    }
+                                    ui.label("💡 Drag to main area or double-click");
+                                }
+                                "pvcam" => {
+                                    ui.separator();
+                                    if let Some(cam) =
+                                        config.get("camera_name").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Camera: {}", cam));
+                                    }
+                                    if let Some(exp) =
+                                        config.get("exposure_ms").and_then(|v| v.as_float())
+                                    {
+                                        ui.label(format!("Exposure: {} ms", exp));
+                                    }
+                                    // Display acquisition status
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:mean_intensity", id),
+                                        "Mean",
+                                    );
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:min_intensity", id),
+                                        "Min",
+                                    );
+                                    display_cached_value(
+                                        ui,
+                                        data_cache,
+                                        &format!("{}:max_intensity", id),
+                                        "Max",
+                                    );
+                                    ui.label("💡 Drag to main area or double-click");
+                                }
+                                _ if inst_type.contains("visa") => {
+                                    ui.separator();
+                                    if let Some(resource) =
+                                        config.get("resource_string").and_then(|v| v.as_str())
+                                    {
+                                        ui.label(format!("Resource: {}", resource));
+                                    }
+                                }
+                                _ => {}
                             }
-                            ui.label("💡 Drag to main area or double-click");
-                        }
-                        "esp300" => {
-                            ui.separator();
-                            if let Some(port) = config.get("port").and_then(|v| v.as_str()) {
-                                ui.label(format!("Port: {}", port));
-                            }
-                            let num_axes = config.get("num_axes").and_then(|v| v.as_integer()).unwrap_or(3) as usize;
-                            ui.label(format!("Axes: {}", num_axes));
-                            for axis in 1..=num_axes as u8 {
-                                display_cached_value(
-                                    ui,
-                                    data_cache,
-                                    &format!("{}:axis{}_position", id, axis),
-                                    &format!("Axis {} Pos", axis),
-                                );
-                                display_cached_value(
-                                    ui,
-                                    data_cache,
-                                    &format!("{}:axis{}_velocity", id, axis),
-                                    &format!("Axis {} Vel", axis),
-                                );
-                            }
-                            ui.label("💡 Drag to main area or double-click");
-                        }
-                        "pvcam" => {
-                            ui.separator();
-                            if let Some(cam) = config.get("camera_name").and_then(|v| v.as_str()) {
-                                ui.label(format!("Camera: {}", cam));
-                            }
-                            if let Some(exp) = config.get("exposure_ms").and_then(|v| v.as_float()) {
-                                ui.label(format!("Exposure: {} ms", exp));
-                            }
-                            // Display acquisition status
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:mean_intensity", id),
-                                "Mean",
-                            );
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:min_intensity", id),
-                                "Min",
-                            );
-                            display_cached_value(
-                                ui,
-                                data_cache,
-                                &format!("{}:max_intensity", id),
-                                "Max",
-                            );
-                            ui.label("💡 Drag to main area or double-click");
-                        }
-                        _ if inst_type.contains("visa") => {
-                            ui.separator();
-                            if let Some(resource) = config.get("resource_string").and_then(|v| v.as_str()) {
-                                ui.label(format!("Resource: {}", resource));
-                            }
-                        }
-                        _ => {}
-                    }
 
-                    ui.add_space(5.0);
+                            ui.add_space(5.0);
+                        })
+                        .response
                 })
-                .response
-            }).response;
+                .response;
 
             // Visual feedback when dragging starts
             if response.drag_started() {
@@ -754,35 +813,44 @@ fn open_instrument_controls(
 ) {
     match inst_type {
         "maitai" => {
-            dock_state.push_to_focused_leaf(
-                DockTab::MaiTaiControl(MaiTaiControlPanel::new(id.to_string()))
-            );
+            dock_state.push_to_focused_leaf(DockTab::MaiTaiControl(MaiTaiControlPanel::new(
+                id.to_string(),
+            )));
         }
         "newport_1830c" => {
-            dock_state.push_to_focused_leaf(
-                DockTab::Newport1830CControl(Newport1830CControlPanel::new(id.to_string()))
-            );
+            dock_state.push_to_focused_leaf(DockTab::Newport1830CControl(
+                Newport1830CControlPanel::new(id.to_string()),
+            ));
         }
         "elliptec" => {
-            let device_addrs = if let Some(addrs) = config.get("device_addresses").and_then(|v| v.as_array()) {
-                addrs.iter().filter_map(|a| a.as_integer().map(|i| i as u8)).collect()
-            } else {
-                vec![0, 1]
-            };
-            dock_state.push_to_focused_leaf(
-                DockTab::ElliptecControl(ElliptecControlPanel::new(id.to_string(), device_addrs))
-            );
+            let device_addrs =
+                if let Some(addrs) = config.get("device_addresses").and_then(|v| v.as_array()) {
+                    addrs
+                        .iter()
+                        .filter_map(|a| a.as_integer().map(|i| i as u8))
+                        .collect()
+                } else {
+                    vec![0, 1]
+                };
+            dock_state.push_to_focused_leaf(DockTab::ElliptecControl(ElliptecControlPanel::new(
+                id.to_string(),
+                device_addrs,
+            )));
         }
         "esp300" => {
-            let num_axes = config.get("num_axes").and_then(|v| v.as_integer()).unwrap_or(3) as usize;
-            dock_state.push_to_focused_leaf(
-                DockTab::ESP300Control(ESP300ControlPanel::new(id.to_string(), num_axes))
-            );
+            let num_axes = config
+                .get("num_axes")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(3) as usize;
+            dock_state.push_to_focused_leaf(DockTab::ESP300Control(ESP300ControlPanel::new(
+                id.to_string(),
+                num_axes,
+            )));
         }
         "pvcam" => {
-            dock_state.push_to_focused_leaf(
-                DockTab::PVCAMControl(PVCAMControlPanel::new(id.to_string()))
-            );
+            dock_state.push_to_focused_leaf(DockTab::PVCAMControl(PVCAMControlPanel::new(
+                id.to_string(),
+            )));
         }
         _ => {}
     }
@@ -825,7 +893,11 @@ where
                     .selected_text(plot_tab.channel.clone())
                     .show_ui(ui, |ui| {
                         for channel in &self.available_channels {
-                            ui.selectable_value(&mut plot_tab.channel, channel.clone(), channel.clone());
+                            ui.selectable_value(
+                                &mut plot_tab.channel,
+                                channel.clone(),
+                                channel.clone(),
+                            );
                         }
                     });
 

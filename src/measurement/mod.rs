@@ -1,4 +1,3 @@
-
 // src/measurement/mod.rs
 
 use anyhow::Result;
@@ -82,8 +81,8 @@ pub trait Measure: Send + Sync {
     async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>>;
 }
 
-pub mod power;
 pub mod datapoint;
 pub mod instrument_measurement;
+pub mod power;
 
 pub use instrument_measurement::InstrumentMeasurement;

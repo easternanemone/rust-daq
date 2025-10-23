@@ -175,11 +175,17 @@ mod tests {
         // First connection attempt should fail
         adapter.trigger_failure();
         assert!(adapter.connect(&AdapterConfig::default()).await.is_err());
-        assert!(!adapter.is_connected(), "Adapter should not be connected after a failure");
+        assert!(
+            !adapter.is_connected(),
+            "Adapter should not be connected after a failure"
+        );
 
         // The failure flag should have been consumed. The next attempt should succeed.
         assert!(adapter.connect(&AdapterConfig::default()).await.is_ok());
-        assert!(adapter.is_connected(), "Adapter should be connected on the second attempt");
+        assert!(
+            adapter.is_connected(),
+            "Adapter should be connected on the second attempt"
+        );
     }
 
     #[tokio::test]
@@ -205,7 +211,11 @@ mod tests {
 
         // With zero latency, this should be very fast.
         // Allow a small margin for OS scheduling and function call overhead.
-        assert!(elapsed.as_millis() < 5, "Connection with zero latency took too long: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 5,
+            "Connection with zero latency took too long: {:?}",
+            elapsed
+        );
     }
 
     #[tokio::test]

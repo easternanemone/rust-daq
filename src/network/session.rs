@@ -54,7 +54,10 @@ impl SessionManager {
         timeout_secs: u64,
     ) -> Session {
         let session = Session::new(session_id.clone(), client_id, timeout_secs);
-        self.sessions.write().await.insert(session_id, session.clone());
+        self.sessions
+            .write()
+            .await
+            .insert(session_id, session.clone());
         session
     }
 
@@ -105,11 +108,7 @@ mod tests {
     async fn test_session_creation() {
         let manager = SessionManager::new();
         let session = manager
-            .create_session(
-                "session-1".to_string(),
-                "client-1".to_string(),
-                6,
-            )
+            .create_session("session-1".to_string(), "client-1".to_string(), 6)
             .await;
 
         assert_eq!(session.id, "session-1");
@@ -121,11 +120,7 @@ mod tests {
     async fn test_heartbeat_update() {
         let manager = SessionManager::new();
         manager
-            .create_session(
-                "session-1".to_string(),
-                "client-1".to_string(),
-                6,
-            )
+            .create_session("session-1".to_string(), "client-1".to_string(), 6)
             .await;
 
         assert!(manager.update_heartbeat("session-1").await);
@@ -137,11 +132,7 @@ mod tests {
     async fn test_session_removal() {
         let manager = SessionManager::new();
         manager
-            .create_session(
-                "session-1".to_string(),
-                "client-1".to_string(),
-                6,
-            )
+            .create_session("session-1".to_string(), "client-1".to_string(), 6)
             .await;
 
         assert!(manager.remove_session("session-1").await);

@@ -81,7 +81,9 @@ impl SerialAdapter {
     /// blocking the Tokio runtime.
     #[cfg(feature = "instrument_serial")]
     pub async fn send_command(&self, command: &str) -> Result<String> {
-        let port = self.port.as_ref()
+        let port = self
+            .port
+            .as_ref()
             .ok_or_else(|| anyhow!("Serial port not connected"))?;
 
         let command_str = format!("{}{}", command, self.line_terminator);
@@ -97,11 +99,11 @@ impl SerialAdapter {
             let mut port_guard = port_clone.blocking_lock();
 
             // Write command
-            port_guard.write_all(command_str.as_bytes())
+            port_guard
+                .write_all(command_str.as_bytes())
                 .context("Failed to write to serial port")?;
 
-            port_guard.flush()
-                .context("Failed to flush serial port")?;
+            port_guard.flush().context("Failed to flush serial port")?;
 
             debug!("Sent serial command: {}", command_for_log.trim());
 
@@ -149,7 +151,9 @@ impl SerialAdapter {
 
     #[cfg(not(feature = "instrument_serial"))]
     pub async fn send_command(&self, _command: &str) -> Result<String> {
-        Err(anyhow!("Serial support not enabled. Rebuild with --features instrument_serial"))
+        Err(anyhow!(
+            "Serial support not enabled. Rebuild with --features instrument_serial"
+        ))
     }
 }
 
@@ -172,20 +176,27 @@ impl HardwareAdapter for SerialAdapter {
                 .timeout(Duration::from_millis(100)) // Internal read timeout
                 .open()
                 .with_context(|| {
-                    format!("Failed to open serial port '{}' at {} baud",
-                        self.port_name, self.baud_rate)
+                    format!(
+                        "Failed to open serial port '{}' at {} baud",
+                        self.port_name, self.baud_rate
+                    )
                 })?;
 
             self.port = Some(Arc::new(Mutex::new(port)));
 
-            debug!("Serial port '{}' opened at {} baud", self.port_name, self.baud_rate);
+            debug!(
+                "Serial port '{}' opened at {} baud",
+                self.port_name, self.baud_rate
+            );
             Ok(())
         }
 
         #[cfg(not(feature = "instrument_serial"))]
         {
             let _ = config;
-            Err(anyhow!("Serial support not enabled. Rebuild with --features instrument_serial"))
+            Err(anyhow!(
+                "Serial support not enabled. Rebuild with --features instrument_serial"
+            ))
         }
     }
 
@@ -227,7 +238,10 @@ impl HardwareAdapter for SerialAdapter {
     }
 
     fn info(&self) -> String {
-        format!("SerialAdapter({} @ {} baud)", self.port_name, self.baud_rate)
+        format!(
+            "SerialAdapter({} @ {} baud)",
+            self.port_name, self.baud_rate
+        )
     }
 }
 

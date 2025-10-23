@@ -4,15 +4,15 @@
 //! by verifying that all subscribers receive all data points without loss,
 //! even when consumers have different speeds.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use rust_daq::{
     config::Settings,
     core::{DataPoint, Instrument},
     measurement::{InstrumentMeasurement, Measure},
 };
-use anyhow::Result;
-use async_trait::async_trait;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 /// High-throughput mock instrument for backpressure testing
@@ -95,12 +95,15 @@ async fn test_backpressure_all_consumers_receive_all_data() {
 
     // Create instrument
     let mut instrument = HighThroughputMock::new(SAMPLE_COUNT);
-    instrument.connect("backpressure_test", &settings).await.unwrap();
+    instrument
+        .connect("backpressure_test", &settings)
+        .await
+        .unwrap();
 
     // Create multiple consumers with different speeds
-    let mut stream1 = instrument.measure().data_stream().await.unwrap();  // Fast consumer
-    let mut stream2 = instrument.measure().data_stream().await.unwrap();  // Medium consumer
-    let mut stream3 = instrument.measure().data_stream().await.unwrap();  // Slow consumer
+    let mut stream1 = instrument.measure().data_stream().await.unwrap(); // Fast consumer
+    let mut stream2 = instrument.measure().data_stream().await.unwrap(); // Medium consumer
+    let mut stream3 = instrument.measure().data_stream().await.unwrap(); // Slow consumer
 
     let count1 = Arc::new(AtomicUsize::new(0));
     let count2 = Arc::new(AtomicUsize::new(0));
@@ -166,17 +169,31 @@ async fn test_backpressure_all_consumers_receive_all_data() {
 
     // Verify data integrity - all values should be sequential
     for (i, &value) in data1.iter().enumerate() {
-        assert_eq!(value, i as f64, "Fast consumer data corruption at index {}", i);
+        assert_eq!(
+            value, i as f64,
+            "Fast consumer data corruption at index {}",
+            i
+        );
     }
     for (i, &value) in data2.iter().enumerate() {
-        assert_eq!(value, i as f64, "Medium consumer data corruption at index {}", i);
+        assert_eq!(
+            value, i as f64,
+            "Medium consumer data corruption at index {}",
+            i
+        );
     }
     for (i, &value) in data3.iter().enumerate() {
-        assert_eq!(value, i as f64, "Slow consumer data corruption at index {}", i);
+        assert_eq!(
+            value, i as f64,
+            "Slow consumer data corruption at index {}",
+            i
+        );
     }
 
-    println!("SUCCESS: All {} consumers received all {} samples without loss",
-             CONSUMER_COUNT, SAMPLE_COUNT);
+    println!(
+        "SUCCESS: All {} consumers received all {} samples without loss",
+        CONSUMER_COUNT, SAMPLE_COUNT
+    );
 }
 
 #[tokio::test]
@@ -188,7 +205,10 @@ async fn test_backpressure_applies_correctly() {
     let settings = Arc::new(Settings::new(Some("default")).unwrap());
 
     let mut instrument = HighThroughputMock::new(SAMPLE_COUNT);
-    instrument.connect("backpressure_test_2", &settings).await.unwrap();
+    instrument
+        .connect("backpressure_test_2", &settings)
+        .await
+        .unwrap();
 
     // Create one very slow consumer
     let mut stream = instrument.measure().data_stream().await.unwrap();
@@ -206,16 +226,23 @@ async fn test_backpressure_applies_correctly() {
 
     // With backpressure, this should take at least 100 * 10ms = 1 second
     // (proving the producer was slowed down by the consumer)
-    assert!(duration.as_secs() >= 1,
-            "Backpressure not working - completed too quickly: {:?}", duration);
+    assert!(
+        duration.as_secs() >= 1,
+        "Backpressure not working - completed too quickly: {:?}",
+        duration
+    );
 
     // And we should have received all data
-    assert_eq!(received_count, SAMPLE_COUNT,
-               "Lost data even with backpressure: got {} expected {}",
-               received_count, SAMPLE_COUNT);
+    assert_eq!(
+        received_count, SAMPLE_COUNT,
+        "Lost data even with backpressure: got {} expected {}",
+        received_count, SAMPLE_COUNT
+    );
 
     instrument.disconnect().await.unwrap();
 
-    println!("SUCCESS: Backpressure correctly slowed producer. Took {:?} for {} samples",
-             duration, SAMPLE_COUNT);
+    println!(
+        "SUCCESS: Backpressure correctly slowed producer. Took {:?} for {} samples",
+        duration, SAMPLE_COUNT
+    );
 }

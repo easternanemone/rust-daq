@@ -118,11 +118,7 @@ mod network_session_tests {
 
         for i in 0..10 {
             manager
-                .create_session(
-                    format!("sess-{}", i),
-                    format!("client-{}", i),
-                    6,
-                )
+                .create_session(format!("sess-{}", i), format!("client-{}", i), 6)
                 .await;
         }
 

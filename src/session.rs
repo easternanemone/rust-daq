@@ -62,7 +62,8 @@ impl Session {
         M::Data: Into<daq_core::Measurement>,
     {
         app.with_inner(|inner| {
-            let active_instruments: std::collections::HashSet<String> = inner.instruments.keys().collect();
+            let active_instruments: std::collections::HashSet<String> =
+                inner.instruments.keys().collect();
             let storage_settings = inner.settings.storage.clone();
             Self {
                 active_instruments,

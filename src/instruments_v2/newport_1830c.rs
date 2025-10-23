@@ -24,7 +24,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use daq_core::{
-    arc_measurement, DataPoint, DaqError, HardwareAdapter, Instrument, InstrumentCommand,
+    arc_measurement, DaqError, DataPoint, HardwareAdapter, Instrument, InstrumentCommand,
     InstrumentState, Measurement, MeasurementReceiver, MeasurementSender, PowerMeter, PowerRange,
 };
 use log::{info, warn};
@@ -43,7 +43,6 @@ pub struct Newport1830CV2 {
 
     /// Current instrument state
     state: InstrumentState,
-
 
     /// Power meter configuration
     wavelength_nm: f64,
@@ -181,7 +180,10 @@ impl Newport1830CV2 {
             let interval_duration = Duration::from_secs_f64(1.0 / polling_rate);
             let mut interval = tokio::time::interval(interval_duration);
 
-            info!("Newport 1830-C '{}' polling task started at {} Hz", id, polling_rate);
+            info!(
+                "Newport 1830-C '{}' polling task started at {} Hz",
+                id, polling_rate
+            );
 
             loop {
                 tokio::select! {
@@ -227,7 +229,6 @@ impl Instrument for Newport1830CV2 {
     fn state(&self) -> InstrumentState {
         self.state.clone()
     }
-
 
     async fn initialize(&mut self) -> Result<()> {
         if self.state != InstrumentState::Disconnected {
@@ -299,7 +300,11 @@ impl Instrument for Newport1830CV2 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Reconnect and reconfigure
-                self.serial.lock().await.connect(&Default::default()).await?;
+                self.serial
+                    .lock()
+                    .await
+                    .connect(&Default::default())
+                    .await?;
                 self.configure().await?;
 
                 self.state = InstrumentState::Ready;
@@ -307,9 +312,7 @@ impl Instrument for Newport1830CV2 {
                 info!("Newport 1830-C '{}' recovered successfully", self.id);
                 Ok(())
             }
-            InstrumentState::Error(_) => {
-                Err(anyhow!("Cannot recover from unrecoverable error"))
-            }
+            InstrumentState::Error(_) => Err(anyhow!("Cannot recover from unrecoverable error")),
             _ => Err(anyhow!("Cannot recover from state: {:?}", self.state)),
         }
     }
@@ -327,13 +330,16 @@ impl Instrument for Newport1830CV2 {
             InstrumentCommand::SetParameter { name, value } => {
                 match name.as_str() {
                     "wavelength_nm" => {
-                        let wavelength = value.as_f64()
+                        let wavelength = value
+                            .as_f64()
                             .ok_or_else(|| anyhow!("Invalid wavelength value"))?;
                         self.set_wavelength_nm(wavelength).await
                     }
                     "range" => {
-                        let range_idx = value.as_i64()
-                            .ok_or_else(|| anyhow!("Invalid range value"))? as i32;
+                        let range_idx = value
+                            .as_i64()
+                            .ok_or_else(|| anyhow!("Invalid range value"))?
+                            as i32;
                         // Convert to PowerRange
                         let range = if range_idx == 0 {
                             PowerRange::Auto
@@ -364,11 +370,13 @@ impl PowerMeter for Newport1830CV2 {
             return Err(anyhow!("Cannot read power from state: {:?}", self.state));
         }
 
-        let response = self.send_command("PM:Power?")
+        let response = self
+            .send_command("PM:Power?")
             .await
             .context("Failed to query power")?;
 
-        response.parse::<f64>()
+        response
+            .parse::<f64>()
             .context("Failed to parse power value")
     }
 
@@ -393,14 +401,23 @@ impl PowerMeter for Newport1830CV2 {
             PowerRange::Range(max_power) => {
                 // Map power to range index (simplified)
                 // Real implementation would have proper Newport range mapping
-                if max_power >= 1.0 { 1 }
-                else if max_power >= 0.1 { 2 }
-                else if max_power >= 0.01 { 3 }
-                else if max_power >= 0.001 { 4 }
-                else if max_power >= 0.0001 { 5 }
-                else if max_power >= 0.00001 { 6 }
-                else if max_power >= 0.000001 { 7 }
-                else { 8 }
+                if max_power >= 1.0 {
+                    1
+                } else if max_power >= 0.1 {
+                    2
+                } else if max_power >= 0.01 {
+                    3
+                } else if max_power >= 0.001 {
+                    4
+                } else if max_power >= 0.0001 {
+                    5
+                } else if max_power >= 0.00001 {
+                    6
+                } else if max_power >= 0.000001 {
+                    7
+                } else {
+                    8
+                }
             }
         };
 
@@ -428,7 +445,10 @@ impl Newport1830CV2 {
     /// Start continuous power monitoring
     async fn start_streaming(&mut self) -> Result<()> {
         if self.state != InstrumentState::Ready {
-            return Err(anyhow!("Cannot start streaming from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot start streaming from state: {:?}",
+                self.state
+            ));
         }
 
         self.spawn_polling_task();
@@ -470,16 +490,12 @@ mod tests {
 
     #[test]
     fn test_newport_creation() {
-        let instrument = Newport1830CV2::new(
-            "test_pm".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument =
+            Newport1830CV2::new("test_pm".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         assert_eq!(instrument.id(), "test_pm");
         assert_eq!(instrument.instrument_type(), "newport_1830c_v2");
         assert_eq!(instrument.state(), InstrumentState::Disconnected);
-
     }
 
     #[test]
@@ -498,11 +514,8 @@ mod tests {
 
     #[test]
     fn test_wavelength_validation() {
-        let instrument = Newport1830CV2::new(
-            "test_pm".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument =
+            Newport1830CV2::new("test_pm".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Wavelength is stored correctly
         assert_eq!(instrument.wavelength_nm, 1550.0);

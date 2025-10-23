@@ -50,11 +50,7 @@
 //!
 //! This pattern ensures the GUI always gets a receiver to await the response.
 
-use crate::{
-    core::InstrumentCommand,
-    error::DaqError,
-    session::GuiState,
-};
+use crate::{core::InstrumentCommand, error::DaqError, session::GuiState};
 use anyhow::Result;
 use daq_core::Measurement;
 use std::path::PathBuf;
@@ -292,9 +288,9 @@ pub enum DaqCommand {
     ///
     /// The actor will:
     /// 1. Get the running module
-    /// 2. Get the running instrument
-    /// 3. Downcast module to the appropriate concrete type
-    /// 4. Assign instrument to module
+    /// 2. Resolve the module role to a capability requirement
+    /// 3. Get the running instrument and verify capability support
+    /// 4. Construct capability proxy and hand off to module
     ///
     /// # Response
     ///
@@ -303,6 +299,8 @@ pub enum DaqCommand {
     AssignInstrumentToModule {
         /// Module instance ID
         module_id: String,
+        /// Logical role within the module (e.g. "stage", "laser")
+        role: String,
         /// Instrument ID to assign
         instrument_id: String,
         /// Response channel for assignment result
@@ -397,7 +395,10 @@ impl DaqCommand {
     }
 
     /// Helper to create a SaveSession command
-    pub fn save_session(path: PathBuf, gui_state: GuiState) -> (Self, oneshot::Receiver<Result<()>>) {
+    pub fn save_session(
+        path: PathBuf,
+        gui_state: GuiState,
+    ) -> (Self, oneshot::Receiver<Result<()>>) {
         let (tx, rx) = oneshot::channel();
         (
             Self::SaveSession {
@@ -436,7 +437,13 @@ impl DaqCommand {
     /// Helper to create a SetStorageFormat command
     pub fn set_storage_format(format: String) -> (Self, oneshot::Receiver<()>) {
         let (tx, rx) = oneshot::channel();
-        (Self::SetStorageFormat { format, response: tx }, rx)
+        (
+            Self::SetStorageFormat {
+                format,
+                response: tx,
+            },
+            rx,
+        )
     }
 
     /// Helper to create a SubscribeToData command
@@ -466,12 +473,14 @@ impl DaqCommand {
     /// Helper to create an AssignInstrumentToModule command
     pub fn assign_instrument_to_module(
         module_id: String,
+        role: String,
         instrument_id: String,
     ) -> (Self, oneshot::Receiver<Result<()>>) {
         let (tx, rx) = oneshot::channel();
         (
             Self::AssignInstrumentToModule {
                 module_id,
+                role,
                 instrument_id,
                 response: tx,
             },

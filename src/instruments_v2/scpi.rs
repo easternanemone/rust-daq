@@ -22,13 +22,12 @@
 //! streaming_rate_hz = 1.0
 //! ```
 
-
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use daq_core::{
-    arc_measurement, DaqError, DataPoint, HardwareAdapter, Instrument, InstrumentCommand, InstrumentState,
-    Measurement, MeasurementReceiver, MeasurementSender,
+    arc_measurement, DaqError, DataPoint, HardwareAdapter, Instrument, InstrumentCommand,
+    InstrumentState, Measurement, MeasurementReceiver, MeasurementSender,
 };
 use log::{info, warn};
 use std::sync::Arc;
@@ -43,10 +42,8 @@ pub struct ScpiInstrumentV2 {
 
     /// VISA adapter for command/response (Arc<Mutex> for shared mutable access)
 
-
     /// Current instrument state
     state: InstrumentState,
-
 
     /// Instrument identity (*IDN? response)
     identity: Option<String>,
@@ -106,12 +103,7 @@ impl ScpiInstrumentV2 {
     /// * `enabled` - Enable continuous polling
     /// * `command` - SCPI query command to poll (e.g., "MEAS:VOLT:DC?")
     /// * `rate_hz` - Polling rate in Hz
-    pub fn with_streaming(
-        mut self,
-        enabled: bool,
-        command: String,
-        rate_hz: f64,
-    ) -> Self {
+    pub fn with_streaming(mut self, enabled: bool, command: String, rate_hz: f64) -> Self {
         self.enable_streaming = enabled;
         self.streaming_command = command;
         self.streaming_rate_hz = rate_hz;
@@ -192,7 +184,6 @@ impl ScpiInstrumentV2 {
         // Clone the Arc (not the adapter) for the spawned task
         // This shares the same connected adapter instance
 
-
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
 
@@ -235,7 +226,6 @@ impl Instrument for ScpiInstrumentV2 {
         self.state.clone()
     }
 
-
     async fn initialize(&mut self) -> Result<()> {
         if self.state != InstrumentState::Disconnected {
             return Err(anyhow!("Cannot initialize from state: {:?}", self.state));
@@ -266,7 +256,6 @@ impl Instrument for ScpiInstrumentV2 {
 
         // Disconnect adapter
 
-
         self.state = InstrumentState::Disconnected;
         info!("SCPI instrument '{}' shut down successfully", self.id);
         Ok(())
@@ -283,7 +272,6 @@ impl Instrument for ScpiInstrumentV2 {
 
                 // Reconnect
 
-
                 // Re-query identity
                 self.query_identity().await?;
 
@@ -292,9 +280,7 @@ impl Instrument for ScpiInstrumentV2 {
                 info!("SCPI instrument '{}' recovered successfully", self.id);
                 Ok(())
             }
-            InstrumentState::Error(_) => {
-                Err(anyhow!("Cannot recover from unrecoverable error"))
-            }
+            InstrumentState::Error(_) => Err(anyhow!("Cannot recover from unrecoverable error")),
             _ => Err(anyhow!("Cannot recover from state: {:?}", self.state)),
         }
     }
@@ -325,10 +311,7 @@ impl Instrument for ScpiInstrumentV2 {
             InstrumentCommand::GetParameter { name } => {
                 // For GetParameter, we'd need a way to return the value
                 // For now, just log it
-                info!(
-                    "Get parameter request for '{}' (not implemented)",
-                    name
-                );
+                info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
         }
@@ -387,10 +370,7 @@ impl ScpiInstrumentV2 {
     /// Execute a SCPI query and return the response
     pub async fn query(&self, command: &str) -> Result<String> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!(
-                "Cannot query from state: {:?}",
-                self.state
-            ));
+            return Err(anyhow!("Cannot query from state: {:?}", self.state));
         }
 
         self.send_command(command).await
@@ -399,10 +379,7 @@ impl ScpiInstrumentV2 {
     /// Execute a SCPI write command
     pub async fn write(&mut self, command: &str) -> Result<()> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!(
-                "Cannot write from state: {:?}",
-                self.state
-            ));
+            return Err(anyhow!("Cannot write from state: {:?}", self.state));
         }
 
         self.send_write(command).await
@@ -415,10 +392,8 @@ mod tests {
 
     #[test]
     fn test_scpi_creation() {
-        let instrument = ScpiInstrumentV2::new(
-            "test_scpi".to_string(),
-            "GPIB0::1::INSTR".to_string(),
-        );
+        let instrument =
+            ScpiInstrumentV2::new("test_scpi".to_string(), "GPIB0::1::INSTR".to_string());
 
         assert_eq!(instrument.id(), "test_scpi");
         assert_eq!(instrument.instrument_type(), "scpi_v2");
@@ -462,10 +437,8 @@ mod tests {
 
     #[test]
     fn test_state_transitions() {
-        let instrument = ScpiInstrumentV2::new(
-            "test_scpi".to_string(),
-            "GPIB0::5::INSTR".to_string(),
-        );
+        let instrument =
+            ScpiInstrumentV2::new("test_scpi".to_string(), "GPIB0::5::INSTR".to_string());
 
         // Starts disconnected
         assert_eq!(instrument.state(), InstrumentState::Disconnected);

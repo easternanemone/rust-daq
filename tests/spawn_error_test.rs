@@ -3,10 +3,7 @@
 //! Tests that spawn_instrument returns proper errors instead of Ok(())
 //! when instrument connection fails.
 
-use rust_daq::{
-    config::Settings,
-    messages::SpawnError,
-};
+use rust_daq::{config::Settings, messages::SpawnError};
 use std::sync::Arc;
 
 /// Test that spawn_instrument returns proper error when config is missing
@@ -40,8 +37,16 @@ fn test_spawn_already_running_error_type() {
 fn test_spawn_error_invalid_config_message() {
     let error = SpawnError::InvalidConfig("test config error".to_string());
     let message = format!("{}", error);
-    assert!(message.contains("Configuration invalid"), "Error message: {}", message);
-    assert!(message.contains("test config error"), "Error message: {}", message);
+    assert!(
+        message.contains("Configuration invalid"),
+        "Error message: {}",
+        message
+    );
+    assert!(
+        message.contains("test config error"),
+        "Error message: {}",
+        message
+    );
 }
 
 /// Test error message content for ConnectionFailed
@@ -49,8 +54,16 @@ fn test_spawn_error_invalid_config_message() {
 fn test_spawn_error_connection_failed_message() {
     let error = SpawnError::ConnectionFailed("connection refused".to_string());
     let message = format!("{}", error);
-    assert!(message.contains("Failed to connect"), "Error message: {}", message);
-    assert!(message.contains("connection refused"), "Error message: {}", message);
+    assert!(
+        message.contains("Failed to connect"),
+        "Error message: {}",
+        message
+    );
+    assert!(
+        message.contains("connection refused"),
+        "Error message: {}",
+        message
+    );
 }
 
 /// Test error message content for AlreadyRunning
@@ -58,6 +71,14 @@ fn test_spawn_error_connection_failed_message() {
 fn test_spawn_error_already_running_message() {
     let error = SpawnError::AlreadyRunning("instrument_1".to_string());
     let message = format!("{}", error);
-    assert!(message.contains("Instrument already running"), "Error message: {}", message);
-    assert!(message.contains("instrument_1"), "Error message: {}", message);
+    assert!(
+        message.contains("Instrument already running"),
+        "Error message: {}",
+        message
+    );
+    assert!(
+        message.contains("instrument_1"),
+        "Error message: {}",
+        message
+    );
 }

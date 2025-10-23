@@ -1,8 +1,9 @@
 //! Instrument trait, registry, and implementations.
 use crate::core::Instrument;
-use crate::measurement::{Measure, InstrumentMeasurement};
+use crate::measurement::{InstrumentMeasurement, Measure};
 use std::collections::HashMap;
 
+pub mod capabilities;
 pub mod config;
 pub mod mock;
 pub mod scpi;
@@ -57,7 +58,11 @@ impl<M: Measure> InstrumentRegistry<M> {
     }
 
     /// Creates an instance of an instrument by its ID.
-    pub fn create(&self, instrument_type: &str, id: &str) -> Option<Box<dyn Instrument<Measure = M>>> {
+    pub fn create(
+        &self,
+        instrument_type: &str,
+        id: &str,
+    ) -> Option<Box<dyn Instrument<Measure = M>>> {
         self.factories
             .get(instrument_type)
             .map(|factory| factory(id))

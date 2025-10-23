@@ -1,4 +1,3 @@
-
 use crate::core::DataPoint;
 use crate::measurement::Measure;
 use anyhow::Result;

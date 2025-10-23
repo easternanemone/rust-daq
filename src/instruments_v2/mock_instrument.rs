@@ -4,12 +4,12 @@
 //! implementation. Serves as a reference for migrating real instruments.
 
 use async_trait::async_trait;
-use daq_core::{
-    arc_measurement, measurement_channel, Camera, DataPoint, DaqError, HardwareAdapter, ImageData,
-    Instrument, InstrumentCommand, InstrumentState, Measurement, MeasurementReceiver,
-    MeasurementSender, PowerMeter, PowerRange, ROI, Result,
-};
 use chrono::Utc;
+use daq_core::{
+    arc_measurement, measurement_channel, Camera, DaqError, DataPoint, HardwareAdapter, ImageData,
+    Instrument, InstrumentCommand, InstrumentState, Measurement, MeasurementReceiver,
+    MeasurementSender, PowerMeter, PowerRange, Result, ROI,
+};
 use tokio::task::JoinHandle;
 
 use crate::adapters::MockAdapter;
@@ -59,7 +59,11 @@ impl MockInstrumentV2 {
     }
 
     /// Create a new mock instrument with custom adapter and specified capacity
-    pub fn with_adapter_and_capacity(id: String, adapter: Box<dyn HardwareAdapter>, capacity: usize) -> Self {
+    pub fn with_adapter_and_capacity(
+        id: String,
+        adapter: Box<dyn HardwareAdapter>,
+        capacity: usize,
+    ) -> Self {
         let (measurement_tx, measurement_rx) = measurement_channel(capacity);
 
         Self {
@@ -120,7 +124,6 @@ impl Instrument for MockInstrumentV2 {
     fn state(&self) -> InstrumentState {
         self.state.clone()
     }
-
 
     async fn initialize(&mut self) -> Result<()> {
         if self.state != InstrumentState::Disconnected {
@@ -183,18 +186,16 @@ impl Instrument for MockInstrumentV2 {
             InstrumentCommand::Shutdown => self.shutdown().await,
             InstrumentCommand::StartAcquisition => self.start_live().await,
             InstrumentCommand::StopAcquisition => self.stop_live().await,
-            InstrumentCommand::SetParameter { name, value } => {
-                match name.as_str() {
-                    "exposure_ms" => {
-                        if let Some(ms) = value.as_f64() {
-                            self.set_exposure_ms(ms).await
-                        } else {
-                            Err(anyhow::anyhow!("Invalid exposure value"))
-                        }
+            InstrumentCommand::SetParameter { name, value } => match name.as_str() {
+                "exposure_ms" => {
+                    if let Some(ms) = value.as_f64() {
+                        self.set_exposure_ms(ms).await
+                    } else {
+                        Err(anyhow::anyhow!("Invalid exposure value"))
                     }
-                    _ => Err(anyhow::anyhow!("Unknown parameter: {}", name)),
                 }
-            }
+                _ => Err(anyhow::anyhow!("Unknown parameter: {}", name)),
+            },
             InstrumentCommand::GetParameter { .. } => {
                 // Not implemented for mock
                 Ok(())
@@ -538,8 +539,7 @@ mod tests {
         // Create instrument with custom adapter that will fail
         let mut adapter = MockAdapter::new();
         adapter.trigger_failure();
-        let mut instrument =
-            MockInstrumentV2::with_adapter("test".to_string(), Box::new(adapter));
+        let mut instrument = MockInstrumentV2::with_adapter("test".to_string(), Box::new(adapter));
 
         // Trigger failure during initialization
         assert!(instrument.initialize().await.is_err());

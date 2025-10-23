@@ -1,14 +1,12 @@
 #[cfg(feature = "networking")]
 mod network_protocol_tests {
-    use rust_daq::network::protocol::{ControlRequest, ControlResponse, Heartbeat, RequestType, ResponseStatus};
+    use rust_daq::network::protocol::{
+        ControlRequest, ControlResponse, Heartbeat, RequestType, ResponseStatus,
+    };
 
     #[test]
     fn test_control_request_encode_decode() {
-        let original = ControlRequest::new(
-            42,
-            RequestType::GetInstruments,
-            vec![1, 2, 3, 4, 5],
-        );
+        let original = ControlRequest::new(42, RequestType::GetInstruments, vec![1, 2, 3, 4, 5]);
 
         let encoded = original.encode();
         let decoded = ControlRequest::decode(&encoded).expect("Failed to decode");
@@ -20,11 +18,7 @@ mod network_protocol_tests {
 
     #[test]
     fn test_control_response_encode_decode() {
-        let original = ControlResponse::new(
-            123,
-            ResponseStatus::Success,
-            vec![10, 20, 30],
-        );
+        let original = ControlResponse::new(123, ResponseStatus::Success, vec![10, 20, 30]);
 
         let encoded = original.encode();
         let decoded = ControlResponse::decode(&encoded).expect("Failed to decode");
@@ -36,10 +30,7 @@ mod network_protocol_tests {
 
     #[test]
     fn test_control_response_error() {
-        let error_resp = ControlResponse::error(
-            456,
-            "Something went wrong".to_string(),
-        );
+        let error_resp = ControlResponse::error(456, "Something went wrong".to_string());
 
         let encoded = error_resp.encode();
         let decoded = ControlResponse::decode(&encoded).expect("Failed to decode");
@@ -76,11 +67,7 @@ mod network_protocol_tests {
         ];
 
         for req_type in request_types {
-            let req = ControlRequest::new(
-                100,
-                req_type,
-                vec![1, 2, 3],
-            );
+            let req = ControlRequest::new(100, req_type, vec![1, 2, 3]);
 
             let encoded = req.encode();
             let decoded = ControlRequest::decode(&encoded).expect("Failed to decode");
@@ -91,11 +78,7 @@ mod network_protocol_tests {
 
     #[test]
     fn test_empty_payload() {
-        let req = ControlRequest::new(
-            1,
-            RequestType::Heartbeat,
-            vec![],
-        );
+        let req = ControlRequest::new(1, RequestType::Heartbeat, vec![]);
 
         let encoded = req.encode();
         let decoded = ControlRequest::decode(&encoded).expect("Failed to decode");
@@ -106,11 +89,7 @@ mod network_protocol_tests {
     #[test]
     fn test_large_payload() {
         let large_payload = vec![0xAB; 1024 * 10];
-        let req = ControlRequest::new(
-            1,
-            RequestType::SendCommand,
-            large_payload.clone(),
-        );
+        let req = ControlRequest::new(1, RequestType::SendCommand, large_payload.clone());
 
         let encoded = req.encode();
         let decoded = ControlRequest::decode(&encoded).expect("Failed to decode");

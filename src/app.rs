@@ -5,15 +5,9 @@
 //! message-passing through mpsc channels.
 
 use crate::{
-    app_actor::DaqManagerActor,
-    config::Settings,
-    core::DataPoint,
-    data::registry::ProcessorRegistry,
-    instrument::InstrumentRegistry,
-    log_capture::LogBuffer,
-    measurement::Measure,
-    messages::DaqCommand,
-    session,
+    app_actor::DaqManagerActor, config::Settings, core::DataPoint,
+    data::registry::ProcessorRegistry, instrument::InstrumentRegistry, log_capture::LogBuffer,
+    measurement::Measure, messages::DaqCommand, session,
 };
 use anyhow::{Context, Result};
 use daq_core::Measurement;

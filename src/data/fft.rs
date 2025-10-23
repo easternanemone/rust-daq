@@ -1,8 +1,8 @@
 //! An FFT (Fast Fourier Transform) data processor for frequency analysis.
 
-use crate::core::{DataPoint, DataProcessor, MeasurementProcessor, SpectrumData, FrequencyBin};
-use daq_core::Measurement;
+use crate::core::{DataPoint, DataProcessor, FrequencyBin, MeasurementProcessor, SpectrumData};
 use chrono::Utc;
+use daq_core::Measurement;
 use log::debug;
 use num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
@@ -302,7 +302,7 @@ impl MeasurementProcessor for FFTProcessor {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    
+
     #[test]
     fn test_measurement_processor_fft() {
         let config = FFTConfig {
@@ -311,7 +311,7 @@ mod tests {
             sampling_rate: 8.0,
         };
         let mut fft_processor = FFTProcessor::new(config);
-        
+
         // Create test data - a simple sine wave
         let mut measurements = Vec::new();
         for i in 0..16 {
@@ -319,11 +319,9 @@ mod tests {
             let value = (2.0 * std::f64::consts::PI * 1.0 * t).sin(); // 1 Hz sine wave
             measurements.push(Arc::new(Measurement::Scalar(daq_core::DataPoint {
                 timestamp: Utc.timestamp_nanos((t * 1_000_000_000.0) as i64),
-                instrument_id: "test_instrument".to_string(),
                 channel: "test_signal".to_string(),
                 value,
                 unit: "V".to_string(),
-                metadata: None,
             })));
         }
 
@@ -335,13 +333,13 @@ mod tests {
         match result[0].as_ref() {
             Measurement::Spectrum(spectrum) => {
                 assert_eq!(spectrum.channel, "test_signal_fft");
-                assert_eq!(spectrum.unit, "dB");
-                assert!(!spectrum.bins.is_empty());
-                
+                assert_eq!(spectrum.unit_y, "dB");
+                assert!(!spectrum.wavelengths.is_empty());
+                assert!(!spectrum.intensities.is_empty());
+
                 // Verify frequency bins are properly structured
-                let first_bin = &spectrum.bins[0];
-                assert_eq!(first_bin.frequency, 0.0); // DC component
-                
+                assert_eq!(spectrum.wavelengths[0], 0.0); // DC component
+
                 // Should have metadata about FFT parameters
                 assert!(spectrum.metadata.is_some());
                 let metadata = spectrum.metadata.as_ref().unwrap();
@@ -351,7 +349,7 @@ mod tests {
             _ => panic!("Expected Spectrum measurement, got {:?}", result[0]),
         }
     }
-    
+
     #[test]
     fn test_measurement_processor_filters_non_scalar() {
         let config = FFTConfig {
@@ -360,28 +358,28 @@ mod tests {
             sampling_rate: 4.0,
         };
         let mut fft_processor = FFTProcessor::new(config);
-        
+
         // Mix of measurement types - only scalars should be processed
         let measurements = vec![
             Arc::new(Measurement::Spectrum(daq_core::SpectrumData {
                 timestamp: Utc::now(),
                 channel: "existing_spectrum".to_string(),
-                unit: "dB".to_string(),
-                bins: vec![],
+                wavelengths: vec![],
+                intensities: vec![],
+                unit_x: "Hz".to_string(),
+                unit_y: "dB".to_string(),
                 metadata: None,
             })),
             Arc::new(Measurement::Scalar(daq_core::DataPoint {
                 timestamp: Utc::now(),
-                instrument_id: "test_instrument".to_string(),
                 channel: "scalar_data".to_string(),
                 value: 1.0,
                 unit: "V".to_string(),
-                metadata: None,
             })),
         ];
 
         let result = fft_processor.process_measurements(&measurements);
-        
+
         // Should return empty because we don't have enough scalar data for FFT window
         assert!(result.is_empty());
     }

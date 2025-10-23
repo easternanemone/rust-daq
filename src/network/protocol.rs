@@ -88,8 +88,8 @@ impl ControlRequest {
             return Err("Insufficient data for ControlRequest".to_string());
         }
 
-        let request_type = RequestType::from_u8(data[0])
-            .ok_or_else(|| "Invalid request type".to_string())?;
+        let request_type =
+            RequestType::from_u8(data[0]).ok_or_else(|| "Invalid request type".to_string())?;
 
         let request_id = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
         let payload_len = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
@@ -188,9 +188,8 @@ impl ControlResponse {
             return Err("Error message size mismatch".to_string());
         }
 
-        let error_message =
-            String::from_utf8(data[payload_end + 4..error_end].to_vec())
-                .map_err(|e| e.to_string())?;
+        let error_message = String::from_utf8(data[payload_end + 4..error_end].to_vec())
+            .map_err(|e| e.to_string())?;
 
         let timestamp = u64::from_le_bytes(
             data[error_end..error_end + 8]
@@ -271,22 +270,20 @@ impl Heartbeat {
             return Err("Session ID length field missing".to_string());
         }
 
-        let session_len =
-            u32::from_le_bytes([
-                data[session_start],
-                data[session_start + 1],
-                data[session_start + 2],
-                data[session_start + 3],
-            ]) as usize;
+        let session_len = u32::from_le_bytes([
+            data[session_start],
+            data[session_start + 1],
+            data[session_start + 2],
+            data[session_start + 3],
+        ]) as usize;
 
         let session_end = session_start + 4 + session_len;
         if data.len() < session_end {
             return Err("Session ID size mismatch".to_string());
         }
 
-        let session_id =
-            String::from_utf8(data[session_start + 4..session_end].to_vec())
-                .map_err(|e| e.to_string())?;
+        let session_id = String::from_utf8(data[session_start + 4..session_end].to_vec())
+            .map_err(|e| e.to_string())?;
 
         Ok(Heartbeat {
             client_id,
@@ -302,11 +299,7 @@ mod tests {
 
     #[test]
     fn test_control_request_roundtrip() {
-        let req = ControlRequest::new(
-            42,
-            RequestType::GetInstruments,
-            vec![1, 2, 3, 4],
-        );
+        let req = ControlRequest::new(42, RequestType::GetInstruments, vec![1, 2, 3, 4]);
         let encoded = req.encode();
         let decoded = ControlRequest::decode(&encoded).unwrap();
 
@@ -317,11 +310,7 @@ mod tests {
 
     #[test]
     fn test_control_response_roundtrip() {
-        let resp = ControlResponse::new(
-            42,
-            ResponseStatus::Success,
-            vec![5, 6, 7, 8],
-        );
+        let resp = ControlResponse::new(42, ResponseStatus::Success, vec![5, 6, 7, 8]);
         let encoded = resp.encode();
         let decoded = ControlResponse::decode(&encoded).unwrap();
 

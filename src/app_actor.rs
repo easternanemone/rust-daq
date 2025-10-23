@@ -80,18 +80,18 @@
 
 use crate::{
     config::Settings,
-    core::{DataPoint, MeasurementProcessor, InstrumentHandle},
+    core::{DataPoint, InstrumentHandle, MeasurementProcessor},
     data::registry::ProcessorRegistry,
     instrument::InstrumentRegistry,
     log_capture::LogBuffer,
     measurement::{DataDistributor, Measure},
     messages::{DaqCommand, SpawnError},
     metadata::Metadata,
-    modules::{Module, ModuleConfig},
+    modules::{Module, ModuleConfig, ModuleInstrumentAssignment, ModuleStatus},
     session::{self, Session},
 };
-use daq_core::Measurement;
 use anyhow::{anyhow, Context, Result};
+use daq_core::Measurement;
 use log::{error, info};
 use std::collections::HashMap;
 use std::path::Path;
@@ -176,7 +176,7 @@ where
         runtime: Arc<Runtime>,
     ) -> Result<Self> {
         let data_distributor = Arc::new(DataDistributor::new(
-            settings.application.broadcast_channel_capacity
+            settings.application.broadcast_channel_capacity,
         ));
         let storage_format = settings.storage.default_format.clone();
 
@@ -297,10 +297,13 @@ where
 
                 DaqCommand::AssignInstrumentToModule {
                     module_id,
+                    role,
                     instrument_id,
                     response,
                 } => {
-                    let result = self.assign_instrument_to_module(&module_id, &instrument_id);
+                    let result = self
+                        .assign_instrument_to_module(&module_id, &role, &instrument_id)
+                        .await;
                     let _ = response.send(result);
                 }
 
@@ -358,13 +361,9 @@ where
             )));
         }
 
-        let instrument_config = self
-            .settings
-            .instruments
-            .get(id)
-            .ok_or_else(|| {
-                SpawnError::InvalidConfig(format!("Instrument config for '{}' not found", id))
-            })?;
+        let instrument_config = self.settings.instruments.get(id).ok_or_else(|| {
+            SpawnError::InvalidConfig(format!("Instrument config for '{}' not found", id))
+        })?;
         let instrument_type = instrument_config
             .get("type")
             .and_then(|v| v.as_str())
@@ -422,8 +421,9 @@ where
             })?;
         info!("Instrument '{}' connected.", id_clone);
 
-        let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
+        let capabilities = instrument.capabilities();
 
+        let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
             let mut stream = instrument
                 .measure()
                 .data_stream()
@@ -478,12 +478,19 @@ where
 
             // Graceful cleanup after loop breaks
             info!("Instrument '{}' disconnecting...", id_clone);
-            instrument.disconnect().await.context("Failed to disconnect instrument")?;
+            instrument
+                .disconnect()
+                .await
+                .context("Failed to disconnect instrument")?;
             info!("Instrument '{}' disconnected successfully", id_clone);
             Ok(())
         });
 
-        let handle = InstrumentHandle { task, command_tx };
+        let handle = InstrumentHandle {
+            task,
+            command_tx,
+            capabilities,
+        };
         self.instruments.insert(id.to_string(), handle);
         Ok(())
     }
@@ -506,8 +513,14 @@ where
         if let Some(handle) = self.instruments.remove(id) {
             // Try graceful shutdown first
             info!("Sending shutdown command to instrument '{}'", id);
-            if let Err(e) = handle.command_tx.try_send(crate::core::InstrumentCommand::Shutdown) {
-                let error_msg = format!("Failed to send shutdown command to '{}': {}. Aborting task.", id, e);
+            if let Err(e) = handle
+                .command_tx
+                .try_send(crate::core::InstrumentCommand::Shutdown)
+            {
+                let error_msg = format!(
+                    "Failed to send shutdown command to '{}': {}. Aborting task.",
+                    id, e
+                );
                 log::warn!("{}", error_msg);
                 handle.task.abort();
                 return Err(crate::error::DaqError::Instrument(error_msg));
@@ -523,17 +536,22 @@ where
                     Ok(())
                 }
                 Ok(Ok(Err(e))) => {
-                    let error_msg = format!("Instrument '{}' task failed during shutdown: {}", id, e);
+                    let error_msg =
+                        format!("Instrument '{}' task failed during shutdown: {}", id, e);
                     log::warn!("{}", error_msg);
                     Err(crate::error::DaqError::Instrument(error_msg))
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("Instrument '{}' task panicked during shutdown: {}", id, e);
+                    let error_msg =
+                        format!("Instrument '{}' task panicked during shutdown: {}", id, e);
                     log::warn!("{}", error_msg);
                     Err(crate::error::DaqError::Instrument(error_msg))
                 }
                 Err(_) => {
-                    let error_msg = format!("Instrument '{}' did not stop within {:?}, aborting", id, timeout_duration);
+                    let error_msg = format!(
+                        "Instrument '{}' did not stop within {:?}, aborting",
+                        id, timeout_duration
+                    );
                     log::warn!("{}", error_msg);
                     Err(crate::error::DaqError::Instrument(error_msg))
                 }
@@ -617,10 +635,7 @@ where
         mut config: ModuleConfig,
     ) -> Result<()> {
         if self.modules.contains_key(id) {
-            return Err(anyhow!(
-                "Module '{}' is already spawned",
-                id
-            ));
+            return Err(anyhow!("Module '{}' is already spawned", id));
         }
 
         // Create module based on type
@@ -628,9 +643,7 @@ where
         use crate::modules::power_meter::PowerMeterModule;
 
         let mut module: Box<dyn Module> = match module_type {
-            "power_meter" => {
-                Box::new(PowerMeterModule::new(id.to_string()))
-            }
+            "power_meter" => Box::new(PowerMeterModule::<M>::new(id.to_string())),
             _ => {
                 return Err(anyhow!(
                     "Unknown module type: '{}' (supported: power_meter)",
@@ -643,7 +656,8 @@ where
         module.init(config)?;
 
         // Store module
-        self.modules.insert(id.to_string(), Arc::new(Mutex::new(module)));
+        self.modules
+            .insert(id.to_string(), Arc::new(Mutex::new(module)));
         info!("Module '{}' spawned and initialized", id);
         Ok(())
     }
@@ -664,31 +678,61 @@ where
     /// - Instrument is not found
     /// - Module does not support instrument assignment (not a ModuleWithInstrument)
     /// - Assignment is rejected (e.g., module is running, incompatible type)
-    fn assign_instrument_to_module(
+    async fn assign_instrument_to_module(
         &mut self,
         module_id: &str,
+        role: &str,
         instrument_id: &str,
     ) -> Result<()> {
-        let _module = self.modules.get(module_id)
-            .ok_or_else(|| anyhow!(
-                "Module '{}' is not spawned",
-                module_id
-            ))?;
+        let module = self
+            .modules
+            .get(module_id)
+            .ok_or_else(|| anyhow!("Module '{}' is not spawned", module_id))?
+            .clone();
 
-        let _instrument = self.instruments.get(instrument_id)
-            .ok_or_else(|| anyhow!(
-                "Instrument '{}' is not running",
-                instrument_id
-            ))?;
+        let instrument = self
+            .instruments
+            .get(instrument_id)
+            .ok_or_else(|| anyhow!("Instrument '{}' is not running", instrument_id))?;
 
-        // For now, we don't support instrument assignment through the generic Module trait
-        // This is a limitation of the downcast pattern with dynamic dispatch
-        // In a future implementation, modules could register their instrument types
-        // or we could use a specialized assignment protocol
-        Err(anyhow!(
-            "Instrument assignment to modules requires type-specific implementation. \
-             Use module-specific APIs or extend the module system."
-        ))
+        let mut module_guard = module.lock().await;
+        let requirements = module_guard.required_capabilities();
+
+        let requirement = requirements
+            .into_iter()
+            .find(|req| req.role == role)
+            .ok_or_else(|| anyhow!("Module '{}' does not declare a '{}' role", module_id, role))?;
+
+        if !instrument
+            .capabilities
+            .iter()
+            .any(|cap| *cap == requirement.capability)
+        {
+            return Err(anyhow!(
+                "Instrument '{}' does not provide required capability for role '{}'",
+                instrument_id,
+                role
+            ));
+        }
+
+        let proxy = crate::instrument::capabilities::create_proxy(
+            requirement.capability,
+            instrument_id,
+            instrument.command_tx.clone(),
+        )?;
+
+        module_guard.assign_instrument(ModuleInstrumentAssignment {
+            role: role.to_string(),
+            instrument_id: instrument_id.to_string(),
+            capability: proxy,
+        })?;
+
+        info!(
+            "Assigned instrument '{}' to module '{}' role '{}'",
+            instrument_id, module_id, role
+        );
+
+        Ok(())
     }
 
     /// Starts a module's experiment logic.
@@ -700,7 +744,9 @@ where
     /// - Module is already running
     /// - Start operation fails (e.g., missing instrument)
     async fn start_module(&mut self, id: &str) -> Result<()> {
-        let module = self.modules.get_mut(id)
+        let module = self
+            .modules
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Module '{}' is not spawned", id))?;
 
         let module_clone = module.clone();
@@ -720,7 +766,9 @@ where
     /// - Module is not running
     /// - Stop operation fails
     async fn stop_module(&mut self, id: &str) -> Result<()> {
-        let module = self.modules.get_mut(id)
+        let module = self
+            .modules
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Module '{}' is not spawned", id))?;
 
         let module_clone = module.clone();
@@ -840,17 +888,22 @@ where
                         Ok(())
                     }
                     Ok(Ok(Err(e))) => {
-                        let error_msg = format!("Storage writer task failed during shutdown: {}", e);
+                        let error_msg =
+                            format!("Storage writer task failed during shutdown: {}", e);
                         log::warn!("{}", error_msg);
                         Err(crate::error::DaqError::Processing(error_msg))
                     }
                     Ok(Err(e)) => {
-                        let error_msg = format!("Storage writer task panicked during shutdown: {}", e);
+                        let error_msg =
+                            format!("Storage writer task panicked during shutdown: {}", e);
                         log::warn!("{}", error_msg);
                         Err(crate::error::DaqError::Processing(error_msg))
                     }
                     Err(_) => {
-                        let error_msg = format!("Storage writer did not stop within {:?}, aborting", timeout_duration);
+                        let error_msg = format!(
+                            "Storage writer did not stop within {:?}, aborting",
+                            timeout_duration
+                        );
                         log::warn!("{}", error_msg);
                         Err(crate::error::DaqError::Processing(error_msg))
                     }
@@ -878,7 +931,8 @@ where
     /// The blocking file I/O is wrapped in spawn_blocking to prevent
     /// blocking the actor task.
     async fn save_session(&self, path: &Path, gui_state: session::GuiState) -> Result<()> {
-        let active_instruments: std::collections::HashSet<String> = self.instruments.keys().cloned().collect();
+        let active_instruments: std::collections::HashSet<String> =
+            self.instruments.keys().cloned().collect();
 
         let session = Session {
             active_instruments,
@@ -887,8 +941,7 @@ where
         };
 
         let path = path.to_path_buf();
-        tokio::task::spawn_blocking(move || session::save_session(&session, &path))
-            .await?
+        tokio::task::spawn_blocking(move || session::save_session(&session, &path)).await?
     }
 
     /// Loads application state from a session file.
@@ -905,8 +958,7 @@ where
     /// blocking the actor task.
     async fn load_session(&mut self, path: &Path) -> Result<session::GuiState> {
         let path = path.to_path_buf();
-        let session = tokio::task::spawn_blocking(move || session::load_session(&path))
-            .await??;
+        let session = tokio::task::spawn_blocking(move || session::load_session(&path)).await??;
         let gui_state = session.gui_state.clone();
 
         // Stop all current instruments
@@ -966,5 +1018,113 @@ where
         } else {
             Err(crate::error::DaqError::ShutdownFailed(errors))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ApplicationSettings, Settings, StorageSettings};
+    use crate::instrument::capabilities::position_control_capability_id;
+    use crate::measurement::InstrumentMeasurement;
+    use crate::modules::{ModuleCapabilityRequirement, ModuleStatus};
+    use std::any::TypeId;
+    use std::collections::HashMap;
+    use tokio::runtime::Runtime;
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::UnboundedSender;
+
+    struct TestModule {
+        name: String,
+        notifier: UnboundedSender<(String, TypeId)>,
+    }
+
+    impl Module for TestModule {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn init(&mut self, _config: ModuleConfig) -> Result<()> {
+            Ok(())
+        }
+
+        fn status(&self) -> ModuleStatus {
+            ModuleStatus::Idle
+        }
+
+        fn required_capabilities(&self) -> Vec<ModuleCapabilityRequirement> {
+            vec![ModuleCapabilityRequirement::new(
+                "stage",
+                position_control_capability_id(),
+            )]
+        }
+
+        fn assign_instrument(&mut self, assignment: ModuleInstrumentAssignment) -> Result<()> {
+            self.notifier
+                .send((
+                    assignment.instrument_id.clone(),
+                    assignment.capability.capability_id(),
+                ))
+                .map_err(|e| anyhow!("failed to record assignment: {}", e))?;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn assigns_capability_proxy_to_module_role() {
+        let settings = Settings {
+            log_level: "info".to_string(),
+            application: ApplicationSettings {
+                broadcast_channel_capacity: 64,
+                command_channel_capacity: 16,
+            },
+            storage: StorageSettings {
+                default_path: "./data".to_string(),
+                default_format: "csv".to_string(),
+            },
+            instruments: HashMap::new(),
+            processors: None,
+        };
+
+        let mut actor = DaqManagerActor::<InstrumentMeasurement>::new(
+            Arc::new(settings),
+            Arc::new(InstrumentRegistry::new()),
+            Arc::new(ProcessorRegistry::new()),
+            LogBuffer::new(),
+            Arc::new(Runtime::new().expect("runtime")),
+        )
+        .expect("actor created");
+
+        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel();
+        let module: Box<dyn Module> = Box::new(TestModule {
+            name: "module".to_string(),
+            notifier: notify_tx,
+        });
+        actor
+            .modules
+            .insert("module".to_string(), Arc::new(Mutex::new(module)));
+
+        let (command_tx, _command_rx) = mpsc::channel(4);
+        let task = tokio::spawn(async { Ok::<(), anyhow::Error>(()) });
+        actor.instruments.insert(
+            "stage".to_string(),
+            InstrumentHandle {
+                task,
+                command_tx,
+                capabilities: vec![position_control_capability_id()],
+            },
+        );
+
+        actor
+            .assign_instrument_to_module("module", "stage", "stage")
+            .await
+            .expect("assignment succeeds");
+
+        let (instrument_id, capability) = notify_rx
+            .recv()
+            .await
+            .expect("module assignment notification");
+        assert_eq!(instrument_id, "stage");
+        assert_eq!(capability, position_control_capability_id());
     }
 }

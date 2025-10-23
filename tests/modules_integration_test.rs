@@ -4,19 +4,27 @@
 
 #[cfg(test)]
 mod tests {
-    use rust_daq::modules::{
-        Module, ModuleConfig, ModuleStatus, ModuleWithInstrument, PowerMeterModule,
-    };
     use anyhow::Result;
+    use rust_daq::modules::{
+        Module, ModuleConfig, ModuleStatus, ModuleWithInstrument,
+    };
+    use rust_daq::modules::power_meter::PowerMeterModule;
 
     // Mock measure type for testing
     #[derive(Clone)]
     struct MockPowerMeasure;
 
+    #[async_trait::async_trait]
     impl rust_daq::measurement::Measure for MockPowerMeasure {
         type Data = f64;
-        fn unit() -> &'static str {
-            "W"
+        
+        async fn measure(&mut self) -> Result<Self::Data> {
+            Ok(42.0)
+        }
+        
+        async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
         }
     }
 

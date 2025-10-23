@@ -3,12 +3,12 @@ use crate::core::StorageWriter;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
+#[cfg(feature = "storage_arrow")]
+use crate::data::storage::ArrowWriter;
 #[cfg(feature = "storage_csv")]
 use crate::data::storage::CsvWriter;
 #[cfg(feature = "storage_hdf5")]
 use crate::data::storage::Hdf5Writer;
-#[cfg(feature = "storage_arrow")]
-use crate::data::storage::ArrowWriter;
 
 type WriterFactory = Box<dyn Fn() -> Box<dyn StorageWriter> + Send + Sync>;
 
@@ -95,8 +95,7 @@ impl StorageWriterRegistry {
     where
         F: Fn() -> Box<dyn StorageWriter> + Send + Sync + 'static,
     {
-        self.factories
-            .insert(format.to_string(), Box::new(factory));
+        self.factories.insert(format.to_string(), Box::new(factory));
     }
 
     /// Creates a storage writer for the specified format.

@@ -43,8 +43,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use daq_core::{
-    arc_measurement, DataPoint, DaqError, HardwareAdapter, Instrument, InstrumentCommand, InstrumentState,
-    Measurement, MeasurementReceiver, MeasurementSender, MotionController,
+    arc_measurement, DaqError, DataPoint, HardwareAdapter, Instrument, InstrumentCommand,
+    InstrumentState, Measurement, MeasurementReceiver, MeasurementSender, MotionController,
 };
 use log::{info, warn};
 use std::sync::Arc;
@@ -96,7 +96,6 @@ pub struct ESP300V2 {
     /// Current instrument state
     state: InstrumentState,
 
-
     /// Number of axes
     num_axes: usize,
 
@@ -135,7 +134,13 @@ impl ESP300V2 {
     /// * `baud_rate` - Communication speed (typically 19200)
     /// * `num_axes` - Number of axes (1-3)
     /// * `capacity` - Broadcast channel capacity for data distribution
-    pub fn with_capacity(id: String, port: String, baud_rate: u32, num_axes: usize, capacity: usize) -> Self {
+    pub fn with_capacity(
+        id: String,
+        port: String,
+        baud_rate: u32,
+        num_axes: usize,
+        capacity: usize,
+    ) -> Self {
         // ESP300 uses hardware flow control
         let serial = SerialAdapter::new(port, baud_rate)
             .with_timeout(Duration::from_secs(1))
@@ -183,7 +188,11 @@ impl ESP300V2 {
         max_position: f64,
     ) -> Result<()> {
         if axis == 0 || axis > self.num_axes {
-            return Err(anyhow!("Invalid axis: {} (valid: 1-{})", axis, self.num_axes));
+            return Err(anyhow!(
+                "Invalid axis: {} (valid: 1-{})",
+                axis,
+                self.num_axes
+            ));
         }
 
         let unit_string = match units {
@@ -212,7 +221,8 @@ impl ESP300V2 {
     /// Configure the instrument after connection
     async fn configure(&mut self) -> Result<()> {
         // Query controller version
-        let version = self.send_command("VE?")
+        let version = self
+            .send_command("VE?")
             .await
             .context("Failed to query version")?;
         info!("ESP300 version: {}", version);
@@ -225,19 +235,28 @@ impl ESP300V2 {
             self.send_command(&format!("{}SN{}", axis, config.units))
                 .await
                 .with_context(|| format!("Failed to set units for axis {}", axis))?;
-            info!("Set axis {} units to {} ({})", axis, config.units, config.unit_string);
+            info!(
+                "Set axis {} units to {} ({})",
+                axis, config.units, config.unit_string
+            );
 
             // Set velocity
             self.send_command(&format!("{}VA{}", axis, config.velocity))
                 .await
                 .with_context(|| format!("Failed to set velocity for axis {}", axis))?;
-            info!("Set axis {} velocity to {} {}/s", axis, config.velocity, config.unit_string);
+            info!(
+                "Set axis {} velocity to {} {}/s",
+                axis, config.velocity, config.unit_string
+            );
 
             // Set acceleration
             self.send_command(&format!("{}AC{}", axis, config.acceleration))
                 .await
                 .with_context(|| format!("Failed to set acceleration for axis {}", axis))?;
-            info!("Set axis {} acceleration to {} {}/s²", axis, config.acceleration, config.unit_string);
+            info!(
+                "Set axis {} acceleration to {} {}/s²",
+                axis, config.acceleration, config.unit_string
+            );
         }
 
         Ok(())
@@ -262,7 +281,10 @@ impl ESP300V2 {
             let interval_duration = Duration::from_secs_f64(1.0 / polling_rate);
             let mut interval = tokio::time::interval(interval_duration);
 
-            info!("ESP300 '{}' polling task started at {} Hz", id, polling_rate);
+            info!(
+                "ESP300 '{}' polling task started at {} Hz",
+                id, polling_rate
+            );
 
             loop {
                 tokio::select! {
@@ -321,7 +343,11 @@ impl ESP300V2 {
     /// Validate axis number
     fn validate_axis(&self, axis: usize) -> Result<()> {
         if axis == 0 || axis > self.num_axes {
-            Err(anyhow!("Invalid axis: {} (valid: 1-{})", axis, self.num_axes))
+            Err(anyhow!(
+                "Invalid axis: {} (valid: 1-{})",
+                axis,
+                self.num_axes
+            ))
         } else {
             Ok(())
         }
@@ -347,7 +373,6 @@ impl Instrument for ESP300V2 {
     fn state(&self) -> InstrumentState {
         self.state.clone()
     }
-
 
     async fn initialize(&mut self) -> Result<()> {
         if self.state != InstrumentState::Disconnected {
@@ -419,7 +444,11 @@ impl Instrument for ESP300V2 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Reconnect and reconfigure
-                self.serial.lock().await.connect(&Default::default()).await?;
+                self.serial
+                    .lock()
+                    .await
+                    .connect(&Default::default())
+                    .await?;
                 self.configure().await?;
 
                 self.state = InstrumentState::Ready;
@@ -427,9 +456,7 @@ impl Instrument for ESP300V2 {
                 info!("ESP300 '{}' recovered successfully", self.id);
                 Ok(())
             }
-            InstrumentState::Error(_) => {
-                Err(anyhow!("Cannot recover from unrecoverable error"))
-            }
+            InstrumentState::Error(_) => Err(anyhow!("Cannot recover from unrecoverable error")),
             _ => Err(anyhow!("Cannot recover from state: {:?}", self.state)),
         }
     }
@@ -454,17 +481,20 @@ impl Instrument for ESP300V2 {
 
                     match parts[1] {
                         "position" => {
-                            let position = value.as_f64()
+                            let position = value
+                                .as_f64()
                                 .ok_or_else(|| anyhow!("Invalid position value"))?;
                             self.move_absolute(axis, position).await
                         }
                         "velocity" => {
-                            let velocity = value.as_f64()
+                            let velocity = value
+                                .as_f64()
                                 .ok_or_else(|| anyhow!("Invalid velocity value"))?;
                             self.set_velocity(axis, velocity).await
                         }
                         "acceleration" => {
-                            let acceleration = value.as_f64()
+                            let acceleration = value
+                                .as_f64()
                                 .ok_or_else(|| anyhow!("Invalid acceleration value"))?;
                             self.set_acceleration(axis, acceleration).await
                         }
@@ -500,7 +530,10 @@ impl MotionController for ESP300V2 {
         if position < config.min_position || position > config.max_position {
             return Err(anyhow!(
                 "Position {} out of range [{}, {}] for axis {}",
-                position, config.min_position, config.max_position, axis
+                position,
+                config.min_position,
+                config.max_position,
+                axis
             ));
         }
 
@@ -508,7 +541,10 @@ impl MotionController for ESP300V2 {
             .await
             .context("Failed to send move absolute command")?;
 
-        info!("ESP300 axis {} moving to {} {}", axis, position, config.unit_string);
+        info!(
+            "ESP300 axis {} moving to {} {}",
+            axis, position, config.unit_string
+        );
         Ok(())
     }
 
@@ -524,7 +560,10 @@ impl MotionController for ESP300V2 {
             .await
             .context("Failed to send move relative command")?;
 
-        info!("ESP300 axis {} moving relative {} {}", axis, distance, config.unit_string);
+        info!(
+            "ESP300 axis {} moving relative {} {}",
+            axis, distance, config.unit_string
+        );
         Ok(())
     }
 
@@ -535,11 +574,13 @@ impl MotionController for ESP300V2 {
 
         self.validate_axis(axis)?;
 
-        let response = self.send_command(&format!("{}TP", axis))
+        let response = self
+            .send_command(&format!("{}TP", axis))
             .await
             .context("Failed to query position")?;
 
-        response.parse::<f64>()
+        response
+            .parse::<f64>()
             .with_context(|| format!("Failed to parse position response: {}", response))
     }
 
@@ -550,11 +591,13 @@ impl MotionController for ESP300V2 {
 
         self.validate_axis(axis)?;
 
-        let response = self.send_command(&format!("{}TV", axis))
+        let response = self
+            .send_command(&format!("{}TV", axis))
             .await
             .context("Failed to query velocity")?;
 
-        response.parse::<f64>()
+        response
+            .parse::<f64>()
             .with_context(|| format!("Failed to parse velocity response: {}", response))
     }
 
@@ -575,13 +618,19 @@ impl MotionController for ESP300V2 {
 
         self.axis_configs[axis - 1].velocity = velocity;
         let config = self.get_axis_config(axis)?;
-        info!("Set ESP300 axis {} velocity to {} {}/s", axis, velocity, config.unit_string);
+        info!(
+            "Set ESP300 axis {} velocity to {} {}/s",
+            axis, velocity, config.unit_string
+        );
         Ok(())
     }
 
     async fn set_acceleration(&mut self, axis: usize, acceleration: f64) -> Result<()> {
         if self.state != InstrumentState::Ready {
-            return Err(anyhow!("Cannot set acceleration from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot set acceleration from state: {:?}",
+                self.state
+            ));
         }
 
         self.validate_axis(axis)?;
@@ -596,7 +645,10 @@ impl MotionController for ESP300V2 {
 
         self.axis_configs[axis - 1].acceleration = acceleration;
         let config = self.get_axis_config(axis)?;
-        info!("Set ESP300 axis {} acceleration to {} {}/s²", axis, acceleration, config.unit_string);
+        info!(
+            "Set ESP300 axis {} acceleration to {} {}/s²",
+            axis, acceleration, config.unit_string
+        );
         Ok(())
     }
 
@@ -694,17 +746,22 @@ impl MotionController for ESP300V2 {
 
     async fn is_moving(&self, axis: usize) -> Result<bool> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!("Cannot check motion status from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot check motion status from state: {:?}",
+                self.state
+            ));
         }
 
         self.validate_axis(axis)?;
 
-        let response = self.send_command(&format!("{}MD?", axis))
+        let response = self
+            .send_command(&format!("{}MD?", axis))
             .await
             .context("Failed to query motion status")?;
 
         // MD? returns 0 if not moving, non-zero if moving
-        let status: i32 = response.parse()
+        let status: i32 = response
+            .parse()
             .with_context(|| format!("Failed to parse motion status: {}", response))?;
 
         Ok(status != 0)
@@ -716,7 +773,10 @@ impl ESP300V2 {
     /// Start continuous position monitoring
     async fn start_streaming(&mut self) -> Result<()> {
         if self.state != InstrumentState::Ready {
-            return Err(anyhow!("Cannot start streaming from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot start streaming from state: {:?}",
+                self.state
+            ));
         }
 
         self.spawn_polling_task();
@@ -773,7 +833,6 @@ mod tests {
         assert_eq!(instrument.instrument_type(), "esp300_v2");
         assert_eq!(instrument.state(), InstrumentState::Disconnected);
         assert_eq!(instrument.num_axes(), 3);
-
     }
 
     #[test]
@@ -802,7 +861,9 @@ mod tests {
         );
 
         // Configure axis 1
-        instrument.configure_axis(1, 1, 10.0, 20.0, -50.0, 50.0).unwrap();
+        instrument
+            .configure_axis(1, 1, 10.0, 20.0, -50.0, 50.0)
+            .unwrap();
         let config = instrument.get_axis_config(1).unwrap();
         assert_eq!(config.units, 1);
         assert_eq!(config.unit_string, "mm");
@@ -812,8 +873,12 @@ mod tests {
         assert_eq!(config.max_position, 50.0);
 
         // Invalid axis
-        assert!(instrument.configure_axis(0, 1, 10.0, 20.0, 0.0, 100.0).is_err());
-        assert!(instrument.configure_axis(4, 1, 10.0, 20.0, 0.0, 100.0).is_err());
+        assert!(instrument
+            .configure_axis(0, 1, 10.0, 20.0, 0.0, 100.0)
+            .is_err());
+        assert!(instrument
+            .configure_axis(4, 1, 10.0, 20.0, 0.0, 100.0)
+            .is_err());
     }
 
     #[test]
@@ -825,13 +890,19 @@ mod tests {
             3,
         );
 
-        instrument.configure_axis(1, 1, 10.0, 20.0, 0.0, 100.0).unwrap();
+        instrument
+            .configure_axis(1, 1, 10.0, 20.0, 0.0, 100.0)
+            .unwrap();
         assert_eq!(instrument.get_units(1), "mm");
 
-        instrument.configure_axis(2, 2, 10.0, 20.0, 0.0, 360.0).unwrap();
+        instrument
+            .configure_axis(2, 2, 10.0, 20.0, 0.0, 360.0)
+            .unwrap();
         assert_eq!(instrument.get_units(2), "deg");
 
-        instrument.configure_axis(3, 3, 10.0, 20.0, 0.0, 6.28).unwrap();
+        instrument
+            .configure_axis(3, 3, 10.0, 20.0, 0.0, 6.28)
+            .unwrap();
         assert_eq!(instrument.get_units(3), "rad");
 
         // Invalid axis
@@ -848,10 +919,14 @@ mod tests {
             2,
         );
 
-        instrument.configure_axis(1, 1, 10.0, 20.0, -50.0, 50.0).unwrap();
+        instrument
+            .configure_axis(1, 1, 10.0, 20.0, -50.0, 50.0)
+            .unwrap();
         assert_eq!(instrument.get_position_range(1), (-50.0, 50.0));
 
-        instrument.configure_axis(2, 2, 5.0, 10.0, 0.0, 360.0).unwrap();
+        instrument
+            .configure_axis(2, 2, 5.0, 10.0, 0.0, 360.0)
+            .unwrap();
         assert_eq!(instrument.get_position_range(2), (0.0, 360.0));
 
         // Invalid axis

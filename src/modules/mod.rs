@@ -169,9 +169,11 @@
 //! ```
 
 use crate::core::Instrument;
+use crate::instrument::capabilities::CapabilityProxyHandle;
 use crate::measurement::Measure;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -241,6 +243,29 @@ pub enum ModuleStatus {
     Error,
 }
 
+/// Capability requirement for a module role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleCapabilityRequirement {
+    pub role: String,
+    pub capability: TypeId,
+}
+
+impl ModuleCapabilityRequirement {
+    pub fn new(role: impl Into<String>, capability: TypeId) -> Self {
+        Self {
+            role: role.into(),
+            capability,
+        }
+    }
+}
+
+/// Assignment payload passed to modules when wiring instruments.
+pub struct ModuleInstrumentAssignment {
+    pub role: String,
+    pub instrument_id: String,
+    pub capability: CapabilityProxyHandle,
+}
+
 /// Base trait for all experiment modules.
 ///
 /// The `Module` trait defines the core lifecycle and status interface that all
@@ -299,15 +324,34 @@ pub trait Module: Send {
     /// This method is used by the DAQ system to monitor module health
     /// and enforce state transitions.
     fn status(&self) -> ModuleStatus;
-    
+
+    /// Returns the list of capability requirements for this module.
+    ///
+    /// The default implementation declares no requirements, allowing
+    /// existing modules to opt-in incrementally.
+    fn required_capabilities(&self) -> Vec<ModuleCapabilityRequirement> {
+        Vec::new()
+    }
+
+    /// Assigns a capability proxy to the module for a specific role.
+    ///
+    /// Modules that do not support capability-aware assignment may rely
+    /// on the default implementation which returns an informative error.
+    fn assign_instrument(&mut self, _assignment: ModuleInstrumentAssignment) -> Result<()> {
+        Err(anyhow!(
+            "Module '{}' does not accept capability assignments",
+            self.name()
+        ))
+    }
+
     fn start(&mut self) -> Result<()> {
         Err(anyhow!("Module does not support start operation"))
     }
-    
+
     fn pause(&mut self) -> Result<()> {
         Err(anyhow!("Module does not support pause operation"))
     }
-    
+
     fn stop(&mut self) -> Result<()> {
         Err(anyhow!("Module does not support stop operation"))
     }
@@ -569,10 +613,17 @@ mod tests {
     #[derive(Clone)]
     struct MockMeasure;
 
+    #[async_trait::async_trait]
     impl Measure for MockMeasure {
         type Data = f64;
-        fn unit() -> &'static str {
-            "V"
+        
+        async fn measure(&mut self) -> Result<Self::Data> {
+            Ok(42.0)
+        }
+        
+        async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
         }
     }
 
@@ -633,7 +684,9 @@ mod tests {
         let types = registry.list_types();
         assert!(types.contains(&"test".to_string()));
 
-        let module = registry.create("test", "test_instance".to_string()).unwrap();
+        let module = registry
+            .create("test", "test_instance".to_string())
+            .unwrap();
         assert_eq!(module.name(), "test_instance");
 
         // Unknown type should error

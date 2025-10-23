@@ -237,7 +237,10 @@ impl<M: Measure + 'static> PowerMeterModule<M> {
 
     /// Returns threshold violation counts
     pub fn get_violation_counts(&self) -> (u64, u64) {
-        (self.low_threshold_violations, self.high_threshold_violations)
+        (
+            self.low_threshold_violations,
+            self.high_threshold_violations,
+        )
     }
 
     /// Clears power history and resets statistics
@@ -400,17 +403,23 @@ mod tests {
     #[derive(Clone)]
     struct MockPowerMeasure;
 
+    #[async_trait::async_trait]
     impl Measure for MockPowerMeasure {
         type Data = f64;
-        fn unit() -> &'static str {
-            "W"
+        
+        async fn measure(&mut self) -> Result<Self::Data> {
+            Ok(42.0)
+        }
+        
+        async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(rx)
         }
     }
 
     #[test]
     fn test_module_creation() {
-        let module: PowerMeterModule<MockPowerMeasure> =
-            PowerMeterModule::new("test".to_string());
+        let module: PowerMeterModule<MockPowerMeasure> = PowerMeterModule::new("test".to_string());
         assert_eq!(module.name(), "test");
         assert_eq!(module.status(), ModuleStatus::Idle);
     }

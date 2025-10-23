@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use log::info;
 use std::sync::Arc;
 
-
 pub struct ScpiInstrument {
     id: String,
     measurement: Option<InstrumentMeasurement>,

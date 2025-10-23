@@ -31,8 +31,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use daq_core::{
-    arc_measurement, DataPoint, DaqError, HardwareAdapter, Instrument, InstrumentCommand, InstrumentState,
-    Measurement, MeasurementReceiver, MeasurementSender, TunableLaser,
+    arc_measurement, DaqError, DataPoint, HardwareAdapter, Instrument, InstrumentCommand,
+    InstrumentState, Measurement, MeasurementReceiver, MeasurementSender, TunableLaser,
 };
 use log::{info, warn};
 use std::sync::Arc;
@@ -50,7 +50,6 @@ pub struct MaiTaiV2 {
 
     /// Current instrument state
     state: InstrumentState,
-
 
     /// Laser configuration
     wavelength_nm: f64,
@@ -127,14 +126,17 @@ impl MaiTaiV2 {
         // Remove command echo if present (format: "COMMAND:value")
         let value_str = response.split(':').last().unwrap_or(&response);
 
-        value_str.trim().parse::<f64>()
+        value_str
+            .trim()
+            .parse::<f64>()
             .with_context(|| format!("Failed to parse response '{}' as float", response))
     }
 
     /// Configure the instrument after connection
     async fn configure(&mut self) -> Result<()> {
         // Verify connection with identity query
-        let id_response = self.send_command("*IDN?")
+        let id_response = self
+            .send_command("*IDN?")
             .await
             .context("Failed to query instrument identity")?;
 
@@ -151,7 +153,10 @@ impl MaiTaiV2 {
         match self.query_value("SHUTTER?").await {
             Ok(val) => {
                 self.shutter_open = val > 0.5;
-                info!("Current shutter state: {}", if self.shutter_open { "open" } else { "closed" });
+                info!(
+                    "Current shutter state: {}",
+                    if self.shutter_open { "open" } else { "closed" }
+                );
             }
             Err(e) => {
                 warn!("Failed to query initial shutter state: {}", e);
@@ -179,7 +184,10 @@ impl MaiTaiV2 {
             let interval_duration = Duration::from_secs_f64(1.0 / polling_rate);
             let mut interval = tokio::time::interval(interval_duration);
 
-            info!("MaiTai '{}' monitoring task started at {} Hz", id, polling_rate);
+            info!(
+                "MaiTai '{}' monitoring task started at {} Hz",
+                id, polling_rate
+            );
 
             loop {
                 tokio::select! {
@@ -259,7 +267,6 @@ impl Instrument for MaiTaiV2 {
         self.state.clone()
     }
 
-
     async fn initialize(&mut self) -> Result<()> {
         if self.state != InstrumentState::Disconnected {
             return Err(anyhow!("Cannot initialize from state: {:?}", self.state));
@@ -330,7 +337,11 @@ impl Instrument for MaiTaiV2 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Reconnect and reconfigure
-                self.serial.lock().await.connect(&Default::default()).await?;
+                self.serial
+                    .lock()
+                    .await
+                    .connect(&Default::default())
+                    .await?;
                 self.configure().await?;
 
                 self.state = InstrumentState::Ready;
@@ -338,9 +349,7 @@ impl Instrument for MaiTaiV2 {
                 info!("MaiTai '{}' recovered successfully", self.id);
                 Ok(())
             }
-            InstrumentState::Error(_) => {
-                Err(anyhow!("Cannot recover from unrecoverable error"))
-            }
+            InstrumentState::Error(_) => Err(anyhow!("Cannot recover from unrecoverable error")),
             _ => Err(anyhow!("Cannot recover from state: {:?}", self.state)),
         }
     }
@@ -355,30 +364,31 @@ impl Instrument for MaiTaiV2 {
             InstrumentCommand::StopAcquisition => self.stop_monitoring().await,
             InstrumentCommand::Shutdown => self.shutdown().await,
             InstrumentCommand::Recover => self.recover().await,
-            InstrumentCommand::SetParameter { name, value } => {
-                match name.as_str() {
-                    "wavelength_nm" => {
-                        let wavelength = value.as_f64()
-                            .ok_or_else(|| anyhow!("Invalid wavelength value"))?;
-                        self.set_wavelength_nm(wavelength).await
-                    }
-                    "shutter" => {
-                        let open = value.as_bool()
-                            .ok_or_else(|| anyhow!("Invalid shutter value (expected boolean)"))?;
-                        self.set_shutter(open).await
-                    }
-                    "laser_on" => {
-                        let on = value.as_bool()
-                            .ok_or_else(|| anyhow!("Invalid laser_on value (expected boolean)"))?;
-                        if on {
-                            self.laser_on().await
-                        } else {
-                            self.laser_off().await
-                        }
-                    }
-                    _ => Err(anyhow!("Unknown parameter: {}", name)),
+            InstrumentCommand::SetParameter { name, value } => match name.as_str() {
+                "wavelength_nm" => {
+                    let wavelength = value
+                        .as_f64()
+                        .ok_or_else(|| anyhow!("Invalid wavelength value"))?;
+                    self.set_wavelength_nm(wavelength).await
                 }
-            }
+                "shutter" => {
+                    let open = value
+                        .as_bool()
+                        .ok_or_else(|| anyhow!("Invalid shutter value (expected boolean)"))?;
+                    self.set_shutter(open).await
+                }
+                "laser_on" => {
+                    let on = value
+                        .as_bool()
+                        .ok_or_else(|| anyhow!("Invalid laser_on value (expected boolean)"))?;
+                    if on {
+                        self.laser_on().await
+                    } else {
+                        self.laser_off().await
+                    }
+                }
+                _ => Err(anyhow!("Unknown parameter: {}", name)),
+            },
             InstrumentCommand::GetParameter { name } => {
                 // For GetParameter, we'd need a way to return the value
                 // For now, just log it
@@ -395,7 +405,10 @@ impl TunableLaser for MaiTaiV2 {
         self.validate_wavelength(nm)?;
 
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!("Cannot set wavelength from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot set wavelength from state: {:?}",
+                self.state
+            ));
         }
 
         self.send_command(&format!("WAVELENGTH:{}", nm))
@@ -409,7 +422,10 @@ impl TunableLaser for MaiTaiV2 {
 
     async fn get_wavelength_nm(&self) -> Result<f64> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!("Cannot query wavelength from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot query wavelength from state: {:?}",
+                self.state
+            ));
         }
 
         self.query_value("WAVELENGTH?")
@@ -429,7 +445,10 @@ impl TunableLaser for MaiTaiV2 {
 
     async fn set_shutter(&mut self, open: bool) -> Result<()> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!("Cannot control shutter from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot control shutter from state: {:?}",
+                self.state
+            ));
         }
 
         let cmd = if open { "SHUTTER:1" } else { "SHUTTER:0" };
@@ -463,7 +482,10 @@ impl TunableLaser for MaiTaiV2 {
 
     async fn laser_off(&mut self) -> Result<()> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
-            return Err(anyhow!("Cannot turn off laser from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot turn off laser from state: {:?}",
+                self.state
+            ));
         }
 
         self.send_command("OFF")
@@ -481,7 +503,10 @@ impl MaiTaiV2 {
     /// Start continuous parameter monitoring
     async fn start_monitoring(&mut self) -> Result<()> {
         if self.state != InstrumentState::Ready {
-            return Err(anyhow!("Cannot start monitoring from state: {:?}", self.state));
+            return Err(anyhow!(
+                "Cannot start monitoring from state: {:?}",
+                self.state
+            ));
         }
 
         self.spawn_monitoring_task();
@@ -538,25 +563,16 @@ mod tests {
 
     #[test]
     fn test_maitai_creation() {
-        let instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument = MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         assert_eq!(instrument.id(), "test_laser");
         assert_eq!(instrument.instrument_type(), "maitai_v2");
         assert_eq!(instrument.state(), InstrumentState::Disconnected);
-
     }
 
     #[test]
     fn test_initial_parameters() {
-        let instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument = MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Verify default parameters
         assert_eq!(instrument.wavelength_nm, 800.0);
@@ -568,11 +584,7 @@ mod tests {
 
     #[test]
     fn test_wavelength_validation() {
-        let instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument = MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Valid wavelengths
         assert!(instrument.validate_wavelength(700.0).is_ok());
@@ -588,11 +600,8 @@ mod tests {
 
     #[test]
     fn test_custom_wavelength_range() {
-        let mut instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let mut instrument =
+            MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Set custom range for different model
         assert!(instrument.set_wavelength_range(710.0, 990.0).is_ok());
@@ -609,11 +618,8 @@ mod tests {
 
     #[test]
     fn test_cached_wavelength() {
-        let mut instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let mut instrument =
+            MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         assert_eq!(instrument.get_wavelength_cached(), 800.0);
 
@@ -624,11 +630,8 @@ mod tests {
 
     #[test]
     fn test_shutter_state_tracking() {
-        let mut instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let mut instrument =
+            MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Test internal state tracking
         assert_eq!(instrument.shutter_open, false);
@@ -640,11 +643,7 @@ mod tests {
 
     #[test]
     fn test_state_transitions() {
-        let instrument = MaiTaiV2::new(
-            "test_laser".to_string(),
-            "/dev/ttyUSB0".to_string(),
-            9600,
-        );
+        let instrument = MaiTaiV2::new("test_laser".to_string(), "/dev/ttyUSB0".to_string(), 9600);
 
         // Should start disconnected
         assert_eq!(instrument.state(), InstrumentState::Disconnected);
