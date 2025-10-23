@@ -2,9 +2,36 @@
 
 This document describes the beads installation setup for the rust-daq project and provides guidance for installing in different environments.
 
+## ⚠️ Claude Code Sandbox Limitations
+
+**Important:** Claude Code runs in a **sandboxed environment** with restricted network access by design. This is a security feature, not a bug.
+
+**What this means:**
+- ✅ Python packages from PyPI can be installed
+- ✅ Standard Ubuntu packages via apt work
+- ✅ GitHub repositories can be cloned
+- ❌ Go module proxy (storage.googleapis.com) is blocked
+- ❌ Tailscale and similar VPN tools are blocked
+- ❌ Many third-party package sources are restricted
+
+**For more details, see:** https://docs.claude.com/en/docs/claude-code/sandboxing
+
+## 🚀 Centralized Architecture via Tailscale
+
+**Note:** The user plans to use **Tailscale** to connect Claude Code sandboxes to centralized services (beads database, MCP servers, etc.). This is a superior architecture compared to git-based sync.
+
+**Current Status:** Tailscale installation is blocked in Claude Code sandbox (403 Forbidden on all installation methods). This should be whitelisted to enable private network access.
+
+**See [TAILSCALE_INTEGRATION.md](TAILSCALE_INTEGRATION.md) for:**
+- Complete centralized architecture design
+- Installation attempts and failure details
+- Expected setup when Tailscale is whitelisted
+- How to request whitelisting from Anthropic
+- Alternative approaches and workarounds
+
 ## Current Environment Status
 
-This environment has **partial beads installation** due to network restrictions:
+This environment has **partial beads installation** due to Claude Code sandbox restrictions:
 
 ✅ **Installed Successfully:**
 - `beads-mcp` (v0.11.0) - MCP server for Claude Code integration
@@ -13,14 +40,44 @@ This environment has **partial beads installation** due to network restrictions:
 
 ⚠️ **Installation Limitation:**
 - `bd` CLI tool - **Stub version only**
-- Full installation blocked by network restrictions preventing Go module downloads
-- modernc.org/sqlite dependency cannot be fetched (403 Forbidden)
+- Full installation blocked by sandbox network restrictions
+- Go module proxy access is not available in sandboxed environments
+- modernc.org/sqlite dependency cannot be fetched
+
+## Recommended Workflow for Claude Code Sandbox
+
+Given the sandbox limitations, here's the recommended approach:
+
+### For Claude Code Users (This Environment)
+
+**Use beads-mcp MCP server only:**
+- ✅ beads-mcp is fully installed and functional
+- ✅ MCP tools provide bd functionality through Claude Code
+- ✅ No need for direct bd CLI access in the sandbox
+
+**Claude Code will use beads-mcp via MCP protocol** - you don't need to manually run `bd` commands. The MCP server handles this for you.
+
+### For Local Development (Outside Sandbox)
+
+**Install full bd CLI on your local machine:**
+1. Run the install script: `curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash`
+2. Initialize in rust-daq: `bd init --prefix daq`
+3. Use `bd` commands directly in your terminal
+4. Changes sync via git (`.beads/issues.jsonl`)
+
+### Hybrid Workflow
+
+**Best of both worlds:**
+1. Use Claude Code with beads-mcp for AI-assisted development
+2. Use local bd CLI for direct issue management
+3. Both share the same `.beads/issues.jsonl` file via git
+4. Changes sync automatically when you pull/push
 
 ## What Works in This Environment
 
-The beads-mcp MCP server is fully functional and can be used with Claude Code. However, it will fail when attempting to execute `bd` CLI commands because only a stub script is installed.
+The beads-mcp MCP server is fully functional and can be used with Claude Code. The `bd` CLI stub provides helpful installation instructions for local environments.
 
-The stub script provides helpful error messages and installation instructions when invoked.
+**Key Point:** You don't need bd CLI in the sandbox - beads-mcp provides all the functionality through Claude Code's MCP integration.
 
 ## Full Installation (For Environments with Network Access)
 
