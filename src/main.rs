@@ -38,6 +38,7 @@ use rust_daq::{
     instrument::{mock::MockInstrument, scpi::ScpiInstrument, InstrumentRegistry},
     log_capture::{LogBuffer, LogCollector},
     measurement::{datapoint::*, InstrumentMeasurement},
+    modules::{ModuleRegistry, power_meter::PowerMeterModule},
 };
 use std::sync::Arc;
 
@@ -111,11 +112,19 @@ fn main() -> Result<()> {
     // Create the processor registry
     let processor_registry = Arc::new(ProcessorRegistry::new());
 
+    // Create the module registry and register modules
+    let mut module_registry = ModuleRegistry::<InstrumentMeasurement>::new();
+    module_registry.register("power_meter", |id| {
+        Box::new(PowerMeterModule::<InstrumentMeasurement>::new(id))
+    });
+    let module_registry = Arc::new(module_registry);
+
     // Create the core application state
     let app = DaqApp::<InstrumentMeasurement>::new(
         settings.clone(),
         instrument_registry,
         processor_registry,
+        module_registry,
         log_buffer,
     )?;
     let app_clone = app.clone();

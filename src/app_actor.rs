@@ -139,6 +139,7 @@ where
     settings: Arc<Settings>,
     instrument_registry: Arc<InstrumentRegistry<M>>,
     processor_registry: Arc<ProcessorRegistry>,
+    module_registry: Arc<crate::modules::ModuleRegistry<M>>,
     instruments: HashMap<String, InstrumentHandle>,
     modules: HashMap<String, Arc<Mutex<Box<dyn Module>>>>,
     data_distributor: Arc<DataDistributor<Arc<Measurement>>>,
@@ -172,6 +173,7 @@ where
         settings: Arc<Settings>,
         instrument_registry: Arc<InstrumentRegistry<M>>,
         processor_registry: Arc<ProcessorRegistry>,
+        module_registry: Arc<crate::modules::ModuleRegistry<M>>,
         log_buffer: LogBuffer,
         runtime: Arc<Runtime>,
     ) -> Result<Self> {
@@ -184,6 +186,7 @@ where
             settings,
             instrument_registry,
             processor_registry,
+            module_registry,
             instruments: HashMap::new(),
             modules: HashMap::new(),
             data_distributor,
@@ -638,19 +641,8 @@ where
             return Err(anyhow!("Module '{}' is already spawned", id));
         }
 
-        // Create module based on type
-        // Currently supports power_meter as a proof-of-concept
-        use crate::modules::power_meter::PowerMeterModule;
-
-        let mut module: Box<dyn Module> = match module_type {
-            "power_meter" => Box::new(PowerMeterModule::<M>::new(id.to_string())),
-            _ => {
-                return Err(anyhow!(
-                    "Unknown module type: '{}' (supported: power_meter)",
-                    module_type
-                ))
-            }
-        };
+        // Create module using registry
+        let mut module: Box<dyn Module> = self.module_registry.create(module_type, id.to_string())?;
 
         // Initialize module
         module.init(config)?;
@@ -1090,6 +1082,7 @@ mod tests {
             Arc::new(settings),
             Arc::new(InstrumentRegistry::new()),
             Arc::new(ProcessorRegistry::new()),
+            Arc::new(crate::modules::ModuleRegistry::new()),
             LogBuffer::new(),
             Arc::new(Runtime::new().expect("runtime")),
         )

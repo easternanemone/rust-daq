@@ -37,10 +37,17 @@ async fn setup_actor() -> mpsc::Sender<DaqCommand> {
     let settings = create_test_settings();
     let runtime = Arc::new(Runtime::new().expect("Failed to create runtime"));
 
+    // Register power_meter module
+    let mut module_registry = rust_daq::modules::ModuleRegistry::new();
+    module_registry.register("power_meter", |id| {
+        Box::new(rust_daq::modules::power_meter::PowerMeterModule::<InstrumentMeasurement>::new(id))
+    });
+
     let actor = DaqManagerActor::<InstrumentMeasurement>::new(
         Arc::new(settings),
         Arc::new(InstrumentRegistry::new()),
         Arc::new(ProcessorRegistry::new()),
+        Arc::new(module_registry),
         LogBuffer::new(),
         runtime,
     )

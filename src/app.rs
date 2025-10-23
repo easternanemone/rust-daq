@@ -45,6 +45,7 @@ where
         settings: Arc<Settings>,
         instrument_registry: Arc<InstrumentRegistry<M>>,
         processor_registry: Arc<ProcessorRegistry>,
+        module_registry: Arc<crate::modules::ModuleRegistry<M>>,
         log_buffer: LogBuffer,
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().context("Failed to create Tokio runtime")?);
@@ -54,6 +55,7 @@ where
             settings.clone(),
             instrument_registry.clone(),
             processor_registry,
+            module_registry,
             log_buffer.clone(),
             runtime.clone(),
         )?;

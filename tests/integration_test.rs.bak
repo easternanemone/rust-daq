@@ -24,7 +24,6 @@ fn test_mock_instrument_spawns_and_produces_data() {
         settings.clone(),
         instrument_registry,
         processor_registry,
-        Arc::new(rust_daq::modules::ModuleRegistry::new()),
         log_buffer,
     )
     .unwrap();
