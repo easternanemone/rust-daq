@@ -8,7 +8,7 @@ use chrono::Utc;
 use daq_core::{
     arc_measurement, measurement_channel, Camera, DaqError, DataPoint, HardwareAdapter, ImageData,
     Instrument, InstrumentCommand, InstrumentState, Measurement, MeasurementReceiver,
-    MeasurementSender, PowerMeter, PowerRange, Result, ROI,
+    MeasurementSender, PixelBuffer, PowerMeter, PowerRange, Result, ROI,
 };
 use tokio::task::JoinHandle;
 
@@ -100,7 +100,7 @@ impl MockInstrumentV2 {
             channel: format!("{}_image", self.id),
             width,
             height,
-            pixels,
+            pixels: PixelBuffer::F64(pixels),
             unit: "counts".to_string(),
             metadata: Some(serde_json::json!({
                 "exposure_ms": self.exposure_ms,
@@ -302,7 +302,7 @@ impl Camera for MockInstrumentV2 {
                             channel: format!("{}_image", id),
                             width,
                             height,
-                            pixels,
+                            pixels: PixelBuffer::F64(pixels),
                             unit: "counts".to_string(),
                             metadata: Some(serde_json::json!({
                                 "exposure_ms": exposure_ms,

@@ -54,6 +54,74 @@ pub struct DataPoint {
     pub unit: String,
 }
 
+/// Memory-efficient pixel storage for camera/sensor data
+///
+/// Supports native camera formats (U8, U16) and processed data (F64).
+/// Using native formats provides significant memory savings:
+/// - U8: 1 byte/pixel (8× savings vs f64)
+/// - U16: 2 bytes/pixel (4× savings vs f64)
+/// - F64: 8 bytes/pixel (for processed/calibrated data)
+///
+/// Example: 2048×2048 camera frame
+/// - PixelBuffer::U16: 8.4 MB
+/// - Vec<f64>: 33.6 MB
+/// - Savings: 25.2 MB per frame (75% reduction)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PixelBuffer {
+    /// 8-bit unsigned integer pixels (1 byte/pixel)
+    U8(Vec<u8>),
+    /// 16-bit unsigned integer pixels (2 bytes/pixel) - Common for scientific cameras
+    U16(Vec<u16>),
+    /// 64-bit floating point pixels (8 bytes/pixel) - For processed data
+    F64(Vec<f64>),
+}
+
+impl PixelBuffer {
+    /// Convert to f64 slice for processing/display
+    ///
+    /// Returns Cow to avoid allocation for F64 variant (zero-copy).
+    pub fn as_f64(&self) -> std::borrow::Cow<'_, [f64]> {
+        use std::borrow::Cow;
+        match self {
+            PixelBuffer::U8(data) => Cow::Owned(data.iter().map(|&v| v as f64).collect()),
+            PixelBuffer::U16(data) => Cow::Owned(data.iter().map(|&v| v as f64).collect()),
+            PixelBuffer::F64(data) => Cow::Borrowed(data.as_slice()),
+        }
+    }
+
+    /// Get the number of pixels
+    pub fn len(&self) -> usize {
+        match self {
+            PixelBuffer::U8(data) => data.len(),
+            PixelBuffer::U16(data) => data.len(),
+            PixelBuffer::F64(data) => data.len(),
+        }
+    }
+
+    /// Check if buffer is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get memory usage in bytes
+    pub fn memory_bytes(&self) -> usize {
+        match self {
+            PixelBuffer::U8(data) => data.len(),
+            PixelBuffer::U16(data) => data.len() * 2,
+            PixelBuffer::F64(data) => data.len() * 8,
+        }
+    }
+
+    /// Convert to Vec<f64> (allocates for U8/U16)
+    pub fn to_vec(&self) -> Vec<f64> {
+        match self {
+            PixelBuffer::U8(data) => data.iter().map(|&v| v as f64).collect(),
+            PixelBuffer::U16(data) => data.iter().map(|&v| v as f64).collect(),
+            PixelBuffer::F64(data) => data.clone(),
+        }
+    }
+}
+
 /// Spectrum data (e.g., from FFT or spectrometer)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpectrumData {
@@ -74,10 +142,27 @@ pub struct ImageData {
     pub channel: String,
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<f64>, // Row-major order
-    pub unit: String,     // e.g., "counts", "photons"
+    pub pixels: PixelBuffer, // Native format support for memory efficiency
+    pub unit: String,        // e.g., "counts", "photons"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+impl ImageData {
+    /// Get pixels as f64 slice (zero-copy for F64 variant)
+    pub fn pixels_as_f64(&self) -> std::borrow::Cow<'_, [f64]> {
+        self.pixels.as_f64()
+    }
+
+    /// Get total pixel count
+    pub fn pixel_count(&self) -> usize {
+        self.pixels.len()
+    }
+
+    /// Get memory usage of pixel data in bytes
+    pub fn memory_bytes(&self) -> usize {
+        self.pixels.memory_bytes()
+    }
 }
 
 /// Unified measurement type supporting multiple data forms
