@@ -15,12 +15,15 @@
 //! timeout_ms = 500
 //! ```
 //!
-//! ## Elliptec Protocol
+//! ## Elliptec Protocol (Based on Official Thorlabs Manual)
 //!
-//! RS-485 multidrop: `<address><command>[data]<CR>`
+//! RS-232 Serial at 9600 baud, 8N1, no flow control
+//! Command format: `<address><command>[data]\r`
 //! - Address: Single hex digit (0-F)
-//! - Commands: `gp` (get position), `ma` (move absolute), `ho` (home), `in` (info)
-//! - Response: `<address><status><data><CR>`
+//! - Commands: `gp` (get position), `ma` (move absolute), `ho` (home), `gs` (get status), `in` (info)
+//! - Response types: `PO` (position), `GS` (status), `ER` (error), `IN` (info)
+//! - ELL14 pulses per revolution: 136,533 (official specification)
+//! - Timing: 100ms delay after command, 100ms delay after response (200ms cycle minimum)
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -55,8 +58,8 @@ pub struct ElliptecV2 {
     task_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 
-    // Elliptec-specific constants
-    counts_per_rotation: f64, // ELL14: 143360 counts = 360 degrees
+    // Elliptec-specific constants (ELL14 official specification)
+    counts_per_rotation: f64, // ELL14: 136,533 counts = 360 degrees (NOT 143,360)
 }
 
 impl ElliptecV2 {
@@ -98,13 +101,14 @@ impl ElliptecV2 {
             task_handle: None,
             shutdown_tx: None,
 
-            counts_per_rotation: 143360.0, // ELL14 specification
+            counts_per_rotation: 136533.0, // ELL14 official specification
         }
     }
 
     /// Send command to specific device and read response
     ///
     /// Elliptec protocol: `<addr><cmd>[data]\r`
+    /// Implements official timing: 100ms after send, 100ms after receive
     async fn send_command(&self, address: u8, command: &str) -> Result<String> {
         // For SerialAdapter, we need to downcast
         let serial_adapter = self
@@ -118,6 +122,9 @@ impl ElliptecV2 {
 
         let response = serial_adapter.send_command(&cmd).await?;
 
+        // Official timing requirement: 100ms delay after receiving response
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         // Validate response starts with correct address
         if !response.starts_with(&format!("{:X}", address)) {
             return Err(anyhow::anyhow!(
@@ -130,6 +137,61 @@ impl ElliptecV2 {
         Ok(response)
     }
 
+    /// Check status response for errors (bit 9 = 0x0200)
+    /// If error bit set, query again for ER response with error code
+    async fn check_status(&self, address: u8) -> Result<u16> {
+        let response = self.send_command(address, "gs").await?;
+
+        // Response format: "0GS1234" where 1234 is 4-char hex status word
+        if response.len() < 7 || &response[1..3] != "GS" {
+            return Err(anyhow::anyhow!(
+                "Invalid status response format: {}",
+                response
+            ));
+        }
+
+        let status_hex = &response[3..7];
+        let status = u16::from_str_radix(status_hex, 16).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse status word '{}': {} (response: {})",
+                status_hex,
+                e,
+                response
+            )
+        })?;
+
+        // Check error bit 9 (0x0200)
+        if (status & 0x0200) != 0 {
+            // Error occurred - query again for ER code
+            let err_response = self.send_command(address, "gs").await?;
+
+            if err_response.len() >= 5 && &err_response[1..3] == "ER" {
+                let err_code = &err_response[3..5];
+                let error_msg = match err_code {
+                    "01" => "Communication timeout",
+                    "02" => "Mechanical timeout",
+                    "03" => "Command not understood",
+                    "04" => "Parameter out of range",
+                    "05" => "Module isolated",
+                    "06" => "Module out of range",
+                    "07" => "Homing error",
+                    "08" => "Motor error",
+                    "09" => "Internal error (firmware)",
+                    _ => "Unknown error",
+                };
+
+                return Err(anyhow::anyhow!(
+                    "Elliptec device {} error {}: {}",
+                    address,
+                    err_code,
+                    error_msg
+                ));
+            }
+        }
+
+        Ok(status)
+    }
+
     /// Get position from device in degrees
     async fn get_position_degrees(&self, address: u8) -> Result<f64> {
         let response = self.send_command(address, "gp").await?;
@@ -137,8 +199,8 @@ impl ElliptecV2 {
         // Response format: "0PO12345678" where:
         // - '0' = address
         // - 'PO' = position status
-        // - '12345678' = hex position
-        if response.len() < 10 {
+        // - '12345678' = 8-char hex position
+        if response.len() < 11 {
             return Err(anyhow::anyhow!(
                 "Invalid position response (too short): {}",
                 response
@@ -154,7 +216,7 @@ impl ElliptecV2 {
             ));
         }
 
-        let hex_pos = &response[3..];
+        let hex_pos = &response[3..11];
         let raw_pos = u32::from_str_radix(hex_pos, 16).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to parse hex position '{}': {} (response: {})",
@@ -164,7 +226,7 @@ impl ElliptecV2 {
             )
         })?;
 
-        // Convert counts to degrees
+        // Convert counts to degrees using official ELL14 constant
         let degrees = (raw_pos as f64 / self.counts_per_rotation) * 360.0;
         Ok(degrees)
     }
@@ -174,45 +236,48 @@ impl ElliptecV2 {
         // Normalize to 0-360 range
         let normalized = degrees.rem_euclid(360.0);
 
-        // Convert to counts
+        // Convert to counts using official ELL14 constant
         let counts = ((normalized / 360.0) * self.counts_per_rotation) as u32;
         let hex_pos = format!("{:08X}", counts);
 
         // 'ma' command - move absolute
-        let response = self.send_command(address, &format!("ma{}", hex_pos)).await?;
+        let _response = self.send_command(address, &format!("ma{}", hex_pos)).await?;
 
-        // Check for error responses
-        let status = &response[1..3];
-        if status.starts_with('E') {
-            return Err(anyhow::anyhow!(
-                "Elliptec device {} returned error: {}",
-                address,
-                response
-            ));
+        // Check status for errors after move command
+        let status = self.check_status(address).await?;
+
+        // Check if motor is moving (bit 1 = 0x0002)
+        if (status & 0x0002) != 0 {
+            debug!(
+                "Elliptec device {} moving to {:.2}° (counts: {}, status: 0x{:04X})",
+                address, normalized, counts, status
+            );
         }
 
-        debug!(
-            "Elliptec device {} moving to {:.2} degrees (counts: {})",
-            address, normalized, counts
-        );
         Ok(())
     }
 
     /// Home device (find reference position)
     async fn home_device(&self, address: u8) -> Result<()> {
-        let response = self.send_command(address, "ho").await?;
+        let _response = self.send_command(address, "ho").await?;
 
-        let status = &response[1..3];
-        if status.starts_with('E') {
-            return Err(anyhow::anyhow!(
-                "Elliptec device {} home failed: {}",
-                address,
-                response
-            ));
+        // Wait for homing to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Poll status until homing complete (bit 8 = 0x0100 means homed)
+        for _ in 0..50 {
+            let status = self.check_status(address).await?;
+
+            // Check if homing complete (bit 8 set, bit 7 clear)
+            if (status & 0x0100) != 0 && (status & 0x0080) == 0 {
+                debug!("Elliptec device {} homed (status: 0x{:04X})", address, status);
+                return Ok(());
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        debug!("Elliptec device {} homed successfully", address);
-        Ok(())
+        Err(anyhow::anyhow!("Elliptec device {} homing timeout", address))
     }
 
     /// Get device information
@@ -531,22 +596,24 @@ impl ElliptecV2 {
                             // Query position
                             let cmd = format!("{:X}gp", addr);
                             match adapter_clone.send_command(&cmd).await {
-                                Ok(response) if response.len() >= 10 => {
-                                    // Parse response
-                                    if let Ok(raw_pos) = u32::from_str_radix(&response[3..], 16) {
-                                        let degrees = (raw_pos as f64 / counts_per_rotation) * 360.0;
+                                Ok(response) if response.len() >= 11 => {
+                                    // Parse response: "0PO12345678"
+                                    if &response[1..3] == "PO" {
+                                        if let Ok(raw_pos) = u32::from_str_radix(&response[3..11], 16) {
+                                            let degrees = (raw_pos as f64 / counts_per_rotation) * 360.0;
 
-                                        let dp = DataPoint {
-                                            timestamp,
-                                            channel: format!("axis{}_position", axis),
-                                            value: degrees,
-                                            unit: "degrees".to_string(),
-                                        };
+                                            let dp = DataPoint {
+                                                timestamp,
+                                                channel: format!("axis{}_position", axis),
+                                                value: degrees,
+                                                unit: "degrees".to_string(),
+                                            };
 
-                                        let measurement = arc_measurement(Measurement::Scalar(dp));
-                                        if tx.send(measurement).is_err() {
-                                            info!("No receivers, stopping Elliptec polling");
-                                            return;
+                                            let measurement = arc_measurement(Measurement::Scalar(dp));
+                                            if tx.send(measurement).is_err() {
+                                                info!("No receivers, stopping Elliptec polling");
+                                                return;
+                                            }
                                         }
                                     }
                                 }
@@ -615,13 +682,13 @@ mod tests {
     fn test_elliptec_position_conversion() {
         let elliptec = ElliptecV2::new("test".to_string());
 
-        // Test full rotation
-        let counts = 143360u32; // One full rotation
+        // Test full rotation (ELL14 official specification: 136,533 counts)
+        let counts = 136533u32;
         let degrees = (counts as f64 / elliptec.counts_per_rotation) * 360.0;
         assert!((degrees - 360.0).abs() < 0.01);
 
         // Test half rotation
-        let counts = 71680u32;
+        let counts = 68266u32;  // 136533 / 2 (approximately)
         let degrees = (counts as f64 / elliptec.counts_per_rotation) * 360.0;
         assert!((degrees - 180.0).abs() < 0.01);
     }
