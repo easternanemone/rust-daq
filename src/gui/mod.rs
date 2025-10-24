@@ -52,7 +52,7 @@ use daq_core::Measurement;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style, TabIndex, TabViewer};
 use egui_plot::{Line, Plot, PlotPoints};
-use log::{error, LevelFilter};
+use log::{error, info, LevelFilter};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -330,15 +330,18 @@ where
                                                     image_data.width as usize,
                                                     image_data.height as usize,
                                                 );
-                                                image_tab.pixel_data = image_data.pixels.clone();
+                                                // Convert pixels to f64 for GUI rendering
+                                                // Note: PixelBuffer stores in native format (U8/U16/F64)
+                                                // This conversion only allocates for U8/U16 variants
+                                                image_tab.pixel_data = image_data.pixels.to_vec();
 
                                                 // Calculate value range for colormap scaling
                                                 if let (Some(&min), Some(&max)) =
                                                     (
-                                                        image_data.pixels.iter().min_by(|a, b| {
+                                                        image_tab.pixel_data.iter().min_by(|a, b| {
                                                             a.partial_cmp(b).unwrap()
                                                         }),
-                                                        image_data.pixels.iter().max_by(|a, b| {
+                                                        image_tab.pixel_data.iter().max_by(|a, b| {
                                                             a.partial_cmp(b).unwrap()
                                                         }),
                                                     )

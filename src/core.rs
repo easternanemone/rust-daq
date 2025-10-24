@@ -176,6 +176,100 @@ pub struct FrequencyBin {
     pub magnitude: f64,
 }
 
+/// Memory-efficient pixel buffer supporting multiple bit depths.
+///
+/// `PixelBuffer` stores image data in its native format to avoid unnecessary
+/// type conversions and memory bloat. Camera sensors typically output 8-bit
+/// or 16-bit unsigned integers, but were previously upcast to 64-bit floats,
+/// wasting 4-8× memory.
+///
+/// # Memory Savings
+///
+/// For a 2048×2048 camera frame:
+/// - U8: 4 MB (1 byte/pixel)
+/// - U16: 8.4 MB (2 bytes/pixel)  
+/// - F64: 33.6 MB (8 bytes/pixel) ← previous implementation
+///
+/// Using U16 instead of F64 saves 25 MB per frame. At 10 Hz acquisition,
+/// this eliminates 250 MB/s of wasted allocation and transfer.
+///
+/// # Variants
+///
+/// * `U8` - 8-bit unsigned integer pixels (0-255)
+/// * `U16` - 16-bit unsigned integer pixels (0-65535)
+/// * `F64` - 64-bit floating point pixels (for computed images)
+///
+/// # Examples
+///
+/// ```rust
+/// use rust_daq::core::PixelBuffer;
+///
+/// // Camera data in native u16 format
+/// let raw_frame: Vec<u16> = vec![1024, 2048, 4096];
+/// let buffer = PixelBuffer::U16(raw_frame);
+///
+/// // Get as f64 for processing (zero-copy for F64 variant)
+/// let pixels_f64 = buffer.as_f64();
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PixelBuffer {
+    /// 8-bit unsigned integer pixels (1 byte/pixel)
+    U8(Vec<u8>),
+    /// 16-bit unsigned integer pixels (2 bytes/pixel)
+    U16(Vec<u16>),
+    /// 64-bit floating point pixels (8 bytes/pixel)
+    F64(Vec<f64>),
+}
+
+impl PixelBuffer {
+    /// Returns pixel data as f64 slice, using zero-copy for F64 variant.
+    ///
+    /// For U8 and U16 variants, this allocates a new Vec and converts each
+    /// pixel. For F64 variant, this returns a borrowed reference with no allocation.
+    ///
+    /// # Performance
+    ///
+    /// - F64: O(1) - zero-copy borrow
+    /// - U8/U16: O(n) - allocation + type conversion
+    ///
+    /// GUI code can use this for rendering without needing to match on variants.
+    pub fn as_f64(&self) -> std::borrow::Cow<'_, [f64]> {
+        use std::borrow::Cow;
+        match self {
+            PixelBuffer::U8(data) => {
+                Cow::Owned(data.iter().map(|&v| v as f64).collect())
+            }
+            PixelBuffer::U16(data) => {
+                Cow::Owned(data.iter().map(|&v| v as f64).collect())
+            }
+            PixelBuffer::F64(data) => Cow::Borrowed(data.as_slice()),
+        }
+    }
+
+    /// Returns the number of pixels in the buffer.
+    pub fn len(&self) -> usize {
+        match self {
+            PixelBuffer::U8(data) => data.len(),
+            PixelBuffer::U16(data) => data.len(),
+            PixelBuffer::F64(data) => data.len(),
+        }
+    }
+
+    /// Returns true if the buffer contains no pixels.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the memory size in bytes.
+    pub fn memory_bytes(&self) -> usize {
+        match self {
+            PixelBuffer::U8(data) => data.len(),
+            PixelBuffer::U16(data) => data.len() * 2,
+            PixelBuffer::F64(data) => data.len() * 8,
+        }
+    }
+}
+
 /// Represents spectrum data from FFT or other frequency analysis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpectrumData {
@@ -203,13 +297,38 @@ pub struct ImageData {
     pub width: usize,
     /// Image height in pixels
     pub height: usize,
-    /// Pixel data (row-major order)
-    pub pixels: Vec<f64>,
+    /// Pixel data in native format (row-major order)
+    pub pixels: PixelBuffer,
     /// Physical unit for pixel values
     pub unit: String,
     /// Optional metadata (exposure time, gain, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+impl ImageData {
+    /// Returns pixel data as f64 for compatibility with existing code.
+    ///
+    /// This is a convenience method that delegates to PixelBuffer::as_f64().
+    /// Use PixelBuffer directly when possible to avoid unnecessary allocations.
+    ///
+    /// # Performance
+    ///
+    /// - For F64 PixelBuffer: Zero-copy borrow
+    /// - For U8/U16 PixelBuffer: Allocation + conversion
+    pub fn pixels_as_f64(&self) -> std::borrow::Cow<'_, [f64]> {
+        self.pixels.as_f64()
+    }
+
+    /// Returns the total number of pixels (width × height).
+    pub fn pixel_count(&self) -> usize {
+        self.width * self.height
+    }
+
+    /// Returns the memory size of the pixel buffer in bytes.
+    pub fn memory_bytes(&self) -> usize {
+        self.pixels.memory_bytes()
+    }
 }
 
 /// A measurement from an instrument, supporting different data types.
@@ -321,7 +440,7 @@ impl Data {
 ///   Example: `QueryParameter("temperature".to_string())`
 ///
 /// * `Execute(command, args)` - Execute a complex command with optional arguments.
-///   Example: `Execute("home".to_string(), vec!["1".to_string()])` to home axis 1
+///   Example: `Execute("calibrate".to_string(), vec![])` to calibrate instrument
 ///
 /// * `Shutdown` - Gracefully shut down the instrument. Triggers `disconnect()` and
 ///   breaks the instrument task loop. The shutdown process has a 5-second timeout,
@@ -800,12 +919,20 @@ pub trait DataProcessor: Send + Sync {
 /// #     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint> { data.to_vec() }
 /// # }
 /// impl MeasurementProcessor for LegacyFilter {
-///     fn process_measurements(&mut self, data: &[Measurement]) -> Vec<Measurement> {
+///     fn process_measurements(&mut self, data: &[Arc<Measurement>]) -> Vec<Arc<Measurement>> {
 ///         let scalars: Vec<DataPoint> = data.iter()
-///             .filter_map(|m| if let Measurement::Scalar(dp) = m { Some(dp.clone()) } else { None })
+///             .filter_map(|m| if let Measurement::Scalar(dp) = m.as_ref() { Some(dp.clone()) } else { None })
 ///             .collect();
 ///         let filtered = self.process(&scalars); // Call legacy DataProcessor::process
-///         filtered.into_iter().map(Measurement::Scalar).collect()
+///         filtered.into_iter().map(|dp| {
+///             let daq_dp = daq_core::DataPoint {
+///                 timestamp: dp.timestamp,
+///                 channel: dp.channel,
+///                 value: dp.value,
+///                 unit: dp.unit,
+///             };
+///             Arc::new(Measurement::Scalar(daq_dp))
+///         }).collect()
 ///     }
 /// }
 /// ```

@@ -19,13 +19,14 @@
 
 use crate::{
     config::Settings,
-    core::{DataPoint, Instrument, InstrumentCommand},
+    core::{DataPoint, Instrument, InstrumentCommand, ImageData, PixelBuffer},
     measurement::InstrumentMeasurement,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{info, warn};
 use std::sync::Arc;
+use daq_core::Measurement;
 
 /// PVCAM camera instrument implementation
 #[derive(Clone)]
@@ -157,6 +158,22 @@ impl Instrument for PVCAMCamera {
                 let (mean, min, max) = instrument.calculate_frame_stats(&frame_data);
 
                 frame_count += 1;
+
+                // TODO: Image broadcasting requires V2 Measurement infrastructure
+                // The PixelBuffer::U16 storage is ready but needs DataDistributor<Measurement>
+                // For now, continue with statistics-only broadcasting
+                //
+                // Future implementation:
+                // let image_data = ImageData {
+                //     timestamp,
+                //     channel: format!("{}_image", instrument.id),
+                //     width: 512,
+                //     height: 512,
+                //     pixels: PixelBuffer::U16(frame_data),  // 4× memory savings!
+                //     unit: "counts".to_string(),
+                //     metadata: Some(serde_json::json!({...})),
+                // };
+                // measurement.broadcast_measurement(Arc::new(Measurement::Image(image_data))).await;
 
                 // Send frame statistics as data points
                 let dp_mean = DataPoint {
