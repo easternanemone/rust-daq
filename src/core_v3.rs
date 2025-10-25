@@ -452,25 +452,31 @@ pub trait PowerMeter: Instrument {
 }
 
 /// Laser capability trait
+///
+/// V3 Design: Control methods for tunable lasers with wavelength/power control.
+/// Power/wavelength readings are broadcast via Instrument::data_channel().
 #[async_trait]
 pub trait Laser: Instrument {
-    /// Turn laser on
-    async fn enable(&mut self) -> Result<()>;
-
-    /// Turn laser off
-    async fn disable(&mut self) -> Result<()>;
-
-    /// Get emission state
-    fn is_emitting(&self) -> bool;
-
-    /// Set wavelength (nm) if tunable
+    /// Set wavelength in nanometers (for tunable lasers)
     async fn set_wavelength(&mut self, nm: f64) -> Result<()>;
-
-    /// Set power (watts or percentage depending on laser)
-    async fn set_power(&mut self, power: f64) -> Result<()>;
-
-    /// Get current power setting
-    fn power(&self) -> f64;
+    
+    /// Get current wavelength setting in nanometers
+    async fn wavelength(&self) -> Result<f64>;
+    
+    /// Set output power in watts
+    async fn set_power(&mut self, watts: f64) -> Result<()>;
+    
+    /// Get current power output in watts
+    async fn power(&self) -> Result<f64>;
+    
+    /// Enable shutter (allow laser emission)
+    async fn enable_shutter(&mut self) -> Result<()>;
+    
+    /// Disable shutter (block laser emission)
+    async fn disable_shutter(&mut self) -> Result<()>;
+    
+    /// Check if shutter is enabled (laser can emit)
+    async fn is_enabled(&self) -> Result<bool>;
 }
 
 // =============================================================================
