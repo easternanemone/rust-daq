@@ -8,6 +8,7 @@
 
 pub mod elliptec;
 pub mod esp300;
+pub mod esp300_v3;  // Phase 2: V3 architecture implementation
 pub mod maitai;
 pub mod mock_instrument;
 pub mod newport_1830c;
@@ -19,6 +20,7 @@ pub mod scpi;
 
 pub use elliptec::ElliptecV2;
 pub use esp300::ESP300V2;
+pub use esp300_v3::ESP300V3;
 pub use maitai::MaiTaiV2;
 pub use mock_instrument::MockInstrumentV2;
 pub use newport_1830c::Newport1830CV2;
