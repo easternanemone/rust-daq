@@ -44,73 +44,72 @@ pub struct Frame {
 pub enum PvcamError {
     #[error("Failed to initialize PVCAM SDK: {0}")]
     InitFailed(String),
-    
+
     #[error("Camera not found: {0}")]
     CameraNotFound(String),
-    
+
     #[error("Camera with handle {camera:?} is not open")]
     CameraNotOpen { camera: CameraHandle },
-    
+
     #[error("Camera disconnected: {camera}")]
     CameraDisconnected { camera: String },
-    
+
     #[error("Invalid parameter '{param}': {reason}")]
     InvalidParameter { param: String, reason: String },
-    
+
     #[error("Parameter {param} out of range: value={value}, valid range={valid_range}")]
     OutOfRange {
         param: String,
         value: String,
         valid_range: String,
     },
-    
+
     #[error("Acquisition error for camera {camera}: {reason}")]
     AcquisitionError { camera: String, reason: String },
-    
+
     #[error("Operation timed out: {operation}")]
     Timeout { operation: String },
-    
+
     #[error("PVCAM SDK operation failed with error code: {0}")]
     SdkSpecific(i16),
-    
+
     #[error("Invalid parameter value for {param:?}: {value}")]
-    InvalidParamValue {
-        param: PvcamParam,
-        value: String,
-    },
-    
+    InvalidParamValue { param: PvcamParam, value: String },
+
     #[error("Parameter {0:?} is not supported or cannot be accessed")]
     ParamNotSupported(PvcamParam),
-    
+
     #[error("Type mismatch for parameter {param:?}. Expected {expected}, got type ID: {actual_type_id:?}")]
     TypeMismatch {
         param: PvcamParam,
         expected: String,
         actual_type_id: TypeId,
     },
-    
+
     #[error("Internal mock error: {0}")]
     MockError(String),
-    
+
     #[error("SDK is not initialized")]
     NotInitialized,
-    
+
     #[error("SDK is already initialized")]
     AlreadyInitialized,
-    
+
     #[error("Acquisition is already in progress for handle {0:?}")]
     AcquisitionInProgress(CameraHandle),
-    
+
     #[error("Failed to convert C string to Rust string: {0}")]
     StringConversionError(#[from] std::str::Utf8Error),
-    
+
     #[error("Failed to allocate memory: {0}")]
     AllocationError(String),
-    
+
     #[error("Buffer overflow: attempted to write {attempted} bytes to {capacity} byte buffer")]
     BufferOverflow { attempted: usize, capacity: usize },
-    
-    #[error("Frame number gap detected: expected {expected}, got {actual}. Dropped {dropped} frames")]
+
+    #[error(
+        "Frame number gap detected: expected {expected}, got {actual}. Dropped {dropped} frames"
+    )]
     DroppedFrames {
         expected: u32,
         actual: u32,
@@ -275,14 +274,22 @@ pub trait PvcamSdk: Send + Sync {
     /// Get u16 parameter (Exposure, Gain, PixelSize)
     fn get_param_u16(&self, handle: &CameraHandle, param: PvcamParam) -> Result<u16, PvcamError>;
     /// Set u16 parameter (Exposure, Gain, PixelSize)
-    fn set_param_u16(&self, handle: &CameraHandle, param: PvcamParam, value: u16)
-        -> Result<(), PvcamError>;
+    fn set_param_u16(
+        &self,
+        handle: &CameraHandle,
+        param: PvcamParam,
+        value: u16,
+    ) -> Result<(), PvcamError>;
 
     /// Get i16 parameter (SensorTemperature)
     fn get_param_i16(&self, handle: &CameraHandle, param: PvcamParam) -> Result<i16, PvcamError>;
     /// Set i16 parameter (SensorTemperature)
-    fn set_param_i16(&self, handle: &CameraHandle, param: PvcamParam, value: i16)
-        -> Result<(), PvcamError>;
+    fn set_param_i16(
+        &self,
+        handle: &CameraHandle,
+        param: PvcamParam,
+        value: i16,
+    ) -> Result<(), PvcamError>;
 
     /// Get PxRegion parameter (ROI)
     fn get_param_region(
@@ -417,10 +424,10 @@ impl PvcamSdk for RealPvcamSdk {
         {
             // use pvcam_sys::*;
             // let status = unsafe { pl_pvcam_init() };
-            // if status != PV_OK { 
+            // if status != PV_OK {
             //     return Err(PvcamError::InitFailed(
             //         format!("SDK initialization failed with code {}", status)
-            //     )); 
+            //     ));
             // }
         }
         inner.is_initialized = true;
@@ -445,10 +452,10 @@ impl PvcamSdk for RealPvcamSdk {
         {
             // use pvcam_sys::*;
             // let status = unsafe { pl_pvcam_uninit() };
-            // if status != PV_OK { 
+            // if status != PV_OK {
             //     return Err(PvcamError::InitFailed(
             //         format!("SDK uninitialization failed with code {}", status)
-            //     )); 
+            //     ));
             // }
         }
         inner.is_initialized = false;
@@ -483,9 +490,10 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
-        let camera_name = inner.open_handles.remove(&handle).ok_or_else(|| {
-            PvcamError::CameraNotOpen { camera: handle }
-        })?;
+        let camera_name = inner
+            .open_handles
+            .remove(&handle)
+            .ok_or_else(|| PvcamError::CameraNotOpen { camera: handle })?;
         // TODO: Implement with pvcam-sys when feature is enabled
         log::info!("Closed camera '{}' with handle {:?}", camera_name, handle);
         Ok(())
@@ -664,7 +672,7 @@ pub struct MockPvcamSdk {
     next_handle_id: Arc<Mutex<i16>>,
     open_cameras: Arc<Mutex<HashMap<CameraHandle, MockCameraState>>>,
     available_cameras: Vec<String>,
-    
+
     // Error injection and simulation
     simulate_dropped_frames: Arc<Mutex<bool>>,
     drop_frame_probability: Arc<Mutex<f64>>, // 0.0 to 1.0
@@ -709,12 +717,12 @@ impl MockPvcamSdk {
     pub fn set_available_cameras(&mut self, names: Vec<String>) {
         self.available_cameras = names;
     }
-    
+
     /// Enable or disable dropped frame simulation
     pub fn set_simulate_dropped_frames(&self, enable: bool) {
         *self.simulate_dropped_frames.lock().unwrap() = enable;
     }
-    
+
     /// Set the probability of dropping frames (0.0 to 1.0)
     /// Only effective when simulate_dropped_frames is enabled
     pub fn set_drop_frame_probability(&self, probability: f64) {
@@ -797,7 +805,10 @@ impl PvcamSdk for MockPvcamSdk {
             }),
         );
         // Initialize trigger mode parameters
-        params.insert(PvcamParam::ExposureMode, Box::new(TriggerMode::Timed.as_u16()));
+        params.insert(
+            PvcamParam::ExposureMode,
+            Box::new(TriggerMode::Timed.as_u16()),
+        );
         params.insert(PvcamParam::EdgeTrigger, Box::new(0u16)); // 0 = rising edge
 
         let mut cameras = self.open_cameras.lock().unwrap();
@@ -908,13 +919,13 @@ impl PvcamSdk for MockPvcamSdk {
             .unwrap()
             .downcast_ref::<PxRegion>()
             .unwrap();
-        
+
         let width = (roi.s2 - roi.s1 + 1) / roi.sbin;
         let height = (roi.p2 - roi.p1 + 1) / roi.pbin;
 
         let (tx, rx) = mpsc::channel(16);
         let (stop_tx, mut stop_rx) = oneshot::channel();
-        
+
         // Clone error injection flags for async task
         let simulate_drops = self.simulate_dropped_frames.clone();
         let drop_probability = self.drop_frame_probability.clone();
@@ -923,7 +934,7 @@ impl PvcamSdk for MockPvcamSdk {
             let mut frame_count = 0u32;
             let mut last_frame_time = std::time::Instant::now();
             let start_time = chrono::Utc::now();
-            
+
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(exposure_ms)) => {
@@ -933,14 +944,14 @@ impl PvcamSdk for MockPvcamSdk {
                             let prob = *drop_probability.lock().unwrap();
                             drops_enabled && rand::random::<f64>() < prob
                         };
-                        
+
                         if should_drop {
                             // Skip this frame (simulate drop) but still increment counter
                             frame_count += 1;
                             log::debug!("Mock: Simulating dropped frame {}", frame_count);
                             continue;
                         }
-                        
+
                         let width_usize = width as usize;
                         let height_usize = height as usize;
                         let mut frame_data = vec![0u16; width_usize * height_usize];
@@ -963,12 +974,12 @@ impl PvcamSdk for MockPvcamSdk {
                         // Use saturating arithmetic to prevent overflow
                         let frame_offset_us = (frame_count as i64).saturating_mul(exposure_ms as i64).saturating_mul(1000);
                         let hardware_timestamp_us = start_time.timestamp_micros().saturating_add(frame_offset_us);
-                        
+
                         // Simulate sensor temperature variation (-10°C to 5°C with drift)
                         let temp_base = -5.0;
                         let temp_variation = (frame_count as f64 * 0.01).sin() * 2.0;
                         let sensor_temp = temp_base + temp_variation;
-                        
+
                         // Simulate readout time (5-10ms with variation)
                         let readout_ms = 7.5 + (frame_count as f64 * 0.1).sin() * 2.5;
 

@@ -5,7 +5,7 @@
 
 use rust_daq::core::{Instrument, InstrumentCommand};
 use rust_daq::instrument::capabilities::{
-    create_proxy, power_measurement_capability_id, position_control_capability_id,
+    create_proxy, position_control_capability_id, power_measurement_capability_id,
 };
 use rust_daq::instrument::mock::MockInstrument;
 use std::sync::Arc;

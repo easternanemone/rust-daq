@@ -1,5 +1,5 @@
-use rust_daq::modules::ModuleRegistry;
 use chrono::{TimeZone, Utc};
+use rust_daq::modules::ModuleRegistry;
 use rust_daq::{
     app::DaqApp,
     config::Settings,

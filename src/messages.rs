@@ -653,7 +653,13 @@ impl DaqCommand {
         label: Option<String>,
     ) -> (Self, oneshot::Receiver<Result<VersionId>>) {
         let (tx, rx) = oneshot::channel();
-        (Self::CreateConfigSnapshot { label, response: tx }, rx)
+        (
+            Self::CreateConfigSnapshot {
+                label,
+                response: tx,
+            },
+            rx,
+        )
     }
 
     /// Helper to create a ListConfigVersions command
@@ -665,7 +671,13 @@ impl DaqCommand {
     /// Helper to create a RollbackToVersion command
     pub fn rollback_to_version(version_id: VersionId) -> (Self, oneshot::Receiver<Result<()>>) {
         let (tx, rx) = oneshot::channel();
-        (Self::RollbackToVersion { version_id, response: tx }, rx)
+        (
+            Self::RollbackToVersion {
+                version_id,
+                response: tx,
+            },
+            rx,
+        )
     }
 
     /// Helper to create a CompareConfigVersions command

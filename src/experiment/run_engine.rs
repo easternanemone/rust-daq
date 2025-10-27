@@ -161,10 +161,7 @@ impl RunEngine {
 
         // Get plan metadata
         let (plan_name, plan_description) = plan.metadata();
-        info!(
-            "Starting experiment: {} - {}",
-            plan_name, plan_description
-        );
+        info!("Starting experiment: {} - {}", plan_name, plan_description);
 
         // Initialize run state
         let run_id = Uuid::new_v4().to_string();
@@ -301,13 +298,11 @@ impl RunEngine {
                 }
             }
 
-            Message::Log { level, message } => {
-                match level {
-                    LogLevel::Info => info!("[Plan] {}", message),
-                    LogLevel::Warn => warn!("[Plan] {}", message),
-                    LogLevel::Error => error!("[Plan] {}", message),
-                }
-            }
+            Message::Log { level, message } => match level {
+                LogLevel::Info => info!("[Plan] {}", message),
+                LogLevel::Warn => warn!("[Plan] {}", message),
+                LogLevel::Error => error!("[Plan] {}", message),
+            },
         }
 
         self.status.message_count += 1;

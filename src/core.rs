@@ -74,12 +74,13 @@ use crate::config::Settings;
 use crate::measurement::Measure;
 use crate::metadata::Metadata;
 use async_trait::async_trait;
-use daq_core::Measurement;
+pub use daq_core::Measurement;
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::convert::TryFrom;
 use std::fmt;
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
@@ -236,12 +237,8 @@ impl PixelBuffer {
     pub fn as_f64(&self) -> std::borrow::Cow<'_, [f64]> {
         use std::borrow::Cow;
         match self {
-            PixelBuffer::U8(data) => {
-                Cow::Owned(data.iter().map(|&v| v as f64).collect())
-            }
-            PixelBuffer::U16(data) => {
-                Cow::Owned(data.iter().map(|&v| v as f64).collect())
-            }
+            PixelBuffer::U8(data) => Cow::Owned(data.iter().map(|&v| v as f64).collect()),
+            PixelBuffer::U16(data) => Cow::Owned(data.iter().map(|&v| v as f64).collect()),
             PixelBuffer::F64(data) => Cow::Borrowed(data.as_slice()),
         }
     }
@@ -270,6 +267,16 @@ impl PixelBuffer {
     }
 }
 
+impl From<PixelBuffer> for daq_core::PixelBuffer {
+    fn from(buffer: PixelBuffer) -> Self {
+        match buffer {
+            PixelBuffer::U8(data) => daq_core::PixelBuffer::U8(data),
+            PixelBuffer::U16(data) => daq_core::PixelBuffer::U16(data),
+            PixelBuffer::F64(data) => daq_core::PixelBuffer::F64(data),
+        }
+    }
+}
+
 /// Represents spectrum data from FFT or other frequency analysis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpectrumData {
@@ -284,6 +291,39 @@ pub struct SpectrumData {
     /// Optional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+impl From<SpectrumData> for daq_core::SpectrumData {
+    fn from(spectrum: SpectrumData) -> Self {
+        let SpectrumData {
+            timestamp,
+            channel,
+            unit,
+            bins,
+            metadata,
+        } = spectrum;
+
+        let (wavelengths, intensities): (Vec<f64>, Vec<f64>) = bins
+            .into_iter()
+            .map(|bin| (bin.frequency, bin.magnitude))
+            .unzip();
+
+        let unit_x = metadata
+            .as_ref()
+            .and_then(|meta| meta.get("frequency_unit").and_then(|value| value.as_str()))
+            .unwrap_or("Hz")
+            .to_string();
+
+        daq_core::SpectrumData {
+            timestamp,
+            channel,
+            wavelengths,
+            intensities,
+            unit_x,
+            unit_y: unit,
+            metadata,
+        }
+    }
 }
 
 /// Represents image data from cameras or 2D sensors.
@@ -328,6 +368,30 @@ impl ImageData {
     /// Returns the memory size of the pixel buffer in bytes.
     pub fn memory_bytes(&self) -> usize {
         self.pixels.memory_bytes()
+    }
+}
+
+impl From<ImageData> for daq_core::ImageData {
+    fn from(image: ImageData) -> Self {
+        let ImageData {
+            timestamp,
+            channel,
+            width,
+            height,
+            pixels,
+            unit,
+            metadata,
+        } = image;
+
+        daq_core::ImageData {
+            timestamp,
+            channel,
+            width: u32::try_from(width).unwrap_or(u32::MAX),
+            height: u32::try_from(height).unwrap_or(u32::MAX),
+            pixels: pixels.into(),
+            unit,
+            metadata,
+        }
     }
 }
 
@@ -420,6 +484,16 @@ impl Data {
             Data::Scalar(dp) => dp.metadata.as_ref(),
             Data::Spectrum(sd) => sd.metadata.as_ref(),
             Data::Image(id) => id.metadata.as_ref(),
+        }
+    }
+}
+
+impl From<Data> for daq_core::Measurement {
+    fn from(data: Data) -> Self {
+        match data {
+            Data::Scalar(dp) => daq_core::Measurement::Scalar(dp.into()),
+            Data::Spectrum(spectrum) => daq_core::Measurement::Spectrum(spectrum.into()),
+            Data::Image(image) => daq_core::Measurement::Image(image.into()),
         }
     }
 }
@@ -759,10 +833,15 @@ pub trait Instrument: Send + Sync {
     async fn handle_command(&mut self, _command: InstrumentCommand) -> anyhow::Result<()> {
         Ok(())
     }
-    
+
     /// Set the V2 data distributor for broadcasting original measurements.
     /// Only V2InstrumentAdapter implements this; default is no-op.
-    fn set_v2_data_distributor(&mut self, _distributor: std::sync::Arc<crate::measurement::DataDistributor<std::sync::Arc<daq_core::Measurement>>>) {
+    fn set_v2_data_distributor(
+        &mut self,
+        _distributor: std::sync::Arc<
+            crate::measurement::DataDistributor<std::sync::Arc<daq_core::Measurement>>,
+        >,
+    ) {
         // Default: no-op for V1 instruments
     }
 }

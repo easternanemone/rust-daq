@@ -1,8 +1,8 @@
 use rust_daq::modules::ModuleRegistry;
-//! Multi-instrument concurrent spawning tests
-//!
-//! Tests for validating that the DAQ system can handle concurrent instrument
-//! spawning and shutdown without deadlocks or failures.
+// Multi-instrument concurrent spawning tests
+//
+// Tests for validating that the DAQ system can handle concurrent instrument
+// spawning and shutdown without deadlocks or failures.
 
 use rust_daq::{
     app::DaqApp,

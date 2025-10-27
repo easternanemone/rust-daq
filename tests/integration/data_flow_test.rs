@@ -1,8 +1,8 @@
 use rust_daq::modules::ModuleRegistry;
-//! Data flow validation tests
-//!
-//! Tests for validating that data from multiple instruments flows correctly
-//! through the system without loss or lag.
+// Data flow validation tests
+//
+// Tests for validating that data from multiple instruments flows correctly
+// through the system without loss or lag.
 
 use rust_daq::{
     app::DaqApp,

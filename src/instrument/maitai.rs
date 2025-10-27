@@ -245,7 +245,8 @@ impl Instrument for MaiTai {
                     info!("Set MaiTai wavelength to {} nm", wavelength);
                 }
                 "shutter" => {
-                    let value_str = value.as_string()
+                    let value_str = value
+                        .as_string()
                         .with_context(|| format!("Invalid shutter value: {}", value))?;
                     let cmd = match value_str.as_str() {
                         "open" => "SHUTTER:1",
@@ -256,7 +257,8 @@ impl Instrument for MaiTai {
                     info!("MaiTai shutter: {}", value);
                 }
                 "laser" => {
-                    let value_str = value.as_string()
+                    let value_str = value
+                        .as_string()
                         .with_context(|| format!("Invalid laser value: {}", value))?;
                     let cmd = match value_str.as_str() {
                         "on" => "ON",
@@ -290,7 +292,10 @@ impl Instrument for MaiTai {
                             // MaiTai doesn't have configurable ranges
                         }
                         _ => {
-                            warn!("Unknown PowerMeasurement operation '{}' for MaiTai", operation);
+                            warn!(
+                                "Unknown PowerMeasurement operation '{}' for MaiTai",
+                                operation
+                            );
                         }
                     }
                 } else {

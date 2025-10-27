@@ -83,8 +83,10 @@ use crate::{
     core::{DataPoint, InstrumentHandle, MeasurementProcessor},
     data::registry::ProcessorRegistry,
     instrument::InstrumentRegistry,
+    instrument_manager_v3::InstrumentManagerV3,
+    instruments_v2::mock_power_meter_v3::MockPowerMeterV3,
     log_capture::LogBuffer,
-    measurement::{DataDistributor, Measure},
+    measurement::{DataDistributor, DataDistributorConfig, Measure, SubscriberMetricsSnapshot},
     messages::{DaqCommand, SpawnError},
     metadata::Metadata,
     modules::{Module, ModuleConfig, ModuleInstrumentAssignment, ModuleStatus},
@@ -93,9 +95,9 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use daq_core::Measurement;
 use log::{error, info, warn};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::{collections::HashMap, time::Duration};
 use tokio::{
     runtime::Runtime,
     sync::{mpsc, Mutex},
@@ -152,6 +154,9 @@ where
     runtime: Arc<Runtime>,
     shutdown_flag: bool,
     version_manager: VersionManager,
+
+    /// V3 instrument manager (Phase 3)
+    instrument_manager_v3: Option<Arc<Mutex<InstrumentManagerV3>>>,
 }
 
 impl<M> DaqManagerActor<M>
@@ -179,13 +184,34 @@ where
         log_buffer: LogBuffer,
         runtime: Arc<Runtime>,
     ) -> Result<Self> {
-        let data_distributor = Arc::new(DataDistributor::new(
-            settings.application.broadcast_channel_capacity,
-        ));
+        let distributor_cfg = &settings.application.data_distributor;
+        let distributor_config = DataDistributorConfig::with_thresholds(
+            distributor_cfg.subscriber_capacity,
+            distributor_cfg.warn_drop_rate_percent,
+            distributor_cfg.error_saturation_percent,
+            Duration::from_secs(distributor_cfg.metrics_window_secs.max(1)),
+        );
+        let data_distributor = Arc::new(DataDistributor::with_config(distributor_config));
         let storage_format = settings.storage.default_format.clone();
 
         std::fs::create_dir_all(".daq/config_versions")?;
         let version_manager = VersionManager::new(".daq/config_versions".into());
+
+        // V3 Instrument Manager Initialization (Phase 3)
+        let instrument_manager_v3 = if !settings.instruments_v3.is_empty() {
+            let mut manager = InstrumentManagerV3::new();
+            manager.set_data_distributor(data_distributor.clone());
+
+            // Register V3 factories
+            manager.register_factory("MockPowerMeterV3", |id, settings| {
+                MockPowerMeterV3::from_config(id, settings)
+            });
+
+            // Note: Load from config will happen in the run() method to allow async
+            Some(Arc::new(Mutex::new(manager)))
+        } else {
+            None
+        };
 
         Ok(Self {
             settings,
@@ -204,6 +230,7 @@ where
             runtime,
             shutdown_flag: false,
             version_manager,
+            instrument_manager_v3,
         })
     }
 
@@ -225,6 +252,20 @@ where
     /// command mutates actor state and sends a response via oneshot channel.
     pub async fn run(mut self, mut command_rx: mpsc::Receiver<DaqCommand>) {
         info!("DaqManagerActor started");
+
+        // Load V3 instruments from config (Phase 3)
+        if let Some(ref v3_manager) = self.instrument_manager_v3 {
+            let mut manager_guard = v3_manager.lock().await;
+            if let Err(e) = manager_guard
+                .load_from_config(&self.settings.instruments_v3)
+                .await
+            {
+                error!("Failed to load V3 instruments: {}", e);
+            } else {
+                info!("V3 instruments loaded successfully");
+            }
+            drop(manager_guard);
+        }
 
         while let Some(command) = command_rx.recv().await {
             match command {
@@ -322,7 +363,9 @@ where
                     config,
                     response,
                 } => {
-                    let result = self.add_instrument_dynamic(&id, &instrument_type, config).await;
+                    let result = self
+                        .add_instrument_dynamic(&id, &instrument_type, config)
+                        .await;
                     let _ = response.send(result);
                 }
                 DaqCommand::RemoveInstrumentDynamic {
@@ -339,7 +382,9 @@ where
                     value,
                     response,
                 } => {
-                    let result = self.update_instrument_parameter(&id, &parameter, &value).await;
+                    let result = self
+                        .update_instrument_parameter(&id, &parameter, &value)
+                        .await;
                     let _ = response.send(result);
                 }
                 DaqCommand::StartModule { id, response } => {
@@ -353,22 +398,35 @@ where
                 }
 
                 DaqCommand::CreateConfigSnapshot { label, response } => {
-                    let result = self.version_manager.create_snapshot(&self.settings, label).await;
+                    let result = self
+                        .version_manager
+                        .create_snapshot(&self.settings, label)
+                        .await;
                     let _ = response.send(result);
                 }
                 DaqCommand::ListConfigVersions { response } => {
                     let result = self.version_manager.list_versions().await;
                     let _ = response.send(result);
                 }
-                DaqCommand::RollbackToVersion { version_id, response } => {
+                DaqCommand::RollbackToVersion {
+                    version_id,
+                    response,
+                } => {
                     let result = self.version_manager.rollback(&version_id).await;
                     if let Ok(settings) = result {
                         self.settings = settings;
                     }
                     let _ = response.send(Ok(()));
                 }
-                DaqCommand::CompareConfigVersions { version_a, version_b, response } => {
-                    let result = self.version_manager.diff_versions(&version_a, &version_b).await;
+                DaqCommand::CompareConfigVersions {
+                    version_a,
+                    version_b,
+                    response,
+                } => {
+                    let result = self
+                        .version_manager
+                        .diff_versions(&version_a, &version_b)
+                        .await;
                     let _ = response.send(result);
                 }
                 DaqCommand::GetInstrumentDependencies { id, response } => {
@@ -702,7 +760,8 @@ where
         }
 
         // Create module using registry
-        let mut module: Box<dyn Module> = self.module_registry.create(module_type, id.to_string())?;
+        let mut module: Box<dyn Module> =
+            self.module_registry.create(module_type, id.to_string())?;
 
         // Initialize module
         module.init(config)?;
@@ -1058,12 +1117,25 @@ where
             errors.push(e);
         }
 
-        // Stop all instruments gracefully
+        // Stop all V1 instruments gracefully
         let instrument_ids: Vec<String> = self.instruments.keys().cloned().collect();
         for id in instrument_ids {
             if let Err(e) = self.stop_instrument(&id).await {
                 errors.push(e);
             }
+        }
+
+        // Shutdown V3 instruments (Phase 3)
+        if let Some(ref v3_manager) = self.instrument_manager_v3 {
+            let mut manager_guard = v3_manager.lock().await;
+            if let Err(e) = manager_guard.shutdown_all().await {
+                error!("V3 instrument shutdown error: {}", e);
+                errors.push(crate::error::DaqError::Instrument(format!(
+                    "V3 shutdown failed: {}",
+                    e
+                )));
+            }
+            drop(manager_guard);
         }
 
         info!("Application shutdown complete");
@@ -1103,7 +1175,9 @@ where
         instrument_type: &str,
         config: toml::Value,
     ) -> Result<()> {
-        self.version_manager.create_snapshot(&self.settings, None).await?;
+        self.version_manager
+            .create_snapshot(&self.settings, None)
+            .await?;
         if self.instruments.contains_key(id) {
             return Err(anyhow!(
                 "Instrument '{}' is already running - cannot add duplicate",
@@ -1140,7 +1214,7 @@ where
             .connect(&id_clone, &settings)
             .await
             .with_context(|| format!("Failed to connect to instrument '{}'", id_clone))?;
-        
+
         info!("Instrument '{}' connected.", id_clone);
 
         let capabilities = instrument.capabilities();
@@ -1209,7 +1283,7 @@ where
             capabilities,
         };
         self.instruments.insert(id.to_string(), handle);
-        
+
         info!("Instrument '{}' dynamically added and started", id);
         Ok(())
     }
@@ -1232,7 +1306,9 @@ where
     /// - Instrument is assigned to a module (when force=false)
     /// - Graceful shutdown fails
     pub async fn remove_instrument_dynamic(&mut self, id: &str, force: bool) -> Result<()> {
-        self.version_manager.create_snapshot(&self.settings, None).await?;
+        self.version_manager
+            .create_snapshot(&self.settings, None)
+            .await?;
         // Check if instrument exists
         if !self.instruments.contains_key(id) {
             return Err(anyhow!("Instrument '{}' is not running", id));
@@ -1248,10 +1324,7 @@ where
             }
         }
 
-        info!(
-            "Dynamically removing instrument '{}' (force={})",
-            id, force
-        );
+        info!("Dynamically removing instrument '{}' (force={})", id, force);
 
         // Stop the instrument gracefully
         self.stop_instrument(id)
@@ -1289,7 +1362,9 @@ where
         parameter: &str,
         value: &str,
     ) -> Result<()> {
-        self.version_manager.create_snapshot(&self.settings, None).await?;
+        self.version_manager
+            .create_snapshot(&self.settings, None)
+            .await?;
         info!(
             "Updating instrument '{}' parameter '{}' to '{}'",
             id, parameter, value
@@ -1298,10 +1373,8 @@ where
         // For MVP, we convert the string value to ParameterValue::String
         // A more sophisticated implementation would parse the value type
         let param_value = crate::core::ParameterValue::String(value.to_string());
-        let command = crate::core::InstrumentCommand::SetParameter(
-            parameter.to_string(),
-            param_value,
-        );
+        let command =
+            crate::core::InstrumentCommand::SetParameter(parameter.to_string(), param_value);
 
         self.send_instrument_command(id, command)
             .await
@@ -1317,6 +1390,11 @@ where
             parameter, id
         );
         Ok(())
+    }
+
+    /// Returns a snapshot of current DataDistributor metrics for observability endpoints
+    pub async fn distributor_metrics_snapshot(&self) -> Vec<SubscriberMetricsSnapshot> {
+        self.data_distributor.metrics_snapshot().await
     }
 }
 
@@ -1376,6 +1454,7 @@ mod tests {
             application: ApplicationSettings {
                 broadcast_channel_capacity: 64,
                 command_channel_capacity: 16,
+                data_distributor: Default::default(),
             },
             storage: StorageSettings {
                 default_path: "./data".to_string(),

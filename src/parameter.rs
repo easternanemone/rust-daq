@@ -101,15 +101,12 @@ impl<T: Debug> std::fmt::Debug for Constraints<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Constraints::None => write!(f, "None"),
-            Constraints::Range { min, max } => {
-                f.debug_struct("Range")
-                    .field("min", min)
-                    .field("max", max)
-                    .finish()
-            }
-            Constraints::Choices(choices) => {
-                f.debug_tuple("Choices").field(choices).finish()
-            }
+            Constraints::Range { min, max } => f
+                .debug_struct("Range")
+                .field("min", min)
+                .field("max", max)
+                .finish(),
+            Constraints::Choices(choices) => f.debug_tuple("Choices").field(choices).finish(),
             Constraints::Custom(_) => write!(f, "Custom(<function>)"),
         }
     }
@@ -341,9 +338,9 @@ where
         }
 
         // Update internal value (notifies subscribers)
-        self.value_tx.send(value.clone()).map_err(|_| {
-            anyhow!("Failed to send value update (no subscribers)")
-        })?;
+        self.value_tx
+            .send(value.clone())
+            .map_err(|_| anyhow!("Failed to send value update (no subscribers)"))?;
 
         // Call change listeners
         let listeners = self.change_listeners.read().await;
@@ -367,9 +364,9 @@ where
         let value = reader()?;
 
         // Update internal value without validation
-        self.value_tx.send(value.clone()).map_err(|_| {
-            anyhow!("Failed to send value update (no subscribers)")
-        })?;
+        self.value_tx
+            .send(value.clone())
+            .map_err(|_| anyhow!("Failed to send value update (no subscribers)"))?;
 
         // Call change listeners
         let listeners = self.change_listeners.read().await;
@@ -428,7 +425,15 @@ where
 
 impl<T> ParameterBase for Parameter<T>
 where
-    T: Clone + Send + Sync + PartialEq + PartialOrd + Debug + Serialize + for<'de> Deserialize<'de> + 'static,
+    T: Clone
+        + Send
+        + Sync
+        + PartialEq
+        + PartialOrd
+        + Debug
+        + Serialize
+        + for<'de> Deserialize<'de>
+        + 'static,
 {
     fn name(&self) -> &str {
         &self.name

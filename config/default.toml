@@ -10,6 +10,13 @@ log_level = "info"
 broadcast_channel_capacity = 1024  # Messages buffered in broadcast channel
 command_channel_capacity = 32      # Commands buffered per instrument
 
+[application.data_distributor]
+# Per-subscriber channel capacity and observability thresholds
+subscriber_capacity = 1024
+warn_drop_rate_percent = 1.0
+error_saturation_percent = 90.0
+metrics_window_secs = 10
+
 [storage]
 default_path = "data_output"
 default_format = "csv" # "csv", "hdf5", "arrow"
@@ -102,11 +109,11 @@ mock = [
 # Note: V3 instruments are loaded separately from V1 instruments and use
 # different trait implementations. IDs must be unique across both V1 and V3.
 
-# [[instruments_v3]]
-# id = "mock_power_meter"
-# type = "MockPowerMeterV3"
-# sampling_rate = 10.0
-# wavelength_nm = 532.0
+[[instruments_v3]]
+id = "mock_power_meter_v3"
+type = "MockPowerMeterV3"
+sampling_rate = 10.0
+wavelength_nm = 532.0
 
 # [[instruments_v3]]
 # id = "newport_pm_v3"

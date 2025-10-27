@@ -1,9 +1,9 @@
+use crate::core::{InstrumentCommand, ParameterValue};
 use crate::messages::DaqCommand;
 use crate::network::protocol::{
     ControlRequest, ControlResponse, Heartbeat, RequestType, ResponseStatus,
 };
 use crate::network::session::SessionManager;
-use crate::core::{InstrumentCommand, ParameterValue};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -246,18 +246,13 @@ impl NetworkServerActor {
 
         match daq_sender.send(cmd).await {
             Ok(_) => match timeout(Duration::from_secs(5), rx).await {
-                Ok(Ok(())) => {
-                    ControlResponse::new(request_id, ResponseStatus::Success, vec![])
+                Ok(Ok(())) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
+                Ok(Err(_)) => {
+                    ControlResponse::error(request_id, "Failed to start recording".to_string())
                 }
-                Ok(Err(_)) => ControlResponse::error(
-                    request_id,
-                    "Failed to start recording".to_string(),
-                ),
                 Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
             },
-            Err(e) => {
-                ControlResponse::error(request_id, format!("Failed to send command: {}", e))
-            }
+            Err(e) => ControlResponse::error(request_id, format!("Failed to send command: {}", e)),
         }
     }
 
@@ -302,14 +297,11 @@ impl NetworkServerActor {
                             request_id,
                             format!("Failed to spawn instrument: {}", e),
                         ),
-                        Err(_) => {
-                            ControlResponse::error(request_id, "Request timeout".to_string())
-                        }
+                        Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
                     },
-                    Err(e) => ControlResponse::error(
-                        request_id,
-                        format!("Failed to send command: {}", e),
-                    ),
+                    Err(e) => {
+                        ControlResponse::error(request_id, format!("Failed to send command: {}", e))
+                    }
                 }
             }
             Err(e) => ControlResponse::error(request_id, format!("Invalid payload: {}", e)),
@@ -331,9 +323,7 @@ impl NetworkServerActor {
 
                 match daq_sender.send(cmd).await {
                     Ok(_) => match timeout(Duration::from_secs(5), rx).await {
-                        Ok(()) => {
-                            ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                        }
+                        Ok(()) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
                         Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
                     },
                     Err(e) => {
@@ -359,14 +349,14 @@ impl NetworkServerActor {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing 'key' field".to_string())?
                     .to_string();
-                
+
                 let value_json = cmd_json
                     .get("value")
                     .ok_or_else(|| "Missing 'value' field".to_string())?;
-                
+
                 let value = ParameterValue::from_json(value_json)
                     .map_err(|e| format!("Invalid parameter value: {}", e))?;
-                
+
                 Ok(InstrumentCommand::SetParameter(key, value))
             }
             "query_parameter" => {
@@ -375,7 +365,7 @@ impl NetworkServerActor {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing 'key' field".to_string())?
                     .to_string();
-                
+
                 Ok(InstrumentCommand::QueryParameter(key))
             }
             "execute" => {
@@ -384,7 +374,7 @@ impl NetworkServerActor {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing 'command' field".to_string())?
                     .to_string();
-                
+
                 let args = cmd_json
                     .get("args")
                     .and_then(|v| v.as_array())
@@ -394,7 +384,7 @@ impl NetworkServerActor {
                             .collect()
                     })
                     .unwrap_or_default();
-                
+
                 Ok(InstrumentCommand::Execute(cmd, args))
             }
             _ => Err(format!("Unknown command type: {}", command_type)),
@@ -426,16 +416,19 @@ impl NetworkServerActor {
 
                             match daq_sender.send(cmd).await {
                                 Ok(_) => match timeout(Duration::from_secs(5), rx).await {
-                                    Ok(Ok(())) => {
-                                        ControlResponse::new(request_id, ResponseStatus::Success, vec![])
-                                    }
+                                    Ok(Ok(())) => ControlResponse::new(
+                                        request_id,
+                                        ResponseStatus::Success,
+                                        vec![],
+                                    ),
                                     Ok(Err(_)) => ControlResponse::error(
                                         request_id,
                                         "Failed to send command".to_string(),
                                     ),
-                                    Err(_) => {
-                                        ControlResponse::error(request_id, "Request timeout".to_string())
-                                    }
+                                    Err(_) => ControlResponse::error(
+                                        request_id,
+                                        "Request timeout".to_string(),
+                                    ),
                                 },
                                 Err(e) => ControlResponse::error(
                                     request_id,
@@ -443,7 +436,9 @@ impl NetworkServerActor {
                                 ),
                             }
                         }
-                        Err(e) => ControlResponse::error(request_id, format!("Invalid command: {}", e)),
+                        Err(e) => {
+                            ControlResponse::error(request_id, format!("Invalid command: {}", e))
+                        }
                     }
                 }
                 Err(e) => {

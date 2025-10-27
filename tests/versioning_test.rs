@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rust_daq::config::versioning::{VersionManager, VersionId};
+use rust_daq::config::versioning::{VersionId, VersionManager};
 use rust_daq::config::{ApplicationSettings, Settings, StorageSettings};
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -10,6 +10,7 @@ fn create_test_settings() -> Settings {
         application: ApplicationSettings {
             broadcast_channel_capacity: 1024,
             command_channel_capacity: 32,
+            data_distributor: Default::default(),
         },
         storage: StorageSettings {
             default_path: "/tmp".to_string(),
@@ -17,6 +18,7 @@ fn create_test_settings() -> Settings {
         },
         instruments: HashMap::new(),
         processors: None,
+        instruments_v3: Vec::new(),
     }
 }
 

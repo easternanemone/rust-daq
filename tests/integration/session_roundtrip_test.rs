@@ -1,8 +1,8 @@
 use rust_daq::modules::ModuleRegistry;
-//! Session round-trip tests
-//!
-//! Tests for validating that sessions can be saved and restored correctly
-//! with all instrument state preserved across multiple iterations.
+// Session round-trip tests
+//
+// Tests for validating that sessions can be saved and restored correctly
+// with all instrument state preserved across multiple iterations.
 
 use rust_daq::{
     app::DaqApp,

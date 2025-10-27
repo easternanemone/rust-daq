@@ -52,11 +52,11 @@ pub mod versioning;
 pub struct InstrumentConfigV3 {
     /// Unique identifier for this instrument instance
     pub id: String,
-    
+
     /// Instrument type name (must match factory registry key)
     #[serde(rename = "type")]
     pub type_name: String,
-    
+
     /// Type-specific configuration settings
     ///
     /// Captures all extra TOML fields for flexible per-instrument config.
@@ -72,7 +72,7 @@ pub struct Settings {
     pub storage: StorageSettings,
     pub instruments: HashMap<String, toml::Value>,
     pub processors: Option<HashMap<String, Vec<ProcessorConfig>>>,
-    
+
     /// V3 instruments configuration (Phase 3)
     ///
     /// Backward compatible: missing [[instruments_v3]] sections result in empty vec
@@ -86,6 +86,8 @@ pub struct ApplicationSettings {
     pub broadcast_channel_capacity: usize,
     #[serde(default = "default_command_capacity")]
     pub command_channel_capacity: usize,
+    #[serde(default)]
+    pub data_distributor: DataDistributorSettings,
 }
 
 fn default_broadcast_capacity() -> usize {
@@ -109,6 +111,26 @@ pub struct StorageSettings {
     pub default_format: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct DataDistributorSettings {
+    pub subscriber_capacity: usize,
+    pub warn_drop_rate_percent: f64,
+    pub error_saturation_percent: f64,
+    pub metrics_window_secs: u64,
+}
+
+impl Default for DataDistributorSettings {
+    fn default() -> Self {
+        Self {
+            subscriber_capacity: default_broadcast_capacity(),
+            warn_drop_rate_percent: 1.0,
+            error_saturation_percent: 90.0,
+            metrics_window_secs: 10,
+        }
+    }
+}
+
 impl Settings {
     pub fn new(config_name: Option<&str>) -> Result<Self> {
         let config_path = format!("config/{}", config_name.unwrap_or("default"));
@@ -130,14 +152,14 @@ impl Settings {
         // Check for ID collisions between V1 and V3 instruments
         use std::collections::HashSet;
         let mut all_ids = HashSet::new();
-        
+
         // Check V1 instrument IDs
         for id in self.instruments.keys() {
             if !all_ids.insert(id) {
                 anyhow::bail!("Duplicate instrument ID: {}", id);
             }
         }
-        
+
         // Check V3 instrument IDs
         for inst_v3 in &self.instruments_v3 {
             if !all_ids.insert(&inst_v3.id) {
@@ -160,6 +182,20 @@ impl Settings {
         is_in_range(self.application.command_channel_capacity, 8..=4096)
             .map_err(anyhow::Error::msg)
             .context("command_channel_capacity must be between 8 and 4096")?;
+
+        let distributor = &self.application.data_distributor;
+        is_in_range(distributor.subscriber_capacity, 64..=65536)
+            .map_err(anyhow::Error::msg)
+            .context("data_distributor.subscriber_capacity must be between 64 and 65536")?;
+        if !(0.0..=100.0).contains(&distributor.warn_drop_rate_percent) {
+            anyhow::bail!("data_distributor.warn_drop_rate_percent must be between 0 and 100");
+        }
+        if !(0.0..=100.0).contains(&distributor.error_saturation_percent) {
+            anyhow::bail!("data_distributor.error_saturation_percent must be between 0 and 100");
+        }
+        is_in_range(distributor.metrics_window_secs, 1..=3600)
+            .map_err(anyhow::Error::msg)
+            .context("data_distributor.metrics_window_secs must be between 1 and 3600")?;
 
         is_valid_path(&self.storage.default_path)
             .map_err(anyhow::Error::msg)
@@ -256,7 +292,7 @@ mod tests {
         assert_eq!(settings.instruments_v3[0].type_name, "MockPowerMeterV3");
         assert_eq!(settings.instruments_v3[1].id, "test_stage");
         assert_eq!(settings.instruments_v3[1].type_name, "MockStageV3");
-        
+
         // Verify settings captured extra fields
         let pm_settings = &settings.instruments_v3[0].settings;
         assert!(pm_settings.get("sampling_rate").is_some());

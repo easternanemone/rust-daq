@@ -51,6 +51,7 @@ fn create_test_actor(runtime: Arc<Runtime>) -> DaqManagerActor<InstrumentMeasure
         application: rust_daq::config::ApplicationSettings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
+            data_distributor: Default::default(),
         },
         storage: rust_daq::config::StorageSettings {
             default_path: "./data".to_string(),
@@ -58,6 +59,7 @@ fn create_test_actor(runtime: Arc<Runtime>) -> DaqManagerActor<InstrumentMeasure
         },
         instruments: HashMap::new(),
         processors: None,
+        instruments_v3: Vec::new(),
     });
 
     let instrument_registry = Arc::new(InstrumentRegistry::new());
@@ -123,17 +125,12 @@ fn test_removal_logic_in_actor() -> Result<()> {
 
         // Verify assignment was tracked
         assert_eq!(
-            actor
-                .dependency_graph
-                .get_dependents("instrument1")
-                .len(),
+            actor.dependency_graph.get_dependents("instrument1").len(),
             1
         );
 
         // Test that removal is blocked
-        let result = actor
-            .remove_instrument_dynamic("instrument1", false)
-            .await;
+        let result = actor.remove_instrument_dynamic("instrument1", false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -141,9 +138,7 @@ fn test_removal_logic_in_actor() -> Result<()> {
             .contains("in use by modules"));
 
         // Test that force removal works
-        let result = actor
-            .remove_instrument_dynamic("instrument1", true)
-            .await;
+        let result = actor.remove_instrument_dynamic("instrument1", true).await;
         assert!(result.is_ok());
 
         // Verify that the dependency graph is cleaned up

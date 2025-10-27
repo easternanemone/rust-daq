@@ -6,8 +6,8 @@
 use rust_daq::app_actor::DaqManagerActor;
 use rust_daq::config::{ApplicationSettings, Settings, StorageSettings};
 use rust_daq::data::registry::ProcessorRegistry;
-use rust_daq::instrument::InstrumentRegistry;
 use rust_daq::instrument::mock::MockInstrument;
+use rust_daq::instrument::InstrumentRegistry;
 use rust_daq::log_capture::LogBuffer;
 use rust_daq::measurement::InstrumentMeasurement;
 use rust_daq::messages::DaqCommand;
@@ -23,6 +23,7 @@ fn create_test_settings() -> Settings {
         application: ApplicationSettings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
+            data_distributor: Default::default(),
         },
         storage: StorageSettings {
             default_path: "./data".to_string(),
@@ -30,6 +31,7 @@ fn create_test_settings() -> Settings {
         },
         instruments: HashMap::new(),
         processors: None,
+        instruments_v3: Vec::new(),
     }
 }
 
@@ -40,7 +42,7 @@ async fn setup_actor() -> mpsc::Sender<DaqCommand> {
     // Register mock instrument in registry
     let mut instrument_registry = InstrumentRegistry::new();
     instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
-    
+
     let actor = DaqManagerActor::<InstrumentMeasurement>::new(
         Arc::new(settings),
         Arc::new(instrument_registry),
@@ -67,11 +69,8 @@ async fn test_add_instrument_dynamic_success() {
     // Create mock instrument configuration
     let config = toml::Value::Table(toml::map::Map::new());
 
-    let (cmd, rx) = DaqCommand::add_instrument_dynamic(
-        "dynamic_mock".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (cmd, rx) =
+        DaqCommand::add_instrument_dynamic("dynamic_mock".to_string(), "mock".to_string(), config);
 
     cmd_tx.send(cmd).await.expect("Failed to send command");
     let result = rx.await.expect("Failed to receive response");
@@ -117,11 +116,8 @@ async fn test_add_instrument_dynamic_duplicate() {
     assert!(result1.is_ok(), "First addition should succeed");
 
     // Try to add duplicate
-    let (cmd2, rx2) = DaqCommand::add_instrument_dynamic(
-        "dup_test".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (cmd2, rx2) =
+        DaqCommand::add_instrument_dynamic("dup_test".to_string(), "mock".to_string(), config);
     cmd_tx.send(cmd2).await.expect("Failed to send command");
     let result2 = rx2.await.expect("Failed to receive response");
 
@@ -147,11 +143,8 @@ async fn test_remove_instrument_dynamic_success() {
 
     // Add instrument first
     let config = toml::Value::Table(toml::map::Map::new());
-    let (add_cmd, add_rx) = DaqCommand::add_instrument_dynamic(
-        "to_remove".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (add_cmd, add_rx) =
+        DaqCommand::add_instrument_dynamic("to_remove".to_string(), "mock".to_string(), config);
     cmd_tx.send(add_cmd).await.expect("Failed to send command");
     add_rx
         .await
@@ -167,7 +160,11 @@ async fn test_remove_instrument_dynamic_success() {
         .expect("Failed to send remove command");
     let result = remove_rx.await.expect("Failed to receive remove response");
 
-    assert!(result.is_ok(), "Instrument removal should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Instrument removal should succeed: {:?}",
+        result
+    );
 
     // Verify instrument is not in the list
     let (list_cmd, list_rx) = DaqCommand::get_instrument_list();
@@ -221,11 +218,8 @@ async fn test_remove_instrument_dynamic_force() {
 
     // Add instrument
     let config = toml::Value::Table(toml::map::Map::new());
-    let (add_cmd, add_rx) = DaqCommand::add_instrument_dynamic(
-        "force_remove".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (add_cmd, add_rx) =
+        DaqCommand::add_instrument_dynamic("force_remove".to_string(), "mock".to_string(), config);
     cmd_tx.send(add_cmd).await.expect("Failed to send command");
     add_rx
         .await
@@ -241,11 +235,7 @@ async fn test_remove_instrument_dynamic_force() {
         .expect("Failed to send remove command");
     let result = remove_rx.await.expect("Failed to receive remove response");
 
-    assert!(
-        result.is_ok(),
-        "Force removal should succeed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "Force removal should succeed: {:?}", result);
 
     // Cleanup
     let (shutdown_cmd, _) = DaqCommand::shutdown();
@@ -258,11 +248,8 @@ async fn test_update_instrument_parameter_success() {
 
     // Add instrument first
     let config = toml::Value::Table(toml::map::Map::new());
-    let (add_cmd, add_rx) = DaqCommand::add_instrument_dynamic(
-        "param_test".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (add_cmd, add_rx) =
+        DaqCommand::add_instrument_dynamic("param_test".to_string(), "mock".to_string(), config);
     cmd_tx.send(add_cmd).await.expect("Failed to send command");
     add_rx
         .await
@@ -336,11 +323,8 @@ async fn test_dynamic_config_full_workflow() {
 
     // 1. Add instrument dynamically
     let config = toml::Value::Table(toml::map::Map::new());
-    let (add_cmd, add_rx) = DaqCommand::add_instrument_dynamic(
-        "workflow_test".to_string(),
-        "mock".to_string(),
-        config,
-    );
+    let (add_cmd, add_rx) =
+        DaqCommand::add_instrument_dynamic("workflow_test".to_string(), "mock".to_string(), config);
     cmd_tx.send(add_cmd).await.expect("Failed to send command");
     add_rx
         .await

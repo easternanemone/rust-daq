@@ -3,20 +3,20 @@
 //! Tests the complete workflow of defining plans, executing them via RunEngine,
 //! and validating checkpointing and state management.
 
+use anyhow::Result;
+use futures::stream::{self, StreamExt};
 use rust_daq::app_actor::DaqManagerActor;
 use rust_daq::config::{ApplicationSettings, Settings, StorageSettings};
 use rust_daq::data::registry::ProcessorRegistry;
 use rust_daq::experiment::{
-    Checkpoint, ExperimentState, GridScanPlan, LogLevel, Message, Plan, PlanStream,
-    RunEngine, ScanPlan, TimeSeriesPlan,
+    Checkpoint, ExperimentState, GridScanPlan, LogLevel, Message, Plan, PlanStream, RunEngine,
+    ScanPlan, TimeSeriesPlan,
 };
 use rust_daq::instrument::InstrumentRegistry;
 use rust_daq::log_capture::LogBuffer;
 use rust_daq::measurement::InstrumentMeasurement;
 use rust_daq::messages::DaqCommand;
 use rust_daq::modules::ModuleRegistry;
-use anyhow::Result;
-use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +30,7 @@ fn create_test_settings() -> Settings {
         application: ApplicationSettings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
+            data_distributor: Default::default(),
         },
         storage: StorageSettings {
             default_path: "./data".to_string(),
@@ -37,6 +38,7 @@ fn create_test_settings() -> Settings {
         },
         instruments: HashMap::new(),
         processors: None,
+        instruments_v3: Vec::new(),
     }
 }
 
@@ -305,7 +307,10 @@ async fn test_grid_scan_plan_messages() {
         .iter()
         .filter(|m| matches!(m, Message::Set { .. }))
         .count();
-    assert_eq!(set_count, 8, "Should have 8 Set messages (2 per point, 4 points)");
+    assert_eq!(
+        set_count, 8,
+        "Should have 8 Set messages (2 per point, 4 points)"
+    );
 
     // Check for Trigger messages
     let trigger_count = messages

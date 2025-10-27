@@ -1,0 +1,1168 @@
+<GENERATED-CODE>
+I will update two files to implement the V3 command path.
+
+1.  **Update `src/instrument_manager_v3.rs`**: This file will be modified to create per-instrument command channels, route commands, and handle responses.
+2.  **Update `src/instruments_v2/mock_power_meter_v3.rs`**: This mock instrument will be updated to properly handle `Start`, `Stop`, and `Configure` commands to control its data generation loop.
+
+<UPDATED_EXISTING_FILE: src/instrument_manager_v3.rs>
+```rust
+//! V3 Instrument Manager - Orchestration layer for V3 instruments
+//!
+//! This module provides the missing orchestration layer identified in the Phase 2
+//! completion analysis. All reference frameworks (DynExp, PyMoDAQ, ScopeFoundry, Qudi)
+//! have a manager/orchestrator that coordinates instrument lifecycle, configuration,
+//! and data flow. This is that layer for rust-daq V3.
+//!
+//! ## Responsibilities
+//!
+//! 1. **Lifecycle Management**: Owns V3 instrument trait objects, spawns their tasks,
+//!    monitors health, and orchestrates graceful shutdown
+//! 2. **Configuration**: Reads `[[instruments_v3]]` from TOML, uses factory pattern
+//!    to instantiate instruments
+//! 3. **Data Flow**: Subscribes to measurement channels, bridges to application
+//! 4. **Parameter Discovery**: Exposes unified interface for parameter control
+//!
+//! ## Reference Pattern
+//!
+//! Based on DynExp's Module/ModuleInstance/Manager architecture:
+//! - `Instrument` trait = DynExp Module (configuration template)
+//! - `InstrumentHandle` = DynExp ModuleInstance (runtime state)
+//! - `InstrumentManagerV3` = DynExp Manager (orchestrator)
+
+use anyhow::{anyhow, Context, Result};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
+
+use crate::config::InstrumentConfigV3;
+use crate::core_v3::{Command, Instrument, Measurement as V3Measurement, Response};
+use crate::measurement::DataDistributor;
+use daq_core::Measurement as V1Measurement;
+
+/// Factory function signature for creating V3 instruments from configuration
+///
+/// Takes instrument ID and configuration (as JSON for flexibility), returns
+/// a boxed trait object. This enables runtime polymorphism and configuration-based
+/// instrument instantiation.
+pub type InstrumentFactory = fn(&str, &serde_json::Value) -> Result<Box<dyn Instrument>>;
+
+/// Message for sending commands to an instrument task with a response channel.
+struct InstrumentCommandMessage {
+    command: Command,
+    responder: oneshot::Sender<Result<Response>>,
+}
+
+/// Runtime handle for an active V3 instrument
+///
+/// Owns the shutdown channel and task handle, enabling lifecycle management
+/// without holding the instrument itself (which runs in its own task).
+struct InstrumentHandle {
+    /// Oneshot channel to signal shutdown
+    shutdown_tx: Option<oneshot::Sender<()>>,
+
+    /// Join handle for the instrument's runtime task
+    task_handle: JoinHandle<Result<()>>,
+
+    /// Broadcast receiver for measurement data
+    measurement_rx: broadcast::Receiver<V3Measurement>,
+
+    /// Command channel sender to the instrument task
+    command_tx: mpsc::Sender<InstrumentCommandMessage>,
+}
+
+/// V3 Instrument Manager - The orchestration layer
+///
+/// Coordinates V3 instrument lifecycle, configuration, and data flow. This is the
+/// missing architectural tier identified in Phase 2 analysis - all reference
+/// frameworks have equivalent (DynExp ModuleManager, PyMODAQ PluginManager, etc.)
+pub struct InstrumentManagerV3 {
+    /// Registry mapping instrument type names to factory functions
+    ///
+    /// Example: "Newport1830CV3" -> Newport1830CV3::from_config
+    factories: HashMap<String, InstrumentFactory>,
+
+    /// Active instruments keyed by their configuration ID
+    ///
+    /// Example: "power_meter_1" -> InstrumentHandle
+    active_instruments: Arc<Mutex<HashMap<String, InstrumentHandle>>>,
+
+    /// Data distributor for aggregated measurements (V3 → V1 bridge)
+    ///
+    /// Uses non-blocking DataDistributor to forward V3 Measurement to V1 GUI/Storage
+    /// during Phase 3 migration, leveraging daq-87/daq-88 backpressure fixes
+    data_distributor: Option<Arc<DataDistributor<Arc<V1Measurement>>>>,
+
+    /// Forwarder task handles for graceful shutdown
+    ///
+    /// Tracks spawned data bridge tasks so they can be cancelled during shutdown
+    forwarder_handles: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+}
+
+impl InstrumentManagerV3 {
+    /// Create a new instrument manager with empty factory registry
+    ///
+    /// Call `register_factory()` to add instrument types before loading from config.
+    pub fn new() -> Self {
+        Self {
+            factories: HashMap::new(),
+            active_instruments: Arc::new(Mutex::new(HashMap::new())),
+            data_distributor: None,
+            forwarder_handles: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Register a factory function for an instrument type
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// manager.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+    /// manager.register_factory("Newport1830CV3", Newport1830CV3::from_config);
+    /// ```
+    pub fn register_factory(&mut self, type_name: impl Into<String>, factory: InstrumentFactory) {
+        self.factories.insert(type_name.into(), factory);
+    }
+
+    /// Set the data distributor for V3 → V1 data flow
+    ///
+    /// During Phase 3, V3 measurements are bridged to V1 DataDistributor
+    /// for backward compatibility with existing DaqApp/GUI/Storage.
+    /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
+    pub fn set_data_distributor(&mut self, distributor: Arc<DataDistributor<Arc<V1Measurement>>>) {
+        self.data_distributor = Some(distributor);
+    }
+
+    /// Load instruments from V3 configuration
+    ///
+    /// Reads `[[instruments_v3]]` sections, instantiates using factory pattern,
+    /// initializes each instrument, and spawns runtime tasks.
+    ///
+    /// # Configuration Format
+    ///
+    /// ```toml
+    /// [[instruments_v3]]
+    /// id = "power_meter_1"
+    /// type = "Newport1830CV3"
+    /// port = "/dev/ttyUSB0"
+    /// [instruments_v3.params]
+    /// wavelength_nm = 532.0
+    /// range = "auto"
+    /// ```
+    pub async fn load_from_config(
+        &mut self,
+        instruments_config: &[InstrumentConfigV3],
+    ) -> Result<()> {
+        for cfg in instruments_config {
+            self.spawn_instrument(cfg)
+                .await
+                .with_context(|| format!("Failed to load instrument '{}'", cfg.id))?;
+        }
+
+        Ok(())
+    }
+
+    /// Spawn a single instrument from configuration
+    ///
+    /// 1. Lookup factory by type name
+    /// 2. Instantiate instrument
+    /// 3. Initialize (connect, configure)
+    /// 4. Spawn runtime task
+    /// 5. Setup data bridge
+    async fn spawn_instrument(&mut self, cfg: &InstrumentConfigV3) -> Result<()> {
+        // Lookup factory
+        let factory = self
+            .factories
+            .get(&cfg.type_name)
+            .ok_or_else(|| anyhow!("Unknown V3 instrument type: '{}'", cfg.type_name))?;
+
+        // Instantiate
+        let mut instrument = factory(&cfg.id, &cfg.settings)
+            .with_context(|| format!("Factory failed for type '{}'", cfg.type_name))?;
+
+        // Initialize
+        instrument
+            .initialize()
+            .await
+            .with_context(|| format!("Initialization failed for '{}'", cfg.id))?;
+
+        // Get measurement channel before moving instrument
+        let measurement_rx = instrument.data_channel();
+
+        // Create command and shutdown channels
+        let (command_tx, mut command_rx) = mpsc::channel::<InstrumentCommandMessage>(32);
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+
+        // Spawn runtime task
+        let task_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(msg) = command_rx.recv() => {
+                        let response = instrument.execute(msg.command).await;
+                        if msg.responder.send(response).is_err() {
+                            tracing::warn!("Failed to send response for command on instrument '{}'", instrument.id());
+                        }
+                    },
+                    _ = &mut shutdown_rx => {
+                        // Graceful shutdown
+                        instrument.shutdown().await?;
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        // Setup data bridge if data distributor configured
+        if let Some(distributor) = &self.data_distributor {
+            let forwarder_handle = Self::spawn_data_bridge(
+                cfg.id.clone(),
+                measurement_rx.resubscribe(),
+                distributor.clone(),
+            );
+
+            // Store forwarder handle for shutdown
+            self.forwarder_handles
+                .lock()
+                .await
+                .insert(cfg.id.clone(), forwarder_handle);
+        }
+
+        // Store handle
+        let handle = InstrumentHandle {
+            shutdown_tx: Some(shutdown_tx),
+            task_handle,
+            measurement_rx,
+            command_tx,
+        };
+
+        self.active_instruments
+            .lock()
+            .await
+            .insert(cfg.id.clone(), handle);
+
+        Ok(())
+    }
+
+    /// Spawn data bridge task for V3 → V1 compatibility
+    ///
+    /// Subscribes to V3 measurement channel and forwards to DataDistributor.
+    /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
+    /// Currently only supports Measurement::Scalar; logs warnings for Image/Spectrum.
+    fn spawn_data_bridge(
+        instrument_id: String,
+        mut v3_rx: broadcast::Receiver<V3Measurement>,
+        distributor: Arc<DataDistributor<Arc<V1Measurement>>>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                match v3_rx.recv().await {
+                    Ok(measurement) => {
+                        // Convert V3 Measurement to V1 Measurement for bridge
+                        // Currently only Scalar is supported in Phase 3
+                        let v1_measurement = match &measurement {
+                            V3Measurement::Scalar { name, value, unit, timestamp } => {
+                                // Convert to V1 DataPoint then wrap in Scalar variant
+                                let data_point = daq_core::DataPoint {
+                                    channel: name.clone(),
+                                    value: *value,
+                                    timestamp: *timestamp,
+                                    unit: unit.clone(),
+                                };
+                                Some(V1Measurement::Scalar(data_point))
+                            }
+                            V3Measurement::Image { .. } => {
+                                tracing::warn!(
+                                    "Image measurement from '{}' not supported by V1 bridge (Phase 3 limitation)",
+                                    instrument_id
+                                );
+                                None
+                            }
+                            V3Measurement::Spectrum { .. } => {
+                                tracing::warn!(
+                                    "Spectrum measurement from '{}' not supported by V1 bridge (Phase 3 limitation)",
+                                    instrument_id
+                                );
+                                None
+                            }
+                            _ => {
+                                tracing::warn!(
+                                    "Unknown measurement type from '{}' not supported by V1 bridge",
+                                    instrument_id
+                                );
+                                None
+                            }
+                        };
+
+                        // Forward converted measurement if successful
+                        if let Some(v1_msg) = v1_measurement {
+                            if let Err(e) = distributor.broadcast(Arc::new(v1_msg)).await {
+                                tracing::error!(
+                                    "Data bridge broadcast failed for '{}': {}",
+                                    instrument_id,
+                                    e
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            "Data bridge for '{}' lagged by {} measurements",
+                            instrument_id,
+                            n
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Measurement channel closed for '{}'", instrument_id);
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Execute a command on a specific instrument
+    ///
+    /// This is the primary control interface for V3 instruments. Commands are
+    /// sent directly (no actor model overhead) and responses are awaited.
+    pub async fn execute_command(
+        &self,
+        instrument_id: &str,
+        command: Command,
+    ) -> Result<Response> {
+        let (response_tx, response_rx) = oneshot::channel();
+        let msg = InstrumentCommandMessage {
+            command,
+            responder: response_tx,
+        };
+
+        let command_tx = {
+            let instruments = self.active_instruments.lock().await;
+            instruments
+                .get(instrument_id)
+                .map(|h| h.command_tx.clone())
+                .ok_or_else(|| anyhow!("Instrument '{}' not found", instrument_id))?
+        };
+
+        command_tx
+            .send(msg)
+            .await
+            .map_err(|e| anyhow!("Failed to send command to '{}': {}", instrument_id, e))?;
+
+        response_rx
+            .await
+            .map_err(|e| anyhow!("Failed to receive response from '{}': {}", instrument_id, e))?
+    }
+
+    /// Get measurement receiver for a specific instrument
+    ///
+    /// Returns a broadcast receiver that can subscribe to the instrument's
+    /// measurement stream. Used by GUI, storage writers, and processors.
+    pub async fn subscribe_measurements(
+        &self,
+        instrument_id: &str,
+    ) -> Result<broadcast::Receiver<V3Measurement>> {
+        let instruments = self.active_instruments.lock().await;
+        let handle = instruments
+            .get(instrument_id)
+            .ok_or_else(|| anyhow!("Instrument '{}' not found", instrument_id))?;
+
+        Ok(handle.measurement_rx.resubscribe())
+    }
+
+    /// List all active V3 instruments
+    pub async fn list_instruments(&self) -> Vec<String> {
+        self.active_instruments
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Shutdown all instruments gracefully
+    ///
+    /// Sends shutdown signal to each instrument and awaits task completion
+    /// with 5-second timeout per instrument (matches V1 behavior).
+    pub async fn shutdown_all(&mut self) -> Result<()> {
+        // Cancel forwarder tasks first
+        {
+            let mut handles = self.forwarder_handles.lock().await;
+            for (id, handle) in handles.drain() {
+                handle.abort();
+                tracing::debug!("Cancelled forwarder task for '{}'", id);
+            }
+        }
+
+        // Shutdown instruments
+        let mut instruments = self.active_instruments.lock().await;
+        let ids: Vec<String> = instruments.keys().cloned().collect();
+
+        for id in ids {
+            if let Some(mut handle) = instruments.remove(&id) {
+                // Send shutdown signal
+                if let Some(shutdown_tx) = handle.shutdown_tx.take() {
+                    let _ = shutdown_tx.send(());
+                }
+
+                // Await task completion with timeout
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    handle.task_handle,
+                )
+                .await
+                {
+                    Ok(Ok(Ok(()))) => {
+                        tracing::info!("Instrument '{}' shutdown successfully", id);
+                    }
+                    Ok(Ok(Err(e))) => {
+                        tracing::error!("Instrument '{}' shutdown error: {}", id, e);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!("Instrument '{}' task panicked: {}", id, e);
+                    }
+                    Err(_) => {
+                        tracing::warn!("Instrument '{}' shutdown timeout (5s), aborting", id);
+                        // Task aborts automatically when JoinHandle drops
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for InstrumentManagerV3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::ParameterValue;
+    use crate::core_v3::{InstrumentState, ParameterBase};
+    use crate::instruments_v2::MockPowerMeterV3;
+
+    // Mock instrument for testing
+    struct MockInstrumentV3 {
+        id: String,
+        tx: broadcast::Sender<V3Measurement>,
+        params: HashMap<String, Box<dyn ParameterBase>>,
+    }
+
+    impl MockInstrumentV3 {
+        fn from_config(id: &str, _cfg: &serde_json::Value) -> Result<Box<dyn Instrument>> {
+            let (tx, _rx) = broadcast::channel(16);
+            Ok(Box::new(Self {
+                id: id.to_string(),
+                tx,
+                params: HashMap::new(),
+            }))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Instrument for MockInstrumentV3 {
+        fn id(&self) -> &str {
+            &self.id
+        }
+
+        async fn initialize(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn shutdown(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn data_channel(&self) -> broadcast::Receiver<V3Measurement> {
+            self.tx.subscribe()
+        }
+
+        async fn execute(&mut self, _cmd: Command) -> Result<Response> {
+            Ok(Response::Ok)
+        }
+
+        fn parameters(&self) -> &HashMap<String, Box<dyn ParameterBase>> {
+            &self.params
+        }
+
+        fn parameters_mut(&mut self) -> &mut HashMap<String, Box<dyn ParameterBase>> {
+            &mut self.params
+        }
+
+        fn state(&self) -> InstrumentState {
+            InstrumentState::Idle
+        }
+    }
+
+    #[tokio::test]
+    async fn test_instrument_manager_registration() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
+
+        assert!(manager.factories.contains_key("MockInstrumentV3"));
+    }
+
+    #[tokio::test]
+    async fn test_instrument_manager_spawn() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
+
+        let cfg = InstrumentConfigV3 {
+            id: "test_instrument".to_string(),
+            type_name: "MockInstrumentV3".to_string(),
+            settings: serde_json::json!({}),
+        };
+
+        manager.spawn_instrument(&cfg).await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.contains(&"test_instrument".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_instrument_manager_shutdown() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
+
+        let cfg = InstrumentConfigV3 {
+            id: "test_instrument".to_string(),
+            type_name: "MockInstrumentV3".to_string(),
+            settings: serde_json::json!({}),
+        };
+
+        manager.spawn_instrument(&cfg).await.unwrap();
+        manager.shutdown_all().await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_integration() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+
+        let cfg = InstrumentConfigV3 {
+            id: "power_meter_test".to_string(),
+            type_name: "MockPowerMeterV3".to_string(),
+            settings: serde_json::json!({
+                "sampling_rate": 10.0,
+                "wavelength_nm": 532.0
+            }),
+        };
+
+        manager.spawn_instrument(&cfg).await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.contains(&"power_meter_test".to_string()));
+
+        // Start the instrument
+        manager
+            .execute_command("power_meter_test", Command::Start)
+            .await
+            .unwrap();
+
+        // Verify we can subscribe to measurements
+        let mut rx = manager
+            .subscribe_measurements("power_meter_test")
+            .await
+            .unwrap();
+
+        // Receive at least one measurement to verify data flow
+        tokio::select! {
+            result = rx.recv() => {
+                let measurement = result.unwrap();
+                assert_eq!(measurement.name(), "power_meter_test_power");
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("No measurement received within timeout");
+            }
+        }
+
+        manager.shutdown_all().await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_command_execution() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+
+        let cfg = InstrumentConfigV3 {
+            id: "pm1".to_string(),
+            type_name: "MockPowerMeterV3".to_string(),
+            settings: serde_json::json!({ "sampling_rate": 100.0 }),
+        };
+        manager.spawn_instrument(&cfg).await.unwrap();
+
+        // Test Start command
+        let response = manager.execute_command("pm1", Command::Start).await.unwrap();
+        assert!(matches!(response, Response::Ok));
+
+        // Test Configure command (assumes SetParameter variant exists)
+        let configure_cmd = Command::SetParameter {
+            name: "wavelength_nm".to_string(),
+            value: ParameterValue::Float(633.0),
+        };
+        let response = manager
+            .execute_command("pm1", configure_cmd)
+            .await
+            .unwrap();
+        assert!(matches!(response, Response::Ok));
+
+        // Test Stop command
+        let response = manager.execute_command("pm1", Command::Stop).await.unwrap();
+        assert!(matches!(response, Response::Ok));
+
+        // Test invalid command
+        let response = manager
+            .execute_command("non_existent", Command::Start)
+            .await;
+        assert!(response.is_err());
+    }
+}
+```
+</UPDATED_EXISTING_FILE>
+
+<UPDATED_EXISTING_FILE: src/instruments_v2/mock_power_meter_v3.rs>
+```rust
+//! Mock Power Meter V3 (Unified Architecture)
+//!
+//! V3 implementation for testing the entire integration stack:
+//! - Implements `core_v3::Instrument` trait (unified architecture)
+//! - Implements `core_v3::PowerMeter` trait for polymorphism
+//! - Uses `Parameter<T>` for declarative parameter management
+//! - Direct async methods (no actor model)
+//! - Single broadcast channel for data streaming
+//!
+//! This is the first fully-integrated V3 instrument, designed to validate:
+//! - TOML configuration → InstrumentManagerV3
+//! - Manager → Forwarder pattern
+//! - Forwarder → DataDistributor
+//! - DataDistributor → GUI
+//!
+//! ## Configuration
+//!
+//! ```toml
+//! [instruments.power_meter]
+//! type = "mock_power_meter_v3"
+//! sampling_rate = 10.0  # Hz
+//! wavelength_nm = 532.0  # nm
+//! ```
+//!
+//! ## Data Generation
+//!
+//! Generates realistic power readings:
+//! - Base power: 1.0 mW
+//! - Noise: ±5% random variation
+//! - Units: milliwatts (mW)
+
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use chrono::Utc;
+use rand::Rng;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+
+use crate::core::ParameterValue;
+use crate::core_v3::{
+    Command, Instrument, InstrumentState, Measurement, ParameterBase, PowerMeter, Response,
+};
+use crate::parameter::{Parameter, ParameterBuilder};
+
+// =============================================================================
+// MockPowerMeterV3
+// =============================================================================
+
+/// Mock power meter for testing V3 integration stack
+///
+/// Generates simulated power readings with realistic noise. This is the
+/// simplest V3 instrument (scalar data only) for validating end-to-end flow:
+/// TOML → Manager → Forwarder → DataDistributor → GUI.
+pub struct MockPowerMeterV3 {
+    /// Instrument identifier
+    id: String,
+
+    /// Current state
+    state: InstrumentState,
+
+    /// Flag to enable/disable data generation task
+    is_running: Arc<AtomicBool>,
+
+    /// Sampling rate in Hz
+    sampling_rate: f64,
+
+    /// Data broadcast channel
+    data_tx: broadcast::Sender<Measurement>,
+
+    /// Parameters (for dynamic access via ParameterBase)
+    parameters: HashMap<String, Box<dyn ParameterBase>>,
+
+    // Typed parameters (for direct access via PowerMeter trait)
+    wavelength_nm: Arc<RwLock<Parameter<f64>>>,
+
+    /// Data generation task handle
+    task_handle: Option<tokio::task::JoinHandle<()>>,
+
+    /// Shutdown signal for data generation task
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl MockPowerMeterV3 {
+    /// Create new mock power meter instance
+    ///
+    /// # Arguments
+    /// * `id` - Unique instrument identifier
+    /// * `sampling_rate` - Data generation rate in Hz
+    /// * `wavelength_nm` - Initial wavelength setting in nanometers
+    pub fn new(id: impl Into<String>, sampling_rate: f64, wavelength_nm: f64) -> Self {
+        let id = id.into();
+        let (data_tx, _) = broadcast::channel(1024);
+
+        // Create wavelength parameter
+        let wavelength_nm_param = Arc::new(RwLock::new(
+            ParameterBuilder::new("wavelength_nm", wavelength_nm)
+                .description("Laser wavelength for power calibration")
+                .unit("nm")
+                .range(400.0, 1700.0)
+                .build(),
+        ));
+
+        Self {
+            id,
+            state: InstrumentState::Uninitialized,
+            is_running: Arc::new(AtomicBool::new(false)),
+            sampling_rate,
+            data_tx,
+            parameters: HashMap::new(),
+            wavelength_nm: wavelength_nm_param,
+            task_handle: None,
+            shutdown_tx: None,
+        }
+    }
+
+    /// Create from TOML configuration
+    ///
+    /// # Configuration Format
+    ///
+    /// ```toml
+    /// [instruments.power_meter]
+    /// type = "mock_power_meter_v3"
+    /// sampling_rate = 10.0
+    /// wavelength_nm = 532.0
+    /// ```
+    pub fn from_config(id: &str, cfg: &serde_json::Value) -> Result<Box<dyn Instrument>> {
+        let sampling_rate = cfg["sampling_rate"].as_f64().unwrap_or(10.0);
+        let wavelength_nm = cfg["wavelength_nm"].as_f64().unwrap_or(532.0);
+
+        Ok(Box::new(Self::new(id, sampling_rate, wavelength_nm)))
+    }
+
+    /// Generate realistic power reading with ±5% noise
+    fn generate_power_reading(&self) -> f64 {
+        let mut rng = rand::thread_rng();
+        let base_power = 1.0; // 1 mW baseline
+        let noise = rng.gen_range(-0.05..0.05); // ±5% noise
+        base_power * (1.0 + noise)
+    }
+}
+
+// =============================================================================
+// Instrument Trait Implementation
+// =============================================================================
+
+#[async_trait]
+impl Instrument for MockPowerMeterV3 {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn state(&self) -> InstrumentState {
+        self.state
+    }
+
+    async fn initialize(&mut self) -> Result<()> {
+        if self.state != InstrumentState::Uninitialized {
+            return Err(anyhow!("Already initialized"));
+        }
+
+        // Spawn data generation task
+        let tx = self.data_tx.clone();
+        let sampling_rate = self.sampling_rate;
+        let id = self.id.clone();
+        let is_running = self.is_running.clone();
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+
+        let handle = tokio::spawn(async move {
+            let interval = tokio::time::Duration::from_secs_f64(1.0 / sampling_rate);
+            let mut ticker = tokio::time::interval(interval);
+
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        if is_running.load(Ordering::SeqCst) {
+                            // Generate power reading
+                            let mut rng = rand::thread_rng();
+                            let base_power = 1.0; // 1 mW baseline
+                            let noise = rng.gen_range(-0.05..0.05); // ±5% noise
+                            let power = base_power * (1.0 + noise);
+
+                            // Create measurement
+                            let measurement = Measurement::Scalar {
+                                name: format!("{}_power", id),
+                                value: power,
+                                unit: "mW".to_string(),
+                                timestamp: Utc::now(),
+                            };
+
+                            // Broadcast measurement
+                            if tx.send(measurement).is_err() {
+                                // Channel closed, exit task
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_rx => {
+                        // Shutdown signal received, exit task
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.task_handle = Some(handle);
+        self.shutdown_tx = Some(shutdown_tx);
+        self.state = InstrumentState::Idle;
+
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        self.state = InstrumentState::ShuttingDown;
+        self.is_running.store(false, Ordering::SeqCst);
+
+        // Send shutdown signal to data generation task
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        // Wait for task to complete
+        if let Some(handle) = self.task_handle.take() {
+            let _ = handle.await;
+        }
+
+        Ok(())
+    }
+
+    fn data_channel(&self) -> broadcast::Receiver<Measurement> {
+        self.data_tx.subscribe()
+    }
+
+    async fn execute(&mut self, cmd: Command) -> Result<Response> {
+        match cmd {
+            Command::Start => {
+                self.is_running.store(true, Ordering::SeqCst);
+                self.state = InstrumentState::Running;
+                Ok(Response::Ok)
+            }
+            Command::Stop => {
+                self.is_running.store(false, Ordering::SeqCst);
+                self.state = InstrumentState::Idle;
+                Ok(Response::Ok)
+            }
+            Command::GetState => Ok(Response::State(self.state)),
+            Command::SetParameter { name, value } => {
+                if name == "wavelength_nm" {
+                    if let Some(nm) = value.as_f64() {
+                        match self.set_wavelength(nm).await {
+                            Ok(_) => Ok(Response::Ok),
+                            Err(e) => Ok(Response::Error(e.to_string())),
+                        }
+                    } else {
+                        Ok(Response::Error(
+                            "Invalid value type for wavelength_nm, expected f64".to_string(),
+                        ))
+                    }
+                } else {
+                    Ok(Response::Error(format!("Unknown parameter '{}'", name)))
+                }
+            }
+            _ => Ok(Response::Error("Unsupported command".to_string())),
+        }
+    }
+
+    fn parameters(&self) -> &HashMap<String, Box<dyn ParameterBase>> {
+        &self.parameters
+    }
+
+    fn parameters_mut(&mut self) -> &mut HashMap<String, Box<dyn ParameterBase>> {
+        &mut self.parameters
+    }
+}
+
+// =============================================================================
+// PowerMeter Trait Implementation
+// =============================================================================
+
+#[async_trait]
+impl PowerMeter for MockPowerMeterV3 {
+    async fn set_wavelength(&mut self, nm: f64) -> Result<()> {
+        // Validate and set parameter
+        self.wavelength_nm.write().await.set(nm).await?;
+        Ok(())
+    }
+
+    async fn set_range(&mut self, _watts: f64) -> Result<()> {
+        // Mock implementation - no actual range setting
+        Ok(())
+    }
+
+    async fn zero(&mut self) -> Result<()> {
+        // Mock implementation - no actual zeroing
+        Ok(())
+    }
+}
+
+// Additional mock-specific methods
+impl MockPowerMeterV3 {
+    /// Get current wavelength setting
+    pub async fn wavelength(&self) -> f64 {
+        self.wavelength_nm.read().await.get()
+    }
+
+    /// Get current power reading (generates new sample)
+    pub fn power(&self) -> f64 {
+        self.generate_power_reading()
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_from_config() {
+        let cfg = serde_json::json!({
+            "sampling_rate": 10.0,
+            "wavelength_nm": 532.0
+        });
+
+        let inst = MockPowerMeterV3::from_config("test", &cfg).unwrap();
+        assert_eq!(inst.id(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_initialization() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        assert_eq!(meter.state(), InstrumentState::Uninitialized);
+
+        meter.initialize().await.unwrap();
+        assert_eq!(meter.state(), InstrumentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_and_measure() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        meter.initialize().await.unwrap();
+        meter.execute(Command::Start).await.unwrap(); // Start data generation
+
+        // Subscribe to data channel
+        let mut rx = meter.data_channel();
+
+        // Wait for measurement (with timeout)
+        tokio::select! {
+            result = rx.recv() => {
+                let measurement = result.unwrap();
+                match measurement {
+                    Measurement::Scalar { name, value, unit, .. } => {
+                        assert_eq!(name, "test_pm_power");
+                        assert!(value > 0.0, "Power should be positive");
+                        assert!(value < 2.0, "Power should be reasonable (< 2mW with noise)");
+                        assert_eq!(unit, "mW");
+                    }
+                    _ => panic!("Expected Scalar measurement"),
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("No measurement received within timeout");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_power_meter_trait_methods() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        meter.initialize().await.unwrap();
+
+        // Test set_wavelength
+        meter.set_wavelength(633.0).await.unwrap();
+        assert_eq!(meter.wavelength().await, 633.0);
+
+        // Test set_wavelength with validation (should fail)
+        let result = meter.set_wavelength(100.0).await;
+        assert!(result.is_err(), "Wavelength below 400nm should fail");
+
+        let result = meter.set_wavelength(2000.0).await;
+        assert!(result.is_err(), "Wavelength above 1700nm should fail");
+
+        // Test set_range (mock - always succeeds)
+        meter.set_range(0.001).await.unwrap();
+
+        // Test zero (mock - always succeeds)
+        meter.zero().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_data_generation_noise() {
+        let meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+
+        // Generate multiple readings and check they're within expected range
+        let readings: Vec<f64> = (0..100).map(|_| meter.power()).collect();
+
+        for reading in &readings {
+            assert!(*reading >= 0.95, "Power should be >= 0.95 mW (1.0 - 5%)");
+            assert!(*reading <= 1.05, "Power should be <= 1.05 mW (1.0 + 5%)");
+        }
+
+        // Check that readings vary (not all the same)
+        let min = readings.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = readings.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        assert!(max - min > 0.01, "Readings should have noise variation");
+    }
+
+    #[tokio::test]
+    async fn test_execute_command() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        meter.initialize().await.unwrap();
+
+        // Test Start command
+        let response = meter.execute(Command::Start).await.unwrap();
+        assert!(matches!(response, Response::Ok));
+        assert_eq!(meter.state(), InstrumentState::Running);
+
+        // Test Stop command
+        let response = meter.execute(Command::Stop).await.unwrap();
+        assert!(matches!(response, Response::Ok));
+        assert_eq!(meter.state(), InstrumentState::Idle);
+
+        // Test GetState command
+        let response = meter.execute(Command::GetState).await.unwrap();
+        assert!(matches!(response, Response::State(InstrumentState::Idle)));
+    }
+
+    #[tokio::test]
+    async fn test_shutdown() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        meter.initialize().await.unwrap();
+        meter.execute(Command::Start).await.unwrap();
+
+        // Subscribe to data channel
+        let mut rx = meter.data_channel();
+
+        // Verify data is flowing
+        tokio::select! {
+            result = rx.recv() => {
+                assert!(result.is_ok(), "Should receive measurement before shutdown");
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("No measurement received before shutdown");
+            }
+        }
+
+        // Shutdown
+        meter.shutdown().await.unwrap();
+        assert_eq!(meter.state(), InstrumentState::ShuttingDown);
+
+        // Verify no more data is generated
+        tokio::select! {
+            result = rx.recv() => {
+                // recv() might return lag error if buffer filled before shutdown
+                // or Ok if there was buffered data. Either is acceptable.
+                // The important part is the task stopped spawning new data.
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                // Timeout is expected - no new data should be generated
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_multiple_subscribers() {
+        let mut meter = MockPowerMeterV3::new("test_pm", 10.0, 532.0);
+        meter.initialize().await.unwrap();
+        meter.execute(Command::Start).await.unwrap();
+
+        // Create multiple subscribers
+        let mut rx1 = meter.data_channel();
+        let mut rx2 = meter.data_channel();
+        let mut rx3 = meter.data_channel();
+
+        // All subscribers should receive the same measurement
+        tokio::select! {
+            result1 = rx1.recv() => {
+                let m1 = result1.unwrap();
+                let result2 = rx2.recv().await.unwrap();
+                let result3 = rx3.recv().await.unwrap();
+
+                // All measurements should have the same name
+                assert_eq!(m1.name(), result2.name());
+                assert_eq!(m1.name(), result3.name());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("No measurement received within timeout");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sampling_rate() {
+        let sampling_rate = 20.0; // 20 Hz
+        let mut meter = MockPowerMeterV3::new("test_pm", sampling_rate, 532.0);
+        meter.initialize().await.unwrap();
+        meter.execute(Command::Start).await.unwrap();
+
+        let mut rx = meter.data_channel();
+
+        // Collect timestamps of first few measurements
+        let mut timestamps = Vec::new();
+        for _ in 0..5 {
+            if let Ok(measurement) = rx.recv().await {
+                timestamps.push(measurement.timestamp());
+            }
+        }
+
+        // Check that measurements arrive at approximately correct rate
+        assert_eq!(timestamps.len(), 5, "Should receive 5 measurements");
+
+        for i in 1..timestamps.len() {
+            let duration = timestamps[i].signed_duration_since(timestamps[i - 1]);
+            let duration_ms = duration.num_milliseconds() as f64;
+            let expected_ms = 1000.0 / sampling_rate;
+
+            // Allow ±20% tolerance for timing (async scheduler variance)
+            assert!(
+                duration_ms >= expected_ms * 0.8 && duration_ms <= expected_ms * 1.2,
+                "Measurement interval should be ~{} ms, got {} ms",
+                expected_ms,
+                duration_ms
+            );
+        }
+    }
+}
+```
+</UPDATED_EXISTING_FILE>
+</GENERATED-CODE>

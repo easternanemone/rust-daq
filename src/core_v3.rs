@@ -16,10 +16,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+
+use crate::core::ParameterValue;
 
 // Re-export existing types that are already correct
 pub use crate::core::{ImageData, PixelBuffer, SpectrumData};
@@ -111,7 +114,10 @@ pub enum Measurement {
     /// 2D image data with zero-copy optimization
     Image {
         name: String,
+        width: u32,
+        height: u32,
         buffer: PixelBuffer,
+        unit: String,
         metadata: ImageMetadata,
         timestamp: DateTime<Utc>,
     },
@@ -121,6 +127,9 @@ pub enum Measurement {
         name: String,
         frequencies: Vec<f64>,
         amplitudes: Vec<f64>,
+        frequency_unit: Option<String>,
+        amplitude_unit: Option<String>,
+        metadata: Option<Value>,
         timestamp: DateTime<Utc>,
     },
 }
@@ -188,6 +197,10 @@ pub enum Command {
     GetParameter(String),
     /// Set parameter value (parameter name, JSON value)
     SetParameter(String, serde_json::Value),
+    /// Configure multiple parameters at once
+    Configure {
+        params: HashMap<String, ParameterValue>,
+    },
     /// Instrument-specific command (for specialized operations)
     Custom(String, serde_json::Value),
 }
@@ -459,22 +472,22 @@ pub trait PowerMeter: Instrument {
 pub trait Laser: Instrument {
     /// Set wavelength in nanometers (for tunable lasers)
     async fn set_wavelength(&mut self, nm: f64) -> Result<()>;
-    
+
     /// Get current wavelength setting in nanometers
     async fn wavelength(&self) -> Result<f64>;
-    
+
     /// Set output power in watts
     async fn set_power(&mut self, watts: f64) -> Result<()>;
-    
+
     /// Get current power output in watts
     async fn power(&self) -> Result<f64>;
-    
+
     /// Enable shutter (allow laser emission)
     async fn enable_shutter(&mut self) -> Result<()>;
-    
+
     /// Disable shutter (block laser emission)
     async fn disable_shutter(&mut self) -> Result<()>;
-    
+
     /// Check if shutter is enabled (laser can emit)
     async fn is_enabled(&self) -> Result<bool>;
 }

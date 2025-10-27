@@ -1,8 +1,8 @@
 use rust_daq::modules::ModuleRegistry;
-//! Command flood tests
-//!
-//! Tests for validating that the system can handle high-frequency command
-//! bursts from the GUI without dropping commands or blocking.
+// Command flood tests
+//
+// Tests for validating that the system can handle high-frequency command
+// bursts from the GUI without dropping commands or blocking.
 
 use rust_daq::{
     app::DaqApp,

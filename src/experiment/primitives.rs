@@ -79,10 +79,7 @@ impl Plan for TimeSeriesPlan {
         metadata.insert("experiment_type".to_string(), "time_series".to_string());
         metadata.insert("module".to_string(), module_id.clone());
         metadata.insert("total_steps".to_string(), total_steps.to_string());
-        metadata.insert(
-            "interval".to_string(),
-            format!("{:.2}s", interval_secs),
-        );
+        metadata.insert("interval".to_string(), format!("{:.2}s", interval_secs));
 
         Box::pin(stream::iter((start_step..total_steps).flat_map(
             move |step| {
@@ -270,9 +267,7 @@ impl Plan for ScanPlan {
                 }));
 
                 // Wait for settling (0.1s)
-                messages.push(Ok(Message::Sleep {
-                    duration_secs: 0.1,
-                }));
+                messages.push(Ok(Message::Sleep { duration_secs: 0.1 }));
 
                 // Trigger and read
                 messages.push(Ok(Message::Trigger {
@@ -466,9 +461,7 @@ impl Plan for GridScanPlan {
                 }));
 
                 // Wait for settling
-                messages.push(Ok(Message::Sleep {
-                    duration_secs: 0.1,
-                }));
+                messages.push(Ok(Message::Sleep { duration_secs: 0.1 }));
 
                 // Trigger and read
                 messages.push(Ok(Message::Trigger {
@@ -501,7 +494,12 @@ impl Plan for GridScanPlan {
                 "2D Grid Scan: {}.{} × {}",
                 self.actuator_id, self.param1, self.param2
             ),
-            format!("{} × {} = {} points", self.num1, self.num2, self.total_points()),
+            format!(
+                "{} × {} = {} points",
+                self.num1,
+                self.num2,
+                self.total_points()
+            ),
         )
     }
 }

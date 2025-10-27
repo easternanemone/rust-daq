@@ -34,18 +34,20 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinHandle;
 
+use super::pvcam_sdk::{
+    AcquisitionGuard, CameraHandle, Frame, MockPvcamSdk, PvcamSdk, RealPvcamSdk, TriggerMode,
+};
 use crate::core_v3::{
-    Camera, Command, ImageData, ImageMetadata, Instrument, InstrumentState,
-    Measurement, ParameterBase, PixelBuffer, Response, Roi,
+    Camera, Command, ImageData, ImageMetadata, Instrument, InstrumentState, Measurement,
+    ParameterBase, PixelBuffer, Response, Roi,
 };
 use crate::parameter::{Parameter, ParameterBuilder};
-use super::pvcam_sdk::{AcquisitionGuard, CameraHandle, Frame, MockPvcamSdk, PvcamSdk, RealPvcamSdk, TriggerMode};
 
 /// SDK mode selection for PVCAM camera
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +99,7 @@ pub struct PVCAMCameraV3 {
     is_acquiring: bool,
     frame_receiver: Option<mpsc::Receiver<Frame>>,
     acquisition_guard: Option<AcquisitionGuard>,
-    
+
     // Background streaming task
     streaming_task: Option<JoinHandle<()>>,
 
@@ -243,12 +245,12 @@ impl PVCAMCameraV3 {
 
         let task = tokio::spawn(async move {
             log::info!("PVCAM '{}': Streaming task started", id);
-            
+
             while let Some(frame) = receiver.recv().await {
                 // Update counters
                 total_frames.fetch_add(1, Ordering::Relaxed);
                 let prev_frame_num = last_frame_number.swap(frame.frame_number, Ordering::Relaxed);
-                
+
                 // Detect dropped frames (use u32::MAX as sentinel for "no previous frame")
                 if prev_frame_num != u32::MAX && frame.frame_number > prev_frame_num + 1 {
                     let dropped = frame.frame_number - prev_frame_num - 1;
@@ -271,7 +273,10 @@ impl PVCAMCameraV3 {
                 // Create measurement from frame
                 let measurement = Measurement::Image {
                     name: format!("{}_frame", id),
+                    width: current_roi.width,
+                    height: current_roi.height,
                     buffer: PixelBuffer::U16(frame.data),
+                    unit: "counts".to_string(),
                     metadata: ImageMetadata {
                         exposure_ms: Some(frame.exposure_time_ms),
                         gain: Some(current_gain as f64),
@@ -287,7 +292,7 @@ impl PVCAMCameraV3 {
                     break;
                 }
             }
-            
+
             log::info!("PVCAM '{}': Streaming task ended", id);
         });
 
@@ -298,7 +303,7 @@ impl PVCAMCameraV3 {
     fn stop_streaming_task(&mut self) {
         // Drop the acquisition guard, which stops the SDK acquisition
         self.acquisition_guard = None;
-        
+
         // Abort the streaming task
         if let Some(task) = self.streaming_task.take() {
             task.abort();
@@ -334,7 +339,7 @@ impl Instrument for PVCAMCameraV3 {
 
         // TODO: Get sensor size from SDK once API is available
         // For now, use default from constructor
-        
+
         // Update ROI parameter constraint to match sensor
         let mut roi_param = self.roi.write().await;
         let default_roi = Roi {
@@ -458,20 +463,19 @@ impl Instrument for PVCAMCameraV3 {
                 Ok(Response::Ok)
             }
 
-            Command::Custom(cmd, data) => {
-                match cmd.as_str() {
-                    "get_frame_stats" => {
-                        let (total, dropped, last) = self.frame_stats();
-                        let stats = serde_json::json!({
-                            "total_frames": total,
-                            "dropped_frames": dropped,
-                            "last_frame_number": last,
-                        });
-                        Ok(Response::Custom(stats))
-                    }
-                    _ => Ok(Response::Error(format!("Unknown custom command: {}", cmd))),
+            Command::Custom(cmd, data) => match cmd.as_str() {
+                "get_frame_stats" => {
+                    let (total, dropped, last) = self.frame_stats();
+                    let stats = serde_json::json!({
+                        "total_frames": total,
+                        "dropped_frames": dropped,
+                        "last_frame_number": last,
+                    });
+                    Ok(Response::Custom(stats))
                 }
-            }
+                _ => Ok(Response::Error(format!("Unknown custom command: {}", cmd))),
+            },
+            _ => Ok(Response::Ok),
         }
     }
 
@@ -492,7 +496,8 @@ impl Camera for PVCAMCameraV3 {
         // Apply to SDK if camera is open (using set_param_u16)
         if let Some(ref handle) = self.camera_handle {
             use super::pvcam_sdk::PvcamParam;
-            self.sdk.set_param_u16(handle, PvcamParam::Exposure, ms as u16)?;
+            self.sdk
+                .set_param_u16(handle, PvcamParam::Exposure, ms as u16)?;
         }
 
         Ok(())
@@ -520,10 +525,10 @@ impl Camera for PVCAMCameraV3 {
             let region = PxRegion {
                 s1: roi.x as u16,
                 s2: (roi.x + roi.width - 1) as u16,
-                sbin: 1,  // Will be set via binning
+                sbin: 1, // Will be set via binning
                 p1: roi.y as u16,
                 p2: (roi.y + roi.height - 1) as u16,
-                pbin: 1,  // Will be set via binning
+                pbin: 1, // Will be set via binning
             };
             self.sdk.set_param_region(handle, PvcamParam::Roi, region)?;
         }
@@ -545,7 +550,10 @@ impl Camera for PVCAMCameraV3 {
 
     async fn start_acquisition(&mut self) -> Result<()> {
         if self.state != InstrumentState::Idle {
-            return Err(anyhow!("Cannot start acquisition from {:?} state", self.state));
+            return Err(anyhow!(
+                "Cannot start acquisition from {:?} state",
+                self.state
+            ));
         }
 
         if self.camera_handle.is_none() {
@@ -558,12 +566,13 @@ impl Camera for PVCAMCameraV3 {
         let exposure = self.exposure_ms.read().await.get();
         let roi = self.roi.read().await.get();
         let binning = self.binning.read().await.get();
-        
+
         use super::pvcam_sdk::{PvcamParam, PxRegion};
-        
+
         // Set exposure
-        self.sdk.set_param_u16(&handle, PvcamParam::Exposure, exposure as u16)?;
-        
+        self.sdk
+            .set_param_u16(&handle, PvcamParam::Exposure, exposure as u16)?;
+
         // Set ROI with binning
         let region = PxRegion {
             s1: roi.x as u16,
@@ -573,11 +582,12 @@ impl Camera for PVCAMCameraV3 {
             p2: (roi.y + roi.height - 1) as u16,
             pbin: binning.1 as u16,
         };
-        self.sdk.set_param_region(&handle, PvcamParam::Roi, region)?;
+        self.sdk
+            .set_param_region(&handle, PvcamParam::Roi, region)?;
 
         // Start acquisition (returns receiver and guard)
         let (receiver, guard) = self.sdk.clone().start_acquisition(handle)?;
-        
+
         // Store receiver and guard
         self.frame_receiver = Some(receiver);
         self.acquisition_guard = Some(guard);
@@ -627,14 +637,20 @@ impl Camera for PVCAMCameraV3 {
     async fn arm_trigger(&mut self) -> Result<()> {
         // PVCAM SDK doesn't have separate arm_trigger method
         // Trigger is configured via ExposureMode parameter
-        log::debug!("PVCAM '{}': arm_trigger is no-op (trigger configured via mode)", self.id);
+        log::debug!(
+            "PVCAM '{}': arm_trigger is no-op (trigger configured via mode)",
+            self.id
+        );
         Ok(())
     }
 
     async fn trigger(&mut self) -> Result<()> {
         // Software trigger not directly exposed in SDK trait
         // Would require trigger mode = SoftwareEdge and frame waiting
-        log::warn!("PVCAM '{}': software_trigger not implemented in SDK", self.id);
+        log::warn!(
+            "PVCAM '{}': software_trigger not implemented in SDK",
+            self.id
+        );
         Err(anyhow!("Software trigger not implemented"))
     }
 }
@@ -705,13 +721,10 @@ mod tests {
 
         // Receive a few frames
         for _ in 0..3 {
-            let measurement = tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                rx.recv(),
-            )
-            .await
-            .expect("Timeout waiting for frame")
-            .unwrap();
+            let measurement = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+                .await
+                .expect("Timeout waiting for frame")
+                .unwrap();
 
             match measurement {
                 Measurement::Image { name, buffer, .. } => {
@@ -743,13 +756,10 @@ mod tests {
 
         // Receive 5 frames
         for _ in 0..5 {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                rx.recv(),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
         }
 
         camera.stop_acquisition().await.unwrap();

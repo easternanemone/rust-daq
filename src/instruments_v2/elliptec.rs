@@ -241,7 +241,9 @@ impl ElliptecV2 {
         let hex_pos = format!("{:08X}", counts);
 
         // 'ma' command - move absolute
-        let _response = self.send_command(address, &format!("ma{}", hex_pos)).await?;
+        let _response = self
+            .send_command(address, &format!("ma{}", hex_pos))
+            .await?;
 
         // Check status for errors after move command
         let status = self.check_status(address).await?;
@@ -270,14 +272,20 @@ impl ElliptecV2 {
 
             // Check if homing complete (bit 8 set, bit 7 clear)
             if (status & 0x0100) != 0 && (status & 0x0080) == 0 {
-                debug!("Elliptec device {} homed (status: 0x{:04X})", address, status);
+                debug!(
+                    "Elliptec device {} homed (status: 0x{:04X})",
+                    address, status
+                );
                 return Ok(());
             }
 
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        Err(anyhow::anyhow!("Elliptec device {} homing timeout", address))
+        Err(anyhow::anyhow!(
+            "Elliptec device {} homing timeout",
+            address
+        ))
     }
 
     /// Get device information
@@ -323,16 +331,17 @@ impl Instrument for ElliptecV2 {
                                 message: format!("Device {} not responding: {}", addr, e),
                                 can_recover: true,
                             });
-                            return Err(anyhow::anyhow!(
-                                "Device {} initialization failed",
-                                addr
-                            ));
+                            return Err(anyhow::anyhow!("Device {} initialization failed", addr));
                         }
                     }
                 }
 
                 self.state = InstrumentState::Ready;
-                info!("Elliptec '{}' initialized with {} axes", self.id, self.num_axes());
+                info!(
+                    "Elliptec '{}' initialized with {} axes",
+                    self.id,
+                    self.num_axes()
+                );
                 Ok(())
             }
             Err(e) => {
@@ -400,9 +409,9 @@ impl Instrument for ElliptecV2 {
                     })?;
 
                     if parts[1] == "position" {
-                        let position = value.as_f64().ok_or_else(|| {
-                            anyhow::anyhow!("Invalid position value: {}", value)
-                        })?;
+                        let position = value
+                            .as_f64()
+                            .ok_or_else(|| anyhow::anyhow!("Invalid position value: {}", value))?;
                         self.move_absolute(axis, position).await?;
                     }
                 } else {
@@ -484,7 +493,9 @@ impl MotionController for ElliptecV2 {
 
     async fn set_acceleration(&mut self, _axis: usize, _acceleration: f64) -> Result<()> {
         // ELL14 doesn't support acceleration control
-        Err(anyhow::anyhow!("ELL14 does not support acceleration control"))
+        Err(anyhow::anyhow!(
+            "ELL14 does not support acceleration control"
+        ))
     }
 
     async fn home_axis(&mut self, axis: usize) -> Result<()> {
@@ -572,7 +583,9 @@ impl ElliptecV2 {
         let addresses = self.device_addresses.clone();
 
         // Create a minimal clone for the task
-        let adapter_clone = self.adapter.as_any()
+        let adapter_clone = self
+            .adapter
+            .as_any()
             .downcast_ref::<SerialAdapter>()
             .ok_or_else(|| anyhow::anyhow!("Adapter is not SerialAdapter"))?
             .clone();
@@ -688,7 +701,7 @@ mod tests {
         assert!((degrees - 360.0).abs() < 0.01);
 
         // Test half rotation
-        let counts = 68266u32;  // 136533 / 2 (approximately)
+        let counts = 68266u32; // 136533 / 2 (approximately)
         let degrees = (counts as f64 / elliptec.counts_per_rotation) * 360.0;
         assert!((degrees - 180.0).abs() < 0.01);
     }

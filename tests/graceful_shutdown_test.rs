@@ -1,6 +1,5 @@
 use rust_daq::modules::ModuleRegistry;
-//! Tests for graceful shutdown with timeout behavior.
-
+/// Tests for graceful shutdown with timeout behavior.
 use rust_daq::{
     app::DaqApp,
     config::Settings,

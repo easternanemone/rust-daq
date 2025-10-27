@@ -40,6 +40,7 @@ pub mod config;
 pub mod core;
 pub mod data;
 pub mod error;
+pub mod experiment;
 pub mod gui;
 pub mod instrument;
 pub mod log_capture;
@@ -49,7 +50,6 @@ pub mod metadata;
 pub mod modules;
 pub mod session;
 pub mod validation;
-pub mod experiment;
 
 // Phase 1: Architectural redesign - New core abstractions (coexist with old)
 pub mod core_v3;

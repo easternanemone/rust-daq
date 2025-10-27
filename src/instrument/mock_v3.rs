@@ -11,6 +11,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinHandle;
@@ -72,8 +73,7 @@ impl MockCameraV3 {
         ));
 
         let roi = Arc::new(RwLock::new(
-            Parameter::new("roi", Roi::default())
-                .with_description("Region of interest"),
+            Parameter::new("roi", Roi::default()).with_description("Region of interest"),
         ));
 
         let binning = Arc::new(RwLock::new(
@@ -169,29 +169,19 @@ impl MockCameraV3 {
                     *pixel = value.min(65535);
                 }
 
-                let image = ImageData {
-                    timestamp: chrono::Utc::now(),
-                    channel: format!("{}_image", id),
-                    width: roi_val.width as usize,
-                    height: roi_val.height as usize,
-                    pixels: PixelBuffer::U16(pixels),
-                    unit: "counts".to_string(),
-                    metadata: Some(serde_json::json!({
-                        "exposure_ms": exposure_ms,
-                        "gain_db": gain_db,
-                    })),
-                };
-
                 let measurement = Measurement::Image {
                     name: format!("{}_frame", id),
-                    buffer: image.pixels.clone(),
+                    width: roi_val.width,
+                    height: roi_val.height,
+                    buffer: PixelBuffer::U16(pixels),
+                    unit: "counts".to_string(),
                     metadata: ImageMetadata {
                         exposure_ms: Some(exposure_ms),
                         gain: Some(gain_db),
                         binning: None,
                         temperature_c: None,
                     },
-                    timestamp: image.timestamp,
+                    timestamp: chrono::Utc::now(),
                 };
 
                 // Broadcast (non-blocking, drops if no subscribers)
@@ -316,7 +306,10 @@ impl Instrument for MockCameraV3 {
                 Ok(Response::Ok)
             }
 
-            Command::Custom(_, _) => Ok(Response::Error("Custom commands not supported".to_string())),
+            Command::Custom(_, _) => {
+                Ok(Response::Error("Custom commands not supported".to_string()))
+            }
+            _ => Ok(Response::Ok),
         }
     }
 
@@ -370,19 +363,26 @@ impl Camera for MockCameraV3 {
         }
 
         let image = self.generate_mock_image();
+        let metadata = ImageMetadata {
+            exposure_ms: Some(self.exposure.read().await.get()),
+            gain: Some(self.gain.read().await.get()),
+            binning: Some(self.binning.read().await.get()),
+            temperature_c: None,
+        };
+
         let measurement = Measurement::Image {
             name: format!("{}_frame", self.id),
+            width: u32::try_from(image.width).unwrap_or(u32::MAX),
+            height: u32::try_from(image.height).unwrap_or(u32::MAX),
             buffer: image.pixels,
-            metadata: ImageMetadata {
-                exposure_ms: Some(self.exposure.read().await.get()),
-                gain: Some(self.gain.read().await.get()),
-                binning: Some(self.binning.read().await.get()),
-                temperature_c: None,
-            },
+            unit: image.unit,
+            metadata,
             timestamp: image.timestamp,
         };
 
-        self.data_tx.send(measurement).map_err(|e| anyhow!("Failed to broadcast: {}", e))?;
+        self.data_tx
+            .send(measurement)
+            .map_err(|e| anyhow!("Failed to broadcast: {}", e))?;
         Ok(())
     }
 }

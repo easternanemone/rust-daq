@@ -2,10 +2,10 @@ use crate::config::Settings;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
+use similar::{ChangeTag, TextDiff};
 use std::path::PathBuf;
 use std::time::SystemTime;
 use tokio::fs;
-use similar::{ChangeTag, TextDiff};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[allow(dead_code)]
@@ -31,7 +31,11 @@ impl VersionManager {
         }
     }
 
-    pub async fn create_snapshot(&self, settings: &Settings, label: Option<String>) -> Result<VersionId> {
+    pub async fn create_snapshot(
+        &self,
+        settings: &Settings,
+        label: Option<String>,
+    ) -> Result<VersionId> {
         // 1. Compute timestamp and hash
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S_%f");
         let hash = self.compute_hash(settings);
@@ -133,7 +137,11 @@ impl VersionManager {
         })
     }
 
-    pub async fn diff_versions(&self, version_a: &VersionId, version_b: &VersionId) -> Result<String> {
+    pub async fn diff_versions(
+        &self,
+        version_a: &VersionId,
+        version_b: &VersionId,
+    ) -> Result<String> {
         let path_a = self.versions_dir.join(&version_a.0);
         let path_b = self.versions_dir.join(&version_b.0);
 

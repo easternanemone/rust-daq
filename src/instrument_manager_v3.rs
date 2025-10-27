@@ -24,10 +24,16 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::core_v3::{Command, Instrument, Measurement, Response};
+use crate::config::InstrumentConfigV3;
+use crate::core::ImageData as CoreImageData;
+use crate::core_v3::{Command, ImageMetadata, Instrument, Measurement as V3Measurement, Response};
+use crate::measurement::DataDistributor;
+use daq_core::Measurement as V1Measurement;
+use daq_core::SpectrumData as V1SpectrumData;
+use serde_json::Value as JsonValue;
 
 /// Factory function signature for creating V3 instruments from configuration
 ///
@@ -43,35 +49,49 @@ pub type InstrumentFactory = fn(&str, &serde_json::Value) -> Result<Box<dyn Inst
 struct InstrumentHandle {
     /// Oneshot channel to signal shutdown
     shutdown_tx: Option<oneshot::Sender<()>>,
-    
+
     /// Join handle for the instrument's runtime task
     task_handle: JoinHandle<Result<()>>,
-    
+
     /// Broadcast receiver for measurement data
-    measurement_rx: broadcast::Receiver<Measurement>,
+    measurement_rx: broadcast::Receiver<V3Measurement>,
+
+    /// Command channel sender
+    command_tx: mpsc::Sender<CommandMessage>,
+}
+
+/// Message sent over the per-instrument command channel
+struct CommandMessage {
+    command: Command,
+    response_tx: oneshot::Sender<Result<Response>>,
 }
 
 /// V3 Instrument Manager - The orchestration layer
 ///
 /// Coordinates V3 instrument lifecycle, configuration, and data flow. This is the
 /// missing architectural tier identified in Phase 2 analysis - all reference
-/// frameworks have equivalent (DynExp ModuleManager, PyMoDAQ PluginManager, etc.)
+/// frameworks have equivalent (DynExp ModuleManager, PyMODAQ PluginManager, etc.)
 pub struct InstrumentManagerV3 {
     /// Registry mapping instrument type names to factory functions
     ///
     /// Example: "Newport1830CV3" -> Newport1830CV3::from_config
     factories: HashMap<String, InstrumentFactory>,
-    
+
     /// Active instruments keyed by their configuration ID
     ///
     /// Example: "power_meter_1" -> InstrumentHandle
     active_instruments: Arc<Mutex<HashMap<String, InstrumentHandle>>>,
-    
-    /// Broadcast channel for aggregated measurements (V3 → V1 bridge)
+
+    /// Data distributor for aggregated measurements (V3 → V1 bridge)
     ///
-    /// Temporarily bridges V3 Measurement to V1 InstrumentMeasurement for
-    /// backward compatibility during Phase 3 migration
-    legacy_bridge_tx: Option<broadcast::Sender<Measurement>>,
+    /// Uses non-blocking DataDistributor to forward V3 Measurement to V1 GUI/Storage
+    /// during Phase 3 migration, leveraging daq-87/daq-88 backpressure fixes
+    data_distributor: Option<Arc<DataDistributor<Arc<V1Measurement>>>>,
+
+    /// Forwarder task handles for graceful shutdown
+    ///
+    /// Tracks spawned data bridge tasks so they can be cancelled during shutdown
+    forwarder_handles: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
 }
 
 impl InstrumentManagerV3 {
@@ -82,10 +102,11 @@ impl InstrumentManagerV3 {
         Self {
             factories: HashMap::new(),
             active_instruments: Arc::new(Mutex::new(HashMap::new())),
-            legacy_bridge_tx: None,
+            data_distributor: None,
+            forwarder_handles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
+
     /// Register a factory function for an instrument type
     ///
     /// # Example
@@ -97,15 +118,16 @@ impl InstrumentManagerV3 {
     pub fn register_factory(&mut self, type_name: impl Into<String>, factory: InstrumentFactory) {
         self.factories.insert(type_name.into(), factory);
     }
-    
-    /// Set the legacy bridge channel for V3 → V1 data flow
+
+    /// Set the data distributor for V3 → V1 data flow
     ///
-    /// During Phase 3, V3 measurements are bridged to V1 InstrumentMeasurement
+    /// During Phase 3, V3 measurements are bridged to V1 DataDistributor
     /// for backward compatibility with existing DaqApp/GUI/Storage.
-    pub fn set_legacy_bridge(&mut self, tx: broadcast::Sender<Measurement>) {
-        self.legacy_bridge_tx = Some(tx);
+    /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
+    pub fn set_data_distributor(&mut self, distributor: Arc<DataDistributor<Arc<V1Measurement>>>) {
+        self.data_distributor = Some(distributor);
     }
-    
+
     /// Load instruments from V3 configuration
     ///
     /// Reads `[[instruments_v3]]` sections, instantiates using factory pattern,
@@ -131,10 +153,10 @@ impl InstrumentManagerV3 {
                 .await
                 .with_context(|| format!("Failed to load instrument '{}'", cfg.id))?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Spawn a single instrument from configuration
     ///
     /// 1. Lookup factory by type name
@@ -148,98 +170,214 @@ impl InstrumentManagerV3 {
             .factories
             .get(&cfg.type_name)
             .ok_or_else(|| anyhow!("Unknown V3 instrument type: '{}'", cfg.type_name))?;
-        
+
         // Instantiate
         let mut instrument = factory(&cfg.id, &cfg.settings)
             .with_context(|| format!("Factory failed for type '{}'", cfg.type_name))?;
-        
+
         // Initialize
         instrument
             .initialize()
             .await
             .with_context(|| format!("Initialization failed for '{}'", cfg.id))?;
-        
+
         // Get measurement channel before moving instrument
         let measurement_rx = instrument.data_channel();
-        
-        // Create shutdown channel
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        
+
+        // Create shutdown and command channels
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let (command_tx, mut command_rx) = mpsc::channel::<CommandMessage>(32); // Command buffer
+
         // Spawn runtime task
         let task_handle = tokio::spawn(async move {
-            // Wait for shutdown signal
-            let _ = shutdown_rx.await;
-            
+            loop {
+                tokio::select! {
+                    // Wait for shutdown signal
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                    // Process incoming commands
+                    Some(CommandMessage { command, response_tx }) = command_rx.recv() => {
+                        let exec_result = instrument.execute(command).await;
+
+                        if let Err(ref err) = exec_result {
+                            tracing::error!(
+                                instrument_id = instrument.id(),
+                                error = ?err,
+                                "Instrument command execution failed"
+                            );
+                        }
+
+                        if let Err(e) = response_tx.send(exec_result) {
+                            tracing::warn!(
+                                instrument_id = instrument.id(),
+                                error = ?e,
+                                "Failed to deliver command response"
+                            );
+                        }
+                    }
+                }
+            }
+
             // Graceful shutdown
             instrument.shutdown().await?;
-            
+
             Ok(())
         });
-        
-        // Setup data bridge if legacy channel configured
-        if let Some(bridge_tx) = &self.legacy_bridge_tx {
-            Self::spawn_data_bridge(
+
+        // Setup data bridge if data distributor configured
+        if let Some(distributor) = &self.data_distributor {
+            let forwarder_handle = Self::spawn_data_bridge(
                 cfg.id.clone(),
                 measurement_rx.resubscribe(),
-                bridge_tx.clone(),
+                distributor.clone(),
             );
+
+            // Store forwarder handle for shutdown
+            self.forwarder_handles
+                .lock()
+                .await
+                .insert(cfg.id.clone(), forwarder_handle);
         }
-        
+
         // Store handle
         let handle = InstrumentHandle {
             shutdown_tx: Some(shutdown_tx),
             task_handle,
             measurement_rx,
+            command_tx,
         };
-        
-        self.active_instruments.lock().await.insert(cfg.id.clone(), handle);
-        
+
+        self.active_instruments
+            .lock()
+            .await
+            .insert(cfg.id.clone(), handle);
+
         Ok(())
     }
-    
+
     /// Spawn data bridge task for V3 → V1 compatibility
     ///
-    /// Subscribes to V3 measurement channel and forwards to legacy broadcast.
+    /// Subscribes to V3 measurement channel and forwards to DataDistributor.
+    /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
     /// Currently only supports Measurement::Scalar; logs warnings for Image/Spectrum.
     fn spawn_data_bridge(
         instrument_id: String,
-        mut v3_rx: broadcast::Receiver<Measurement>,
-        legacy_tx: broadcast::Sender<Measurement>,
-    ) {
+        mut v3_rx: broadcast::Receiver<V3Measurement>,
+        distributor: Arc<DataDistributor<Arc<V1Measurement>>>,
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 match v3_rx.recv().await {
                     Ok(measurement) => {
-                        // Check if V1 can handle this measurement type
-                        match &measurement {
-                            Measurement::Scalar { .. } => {
-                                // Forward to legacy channel
-                                if let Err(e) = legacy_tx.send(measurement) {
-                                    tracing::error!(
-                                        "Legacy bridge send failed for '{}': {}",
-                                        instrument_id,
-                                        e
+                        // Convert V3 Measurement to V1 Measurement for bridge
+                        // Currently only Scalar is supported in Phase 3
+                        let v1_measurement = match &measurement {
+                            V3Measurement::Scalar {
+                                name,
+                                value,
+                                unit,
+                                timestamp,
+                            } => {
+                                let data_point = daq_core::DataPoint {
+                                    channel: name.clone(),
+                                    value: *value,
+                                    timestamp: *timestamp,
+                                    unit: unit.clone(),
+                                };
+                                Some(V1Measurement::Scalar(data_point))
+                            }
+                            V3Measurement::Image {
+                                name,
+                                width,
+                                height,
+                                buffer,
+                                unit,
+                                metadata,
+                                timestamp,
+                            } => {
+                                let width_usize = (*width).max(1) as usize;
+                                let height_usize = (*height).max(1) as usize;
+                                let expected_len = width_usize.saturating_mul(height_usize);
+
+                                if buffer.len() != expected_len {
+                                    tracing::warn!(
+                                        instrument_id = instrument_id,
+                                        channel = name,
+                                        expected_len,
+                                        actual_len = buffer.len(),
+                                        "Image buffer length mismatch during V3→V1 bridge"
                                     );
-                                    break;
+                                }
+
+                                let metadata_value = Self::image_metadata_to_value(metadata);
+
+                                let image_data = CoreImageData {
+                                    timestamp: *timestamp,
+                                    channel: name.clone(),
+                                    width: width_usize,
+                                    height: height_usize,
+                                    pixels: buffer.clone(),
+                                    unit: unit.clone(),
+                                    metadata: metadata_value,
+                                };
+
+                                Some(V1Measurement::Image(image_data.into()))
+                            }
+                            V3Measurement::Spectrum {
+                                name,
+                                frequencies,
+                                amplitudes,
+                                frequency_unit,
+                                amplitude_unit,
+                                metadata,
+                                timestamp,
+                            } => {
+                                if frequencies.len() != amplitudes.len() {
+                                    tracing::warn!(
+                                        instrument_id = instrument_id,
+                                        channel = name,
+                                        freq_len = frequencies.len(),
+                                        amp_len = amplitudes.len(),
+                                        "Spectrum measurement length mismatch during V3→V1 bridge"
+                                    );
+                                    None
+                                } else {
+                                    let spectrum = V1SpectrumData {
+                                        timestamp: *timestamp,
+                                        channel: name.clone(),
+                                        wavelengths: frequencies.clone(),
+                                        intensities: amplitudes.clone(),
+                                        unit_x: frequency_unit
+                                            .clone()
+                                            .unwrap_or_else(|| "Hz".to_string()),
+                                        unit_y: amplitude_unit
+                                            .clone()
+                                            .unwrap_or_else(|| "arb".to_string()),
+                                        metadata: metadata.clone(),
+                                    };
+
+                                    Some(V1Measurement::Spectrum(spectrum))
                                 }
                             }
-                            Measurement::Image { .. } => {
+                            V3Measurement::Vector { .. } => {
                                 tracing::warn!(
-                                    "Image measurement from '{}' not supported by V1 bridge (Phase 3 limitation)",
-                                    instrument_id
+                                    instrument_id = instrument_id,
+                                    "Vector measurement not yet supported by V3→V1 bridge"
                                 );
+                                None
                             }
-                            Measurement::Spectrum { .. } => {
-                                tracing::warn!(
-                                    "Spectrum measurement from '{}' not supported by V1 bridge (Phase 3 limitation)",
-                                    instrument_id
+                        };
+
+                        // Forward converted measurement if successful
+                        if let Some(v1_msg) = v1_measurement {
+                            if let Err(e) = distributor.broadcast(Arc::new(v1_msg)).await {
+                                tracing::error!(
+                                    "Data bridge broadcast failed for '{}': {}",
+                                    instrument_id,
+                                    e
                                 );
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    "Unknown measurement type from '{}' not supported by V1 bridge",
-                                    instrument_id
-                                );
+                                break;
                             }
                         }
                     }
@@ -256,27 +394,56 @@ impl InstrumentManagerV3 {
                     }
                 }
             }
-        });
+        })
     }
-    
+
+    fn image_metadata_to_value(metadata: &ImageMetadata) -> Option<JsonValue> {
+        if metadata.exposure_ms.is_none()
+            && metadata.gain.is_none()
+            && metadata.binning.is_none()
+            && metadata.temperature_c.is_none()
+        {
+            None
+        } else {
+            serde_json::to_value(metadata).ok()
+        }
+    }
+
     /// Execute a command on a specific instrument
     ///
     /// This is the primary control interface for V3 instruments. Commands are
     /// sent directly (no actor model overhead) and responses are awaited.
-    pub async fn execute_command(
-        &self,
-        instrument_id: &str,
-        command: Command,
-    ) -> Result<Response> {
-        // In this simplified implementation, we don't hold instruments directly
-        // Instead, commands would be sent via channels to instrument tasks
-        // TODO: Implement command channels per instrument
-        
-        Err(anyhow!(
-            "Command execution not yet implemented - Phase 3 Milestone 2"
-        ))
+    pub async fn execute_command(&self, instrument_id: &str, command: Command) -> Result<Response> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        let sender = {
+            let instruments = self.active_instruments.lock().await;
+            if let Some(handle) = instruments.get(instrument_id) {
+                handle.command_tx.clone()
+            } else {
+                return Err(anyhow!("Instrument '{}' not found", instrument_id));
+            }
+        };
+
+        sender
+            .send(CommandMessage {
+                command,
+                response_tx,
+            })
+            .await
+            .with_context(|| {
+                format!("Command channel closed for instrument '{}'", instrument_id)
+            })?;
+
+        match response_rx.await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow!(
+                "Instrument '{}' dropped command response channel",
+                instrument_id
+            )),
+        }
     }
-    
+
     /// Get measurement receiver for a specific instrument
     ///
     /// Returns a broadcast receiver that can subscribe to the instrument's
@@ -284,15 +451,15 @@ impl InstrumentManagerV3 {
     pub async fn subscribe_measurements(
         &self,
         instrument_id: &str,
-    ) -> Result<broadcast::Receiver<Measurement>> {
+    ) -> Result<broadcast::Receiver<V3Measurement>> {
         let instruments = self.active_instruments.lock().await;
         let handle = instruments
             .get(instrument_id)
             .ok_or_else(|| anyhow!("Instrument '{}' not found", instrument_id))?;
-        
+
         Ok(handle.measurement_rx.resubscribe())
     }
-    
+
     /// List all active V3 instruments
     pub async fn list_instruments(&self) -> Vec<String> {
         self.active_instruments
@@ -302,28 +469,35 @@ impl InstrumentManagerV3 {
             .cloned()
             .collect()
     }
-    
+
     /// Shutdown all instruments gracefully
     ///
     /// Sends shutdown signal to each instrument and awaits task completion
     /// with 5-second timeout per instrument (matches V1 behavior).
     pub async fn shutdown_all(&mut self) -> Result<()> {
+        // Cancel forwarder tasks first
+        {
+            let mut handles = self.forwarder_handles.lock().await;
+            for (id, handle) in handles.drain() {
+                handle.abort();
+                tracing::debug!("Cancelled forwarder task for '{}'", id);
+            }
+        }
+
+        // Shutdown instruments
         let mut instruments = self.active_instruments.lock().await;
         let ids: Vec<String> = instruments.keys().cloned().collect();
-        
+
         for id in ids {
             if let Some(mut handle) = instruments.remove(&id) {
                 // Send shutdown signal
                 if let Some(shutdown_tx) = handle.shutdown_tx.take() {
                     let _ = shutdown_tx.send(());
                 }
-                
+
                 // Await task completion with timeout
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    handle.task_handle,
-                )
-                .await
+                match tokio::time::timeout(std::time::Duration::from_secs(5), handle.task_handle)
+                    .await
                 {
                     Ok(Ok(Ok(()))) => {
                         tracing::info!("Instrument '{}' shutdown successfully", id);
@@ -341,7 +515,7 @@ impl InstrumentManagerV3 {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -352,37 +526,21 @@ impl Default for InstrumentManagerV3 {
     }
 }
 
-/// V3 instrument configuration from TOML
-///
-/// Represents a `[[instruments_v3]]` section in config/default.toml
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct InstrumentConfigV3 {
-    /// Unique identifier for this instrument instance
-    pub id: String,
-    
-    /// Instrument type name (must match factory registry key)
-    pub type_name: String,
-    
-    /// Type-specific configuration settings
-    ///
-    /// Deserialized from TOML table to JSON for flexibility. Each instrument
-    /// factory is responsible for parsing its own settings.
-    #[serde(default)]
-    pub settings: serde_json::Value,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core_v3::{InstrumentState, ParameterBase};
-    
+    use crate::core_v3::{InstrumentState, ParameterBase, PixelBuffer};
+    use crate::instruments_v2::MockPowerMeterV3;
+    use chrono::Utc;
+    use tokio::time::{timeout, Duration};
+
     // Mock instrument for testing
     struct MockInstrumentV3 {
         id: String,
-        tx: broadcast::Sender<Measurement>,
+        tx: broadcast::Sender<V3Measurement>,
         params: HashMap<String, Box<dyn ParameterBase>>,
     }
-    
+
     impl MockInstrumentV3 {
         fn from_config(id: &str, _cfg: &serde_json::Value) -> Result<Box<dyn Instrument>> {
             let (tx, _rx) = broadcast::channel(16);
@@ -393,82 +551,210 @@ mod tests {
             }))
         }
     }
-    
+
     #[async_trait::async_trait]
     impl Instrument for MockInstrumentV3 {
         fn id(&self) -> &str {
             &self.id
         }
-        
+
         async fn initialize(&mut self) -> Result<()> {
             Ok(())
         }
-        
+
         async fn shutdown(&mut self) -> Result<()> {
             Ok(())
         }
-        
-        fn data_channel(&self) -> broadcast::Receiver<Measurement> {
+
+        fn data_channel(&self) -> broadcast::Receiver<V3Measurement> {
             self.tx.subscribe()
         }
-        
+
         async fn execute(&mut self, _cmd: Command) -> Result<Response> {
             Ok(Response::Ok)
         }
-        
+
         fn parameters(&self) -> &HashMap<String, Box<dyn ParameterBase>> {
             &self.params
         }
-        
+
         fn parameters_mut(&mut self) -> &mut HashMap<String, Box<dyn ParameterBase>> {
             &mut self.params
         }
-        
+
         fn state(&self) -> InstrumentState {
             InstrumentState::Idle
         }
     }
-    
+
     #[tokio::test]
     async fn test_instrument_manager_registration() {
         let mut manager = InstrumentManagerV3::new();
         manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
-        
+
         assert!(manager.factories.contains_key("MockInstrumentV3"));
     }
-    
+
     #[tokio::test]
     async fn test_instrument_manager_spawn() {
         let mut manager = InstrumentManagerV3::new();
         manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
-        
+
         let cfg = InstrumentConfigV3 {
             id: "test_instrument".to_string(),
             type_name: "MockInstrumentV3".to_string(),
             settings: serde_json::json!({}),
         };
-        
+
         manager.spawn_instrument(&cfg).await.unwrap();
-        
+
         let instruments = manager.list_instruments().await;
         assert!(instruments.contains(&"test_instrument".to_string()));
     }
-    
+
     #[tokio::test]
     async fn test_instrument_manager_shutdown() {
         let mut manager = InstrumentManagerV3::new();
         manager.register_factory("MockInstrumentV3", MockInstrumentV3::from_config);
-        
+
         let cfg = InstrumentConfigV3 {
             id: "test_instrument".to_string(),
             type_name: "MockInstrumentV3".to_string(),
             settings: serde_json::json!({}),
         };
-        
+
         manager.spawn_instrument(&cfg).await.unwrap();
         manager.shutdown_all().await.unwrap();
-        
+
         let instruments = manager.list_instruments().await;
         assert!(instruments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_integration() {
+        let mut manager = InstrumentManagerV3::new();
+        manager.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+
+        let cfg = InstrumentConfigV3 {
+            id: "power_meter_test".to_string(),
+            type_name: "MockPowerMeterV3".to_string(),
+            settings: serde_json::json!({
+                "sampling_rate": 10.0,
+                "wavelength_nm": 532.0
+            }),
+        };
+
+        manager.spawn_instrument(&cfg).await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.contains(&"power_meter_test".to_string()));
+
+        // Verify we can subscribe to measurements
+        let mut rx = manager
+            .subscribe_measurements("power_meter_test")
+            .await
+            .unwrap();
+
+        // Receive at least one measurement to verify data flow
+        tokio::select! {
+            result = rx.recv() => {
+                let measurement = result.unwrap();
+                assert_eq!(measurement.name(), "power_meter_test_power");
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                panic!("No measurement received within timeout");
+            }
+        }
+
+        manager.shutdown_all().await.unwrap();
+
+        let instruments = manager.list_instruments().await;
+        assert!(instruments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_data_bridge_forward_image_measurement() {
+        let distributor = Arc::new(DataDistributor::new(8));
+        let mut subscriber = distributor.subscribe("listener").await;
+        let (tx, rx) = broadcast::channel(8);
+
+        let forwarder =
+            InstrumentManagerV3::spawn_data_bridge("camera1".to_string(), rx, distributor.clone());
+
+        let measurement = V3Measurement::Image {
+            name: "camera1_frame".to_string(),
+            width: 2,
+            height: 2,
+            buffer: PixelBuffer::U16(vec![10, 20, 30, 40]),
+            unit: "counts".to_string(),
+            metadata: ImageMetadata {
+                exposure_ms: Some(5.0),
+                gain: Some(2.0),
+                binning: None,
+                temperature_c: None,
+            },
+            timestamp: Utc::now(),
+        };
+
+        tx.send(measurement).unwrap();
+
+        let received = timeout(Duration::from_millis(200), subscriber.recv())
+            .await
+            .expect("subscriber should receive image measurement")
+            .expect("channel should remain open");
+
+        match received.as_ref() {
+            V1Measurement::Image(image) => {
+                assert_eq!(image.channel, "camera1_frame");
+                assert_eq!(image.width, 2);
+                assert_eq!(image.height, 2);
+                assert_eq!(image.unit, "counts");
+            }
+            other => panic!("Expected V1 image measurement, got {other:?}"),
+        }
+
+        forwarder.abort();
+    }
+
+    #[tokio::test]
+    async fn test_data_bridge_forward_spectrum_measurement() {
+        let distributor = Arc::new(DataDistributor::new(8));
+        let mut subscriber = distributor.subscribe("listener").await;
+        let (tx, rx) = broadcast::channel(8);
+
+        let forwarder = InstrumentManagerV3::spawn_data_bridge(
+            "spectrum1".to_string(),
+            rx,
+            distributor.clone(),
+        );
+
+        let measurement = V3Measurement::Spectrum {
+            name: "spectrum1_fft".to_string(),
+            frequencies: vec![0.0, 100.0, 200.0],
+            amplitudes: vec![-10.0, -3.0, -6.0],
+            frequency_unit: Some("Hz".to_string()),
+            amplitude_unit: Some("dB".to_string()),
+            metadata: Some(serde_json::json!({ "window_size": 256 })),
+            timestamp: Utc::now(),
+        };
+
+        tx.send(measurement).unwrap();
+
+        let received = timeout(Duration::from_millis(200), subscriber.recv())
+            .await
+            .expect("subscriber should receive spectrum measurement")
+            .expect("channel should remain open");
+
+        match received.as_ref() {
+            V1Measurement::Spectrum(spec) => {
+                assert_eq!(spec.channel, "spectrum1_fft");
+                assert_eq!(spec.wavelengths.len(), 3);
+                assert_eq!(spec.unit_x, "Hz");
+                assert_eq!(spec.unit_y, "dB");
+            }
+            other => panic!("Expected V1 spectrum measurement, got {other:?}"),
+        }
+
+        forwarder.abort();
     }
 }

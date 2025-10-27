@@ -328,7 +328,11 @@ where
                             if let Some(subscribed_tabs) =
                                 self.channel_subscriptions.get(&cache_key)
                             {
-                                log::info!("GUI: Found {} subscribed tabs for cache_key '{}'", subscribed_tabs.len(), cache_key);
+                                log::info!(
+                                    "GUI: Found {} subscribed tabs for cache_key '{}'",
+                                    subscribed_tabs.len(),
+                                    cache_key
+                                );
                                 for &tab_location in subscribed_tabs {
                                     for (location, tab) in self.dock_state.iter_all_tabs_mut() {
                                         if location == tab_location {
@@ -339,21 +343,20 @@ where
                                                 );
                                                 // Store pixels in native format for memory efficiency
                                                 // PixelBuffer::U16 uses 4× less memory than F64
-                                                image_tab.pixel_data = Some(image_data.pixels.clone());
+                                                image_tab.pixel_data =
+                                                    Some(image_data.pixels.clone());
 
                                                 // Calculate value range for colormap scaling
                                                 // Convert to f64 temporarily for min/max calculation
                                                 let pixels_f64 = image_data.pixels.as_f64();
-                                                if let (Some(&min), Some(&max)) =
-                                                    (
-                                                        pixels_f64.iter().min_by(|a, b| {
-                                                            a.partial_cmp(b).unwrap()
-                                                        }),
-                                                        pixels_f64.iter().max_by(|a, b| {
-                                                            a.partial_cmp(b).unwrap()
-                                                        }),
-                                                    )
-                                                {
+                                                if let (Some(&min), Some(&max)) = (
+                                                    pixels_f64
+                                                        .iter()
+                                                        .min_by(|a, b| a.partial_cmp(b).unwrap()),
+                                                    pixels_f64
+                                                        .iter()
+                                                        .max_by(|a, b| a.partial_cmp(b).unwrap()),
+                                                ) {
                                                     image_tab.value_range = (min, max);
                                                 }
                                             }
@@ -433,10 +436,8 @@ where
         ctx.input(|i| {
             if i.key_pressed(egui::Key::F12) {
                 let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-                let screenshot_path = std::path::PathBuf::from(format!(
-                    "screenshots/screenshot_{}.png",
-                    timestamp
-                ));
+                let screenshot_path =
+                    std::path::PathBuf::from(format!("screenshots/screenshot_{}.png", timestamp));
                 self.screenshot_request = Some(screenshot_path);
             }
         });
@@ -1158,7 +1159,9 @@ fn convert_to_grayscale_rgba(
         let gray = normalized as u8;
 
         // Create grayscale RGBA pixel (R=G=B=gray, A=255)
-        rgba.push(egui::Color32::from_rgba_premultiplied(gray, gray, gray, 255));
+        rgba.push(egui::Color32::from_rgba_premultiplied(
+            gray, gray, gray, 255,
+        ));
     }
 
     rgba

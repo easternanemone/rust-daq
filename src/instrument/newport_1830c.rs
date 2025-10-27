@@ -295,7 +295,10 @@ impl Instrument for Newport1830C {
                             }
                         }
                         _ => {
-                            warn!("Unknown PowerMeasurement operation '{}' for Newport 1830-C", operation);
+                            warn!(
+                                "Unknown PowerMeasurement operation '{}' for Newport 1830-C",
+                                operation
+                            );
                             Ok(())
                         }
                     }?;

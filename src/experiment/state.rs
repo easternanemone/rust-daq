@@ -58,7 +58,10 @@ impl std::fmt::Display for ExperimentState {
 impl ExperimentState {
     /// Check if the state allows starting a new run.
     pub fn can_begin(&self) -> bool {
-        matches!(self, ExperimentState::Idle | ExperimentState::Complete | ExperimentState::Error)
+        matches!(
+            self,
+            ExperimentState::Idle | ExperimentState::Complete | ExperimentState::Error
+        )
     }
 
     /// Check if the state allows pausing.
@@ -160,13 +163,11 @@ impl Checkpoint {
     /// - Serialization fails
     /// - File write fails
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let json = serde_json::to_string_pretty(self)
-            .context("Failed to serialize checkpoint")?;
+        let json = serde_json::to_string_pretty(self).context("Failed to serialize checkpoint")?;
 
         // Ensure parent directory exists
         if let Some(parent) = path.as_ref().parent() {
-            fs::create_dir_all(parent)
-                .context("Failed to create checkpoint directory")?;
+            fs::create_dir_all(parent).context("Failed to create checkpoint directory")?;
         }
 
         fs::write(&path, json)
@@ -191,8 +192,7 @@ impl Checkpoint {
         let json = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read checkpoint from {:?}", path.as_ref()))?;
 
-        let checkpoint = serde_json::from_str(&json)
-            .context("Failed to deserialize checkpoint")?;
+        let checkpoint = serde_json::from_str(&json).context("Failed to deserialize checkpoint")?;
 
         Ok(checkpoint)
     }
@@ -208,10 +208,7 @@ impl Checkpoint {
     ///
     /// Format: `checkpoint_<timestamp>.json`
     pub fn default_filename(&self) -> String {
-        format!(
-            "checkpoint_{}.json",
-            self.timestamp.format("%Y%m%d_%H%M%S")
-        )
+        format!("checkpoint_{}.json", self.timestamp.format("%Y%m%d_%H%M%S"))
     }
 
     /// Get the default full path for this checkpoint.
@@ -250,7 +247,8 @@ mod tests {
             ExperimentState::Paused,
             metadata.clone(),
             42,
-        ).with_label("manual_pause".to_string());
+        )
+        .with_label("manual_pause".to_string());
 
         // Save
         checkpoint.save(&path).unwrap();

@@ -42,14 +42,14 @@
 //! ```
 
 use crate::core::{Instrument as V1Instrument, InstrumentCommand as V1Command};
+use crate::measurement::DataDistributor;
 use crate::measurement::InstrumentMeasurement;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use daq_core::{Instrument as V2Instrument, InstrumentCommand as V2Command, Measurement};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use crate::measurement::DataDistributor; // Add DataDistributor import
+use tokio::task::JoinHandle; // Add DataDistributor import
 
 /// Adapter that wraps a V2 instrument to work with V1 InstrumentRegistry.
 ///
@@ -74,16 +74,16 @@ use crate::measurement::DataDistributor; // Add DataDistributor import
 pub struct V2InstrumentAdapter<I: V2Instrument> {
     /// Wrapped V2 instrument (shared with background task)
     inner: Arc<Mutex<I>>,
-    
+
     /// V1 measurement interface for broadcasting
     measurement: InstrumentMeasurement,
-    
+
     /// Background task handle (for cleanup on disconnect)
     task_handle: Option<JoinHandle<()>>,
-    
+
     /// Shutdown signal sender (for graceful task termination)
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    
+
     /// Optional V2 data distributor for broadcasting original measurements
     /// This enables V2 GUI components (like ImageTab) to receive full Image/Spectrum data
     v2_distributor: Option<Arc<DataDistributor<Arc<Measurement>>>>,
@@ -200,10 +200,10 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                                         log::warn!("V2InstrumentAdapter: Failed to broadcast V2 measurement: {}", e);
                                     }
                                 }
-                                
+
                                 // Convert Arc<Measurement> to DataPoint(s) for V1 compatibility
                                 let datapoints = Self::convert_measurement(&arc_measurement);
-                                
+
                                 // Broadcast to V1 subscribers
                                 for dp in datapoints {
                                     if let Err(e) = measurement.broadcast(dp).await {
@@ -217,7 +217,7 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                             }
                         }
                     }
-                    
+
                     // Shutdown signal
                     _ = &mut shutdown_rx => {
                         log::debug!("V2InstrumentAdapter: Received shutdown signal");
@@ -267,8 +267,10 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                 // Convert spectrum to multiple scalar points
                 // Each (wavelength, intensity) pair becomes a DataPoint
                 let mut points = Vec::with_capacity(sd.wavelengths.len());
-                
-                for (i, (&wavelength, &intensity)) in sd.wavelengths.iter().zip(&sd.intensities).enumerate() {
+
+                for (i, (&wavelength, &intensity)) in
+                    sd.wavelengths.iter().zip(&sd.intensities).enumerate()
+                {
                     points.push(crate::core::DataPoint {
                         timestamp: sd.timestamp,
                         instrument_id: String::new(),
@@ -282,7 +284,7 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                         })),
                     });
                 }
-                
+
                 points
             }
 
@@ -290,13 +292,13 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                 // Convert image to statistics DataPoints
                 // This allows V1 components to at least see summary statistics
                 let pixels_f64 = img.pixels_as_f64();
-                
+
                 let mean = if !pixels_f64.is_empty() {
                     pixels_f64.iter().sum::<f64>() / pixels_f64.len() as f64
                 } else {
                     0.0
                 };
-                
+
                 let min = pixels_f64.iter().copied().fold(f64::INFINITY, f64::min);
                 let max = pixels_f64.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
@@ -361,33 +363,27 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
     fn convert_command(cmd: V1Command) -> Option<V2Command> {
         match cmd {
             V1Command::Shutdown => Some(V2Command::Shutdown),
-            
+
             V1Command::SetParameter(name, value) => {
                 // Convert ParameterValue to serde_json::Value
                 let json_value = match value {
                     crate::core::ParameterValue::Bool(b) => serde_json::Value::Bool(b),
                     crate::core::ParameterValue::Int(i) => serde_json::Value::Number(i.into()),
-                    crate::core::ParameterValue::Float(f) => {
-                        serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
-                    }
+                    crate::core::ParameterValue::Float(f) => serde_json::Number::from_f64(f)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
                     crate::core::ParameterValue::String(s) => serde_json::Value::String(s),
-                    crate::core::ParameterValue::FloatArray(arr) => {
-                        serde_json::Value::Array(
-                            arr.into_iter()
-                                .filter_map(|f| serde_json::Number::from_f64(f))
-                                .map(serde_json::Value::Number)
-                                .collect()
-                        )
-                    }
-                    crate::core::ParameterValue::IntArray(arr) => {
-                        serde_json::Value::Array(
-                            arr.into_iter()
-                                .map(|i| serde_json::Value::Number(i.into()))
-                                .collect()
-                        )
-                    }
+                    crate::core::ParameterValue::FloatArray(arr) => serde_json::Value::Array(
+                        arr.into_iter()
+                            .filter_map(|f| serde_json::Number::from_f64(f))
+                            .map(serde_json::Value::Number)
+                            .collect(),
+                    ),
+                    crate::core::ParameterValue::IntArray(arr) => serde_json::Value::Array(
+                        arr.into_iter()
+                            .map(|i| serde_json::Value::Number(i.into()))
+                            .collect(),
+                    ),
                     crate::core::ParameterValue::Array(_) => {
                         // Complex nested arrays not supported, use null
                         serde_json::Value::Null
@@ -405,9 +401,7 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                 })
             }
 
-            V1Command::QueryParameter(name) => {
-                Some(V2Command::GetParameter { name })
-            }
+            V1Command::QueryParameter(name) => Some(V2Command::GetParameter { name }),
 
             V1Command::Execute(command, _args) => {
                 // Map common commands
@@ -415,7 +409,10 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
                     "start" | "start_acquisition" => Some(V2Command::StartAcquisition),
                     "stop" | "stop_acquisition" => Some(V2Command::StopAcquisition),
                     _ => {
-                        log::warn!("V2InstrumentAdapter: Unsupported Execute command: {}", command);
+                        log::warn!(
+                            "V2InstrumentAdapter: Unsupported Execute command: {}",
+                            command
+                        );
                         None
                     }
                 }
@@ -423,7 +420,9 @@ impl<I: V2Instrument + 'static> V2InstrumentAdapter<I> {
 
             V1Command::Capability { .. } => {
                 // V2 doesn't have capability system, ignore
-                log::debug!("V2InstrumentAdapter: Ignoring Capability command (not supported in V2)");
+                log::debug!(
+                    "V2InstrumentAdapter: Ignoring Capability command (not supported in V2)"
+                );
                 None
             }
         }
@@ -441,17 +440,15 @@ impl<I: V2Instrument + 'static> V1Instrument for V2InstrumentAdapter<I> {
         format!("{} (V2)", inner.id())
     }
 
-    async fn connect(
-        &mut self,
-        id: &str,
-        _settings: &Arc<crate::config::Settings>,
-    ) -> Result<()> {
+    async fn connect(&mut self, id: &str, _settings: &Arc<crate::config::Settings>) -> Result<()> {
         log::info!("V2InstrumentAdapter: Connecting instrument '{}'", id);
 
         // Initialize V2 instrument
         {
             let mut inner = self.inner.lock().await;
-            inner.initialize().await
+            inner
+                .initialize()
+                .await
                 .context("Failed to initialize V2 instrument")?;
         }
 
@@ -488,7 +485,9 @@ impl<I: V2Instrument + 'static> V1Instrument for V2InstrumentAdapter<I> {
         // Shutdown V2 instrument
         {
             let mut inner = self.inner.lock().await;
-            inner.shutdown().await
+            inner
+                .shutdown()
+                .await
                 .context("Failed to shutdown V2 instrument")?;
         }
 
@@ -514,12 +513,14 @@ impl<I: V2Instrument + 'static> V1Instrument for V2InstrumentAdapter<I> {
 
         // Forward to V2 instrument
         let mut inner = self.inner.lock().await;
-        inner.handle_command(v2_command).await
+        inner
+            .handle_command(v2_command)
+            .await
             .context("V2 instrument command failed")?;
 
         Ok(())
     }
-    
+
     fn set_v2_data_distributor(&mut self, distributor: Arc<DataDistributor<Arc<Measurement>>>) {
         log::info!("V2InstrumentAdapter: Setting V2 data distributor");
         self.v2_distributor = Some(distributor);
@@ -558,7 +559,9 @@ mod tests {
                 value,
                 unit: "V".to_string(),
             };
-            let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(dp)));
+            let _ = self
+                .measurement_tx
+                .send(arc_measurement(Measurement::Scalar(dp)));
         }
     }
 
@@ -634,13 +637,15 @@ mod tests {
             value: 42.0,
             unit: "V".to_string(),
         };
-        mock_tx.send(arc_measurement(Measurement::Scalar(dp.clone()))).unwrap();
+        mock_tx
+            .send(arc_measurement(Measurement::Scalar(dp.clone())))
+            .unwrap();
 
         // Should receive converted measurement on V1 stream
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv()
-        ).await.unwrap().unwrap();
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(received.channel, "test_channel");
         assert_eq!(received.value, 42.0);

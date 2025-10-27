@@ -38,7 +38,7 @@ use rust_daq::{
     instrument::{mock::MockInstrument, scpi::ScpiInstrument, InstrumentRegistry},
     log_capture::{LogBuffer, LogCollector},
     measurement::{datapoint::*, InstrumentMeasurement},
-    modules::{ModuleRegistry, power_meter::PowerMeterModule},
+    modules::{power_meter::PowerMeterModule, ModuleRegistry},
 };
 use std::sync::Arc;
 
@@ -112,9 +112,9 @@ fn main() -> Result<()> {
     use rust_daq::instruments_v2::pvcam::PVCAMInstrumentV2;
 
     instrument_registry.register("pvcam_v2", |id| {
-        Box::new(V2InstrumentAdapter::new(
-            PVCAMInstrumentV2::new(id.to_string())
-        ))
+        Box::new(V2InstrumentAdapter::new(PVCAMInstrumentV2::new(
+            id.to_string(),
+        )))
     });
 
     let instrument_registry = Arc::new(instrument_registry);

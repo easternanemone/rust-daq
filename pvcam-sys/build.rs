@@ -9,19 +9,26 @@ fn main() {
         println!("cargo:rerun-if-env-changed=PVCAM_SDK_DIR");
         println!("cargo:rerun-if-changed=wrapper.h"); // For bindgen to re-run if wrapper changes
 
-        let sdk_dir = env::var("PVCAM_SDK_DIR")
-            .expect("PVCAM_SDK_DIR environment variable must be set when `pvcam-sdk` feature is enabled.");
+        let sdk_dir = env::var("PVCAM_SDK_DIR").expect(
+            "PVCAM_SDK_DIR environment variable must be set when `pvcam-sdk` feature is enabled.",
+        );
 
         let sdk_include_path = PathBuf::from(&sdk_dir).join("include");
         let sdk_lib_path = PathBuf::from(&sdk_dir).join("lib");
 
         if !sdk_include_path.exists() {
-            panic!("PVCAM SDK include path does not exist: {:?}", sdk_include_path);
+            panic!(
+                "PVCAM SDK include path does not exist: {:?}",
+                sdk_include_path
+            );
         }
         // The lib path might not exist if libraries are installed globally,
         // but it's a common place. Warn rather than panic.
         if !sdk_lib_path.exists() {
-            eprintln!("Warning: PVCAM SDK lib path does not exist: {:?}", sdk_lib_path);
+            eprintln!(
+                "Warning: PVCAM SDK lib path does not exist: {:?}",
+                sdk_lib_path
+            );
         }
 
         // Generate bindings
@@ -48,7 +55,9 @@ fn main() {
             // Convert PARAM_* constants to a Rust enum for type safety.
             // Bindgen will attempt to group related constants into an enum.
             .constified_enum("PARAM_.*")
-            .default_enum_style(bindgen::EnumVariation::Rust { non_exhaustive: false })
+            .default_enum_style(bindgen::EnumVariation::Rust {
+                non_exhaustive: false,
+            })
             // Map `rs_bool` to Rust's `bool`. This assumes rs_bool is 0 for false, non-zero for true.
             .type_alias("rs_bool", "bool")
             // Finish the builder and generate the bindings.

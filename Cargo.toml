@@ -87,6 +87,7 @@ flatbuffers = "24.3.25"
 tempfile = "3.10.1"
 serial_test = "3.1.1"
 tokio-test = "0.4"
+tracing-test = "0.2"
 
 [features]
 # NOTE: Phase 1 (bd-61) migrated to actor-based state management
@@ -108,5 +109,9 @@ name = "rust_daq"
 path = "src/main.rs"
 
 [[test]]
-name = "dependency_tracking_test"
-path = "tests/dependency_tracking_test.rs"
+name = "storage_shutdown_test"
+path = "tests/storage_shutdown_test.rs"
+
+[[test]]
+name = "v3_command_path_test"
+path = "tests/v3_command_path_test.rs"

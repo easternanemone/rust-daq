@@ -23,14 +23,14 @@ use daq_core::{
     Instrument, InstrumentCommand, InstrumentState, Measurement, MeasurementReceiver,
     MeasurementSender, PixelBuffer, Result, ROI,
 };
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::task::JoinHandle;
 
-use crate::adapters::MockAdapter;
-use super::pvcam_sdk::{CameraHandle, MockPvcamSdk, PvcamSdk, RealPvcamSdk};
 use super::pvcam_sdk::TriggerMode;
+use super::pvcam_sdk::{CameraHandle, MockPvcamSdk, PvcamSdk, RealPvcamSdk};
+use crate::adapters::MockAdapter;
 
 /// SDK mode selection for PVCAM camera
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub struct PVCAMInstrumentV2 {
     roi: ROI,
     binning: (u16, u16),
     sensor_size: (u32, u32),
-    gain: u16, // Sensor gain
+    gain: u16,                 // Sensor gain
     trigger_mode: TriggerMode, // Trigger mode for acquisition
 
     // Data streaming
@@ -69,7 +69,7 @@ pub struct PVCAMInstrumentV2 {
     // Task management
     task_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    
+
     // Diagnostic counters (accessed from async task, must be atomic)
     total_frames: Arc<AtomicU64>,
     dropped_frames: Arc<AtomicU64>,
@@ -119,7 +119,7 @@ impl PVCAMInstrumentV2 {
             },
             binning: (1, 1),
             sensor_size: (2048, 2048),
-            gain: 1, // Default gain
+            gain: 1,                          // Default gain
             trigger_mode: TriggerMode::Timed, // Default to free-running
 
             measurement_tx,
@@ -127,7 +127,7 @@ impl PVCAMInstrumentV2 {
 
             task_handle: None,
             shutdown_tx: None,
-            
+
             // Initialize diagnostic counters
             total_frames: Arc::new(AtomicU64::new(0)),
             dropped_frames: Arc::new(AtomicU64::new(0)),
@@ -166,7 +166,7 @@ impl PVCAMInstrumentV2 {
             },
             binning: (1, 1),
             sensor_size: (2048, 2048),
-            gain: 1, // Default gain
+            gain: 1,                          // Default gain
             trigger_mode: TriggerMode::Timed, // Default to free-running
 
             measurement_tx,
@@ -174,7 +174,7 @@ impl PVCAMInstrumentV2 {
 
             task_handle: None,
             shutdown_tx: None,
-            
+
             // Initialize diagnostic counters
             total_frames: Arc::new(AtomicU64::new(0)),
             dropped_frames: Arc::new(AtomicU64::new(0)),
@@ -286,7 +286,10 @@ impl Instrument for PVCAMInstrumentV2 {
         );
 
         // Read initial gain from SDK
-        match self.sdk.get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Gain) {
+        match self
+            .sdk
+            .get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Gain)
+        {
             Ok(gain_u16) => {
                 self.gain = gain_u16;
                 log::info!("PVCAM initial gain read from SDK: {}", gain_u16);
@@ -384,10 +387,17 @@ impl Instrument for PVCAMInstrumentV2 {
                     if let Some(gain_f64) = value.as_f64() {
                         // Validation: Gain must be positive
                         if gain_f64 <= 0.0 {
-                            return Err(anyhow::anyhow!("Gain must be a positive value, got {}", gain_f64));
+                            return Err(anyhow::anyhow!(
+                                "Gain must be a positive value, got {}",
+                                gain_f64
+                            ));
                         }
                         if gain_f64 > u16::MAX as f64 {
-                            return Err(anyhow::anyhow!("Gain value {} is too large, max is {}", gain_f64, u16::MAX));
+                            return Err(anyhow::anyhow!(
+                                "Gain value {} is too large, max is {}",
+                                gain_f64,
+                                u16::MAX
+                            ));
                         }
 
                         let gain_u16 = gain_f64 as u16;
@@ -409,22 +419,32 @@ impl Instrument for PVCAMInstrumentV2 {
                     }
 
                     // Parse binning value as JSON object {"x": u16, "y": u16}
-                    let binning_obj = value.as_object()
-                        .ok_or_else(|| anyhow::anyhow!("Binning must be a JSON object with 'x' and 'y' fields"))?;
-                    
-                    let x = binning_obj.get("x")
+                    let binning_obj = value.as_object().ok_or_else(|| {
+                        anyhow::anyhow!("Binning must be a JSON object with 'x' and 'y' fields")
+                    })?;
+
+                    let x = binning_obj
+                        .get("x")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| anyhow::anyhow!("Binning 'x' must be a positive integer"))?;
-                    let y = binning_obj.get("y")
+                    let y = binning_obj
+                        .get("y")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| anyhow::anyhow!("Binning 'y' must be a positive integer"))?;
 
                     // Validation: Binning must be in u16 range and positive
                     if x == 0 || y == 0 {
-                        return Err(anyhow::anyhow!("Binning values must be positive, got x={}, y={}", x, y));
+                        return Err(anyhow::anyhow!(
+                            "Binning values must be positive, got x={}, y={}",
+                            x,
+                            y
+                        ));
                     }
                     if x > u16::MAX as u64 || y > u16::MAX as u64 {
-                        return Err(anyhow::anyhow!("Binning values too large, max is {}", u16::MAX));
+                        return Err(anyhow::anyhow!(
+                            "Binning values too large, max is {}",
+                            u16::MAX
+                        ));
                     }
 
                     let x_u16 = x as u16;
@@ -440,30 +460,48 @@ impl Instrument for PVCAMInstrumentV2 {
                     }
 
                     // Parse ROI value as JSON object {"x": u16, "y": u16, "width": u16, "height": u16}
-                    let roi_obj = value.as_object()
-                        .ok_or_else(|| anyhow::anyhow!("ROI must be a JSON object with 'x', 'y', 'width', and 'height' fields"))?;
+                    let roi_obj = value.as_object().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "ROI must be a JSON object with 'x', 'y', 'width', and 'height' fields"
+                        )
+                    })?;
 
-                    let x = roi_obj.get("x")
+                    let x = roi_obj
+                        .get("x")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| anyhow::anyhow!("ROI 'x' must be a positive integer"))?;
-                    let y = roi_obj.get("y")
+                    let y = roi_obj
+                        .get("y")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| anyhow::anyhow!("ROI 'y' must be a positive integer"))?;
-                    let width = roi_obj.get("width")
+                    let width = roi_obj
+                        .get("width")
                         .and_then(|v| v.as_u64())
                         .ok_or_else(|| anyhow::anyhow!("ROI 'width' must be a positive integer"))?;
-                    let height = roi_obj.get("height")
-                        .and_then(|v| v.as_u64())
-                        .ok_or_else(|| anyhow::anyhow!("ROI 'height' must be a positive integer"))?;
+                    let height =
+                        roi_obj
+                            .get("height")
+                            .and_then(|v| v.as_u64())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("ROI 'height' must be a positive integer")
+                            })?;
 
                     // Validation: ROI values must be in u16 range
-                    if x > u16::MAX as u64 || y > u16::MAX as u64 || width > u16::MAX as u64 || height > u16::MAX as u64 {
+                    if x > u16::MAX as u64
+                        || y > u16::MAX as u64
+                        || width > u16::MAX as u64
+                        || height > u16::MAX as u64
+                    {
                         return Err(anyhow::anyhow!("ROI values too large, max is {}", u16::MAX));
                     }
 
                     // Validation: Width and height must be positive
                     if width == 0 || height == 0 {
-                        return Err(anyhow::anyhow!("ROI width and height must be positive, got width={}, height={}", width, height));
+                        return Err(anyhow::anyhow!(
+                            "ROI width and height must be positive, got width={}, height={}",
+                            width,
+                            height
+                        ));
                     }
 
                     let roi = ROI {
@@ -477,13 +515,17 @@ impl Instrument for PVCAMInstrumentV2 {
                     if roi.x + roi.width > self.sensor_size.0 as u16 {
                         return Err(anyhow::anyhow!(
                             "ROI extends beyond sensor width: x={}, width={}, sensor_width={}",
-                            roi.x, roi.width, self.sensor_size.0
+                            roi.x,
+                            roi.width,
+                            self.sensor_size.0
                         ));
                     }
                     if roi.y + roi.height > self.sensor_size.1 as u16 {
                         return Err(anyhow::anyhow!(
                             "ROI extends beyond sensor height: y={}, height={}, sensor_height={}",
-                            roi.y, roi.height, self.sensor_size.1
+                            roi.y,
+                            roi.height,
+                            self.sensor_size.1
                         ));
                     }
 
@@ -493,7 +535,9 @@ impl Instrument for PVCAMInstrumentV2 {
                 }
                 "trigger_mode" => {
                     if self.state == InstrumentState::Acquiring {
-                        return Err(anyhow::anyhow!("Cannot change trigger mode while acquiring"));
+                        return Err(anyhow::anyhow!(
+                            "Cannot change trigger mode while acquiring"
+                        ));
                     }
 
                     if let Some(mode_str) = value.as_str() {
@@ -502,14 +546,20 @@ impl Instrument for PVCAMInstrumentV2 {
 
                         let handle = self.get_handle()?;
                         self.sdk
-                            .set_param_u16(&handle, super::pvcam_sdk::PvcamParam::ExposureMode, trigger_mode.as_u16())
+                            .set_param_u16(
+                                &handle,
+                                super::pvcam_sdk::PvcamParam::ExposureMode,
+                                trigger_mode.as_u16(),
+                            )
                             .map_err(|e| anyhow::anyhow!("Failed to set trigger mode: {}", e))?;
 
                         self.trigger_mode = trigger_mode;
                         log::info!("PVCAM trigger mode set to {:?}", trigger_mode);
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("Invalid trigger mode value, expected string"))
+                        Err(anyhow::anyhow!(
+                            "Invalid trigger mode value, expected string"
+                        ))
                     }
                 }
                 _ => Err(anyhow::anyhow!("Unknown parameter: {}", name)),
@@ -518,25 +568,39 @@ impl Instrument for PVCAMInstrumentV2 {
                 let handle = self.get_handle()?;
                 let value_from_sdk = match name.as_str() {
                     "exposure_ms" => {
-                        let exposure_u16 = self.sdk.get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Exposure)
-                            .map_err(|e| anyhow::anyhow!("Failed to get exposure from SDK: {}", e))?;
+                        let exposure_u16 = self
+                            .sdk
+                            .get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Exposure)
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to get exposure from SDK: {}", e)
+                            })?;
                         exposure_u16 as f64
-                    },
+                    }
                     "gain" => {
-                        let gain_u16 = self.sdk.get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Gain)
+                        let gain_u16 = self
+                            .sdk
+                            .get_param_u16(&handle, super::pvcam_sdk::PvcamParam::Gain)
                             .map_err(|e| anyhow::anyhow!("Failed to get gain from SDK: {}", e))?;
                         gain_u16 as f64
-                    },
+                    }
                     "sensor_temperature" => {
-                        let temp_i16 = self.sdk.get_param_i16(&handle, super::pvcam_sdk::PvcamParam::SensorTemperature)
-                            .map_err(|e| anyhow::anyhow!("Failed to get sensor temperature from SDK: {}", e))?;
+                        let temp_i16 = self
+                            .sdk
+                            .get_param_i16(&handle, super::pvcam_sdk::PvcamParam::SensorTemperature)
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to get sensor temperature from SDK: {}", e)
+                            })?;
                         temp_i16 as f64
-                    },
+                    }
                     "pixel_size_um" => {
-                        let pixel_size_u16 = self.sdk.get_param_u16(&handle, super::pvcam_sdk::PvcamParam::PixelSize)
-                            .map_err(|e| anyhow::anyhow!("Failed to get pixel size from SDK: {}", e))?;
+                        let pixel_size_u16 = self
+                            .sdk
+                            .get_param_u16(&handle, super::pvcam_sdk::PvcamParam::PixelSize)
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to get pixel size from SDK: {}", e)
+                            })?;
                         pixel_size_u16 as f64
-                    },
+                    }
                     "roi" => {
                         // Read from internal state and broadcast as JSON-encoded scalar
                         let roi_json = serde_json::json!({
@@ -560,7 +624,9 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.roi.x as f64,
                             unit: "px".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(roi_x)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(roi_x)));
 
                         let roi_y = DataPoint {
                             timestamp: Utc::now(),
@@ -568,7 +634,9 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.roi.y as f64,
                             unit: "px".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(roi_y)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(roi_y)));
 
                         let roi_width = DataPoint {
                             timestamp: Utc::now(),
@@ -576,7 +644,9 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.roi.width as f64,
                             unit: "px".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(roi_width)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(roi_width)));
 
                         let roi_height = DataPoint {
                             timestamp: Utc::now(),
@@ -584,12 +654,14 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.roi.height as f64,
                             unit: "px".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(roi_height)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(roi_height)));
 
                         let _ = self.measurement_tx.send(measurement);
                         log::info!("PVCAM ROI query: {:?}", roi_json);
                         return Ok(());
-                    },
+                    }
                     "binning" => {
                         // Read from internal state and broadcast as individual scalar values
                         let binning_x = DataPoint {
@@ -598,7 +670,9 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.binning.0 as f64,
                             unit: "".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(binning_x)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(binning_x)));
 
                         let binning_y = DataPoint {
                             timestamp: Utc::now(),
@@ -606,11 +680,17 @@ impl Instrument for PVCAMInstrumentV2 {
                             value: self.binning.1 as f64,
                             unit: "".to_string(),
                         };
-                        let _ = self.measurement_tx.send(arc_measurement(Measurement::Scalar(binning_y)));
+                        let _ = self
+                            .measurement_tx
+                            .send(arc_measurement(Measurement::Scalar(binning_y)));
 
-                        log::info!("PVCAM binning query: ({}, {})", self.binning.0, self.binning.1);
+                        log::info!(
+                            "PVCAM binning query: ({}, {})",
+                            self.binning.0,
+                            self.binning.1
+                        );
                         return Ok(());
-                    },
+                    }
                     "trigger_mode" => {
                         let trigger_mode = self.trigger_mode;
                         let trigger_mode_str = trigger_mode.to_string();
@@ -626,7 +706,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         let _ = self.measurement_tx.send(measurement);
                         log::info!("PVCAM trigger mode query: {}", trigger_mode_str);
                         return Ok(());
-                    },
+                    }
                     // Diagnostic parameters
                     "total_frames" => {
                         let total = self.total_frames.load(Ordering::Relaxed) as f64;
@@ -639,7 +719,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         let _ = self.measurement_tx.send(measurement);
                         log::debug!("PVCAM total_frames query: {}", total);
                         return Ok(());
-                    },
+                    }
                     "dropped_frames" => {
                         let dropped = self.dropped_frames.load(Ordering::Relaxed) as f64;
                         let measurement = arc_measurement(Measurement::Scalar(DataPoint {
@@ -651,12 +731,12 @@ impl Instrument for PVCAMInstrumentV2 {
                         let _ = self.measurement_tx.send(measurement);
                         log::debug!("PVCAM dropped_frames query: {}", dropped);
                         return Ok(());
-                    },
+                    }
                     "actual_fps" => {
                         // Calculate actual FPS from total frames and elapsed time
                         let total = self.total_frames.load(Ordering::Relaxed);
                         let start_time_guard = self.acquisition_start_time.lock().await;
-                        
+
                         let fps = if let Some(start_time) = *start_time_guard {
                             let elapsed = start_time.elapsed().as_secs_f64();
                             if elapsed > 0.0 && total > 0 {
@@ -667,7 +747,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         } else {
                             0.0
                         };
-                        
+
                         let measurement = arc_measurement(Measurement::Scalar(DataPoint {
                             timestamp: Utc::now(),
                             channel: format!("{}:actual_fps", self.id),
@@ -677,7 +757,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         let _ = self.measurement_tx.send(measurement);
                         log::debug!("PVCAM actual_fps query: {:.2} Hz", fps);
                         return Ok(());
-                    },
+                    }
                     "camera_health" => {
                         // Generate health status string
                         let total = self.total_frames.load(Ordering::Relaxed);
@@ -687,7 +767,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         } else {
                             0.0
                         };
-                        
+
                         let health_status = if drop_rate > 10.0 {
                             "WARNING: High drop rate"
                         } else if drop_rate > 1.0 {
@@ -697,7 +777,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         } else {
                             "READY: Idle"
                         };
-                        
+
                         // Encode health as numeric value for easier monitoring
                         let health_value = if drop_rate > 10.0 {
                             0.0 // Critical
@@ -708,7 +788,7 @@ impl Instrument for PVCAMInstrumentV2 {
                         } else {
                             0.75 // Ready/Idle
                         };
-                        
+
                         let measurement = arc_measurement(Measurement::Scalar(DataPoint {
                             timestamp: Utc::now(),
                             channel: format!("{}:camera_health", self.id),
@@ -716,9 +796,13 @@ impl Instrument for PVCAMInstrumentV2 {
                             unit: "".to_string(),
                         }));
                         let _ = self.measurement_tx.send(measurement);
-                        log::info!("PVCAM camera_health query: {} (drop_rate={:.2}%)", health_status, drop_rate);
+                        log::info!(
+                            "PVCAM camera_health query: {} (drop_rate={:.2}%)",
+                            health_status,
+                            drop_rate
+                        );
                         return Ok(());
-                    },
+                    }
                     _ => return Err(anyhow::anyhow!("Unknown parameter: {}", name)),
                 };
 
@@ -726,7 +810,7 @@ impl Instrument for PVCAMInstrumentV2 {
                 if name.as_str() == "exposure_ms" {
                     self.exposure_ms = value_from_sdk;
                 }
-                
+
                 // Update internal state if it's gain to keep it in sync
                 if name.as_str() == "gain" {
                     self.gain = value_from_sdk as u16;
@@ -797,9 +881,9 @@ impl Camera for PVCAMInstrumentV2 {
 
         // Generate u16 frame data (native camera format)
         let frame_data = self.simulate_frame_data(width, height);
-        
+
         let timestamp = Utc::now();
-        
+
         // Simulate realistic metadata for snap()
         let hardware_timestamp_us = timestamp.timestamp_micros();
         let readout_ms = 7.5; // Typical readout time
@@ -868,13 +952,13 @@ impl Camera for PVCAMInstrumentV2 {
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
-        
+
         // Clone diagnostic counters for async task
         let total_frames = self.total_frames.clone();
         let dropped_frames = self.dropped_frames.clone();
         let last_frame_number = self.last_frame_number.clone();
         let acquisition_start_time = self.acquisition_start_time.clone();
-        
+
         // Reset diagnostics at start of acquisition
         total_frames.store(0, Ordering::Relaxed);
         dropped_frames.store(0, Ordering::Relaxed);
@@ -909,14 +993,14 @@ impl Camera for PVCAMInstrumentV2 {
                     Some(frame) = frame_rx.recv() => {
                         // Track total frames received
                         total_frames.fetch_add(1, Ordering::Relaxed);
-                        
+
                         // Detect dropped frames by checking frame number sequence
                         let expected_frame_num = last_frame_number.load(Ordering::Relaxed);
                         if frame.frame_number > 0 && expected_frame_num > 0 {
                             // Check for gap in frame numbers (expect frame_number == expected_frame_num + 1)
                             let actual_next = frame.frame_number;
                             let expected_next = expected_frame_num + 1;
-                            
+
                             if actual_next != expected_next {
                                 let dropped = actual_next.saturating_sub(expected_next);
                                 dropped_frames.fetch_add(dropped as u64, Ordering::Relaxed);
@@ -927,7 +1011,7 @@ impl Camera for PVCAMInstrumentV2 {
                             }
                         }
                         last_frame_number.store(frame.frame_number, Ordering::Relaxed);
-                        
+
                         let (mean, min, max) = PVCAMInstrumentV2::calculate_frame_stats(&frame.data);
                         let timestamp = frame.software_timestamp;
 
@@ -957,7 +1041,7 @@ impl Camera for PVCAMInstrumentV2 {
                         if let Some(temp) = frame.sensor_temperature_c {
                             metadata["sensor_temperature_c"] = serde_json::json!(temp);
                         }
-                        
+
                         metadata["software_timestamp"] = serde_json::json!(timestamp.to_rfc3339());
 
                         // Emit image measurement with PixelBuffer::U16
@@ -1001,7 +1085,7 @@ impl Camera for PVCAMInstrumentV2 {
                             unit: "counts".to_string(),
                         };
                         let _ = tx.send(arc_measurement(Measurement::Scalar(dp_max)));
-                        
+
                         // Broadcast sensor temperature as separate measurement if available
                         if let Some(temp) = frame.sensor_temperature_c {
                             let dp_temp = DataPoint {
@@ -1012,7 +1096,7 @@ impl Camera for PVCAMInstrumentV2 {
                             };
                             let _ = tx.send(arc_measurement(Measurement::Scalar(dp_temp)));
                         }
-                        
+
                         // Broadcast actual frame rate calculated from timestamps
                         if let Some(hw_ts) = frame.hardware_timestamp {
                             if frame.frame_number > 0 {
@@ -1086,10 +1170,17 @@ impl Camera for PVCAMInstrumentV2 {
 
         // Validation: Exposure must be positive and within u16 range
         if ms <= 0.0 {
-            return Err(anyhow::anyhow!("Exposure must be a positive value, got {}", ms));
+            return Err(anyhow::anyhow!(
+                "Exposure must be a positive value, got {}",
+                ms
+            ));
         }
         if ms > u16::MAX as f64 {
-            return Err(anyhow::anyhow!("Exposure value {} ms is too large, max is {} ms", ms, u16::MAX));
+            return Err(anyhow::anyhow!(
+                "Exposure value {} ms is too large, max is {} ms",
+                ms,
+                u16::MAX
+            ));
         }
 
         // Convert f64 milliseconds to u16 for SDK (PVCAM uses integer milliseconds)
@@ -1287,7 +1378,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot change binning while acquiring"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot change binning while acquiring"));
 
         camera.stop_live().await.unwrap();
     }
@@ -1306,7 +1400,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Binning values must be positive"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Binning values must be positive"));
     }
 
     #[tokio::test]
@@ -1324,7 +1421,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Binning 'y' must be a positive integer"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Binning 'y' must be a positive integer"));
     }
 
     #[tokio::test]
@@ -1372,7 +1472,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot change ROI while acquiring"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot change ROI while acquiring"));
 
         camera.stop_live().await.unwrap();
     }
@@ -1397,7 +1500,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ROI extends beyond sensor width"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ROI extends beyond sensor width"));
     }
 
     #[tokio::test]
@@ -1419,7 +1525,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ROI width and height must be positive"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ROI width and height must be positive"));
     }
 
     #[tokio::test]
@@ -1564,7 +1673,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot change trigger mode while acquiring"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot change trigger mode while acquiring"));
 
         camera.stop_live().await.unwrap();
     }
@@ -1583,7 +1695,10 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid trigger mode"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid trigger mode"));
     }
 
     #[tokio::test]
@@ -1696,10 +1811,18 @@ mod tests {
         assert!(hw_ts > 0, "Hardware timestamp should be positive");
 
         let readout = frame.readout_time_ms.unwrap();
-        assert!(readout >= 5.0 && readout <= 10.0, "Readout time should be 5-10ms, got {}", readout);
+        assert!(
+            readout >= 5.0 && readout <= 10.0,
+            "Readout time should be 5-10ms, got {}",
+            readout
+        );
 
         let temp = frame.sensor_temperature_c.unwrap();
-        assert!(temp >= -10.0 && temp <= 5.0, "Sensor temp should be -10 to 5°C, got {}", temp);
+        assert!(
+            temp >= -10.0 && temp <= 5.0,
+            "Sensor temp should be -10 to 5°C, got {}",
+            temp
+        );
 
         assert_eq!(frame.exposure_time_ms, 100.0);
         assert_eq!(frame.roi.2, 2048); // width
@@ -1763,7 +1886,10 @@ mod tests {
             }
         }
 
-        assert!(image_received, "Should have received at least one image measurement");
+        assert!(
+            image_received,
+            "Should have received at least one image measurement"
+        );
         camera.stop_live().await.unwrap();
     }
 
@@ -1776,7 +1902,15 @@ mod tests {
         camera.set_exposure_ms(50.0).await.unwrap();
 
         // Change ROI
-        camera.set_roi(ROI { x: 100, y: 100, width: 512, height: 512 }).await.unwrap();
+        camera
+            .set_roi(ROI {
+                x: 100,
+                y: 100,
+                width: 512,
+                height: 512,
+            })
+            .await
+            .unwrap();
 
         // Change binning
         camera.set_binning(2, 2).await.unwrap();
@@ -1849,7 +1983,10 @@ mod tests {
             }
         }
 
-        assert!(temp_received, "Should have received sensor temperature as scalar");
+        assert!(
+            temp_received,
+            "Should have received sensor temperature as scalar"
+        );
         camera.stop_live().await.unwrap();
     }
 
@@ -1893,7 +2030,10 @@ mod tests {
         let image = camera.snap().await.unwrap();
 
         // Verify metadata exists and contains all fields
-        let metadata = image.metadata.as_ref().expect("snap() should include metadata");
+        let metadata = image
+            .metadata
+            .as_ref()
+            .expect("snap() should include metadata");
 
         assert!(metadata.get("camera_name").is_some());
         assert!(metadata.get("exposure_ms").is_some());
@@ -1911,27 +2051,30 @@ mod tests {
         let readout = metadata["readout_time_ms"].as_f64().unwrap();
         assert_eq!(readout, 7.5);
     }
-    
+
     // ==================== DIAGNOSTIC TESTS ====================
-    
+
     #[tokio::test]
     async fn test_diagnostic_counters_track_frames() {
         let mut camera = PVCAMInstrumentV2::new("test_pvcam".to_string());
         camera.initialize().await.unwrap();
-        
+
         let mut rx = camera.measurement_stream();
-        
+
         // Start acquisition
         camera.start_live().await.unwrap();
-        
+
         // Wait for several frames
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         // Query total_frames
-        camera.handle_command(InstrumentCommand::GetParameter {
-            name: "total_frames".to_string(),
-        }).await.unwrap();
-        
+        camera
+            .handle_command(InstrumentCommand::GetParameter {
+                name: "total_frames".to_string(),
+            })
+            .await
+            .unwrap();
+
         // Look for the total_frames measurement
         let mut total_frames_value = None;
         for _ in 0..20 {
@@ -1944,38 +2087,42 @@ mod tests {
                 }
             }
         }
-        
+
         let total = total_frames_value.expect("Should receive total_frames measurement");
-        assert!(total >= 1.0, "Should have received at least 1 frame, got {}", total);
+        assert!(
+            total >= 1.0,
+            "Should have received at least 1 frame, got {}",
+            total
+        );
         assert_eq!(camera.total_frames.load(Ordering::Relaxed) as f64, total);
-        
+
         camera.stop_live().await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_diagnostic_dropped_frames_detection() {
         use super::super::pvcam_sdk::MockPvcamSdk;
         use std::sync::Arc;
-        
+
         // Create camera with MockPvcamSdk that we can configure
         let sdk = Arc::new(MockPvcamSdk::new());
-        
+
         // Enable dropped frame simulation with 20% probability
         sdk.set_simulate_dropped_frames(true);
         sdk.set_drop_frame_probability(0.2);
-        
+
         let mut camera = PVCAMInstrumentV2::with_adapter_and_capacity(
             "test_pvcam".to_string(),
             Box::new(crate::adapters::MockAdapter::new()),
             1024,
         );
-        
+
         // Replace the SDK with our configured one
         camera.sdk = sdk;
-        
+
         camera.initialize().await.unwrap();
         camera.start_live().await.unwrap();
-        
+
         // Wait for frames to accumulate (with 20% drop rate, we should see some drops)
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -1983,9 +2130,12 @@ mod tests {
         let mut rx = camera.measurement_stream();
 
         // Query dropped_frames
-        camera.handle_command(InstrumentCommand::GetParameter {
-            name: "dropped_frames".to_string(),
-        }).await.unwrap();
+        camera
+            .handle_command(InstrumentCommand::GetParameter {
+                name: "dropped_frames".to_string(),
+            })
+            .await
+            .unwrap();
         let mut dropped_frames_value = None;
         for _ in 0..20 {
             if let Ok(Ok(measurement)) = timeout(Duration::from_millis(100), rx.recv()).await {
@@ -1997,31 +2147,38 @@ mod tests {
                 }
             }
         }
-        
+
         let dropped = dropped_frames_value.expect("Should receive dropped_frames measurement");
         // With 20% drop probability over 1 second at ~100ms exposure, expect some drops
         // but this is probabilistic so we just verify the counter exists and is accessible
-        assert!(dropped >= 0.0, "Dropped frames should be non-negative, got {}", dropped);
-        
+        assert!(
+            dropped >= 0.0,
+            "Dropped frames should be non-negative, got {}",
+            dropped
+        );
+
         camera.stop_live().await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_diagnostic_actual_fps_calculation() {
         let mut camera = PVCAMInstrumentV2::new("test_pvcam".to_string());
         camera.initialize().await.unwrap();
-        
+
         let mut rx = camera.measurement_stream();
         camera.start_live().await.unwrap();
-        
+
         // Wait for frames to accumulate
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         // Query actual_fps
-        camera.handle_command(InstrumentCommand::GetParameter {
-            name: "actual_fps".to_string(),
-        }).await.unwrap();
-        
+        camera
+            .handle_command(InstrumentCommand::GetParameter {
+                name: "actual_fps".to_string(),
+            })
+            .await
+            .unwrap();
+
         let mut fps_value = None;
         for _ in 0..20 {
             if let Ok(Ok(measurement)) = timeout(Duration::from_millis(100), rx.recv()).await {
@@ -2033,26 +2190,29 @@ mod tests {
                 }
             }
         }
-        
+
         let fps = fps_value.expect("Should receive actual_fps measurement");
         assert!(fps > 0.0, "FPS should be positive");
         assert!(fps < 100.0, "FPS should be reasonable for 100ms exposure");
-        
+
         camera.stop_live().await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_diagnostic_camera_health() {
         let mut camera = PVCAMInstrumentV2::new("test_pvcam".to_string());
         camera.initialize().await.unwrap();
-        
+
         let mut rx = camera.measurement_stream();
-        
+
         // Query health while idle
-        camera.handle_command(InstrumentCommand::GetParameter {
-            name: "camera_health".to_string(),
-        }).await.unwrap();
-        
+        camera
+            .handle_command(InstrumentCommand::GetParameter {
+                name: "camera_health".to_string(),
+            })
+            .await
+            .unwrap();
+
         let mut health_value = None;
         for _ in 0..20 {
             if let Ok(Ok(measurement)) = timeout(Duration::from_millis(100), rx.recv()).await {
@@ -2064,18 +2224,21 @@ mod tests {
                 }
             }
         }
-        
+
         let health = health_value.expect("Should receive camera_health measurement");
         assert_eq!(health, 0.75, "Health should be 0.75 (Ready/Idle)");
-        
+
         // Start acquisition and check health again
         camera.start_live().await.unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
-        camera.handle_command(InstrumentCommand::GetParameter {
-            name: "camera_health".to_string(),
-        }).await.unwrap();
-        
+
+        camera
+            .handle_command(InstrumentCommand::GetParameter {
+                name: "camera_health".to_string(),
+            })
+            .await
+            .unwrap();
+
         let mut health_acquiring = None;
         for _ in 0..20 {
             if let Ok(Ok(measurement)) = timeout(Duration::from_millis(100), rx.recv()).await {
@@ -2087,51 +2250,58 @@ mod tests {
                 }
             }
         }
-        
-        let health = health_acquiring.expect("Should receive camera_health measurement while acquiring");
+
+        let health =
+            health_acquiring.expect("Should receive camera_health measurement while acquiring");
         assert_eq!(health, 1.0, "Health should be 1.0 (Healthy/Acquiring)");
-        
+
         camera.stop_live().await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_diagnostic_counters_reset_on_start() {
         let mut camera = PVCAMInstrumentV2::new("test_pvcam".to_string());
         camera.initialize().await.unwrap();
-        
+
         // Manually set counters to non-zero values
         camera.total_frames.store(100, Ordering::Relaxed);
         camera.dropped_frames.store(10, Ordering::Relaxed);
-        
+
         // Start acquisition - should reset counters
         camera.start_live().await.unwrap();
-        
+
         // Verify counters were reset
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // After some frames, total should be small (recently reset)
         let total = camera.total_frames.load(Ordering::Relaxed);
-        assert!(total < 50, "Total frames should be reset and small, got {}", total);
-        
+        assert!(
+            total < 50,
+            "Total frames should be reset and small, got {}",
+            total
+        );
+
         camera.stop_live().await.unwrap();
     }
-    
+
     #[test]
     fn test_pvcam_error_variants_have_context() {
-        use super::super::pvcam_sdk::{PvcamError, CameraHandle};
-        
+        use super::super::pvcam_sdk::{CameraHandle, PvcamError};
+
         // Test InitFailed has descriptive message
         let err = PvcamError::InitFailed("SDK not found".to_string());
         let msg = format!("{}", err);
         assert!(msg.contains("Failed to initialize"));
         assert!(msg.contains("SDK not found"));
-        
+
         // Test CameraDisconnected
-        let err = PvcamError::CameraDisconnected { camera: "PrimeBSI".to_string() };
+        let err = PvcamError::CameraDisconnected {
+            camera: "PrimeBSI".to_string(),
+        };
         let msg = format!("{}", err);
         assert!(msg.contains("Camera disconnected"));
         assert!(msg.contains("PrimeBSI"));
-        
+
         // Test InvalidParameter
         let err = PvcamError::InvalidParameter {
             param: "exposure".to_string(),
@@ -2141,7 +2311,7 @@ mod tests {
         assert!(msg.contains("Invalid parameter"));
         assert!(msg.contains("exposure"));
         assert!(msg.contains("value too large"));
-        
+
         // Test OutOfRange
         let err = PvcamError::OutOfRange {
             param: "gain".to_string(),
@@ -2153,7 +2323,7 @@ mod tests {
         assert!(msg.contains("gain"));
         assert!(msg.contains("1000"));
         assert!(msg.contains("1-64"));
-        
+
         // Test AcquisitionError
         let err = PvcamError::AcquisitionError {
             camera: "PrimeBSI".to_string(),
@@ -2163,13 +2333,15 @@ mod tests {
         assert!(msg.contains("Acquisition error"));
         assert!(msg.contains("PrimeBSI"));
         assert!(msg.contains("buffer overflow"));
-        
+
         // Test Timeout
-        let err = PvcamError::Timeout { operation: "frame capture".to_string() };
+        let err = PvcamError::Timeout {
+            operation: "frame capture".to_string(),
+        };
         let msg = format!("{}", err);
         assert!(msg.contains("timed out"));
         assert!(msg.contains("frame capture"));
-        
+
         // Test DroppedFrames
         let err = PvcamError::DroppedFrames {
             expected: 10,
@@ -2182,26 +2354,26 @@ mod tests {
         assert!(msg.contains("got 15"));
         assert!(msg.contains("Dropped 5"));
     }
-    
+
     #[tokio::test]
     async fn test_mock_sdk_error_injection() {
         use super::super::pvcam_sdk::{MockPvcamSdk, PvcamSdk};
         use std::sync::Arc;
-        
+
         let sdk = Arc::new(MockPvcamSdk::new());
-        
+
         // Test init failure
         sdk.set_next_init_fails(true);
         let result = sdk.init();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Mock init failed"));
-        
+
         // Init should succeed on second try
         let result = sdk.init();
         assert!(result.is_ok());
-        
+
         // Test open_camera failure
-        use super::super::pvcam_sdk::{PvcamError, CameraHandle};
+        use super::super::pvcam_sdk::{CameraHandle, PvcamError};
         sdk.set_next_open_fails_with_error(Some(PvcamError::CameraNotFound("TestCam".to_string())));
         let result = sdk.open_camera("PrimeBSI");
         assert!(result.is_err());

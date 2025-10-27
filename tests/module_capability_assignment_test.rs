@@ -23,6 +23,7 @@ fn create_test_settings() -> Settings {
         application: ApplicationSettings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
+            data_distributor: Default::default(),
         },
         storage: StorageSettings {
             default_path: "./data".to_string(),
@@ -30,6 +31,7 @@ fn create_test_settings() -> Settings {
         },
         instruments: HashMap::new(),
         processors: None,
+        instruments_v3: Vec::new(),
     }
 }
 
@@ -40,7 +42,9 @@ async fn setup_actor() -> mpsc::Sender<DaqCommand> {
     // Register power_meter module
     let mut module_registry = rust_daq::modules::ModuleRegistry::new();
     module_registry.register("power_meter", |id| {
-        Box::new(rust_daq::modules::power_meter::PowerMeterModule::<InstrumentMeasurement>::new(id))
+        Box::new(rust_daq::modules::power_meter::PowerMeterModule::<
+            InstrumentMeasurement,
+        >::new(id))
     });
 
     let actor = DaqManagerActor::<InstrumentMeasurement>::new(
@@ -70,10 +74,7 @@ async fn test_spawn_module_via_command() {
     let (spawn_cmd, spawn_rx) =
         DaqCommand::spawn_module("pm_module".to_string(), "power_meter".to_string(), config);
 
-    cmd_tx
-        .send(spawn_cmd)
-        .await
-        .expect("Should send command");
+    cmd_tx.send(spawn_cmd).await.expect("Should send command");
 
     let result = spawn_rx.await.expect("Should receive response");
     assert!(
@@ -92,8 +93,11 @@ async fn test_reject_duplicate_module_spawn_via_command() {
     };
 
     // First spawn should succeed
-    let (spawn_cmd1, spawn_rx1) =
-        DaqCommand::spawn_module("pm_module".to_string(), "power_meter".to_string(), config.clone());
+    let (spawn_cmd1, spawn_rx1) = DaqCommand::spawn_module(
+        "pm_module".to_string(),
+        "power_meter".to_string(),
+        config.clone(),
+    );
     cmd_tx.send(spawn_cmd1).await.expect("Should send command");
     let result1 = spawn_rx1.await.expect("Should receive response");
     assert!(result1.is_ok(), "First spawn should succeed");
@@ -104,10 +108,7 @@ async fn test_reject_duplicate_module_spawn_via_command() {
     cmd_tx.send(spawn_cmd2).await.expect("Should send command");
     let result2 = spawn_rx2.await.expect("Should receive response");
 
-    assert!(
-        result2.is_err(),
-        "Second spawn with same ID should fail"
-    );
+    assert!(result2.is_err(), "Second spawn with same ID should fail");
     let err = result2.unwrap_err();
     assert!(
         err.to_string().contains("already spawned"),
@@ -124,8 +125,11 @@ async fn test_reject_unknown_module_type_via_command() {
         params: HashMap::new(),
     };
 
-    let (spawn_cmd, spawn_rx) =
-        DaqCommand::spawn_module("test_module".to_string(), "unknown_type".to_string(), config);
+    let (spawn_cmd, spawn_rx) = DaqCommand::spawn_module(
+        "test_module".to_string(),
+        "unknown_type".to_string(),
+        config,
+    );
     cmd_tx.send(spawn_cmd).await.expect("Should send command");
     let result = spawn_rx.await.expect("Should receive response");
 
@@ -148,10 +152,7 @@ async fn test_assign_instrument_rejects_missing_module() {
         "power_meter_1".to_string(),
     );
 
-    cmd_tx
-        .send(assign_cmd)
-        .await
-        .expect("Should send command");
+    cmd_tx.send(assign_cmd).await.expect("Should send command");
 
     let result = assign_rx.await.expect("Should receive response");
     assert!(
@@ -189,10 +190,7 @@ async fn test_assign_instrument_rejects_missing_instrument() {
         "nonexistent_instrument".to_string(),
     );
 
-    cmd_tx
-        .send(assign_cmd)
-        .await
-        .expect("Should send command");
+    cmd_tx.send(assign_cmd).await.expect("Should send command");
 
     let result = assign_rx.await.expect("Should receive response");
     assert!(
@@ -225,10 +223,7 @@ async fn test_start_module_via_command() {
 
     // Start module (will fail because no instrument assigned, but tests the command flow)
     let (start_cmd, start_rx) = DaqCommand::start_module("pm_module".to_string());
-    cmd_tx
-        .send(start_cmd)
-        .await
-        .expect("Should send command");
+    cmd_tx.send(start_cmd).await.expect("Should send command");
 
     let result = start_rx.await.expect("Should receive response");
     // This may fail due to missing instrument assignment, which is expected

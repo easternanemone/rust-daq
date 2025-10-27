@@ -300,7 +300,13 @@ System behavior is controlled via TOML configuration:
 ```toml
 [application]
 name = "Rust DAQ"
-broadcast_channel_capacity = 1024  # DataDistributor capacity
+broadcast_channel_capacity = 1024  # Legacy broadcast buffer (V1)
+
+[application.data_distributor]
+subscriber_capacity = 1024        # Per-subscriber buffer capacity
+warn_drop_rate_percent = 1.0      # WARN when subscriber drops >1% of messages over window
+error_saturation_percent = 90.0   # ERROR when occupancy exceeds 90%
+metrics_window_secs = 10          # Rolling window for metrics/log evaluation
 command_channel_capacity = 32      # mpsc channel capacity
 
 [[instruments.my_instrument]]

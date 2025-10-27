@@ -185,9 +185,6 @@ pub trait Plan: Send {
     ///
     /// Returns a human-readable name and description for this plan.
     fn metadata(&self) -> (String, String) {
-        (
-            "Unnamed Plan".to_string(),
-            "No description".to_string(),
-        )
+        ("Unnamed Plan".to_string(), "No description".to_string())
     }
 }

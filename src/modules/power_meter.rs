@@ -406,12 +406,14 @@ mod tests {
     #[async_trait::async_trait]
     impl Measure for MockPowerMeasure {
         type Data = f64;
-        
+
         async fn measure(&mut self) -> Result<Self::Data> {
             Ok(42.0)
         }
-        
-        async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
+
+        async fn data_stream(
+            &self,
+        ) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             Ok(rx)
         }

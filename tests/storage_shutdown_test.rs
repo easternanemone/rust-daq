@@ -1,6 +1,5 @@
 use rust_daq::modules::ModuleRegistry;
-//! Integration tests for storage writer graceful shutdown behavior.
-
+/// Integration tests for storage writer graceful shutdown behavior.
 use rust_daq::{
     app::DaqApp,
     config::Settings,

@@ -393,6 +393,7 @@ mod tests {
             application: ApplicationSettings {
                 broadcast_channel_capacity: 1024,
                 command_channel_capacity: 32,
+                data_distributor: Default::default(),
             },
             storage: StorageSettings {
                 default_path: "/tmp".to_string(),
