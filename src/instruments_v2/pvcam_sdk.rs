@@ -8,6 +8,11 @@ use std::{
     fmt,
     sync::{Arc, Mutex},
 };
+#[cfg(feature = "pvcam_hardware")]
+use std::{
+    ffi::{CStr, CString},
+    os::raw::c_char,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -333,10 +338,16 @@ struct SendPtr(*mut c_void);
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
 
+struct AcquisitionState {
+    callback_context: SendPtr,
+    #[cfg(feature = "pvcam_hardware")]
+    frame_buffer: Vec<u16>,
+}
+
 struct RealPvcamSdkInner {
     is_initialized: bool,
     open_handles: HashMap<CameraHandle, String>,
-    active_acquisitions: HashMap<CameraHandle, SendPtr>,
+    active_acquisitions: HashMap<CameraHandle, AcquisitionState>,
 }
 
 /// Real implementation of `PvcamSdk` using `pvcam-sys` FFI.
@@ -374,6 +385,84 @@ impl RealPvcamSdk {
         {
             Ok(())
         }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn sdk_bool(status: pvcam_sys::rs_bool, operation: &'static str) -> Result<(), PvcamError> {
+        if status == pvcam_sys::PV_OK {
+            Ok(())
+        } else {
+            Err(Self::last_error(operation))
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn last_error(operation: &'static str) -> PvcamError {
+        unsafe {
+            let code = pvcam_sys::pl_error_code();
+            let mut buffer = vec![0i8; pvcam_sys::ERROR_MSG_LEN as usize];
+            let message =
+                if pvcam_sys::pl_error_message(code, buffer.as_mut_ptr()) == pvcam_sys::PV_OK {
+                    let c_str = CStr::from_ptr(buffer.as_ptr());
+                    c_str.to_string_lossy().into_owned()
+                } else {
+                    String::from("Unknown PVCAM error")
+                };
+            log::error!(
+                "PVCAM operation '{}' failed (code {}): {}",
+                operation,
+                code,
+                message
+            );
+            PvcamError::SdkSpecific(code)
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn param_id(param: PvcamParam) -> Result<u32, PvcamError> {
+        match param {
+            PvcamParam::Exposure => Ok(pvcam_sys::PARAM_EXPOSURE_TIME),
+            PvcamParam::Gain => Ok(pvcam_sys::PARAM_GAIN_INDEX),
+            PvcamParam::Roi => Ok(pvcam_sys::PARAM_ROI),
+            // Remaining parameters require additional SDK integration; return explicit error for now.
+            other => Err(PvcamError::ParamNotSupported(other)),
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn attr_current() -> u32 {
+        pvcam_sys::ATTR_CURRENT
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn current_roi(handle: pvcam_sys::int16) -> Result<pvcam_sys::rgn_type, PvcamError> {
+        let mut region = pvcam_sys::rgn_type {
+            s1: 0,
+            s2: 0,
+            sbin: 1,
+            p1: 0,
+            p2: 0,
+            pbin: 1,
+        };
+        unsafe {
+            Self::sdk_bool(
+                pvcam_sys::pl_get_param(
+                    handle,
+                    pvcam_sys::PARAM_ROI,
+                    Self::attr_current(),
+                    &mut region as *mut pvcam_sys::rgn_type as *mut c_void,
+                ),
+                "pl_get_param (ROI)",
+            )?;
+        }
+        Ok(region)
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn region_pixel_count(region: &pvcam_sys::rgn_type) -> usize {
+        let width = region.s2.saturating_sub(region.s1).saturating_add(1) as usize;
+        let height = region.p2.saturating_sub(region.p1).saturating_add(1) as usize;
+        width.saturating_mul(height)
     }
 }
 
@@ -440,16 +529,13 @@ impl PvcamSdk for RealPvcamSdk {
         if inner.is_initialized {
             return Err(PvcamError::AlreadyInitialized);
         }
-        // TODO: Call pvcam_sys::pl_pvcam_init() when pvcam_hardware feature is enabled
         #[cfg(feature = "pvcam_hardware")]
+        unsafe {
+            Self::sdk_bool(pvcam_sys::pl_pvcam_init(), "pl_pvcam_init")?;
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
         {
-            // use pvcam_sys::*;
-            // let status = unsafe { pl_pvcam_init() };
-            // if status != PV_OK {
-            //     return Err(PvcamError::InitFailed(
-            //         format!("SDK initialization failed with code {}", status)
-            //     ));
-            // }
+            unreachable!("pvcam_hardware feature gate mismatch");
         }
         inner.is_initialized = true;
         log::info!("PVCAM SDK initialized successfully");
@@ -463,23 +549,27 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
+        let handles = inner.open_handles.keys().copied().collect::<Vec<_>>();
+        drop(inner);
+
         // Best effort to close any remaining handles
-        for handle in inner.open_handles.keys().copied().collect::<Vec<_>>() {
+        for handle in handles {
             if let Err(e) = self.close_camera(handle) {
                 log::warn!("Failed to close camera {:?} during uninit: {}", handle, e);
             }
         }
+
+        let mut inner = self.inner.lock().unwrap();
         inner.open_handles.clear();
+        inner.active_acquisitions.clear();
 
         #[cfg(feature = "pvcam_hardware")]
+        unsafe {
+            Self::sdk_bool(pvcam_sys::pl_pvcam_uninit(), "pl_pvcam_uninit")?;
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
         {
-            // use pvcam_sys::*;
-            // let status = unsafe { pl_pvcam_uninit() };
-            // if status != PV_OK {
-            //     return Err(PvcamError::InitFailed(
-            //         format!("SDK uninitialization failed with code {}", status)
-            //     ));
-            // }
+            unreachable!("pvcam_hardware feature gate mismatch");
         }
         inner.is_initialized = false;
         log::info!("PVCAM SDK uninitialized successfully");
@@ -493,9 +583,33 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        log::debug!("Enumerating cameras (mock)");
-        Ok(vec!["PrimeBSI".to_string()])
+        #[cfg(feature = "pvcam_hardware")]
+        unsafe {
+            let mut total: pvcam_sys::int16 = 0;
+            Self::sdk_bool(pvcam_sys::pl_cam_get_total(&mut total), "pl_cam_get_total")?;
+
+            let mut names = Vec::with_capacity(total as usize);
+            for index in 0..total {
+                let mut buffer = vec![0i8; pvcam_sys::CAM_NAME_LEN as usize];
+                Self::sdk_bool(
+                    pvcam_sys::pl_cam_get_name(index, buffer.as_mut_ptr()),
+                    "pl_cam_get_name",
+                )?;
+                let c_str = CStr::from_ptr(buffer.as_ptr());
+                let trimmed = c_str
+                    .to_string_lossy()
+                    .trim_matches(char::from(0))
+                    .to_string();
+                if !trimmed.is_empty() {
+                    names.push(trimmed);
+                }
+            }
+            Ok(names)
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn open_camera(&self, name: &str) -> Result<CameraHandle, PvcamError> {
@@ -505,11 +619,30 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        let handle = CameraHandle(1);
-        inner.open_handles.insert(handle, name.to_string());
-        log::info!("Opened camera '{}' with handle {:?}", name, handle);
-        Ok(handle)
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let c_name =
+                CString::new(name).map_err(|_| PvcamError::CameraNotFound(name.to_string()))?;
+            let mut handle: pvcam_sys::int16 = 0;
+            unsafe {
+                Self::sdk_bool(
+                    pvcam_sys::pl_cam_open(
+                        c_name.as_ptr() as *mut c_char,
+                        &mut handle,
+                        pvcam_sys::OPEN_EXCLUSIVE,
+                    ),
+                    "pl_cam_open",
+                )?;
+            }
+            let handle = CameraHandle(handle as i16);
+            inner.open_handles.insert(handle, name.to_string());
+            log::info!("Opened camera '{}' with handle {:?}", name, handle);
+            Ok(handle)
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn close_camera(&self, handle: CameraHandle) -> Result<(), PvcamError> {
@@ -519,11 +652,29 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
+        if inner.active_acquisitions.contains_key(&handle) {
+            drop(inner);
+            self.stop_acquisition(handle)?;
+            inner = self.inner.lock().unwrap();
+        }
+
         let camera_name = inner
             .open_handles
             .remove(&handle)
             .ok_or_else(|| PvcamError::CameraNotOpen { camera: handle })?;
-        // TODO: Implement with pvcam-sys when feature is enabled
+        drop(inner);
+
+        #[cfg(feature = "pvcam_hardware")]
+        unsafe {
+            Self::sdk_bool(
+                pvcam_sys::pl_cam_close(handle.0 as pvcam_sys::int16),
+                "pl_cam_close",
+            )?;
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
         log::info!("Closed camera '{}' with handle {:?}", camera_name, handle);
         Ok(())
     }
@@ -538,16 +689,34 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.open_handles.contains_key(handle) {
             return Err(PvcamError::CameraNotOpen { camera: *handle });
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        log::warn!("get_param_u16({:?}) not implemented for real SDK", param);
-        Err(PvcamError::ParamNotSupported(param))
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let param_id = Self::param_id(param)?;
+            let mut value: u32 = 0;
+            unsafe {
+                Self::sdk_bool(
+                    pvcam_sys::pl_get_param(
+                        handle.0 as pvcam_sys::int16,
+                        param_id,
+                        Self::attr_current(),
+                        &mut value as *mut u32 as *mut c_void,
+                    ),
+                    "pl_get_param",
+                )?;
+            }
+            Ok(value as u16)
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn set_param_u16(
         &self,
         handle: &CameraHandle,
         param: PvcamParam,
-        _value: u16,
+        value: u16,
     ) -> Result<(), PvcamError> {
         Self::ensure_hardware_enabled("set_param_u16")?;
 
@@ -558,9 +727,26 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.open_handles.contains_key(handle) {
             return Err(PvcamError::CameraNotOpen { camera: *handle });
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        log::warn!("set_param_u16({:?}) not implemented for real SDK", param);
-        Err(PvcamError::ParamNotSupported(param))
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let param_id = Self::param_id(param)?;
+            let mut raw_value: u32 = value as u32;
+            unsafe {
+                Self::sdk_bool(
+                    pvcam_sys::pl_set_param(
+                        handle.0 as pvcam_sys::int16,
+                        param_id,
+                        &mut raw_value as *mut u32 as *mut c_void,
+                    ),
+                    "pl_set_param",
+                )?;
+            }
+            Ok(())
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn get_param_i16(&self, handle: &CameraHandle, param: PvcamParam) -> Result<i16, PvcamError> {
@@ -612,16 +798,52 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.open_handles.contains_key(handle) {
             return Err(PvcamError::CameraNotOpen { camera: *handle });
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        log::warn!("get_param_region({:?}) not implemented for real SDK", param);
-        Err(PvcamError::ParamNotSupported(param))
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            if !matches!(param, PvcamParam::Roi) {
+                return Err(PvcamError::ParamNotSupported(param));
+            }
+
+            let mut region = pvcam_sys::rgn_type {
+                s1: 0,
+                s2: 0,
+                sbin: 1,
+                p1: 0,
+                p2: 0,
+                pbin: 1,
+            };
+            unsafe {
+                Self::sdk_bool(
+                    pvcam_sys::pl_get_param(
+                        handle.0 as pvcam_sys::int16,
+                        pvcam_sys::PARAM_ROI,
+                        Self::attr_current(),
+                        &mut region as *mut pvcam_sys::rgn_type as *mut c_void,
+                    ),
+                    "pl_get_param (ROI)",
+                )?;
+            }
+
+            Ok(PxRegion {
+                s1: region.s1,
+                s2: region.s2,
+                sbin: region.sbin,
+                p1: region.p1,
+                p2: region.p2,
+                pbin: region.pbin,
+            })
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn set_param_region(
         &self,
         handle: &CameraHandle,
         param: PvcamParam,
-        _value: PxRegion,
+        value: PxRegion,
     ) -> Result<(), PvcamError> {
         Self::ensure_hardware_enabled("set_param_region")?;
 
@@ -632,9 +854,36 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.open_handles.contains_key(handle) {
             return Err(PvcamError::CameraNotOpen { camera: *handle });
         }
-        // TODO: Implement with pvcam-sys when feature is enabled
-        log::warn!("set_param_region({:?}) not implemented for real SDK", param);
-        Err(PvcamError::ParamNotSupported(param))
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            if !matches!(param, PvcamParam::Roi) {
+                return Err(PvcamError::ParamNotSupported(param));
+            }
+
+            let mut region = pvcam_sys::rgn_type {
+                s1: value.s1,
+                s2: value.s2,
+                sbin: value.sbin,
+                p1: value.p1,
+                p2: value.p2,
+                pbin: value.pbin,
+            };
+            unsafe {
+                Self::sdk_bool(
+                    pvcam_sys::pl_set_param(
+                        handle.0 as pvcam_sys::int16,
+                        pvcam_sys::PARAM_ROI,
+                        &mut region as *mut pvcam_sys::rgn_type as *mut c_void,
+                    ),
+                    "pl_set_param (ROI)",
+                )?;
+            }
+            Ok(())
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            unreachable!("pvcam_hardware feature gate mismatch");
+        }
     }
 
     fn start_acquisition(
@@ -653,23 +902,113 @@ impl PvcamSdk for RealPvcamSdk {
         if inner.active_acquisitions.contains_key(&handle) {
             return Err(PvcamError::AcquisitionInProgress(handle));
         }
+        drop(inner);
 
-        let (tx, rx) = mpsc::channel(16); // Buffer size of 16 frames
-        let tx_box = Box::new(tx);
-        let context = Box::into_raw(tx_box) as *mut c_void;
+        let (tx_sender, rx) = mpsc::channel(16);
+        #[cfg(not(feature = "pvcam_hardware"))]
+        let _ = &tx_sender; // suppress unused warnings when feature disabled
 
         #[cfg(feature = "pvcam_hardware")]
-        {
-            // TODO: Replace with actual SDK calls
-            // unsafe {
-            //     pl_exp_setup_cont(...);
-            //     pl_exp_register_callback_ex3(handle.0, pvcam_sys::PL_CALLBACK_EVENT_EOF, Some(pvcam_frame_callback), context);
-            //     pl_exp_start_cont(...);
-            // }
-            log::info!("Real PVCAM acquisition started (simulation)");
+        let context_ptr = {
+            let tx_box = Box::new(tx_sender);
+            Box::into_raw(tx_box) as *mut c_void
+        };
+
+        #[cfg(feature = "pvcam_hardware")]
+        let acquisition_state = {
+            let hcam = handle.0 as pvcam_sys::int16;
+
+            let setup_result: Result<AcquisitionState, PvcamError> = (|| {
+                let mut region = Self::current_roi(hcam)?;
+                let pixel_count = Self::region_pixel_count(&region);
+                let exposure_ms = self.get_param_u16(&handle, PvcamParam::Exposure)? as u32;
+                let exposure_us = exposure_ms.saturating_mul(1000);
+
+                let mut bytes_required: u32 = 0;
+                unsafe {
+                    Self::sdk_bool(
+                        pvcam_sys::pl_exp_setup_cont(
+                            hcam,
+                            1,
+                            &mut region,
+                            pvcam_sys::TIMED_MODE,
+                            exposure_us,
+                            &mut bytes_required,
+                            pvcam_sys::CIRC_OVERWRITE,
+                        ),
+                        "pl_exp_setup_cont",
+                    )?;
+
+                    if let Err(e) = Self::sdk_bool(
+                        pvcam_sys::pl_cam_register_callback_ex3(
+                            hcam,
+                            pvcam_sys::PL_CALLBACK_EOF,
+                            Some(pvcam_frame_callback),
+                            context_ptr,
+                        ),
+                        "pl_cam_register_callback_ex3",
+                    ) {
+                        let _ = pvcam_sys::pl_exp_uninit_seq(hcam);
+                        return Err(e);
+                    }
+                }
+
+                let buffer_len = usize::max(
+                    (bytes_required as usize) / std::mem::size_of::<u16>(),
+                    pixel_count,
+                );
+                let mut frame_buffer = vec![0u16; buffer_len];
+
+                let start_result = unsafe {
+                    Self::sdk_bool(
+                        pvcam_sys::pl_exp_start_cont(
+                            hcam,
+                            frame_buffer.as_mut_ptr() as *mut c_void,
+                            buffer_len as u32,
+                        ),
+                        "pl_exp_start_cont",
+                    )
+                };
+
+                if let Err(err) = start_result {
+                    unsafe {
+                        let _ =
+                            pvcam_sys::pl_cam_deregister_callback(hcam, pvcam_sys::PL_CALLBACK_EOF);
+                        let _ = pvcam_sys::pl_exp_uninit_seq(hcam);
+                    }
+                    return Err(err);
+                }
+
+                Ok(AcquisitionState {
+                    callback_context: SendPtr(context_ptr),
+                    frame_buffer,
+                })
+            })();
+
+            match setup_result {
+                Ok(state) => state,
+                Err(err) => {
+                    unsafe {
+                        drop(Box::from_raw(context_ptr as *mut mpsc::Sender<Frame>));
+                    }
+                    return Err(err);
+                }
+            }
+        };
+
+        let mut inner = self.inner.lock().unwrap();
+        if inner.active_acquisitions.contains_key(&handle) {
+            return Err(PvcamError::AcquisitionInProgress(handle));
         }
 
-        inner.active_acquisitions.insert(handle, SendPtr(context));
+        #[cfg(feature = "pvcam_hardware")]
+        inner.active_acquisitions.insert(handle, acquisition_state);
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let _ = &inner; // suppress unused warning when feature disabled
+        }
+        #[cfg(feature = "pvcam_hardware")]
+        log::info!("PVCAM acquisition started for handle {:?}", handle);
 
         let guard = AcquisitionGuard {
             sdk: self.clone(),
@@ -685,27 +1024,83 @@ impl PvcamSdk for RealPvcamSdk {
         if !inner.is_initialized {
             return Err(PvcamError::NotInitialized);
         }
+        if let Some(state) = inner.active_acquisitions.remove(&handle) {
+            drop(inner);
 
-        if let Some(SendPtr(context)) = inner.active_acquisitions.remove(&handle) {
-            #[cfg(feature = "pvcam-sdk")]
-            {
-                // TODO: Replace with actual SDK calls
-                // unsafe {
-                //     pl_exp_stop_cont(handle.0, pvcam_sys::CCS_HALT);
-                //     pl_exp_finish_seq(handle.0, std::ptr::null_mut(), 0);
-                // }
-                log::info!("Real PVCAM acquisition stopped (simulation)");
+            #[cfg(feature = "pvcam_hardware")]
+            let stop_error = {
+                let hcam = handle.0 as pvcam_sys::int16;
+                let mut error: Option<PvcamError> = None;
+
+                unsafe {
+                    if let Err(e) = Self::sdk_bool(
+                        pvcam_sys::pl_exp_stop_cont(hcam, pvcam_sys::CCS_CLEAR),
+                        "pl_exp_stop_cont",
+                    ) {
+                        error = Some(e);
+                    }
+                    if let Err(e) = Self::sdk_bool(
+                        pvcam_sys::pl_exp_abort(hcam, pvcam_sys::CCS_CLEAR),
+                        "pl_exp_abort",
+                    ) {
+                        if error.is_none() {
+                            error = Some(e);
+                        }
+                    }
+                    if let Err(e) = Self::sdk_bool(
+                        pvcam_sys::pl_exp_finish_seq(
+                            hcam,
+                            state.frame_buffer.as_ptr() as *mut c_void,
+                            0,
+                        ),
+                        "pl_exp_finish_seq",
+                    ) {
+                        if error.is_none() {
+                            error = Some(e);
+                        }
+                    }
+                    if let Err(e) =
+                        Self::sdk_bool(pvcam_sys::pl_exp_uninit_seq(hcam), "pl_exp_uninit_seq")
+                    {
+                        if error.is_none() {
+                            error = Some(e);
+                        }
+                    }
+                    if let Err(e) = Self::sdk_bool(
+                        pvcam_sys::pl_cam_deregister_callback(hcam, pvcam_sys::PL_CALLBACK_EOF),
+                        "pl_cam_deregister_callback",
+                    ) {
+                        if error.is_none() {
+                            error = Some(e);
+                        }
+                    }
+                }
+
+                error
+            };
+
+            let SendPtr(context) = state.callback_context;
+            if !context.is_null() {
+                let tx_box = unsafe { Box::from_raw(context as *mut mpsc::Sender<Frame>) };
+                drop(tx_box);
             }
 
-            // Reconstitute the Box<Sender> from the raw pointer and drop it.
-            // This closes the channel and deallocates the sender.
-            let tx_box = unsafe { Box::from_raw(context as *mut mpsc::Sender<Frame>) };
-            drop(tx_box);
-        } else if !inner.open_handles.contains_key(&handle) {
-            return Err(PvcamError::CameraNotOpen { camera: handle });
-        }
+            #[cfg(feature = "pvcam_hardware")]
+            if let Some(err) = stop_error {
+                return Err(err);
+            }
 
-        Ok(())
+            #[cfg(feature = "pvcam_hardware")]
+            log::info!("PVCAM acquisition stopped for handle {:?}", handle);
+
+            Ok(())
+        } else {
+            if inner.open_handles.contains_key(&handle) {
+                Ok(())
+            } else {
+                Err(PvcamError::CameraNotOpen { camera: handle })
+            }
+        }
     }
 }
 
