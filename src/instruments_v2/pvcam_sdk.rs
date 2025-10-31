@@ -44,6 +44,15 @@ pub struct Frame {
     pub roi: (u16, u16, u16, u16),
 }
 
+#[cfg(feature = "pvcam_hardware")]
+struct FrameInfoMetadata {
+    hardware_timestamp: Option<i64>,
+    exposure_ms: f64,
+    readout_ms: Option<f64>,
+    sensor_temp_c: Option<f64>,
+    roi: (u16, u16, u16, u16),
+}
+
 /// Represents possible errors that can occur during PVCAM SDK operations.
 #[derive(Debug, thiserror::Error)]
 pub enum PvcamError {
@@ -495,29 +504,72 @@ unsafe extern "C" fn pvcam_frame_callback(
     let frame_data =
         std::slice::from_raw_parts(frame_info.buffer as *const u16, pixel_count).to_vec();
 
-    // Extract metadata from FRAME_INFO
-    // TODO: Replace with actual FRAME_INFO field access when pvcam_hardware feature is available
-    let hardware_timestamp = None; // frame_info.timeStamp as i64 in microseconds
+    let metadata = extract_frame_info_metadata(frame_info);
     let software_timestamp = chrono::Utc::now();
-    let exposure_time_ms = 0.0; // Extract from frame_info.expTime or camera state
-    let readout_time_ms = None; // Calculate from frame timing if available
-    let sensor_temperature_c = None; // Query from camera params if available
-    let roi = (0, 0, frame_info.width, frame_info.height); // Extract from frame_info ROI fields
 
     let frame = Frame {
         data: frame_data,
         frame_number: frame_info.frameNr,
-        hardware_timestamp,
+        hardware_timestamp: metadata.hardware_timestamp,
         software_timestamp,
-        exposure_time_ms,
-        readout_time_ms,
-        sensor_temperature_c,
-        roi,
+        exposure_time_ms: metadata.exposure_ms,
+        readout_time_ms: metadata.readout_ms,
+        sensor_temperature_c: metadata.sensor_temp_c,
+        roi: metadata.roi,
     };
 
     // Use try_send to avoid blocking the SDK callback thread.
     if let Err(e) = sender.try_send(frame) {
         log::warn!("Failed to send frame from PVCAM callback: {}", e);
+    }
+}
+
+#[cfg(feature = "pvcam_hardware")]
+fn extract_frame_info_metadata(frame_info: &pvcam_sys::FRAME_INFO) -> FrameInfoMetadata {
+    unsafe { frame_info_metadata_from_hw(frame_info) }
+}
+
+#[cfg(feature = "pvcam_hardware")]
+#[allow(non_snake_case)]
+unsafe fn frame_info_metadata_from_hw(frame_info: &pvcam_sys::FRAME_INFO) -> FrameInfoMetadata {
+    let hardware_timestamp = if frame_info.timeStamp != 0 {
+        Some(frame_info.timeStamp as i64)
+    } else {
+        None
+    };
+
+    let exposure_ms = if frame_info.expTime > 0 {
+        frame_info.expTime as f64 / 1000.0
+    } else {
+        0.0
+    };
+
+    let readout_ms = if frame_info.readoutTime > 0 {
+        Some(frame_info.readoutTime as f64 / 1000.0)
+    } else {
+        None
+    };
+
+    let sensor_temp_c = if frame_info.sensorTemp != 0 {
+        Some(frame_info.sensorTemp as f64 / 100.0)
+    } else {
+        None
+    };
+
+    let s1 = frame_info.roi.s1;
+    let s2 = frame_info.roi.s2;
+    let p1 = frame_info.roi.p1;
+    let p2 = frame_info.roi.p2;
+    let width = s2.saturating_sub(s1).saturating_add(1);
+    let height = p2.saturating_sub(p1).saturating_add(1);
+    let roi = (s1, p1, width, height);
+
+    FrameInfoMetadata {
+        hardware_timestamp,
+        exposure_ms,
+        readout_ms,
+        sensor_temp_c,
+        roi,
     }
 }
 

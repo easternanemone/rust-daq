@@ -541,19 +541,41 @@ impl PVCAMCameraV3 {
                 }
 
                 // Get current parameters
-                let current_roi = roi.read().await.get();
                 let current_binning = binning.read().await.get();
                 let current_gain = gain.read().await.get();
 
+                let frame_roi = Roi {
+                    x: frame.roi.0 as u32,
+                    y: frame.roi.1 as u32,
+                    width: frame.roi.2 as u32,
+                    height: frame.roi.3 as u32,
+                };
+
+                {
+                    let mut roi_param = roi.write().await;
+                    if roi_param.get() != frame_roi {
+                        if let Err(err) = roi_param.set(frame_roi).await {
+                            log::warn!("PVCAM '{}': failed to sync ROI parameter: {}", id, err);
+                        }
+                    }
+                }
+
                 // Create measurement from frame
+                let effective_roi = frame_roi;
+                let effective_exposure_ms = if frame.exposure_time_ms > 0.0 {
+                    frame.exposure_time_ms
+                } else {
+                    exposure_ms.read().await.get()
+                };
+
                 let measurement = Measurement::Image {
                     name: format!("{}_frame", id),
-                    width: current_roi.width,
-                    height: current_roi.height,
+                    width: effective_roi.width,
+                    height: effective_roi.height,
                     buffer: PixelBuffer::U16(frame.data),
                     unit: "counts".to_string(),
                     metadata: ImageMetadata {
-                        exposure_ms: Some(frame.exposure_time_ms),
+                        exposure_ms: Some(effective_exposure_ms),
                         gain: Some(current_gain as f64),
                         binning: Some(current_binning),
                         temperature_c: frame.sensor_temperature_c,
