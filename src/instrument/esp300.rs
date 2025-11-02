@@ -139,17 +139,14 @@ impl Instrument for ESP300 {
             .and_then(|v| v.as_integer())
             .unwrap_or(19200) as u32;
 
-        // Open serial port with hardware flow control
-        let mut port = serialport::new(port_name, baud_rate)
+        // Open serial port with NO flow control
+        // NOTE: Despite documentation suggesting RTS/CTS, hardware testing confirmed
+        // that ESP300 v3.04 works correctly with FlowControl::None (validated 2025-11-02)
+        let port = serialport::new(port_name, baud_rate)
             .timeout(std::time::Duration::from_millis(500))
+            .flow_control(serialport::FlowControl::None)
             .open()
             .with_context(|| format!("Failed to open serial port '{}' for ESP300", port_name))?;
-
-        // ESP300 requires hardware flow control (RTS/CTS)
-        port.write_request_to_send(true)
-            .context("Failed to enable RTS")?;
-        port.write_data_terminal_ready(true)
-            .context("Failed to enable DTR")?;
 
         self.adapter = Some(SerialAdapter::new(port));
 

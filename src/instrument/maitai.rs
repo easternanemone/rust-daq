@@ -116,10 +116,10 @@ impl Instrument for MaiTai {
             .and_then(|v| v.as_integer())
             .unwrap_or(9600) as u32;
 
-        // Open serial port
+        // MaiTai uses software flow control (XON/XOFF) - validated 2025-11-02
         let port = serialport::new(port_name, baud_rate)
             .timeout(std::time::Duration::from_millis(500))
-            .flow_control(serialport::FlowControl::Hardware) // CRITICAL: Enable RTS/CTS for instrument communication
+            .flow_control(serialport::FlowControl::Software)
             .open()
             .with_context(|| format!("Failed to open serial port '{}' for MaiTai", port_name))?;
 
