@@ -749,6 +749,7 @@ where
                                 match cmd.as_str() {
                                     "start" | "start_acquisition" => daq_core::InstrumentCommand::StartAcquisition,
                                     "stop" | "stop_acquisition" => daq_core::InstrumentCommand::StopAcquisition,
+                                    "snap" | "snap_frame" => daq_core::InstrumentCommand::SnapFrame,
                                     "recover" => daq_core::InstrumentCommand::Recover,
                                     _ => {
                                         log::warn!(

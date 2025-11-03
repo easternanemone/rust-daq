@@ -339,6 +339,9 @@ pub enum InstrumentCommand {
     /// Stop data acquisition
     StopAcquisition,
 
+    /// Capture a single frame (cameras only)
+    SnapFrame,
+
     /// Set a parameter (instrument-specific)
     SetParameter {
         name: String,

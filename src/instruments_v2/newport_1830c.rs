@@ -359,6 +359,9 @@ impl Instrument for Newport1830CV2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
+            InstrumentCommand::SnapFrame => {
+                Err(anyhow::anyhow!("SnapFrame command not supported for power meter"))
+            }
         }
     }
 }

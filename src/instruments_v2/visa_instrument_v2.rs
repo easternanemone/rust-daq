@@ -1,48 +1,54 @@
-//! Generic SCPI Instrument V2 Implementation
+//! Generic VISA Instrument V2 Implementation
 //!
-//! This module provides a V2 implementation of a generic SCPI instrument
+//! This module provides a V2 implementation of a generic VISA instrument
 //! using the new three-tier architecture:
-//! - VisaAdapter for VISA communication (or SerialAdapter for serial SCPI)
+//! - VisaAdapter for VISA communication (GPIB, USB, Ethernet)
 //! - Instrument trait for state management
-//! - Flexible command execution for arbitrary SCPI commands
+//! - Flexible command execution for arbitrary VISA commands
 //!
-//! SCPI (Standard Commands for Programmable Instruments) is a standardized
-//! command set for controlling test and measurement instruments. This generic
-//! implementation supports any SCPI-compliant instrument.
+//! VISA (Virtual Instrument Software Architecture) is a standard API for
+//! communicating with test and measurement instruments. This generic
+//! implementation supports any VISA-compliant instrument.
 //!
 //! ## Configuration Example
 //!
 //! ```toml
-//! [instruments.scpi_multimeter]
-//! type = "scpi_v2"
-//! resource = "GPIB0::5::INSTR"  # or "TCPIP0::192.168.1.100::INSTR"
+//! [instruments.visa_multimeter]
+//! type = "visa_v2"
+//! resource = "GPIB0::5::INSTR"  # or "USB0::...", "TCPIP0::..."
 //! timeout_ms = 5000
-//! enable_streaming = false  # Set true to poll measurements continuously
-//! streaming_command = "MEAS:VOLT:DC?"  # Command for continuous polling
+//! enable_streaming = false
+//! streaming_command = "MEAS:VOLT:DC?"
 //! streaming_rate_hz = 1.0
 //! ```
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use chrono::Utc;
 use daq_core::{
-    Instrument, InstrumentCommand, InstrumentState, MeasurementReceiver, MeasurementSender,
+    AdapterConfig, DataPoint, Instrument, InstrumentCommand, InstrumentState, Measurement,
+    MeasurementReceiver, MeasurementSender,
 };
-use log::info;
+use log::{debug, error, info};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
-/// Generic SCPI instrument implementation using VISA adapter
-pub struct ScpiInstrumentV2 {
+use crate::adapters::visa_adapter::VisaAdapter;
+
+/// Generic VISA instrument implementation using VISA adapter
+pub struct VisaInstrumentV2 {
     /// Instrument identifier
     id: String,
 
-    /// VISA adapter for command/response (Arc<Mutex> for shared mutable access)
+    /// VISA adapter for communication (Arc<Mutex> for shared mutable access)
+    adapter: Arc<Mutex<VisaAdapter>>,
 
     /// Current instrument state
     state: InstrumentState,
 
-    /// Instrument identity (*IDN? response)
+    /// Cached instrument identity (*IDN? response)
     identity: Option<String>,
 
     /// Streaming configuration
@@ -59,8 +65,8 @@ pub struct ScpiInstrumentV2 {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-impl ScpiInstrumentV2 {
-    /// Create a new generic SCPI instrument with VisaAdapter and default capacity (1024)
+impl VisaInstrumentV2 {
+    /// Create a new generic VISA instrument with VisaAdapter and default capacity (1024)
     ///
     /// # Arguments
     /// * `id` - Unique instrument identifier
@@ -69,7 +75,7 @@ impl ScpiInstrumentV2 {
         Self::with_capacity(id, resource, 1024)
     }
 
-    /// Create a new generic SCPI instrument with VisaAdapter and specified capacity
+    /// Create a new generic VISA instrument with VisaAdapter and specified capacity
     ///
     /// # Arguments
     /// * `id` - Unique instrument identifier
@@ -77,12 +83,12 @@ impl ScpiInstrumentV2 {
     /// * `capacity` - Broadcast channel capacity for data distribution
     pub fn with_capacity(id: String, resource: String, capacity: usize) -> Self {
         let (tx, rx) = broadcast::channel(capacity);
+        let adapter = VisaAdapter::new(resource);
 
         Self {
             id,
-
+            adapter: Arc::new(Mutex::new(adapter)),
             state: InstrumentState::Disconnected,
-
             identity: None,
             enable_streaming: false,
             streaming_command: "MEAS:VOLT:DC?".to_string(),
@@ -98,7 +104,7 @@ impl ScpiInstrumentV2 {
     ///
     /// # Arguments
     /// * `enabled` - Enable continuous polling
-    /// * `command` - SCPI query command to poll (e.g., "MEAS:VOLT:DC?")
+    /// * `command` - VISA query command to poll (e.g., "MEAS:VOLT:DC?")
     /// * `rate_hz` - Polling rate in Hz
     pub fn with_streaming(mut self, enabled: bool, command: String, rate_hz: f64) -> Self {
         self.enable_streaming = enabled;
@@ -107,19 +113,19 @@ impl ScpiInstrumentV2 {
         self
     }
 
-    /// Send a SCPI command to the instrument
+    /// Send a VISA command to the instrument
     ///
     /// For query commands (ending with ?), returns the response.
     /// For write commands, returns an empty string.
-    pub async fn send_command(&self, _command: &str) -> Result<String> {
-        // TODO: Implement SCPI command execution
-        Ok(String::new())
+    pub async fn send_command(&self, command: &str) -> Result<String> {
+        let adapter_guard = self.adapter.lock().await;
+        adapter_guard.send_command(command).await
     }
 
-    /// Send a SCPI write command (no response expected)
-    pub async fn send_write(&self, _command: &str) -> Result<()> {
-        // TODO: Implement SCPI write command
-        Ok(())
+    /// Send a VISA write command (no response expected)
+    pub async fn send_write(&self, command: &str) -> Result<()> {
+        let adapter_guard = self.adapter.lock().await;
+        adapter_guard.send_write(command).await
     }
 
     /// Query the instrument identity (*IDN?)
@@ -129,7 +135,7 @@ impl ScpiInstrumentV2 {
             .await
             .context("Failed to query instrument identity")?;
 
-        info!("SCPI instrument '{}' identity: {}", self.id, response);
+        info!("VISA instrument '{}' identity: {}", self.id, response);
         self.identity = Some(response.clone());
         Ok(response)
     }
@@ -140,7 +146,7 @@ impl ScpiInstrumentV2 {
             .await
             .context("Failed to send *RST command")?;
 
-        info!("SCPI instrument '{}' reset", self.id);
+        info!("VISA instrument '{}' reset", self.id);
 
         // Wait for reset to complete
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -153,7 +159,7 @@ impl ScpiInstrumentV2 {
             .await
             .context("Failed to send *CLS command")?;
 
-        info!("SCPI instrument '{}' status cleared", self.id);
+        info!("VISA instrument '{}' status cleared", self.id);
         Ok(())
     }
 
@@ -180,6 +186,7 @@ impl ScpiInstrumentV2 {
 
         // Clone the Arc (not the adapter) for the spawned task
         // This shares the same connected adapter instance
+        let adapter = self.adapter.clone();
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(shutdown_tx);
@@ -189,18 +196,43 @@ impl ScpiInstrumentV2 {
             let mut interval = tokio::time::interval(interval_duration);
 
             info!(
-                "SCPI instrument '{}' polling task started at {} Hz",
+                "VISA instrument '{}' polling task started at {} Hz",
                 id, polling_rate
             );
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // Query the instrument
+                        // Query the instrument via adapter
+                        let result = {
+                            let adapter_guard = adapter.lock().await;
+                            adapter_guard.send_command(&command).await
+                        };
 
+                        match result {
+                            Ok(response) => {
+                                // Parse response as f64
+                                if let Ok(value) = response.trim().parse::<f64>() {
+                                    let datapoint = DataPoint {
+                                        timestamp: Utc::now(),
+                                        channel: id.clone(),
+                                        value,
+                                        unit: "V".to_string(), // Generic unit
+                                    };
+                                    let measurement = Measurement::Scalar(datapoint);
+                                    let _ = tx.send(measurement); // Ignore channel errors
+                                } else {
+                                    debug!("Failed to parse VISA response as f64: {}", response);
+                                }
+                            }
+                            Err(e) => {
+                                error!("VISA polling query failed: {}", e);
+                                // Continue polling despite errors
+                            }
+                        }
                     }
                     _ = &mut shutdown_rx => {
-                        info!("SCPI instrument '{}' polling task shutting down", id);
+                        info!("VISA instrument '{}' polling task shutting down", id);
                         break;
                     }
                 }
@@ -210,13 +242,13 @@ impl ScpiInstrumentV2 {
 }
 
 #[async_trait]
-impl Instrument for ScpiInstrumentV2 {
+impl Instrument for VisaInstrumentV2 {
     fn id(&self) -> &str {
         &self.id
     }
 
     fn instrument_type(&self) -> &str {
-        "scpi_v2"
+        "visa_v2"
     }
 
     fn state(&self) -> InstrumentState {
@@ -228,18 +260,28 @@ impl Instrument for ScpiInstrumentV2 {
             return Err(anyhow!("Cannot initialize from state: {:?}", self.state));
         }
 
-        info!("Initializing SCPI instrument '{}'", self.id);
+        info!("Initializing VISA instrument '{}'", self.id);
         self.state = InstrumentState::Connecting;
 
-        // Connect hardware adapter
+        // Connect hardware adapter with empty config (adapter already has resource string)
+        let config = AdapterConfig::default();
+        self.adapter
+            .lock()
+            .await
+            .connect(&config)
+            .await
+            .context("Failed to connect VISA adapter")?;
+
+        // Query identity
+        self.query_identity().await?;
 
         self.state = InstrumentState::Ready;
-        info!("SCPI instrument '{}' initialized successfully", self.id);
+        info!("VISA instrument '{}' initialized successfully", self.id);
         Ok(())
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        info!("Shutting down SCPI instrument '{}'", self.id);
+        info!("Shutting down VISA instrument '{}'", self.id);
         self.state = InstrumentState::ShuttingDown;
 
         // Stop acquisition task if running
@@ -252,29 +294,32 @@ impl Instrument for ScpiInstrumentV2 {
         }
 
         // Disconnect adapter
+        self.adapter.lock().await.disconnect().await?;
 
         self.state = InstrumentState::Disconnected;
-        info!("SCPI instrument '{}' shut down successfully", self.id);
+        info!("VISA instrument '{}' shut down successfully", self.id);
         Ok(())
     }
 
     async fn recover(&mut self) -> Result<()> {
         match &self.state {
             InstrumentState::Error(daq_error) if daq_error.can_recover => {
-                info!("Attempting to recover SCPI instrument '{}'", self.id);
+                info!("Attempting to recover VISA instrument '{}'", self.id);
 
                 // Disconnect and wait
-
+                let _ = self.adapter.lock().await.disconnect().await;
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Reconnect
+                let config = AdapterConfig::default();
+                self.adapter.lock().await.connect(&config).await?;
 
                 // Re-query identity
                 self.query_identity().await?;
 
                 self.state = InstrumentState::Ready;
 
-                info!("SCPI instrument '{}' recovered successfully", self.id);
+                info!("VISA instrument '{}' recovered successfully", self.id);
                 Ok(())
             }
             InstrumentState::Error(_) => Err(anyhow!("Cannot recover from unrecoverable error")),
@@ -293,16 +338,16 @@ impl Instrument for ScpiInstrumentV2 {
             InstrumentCommand::Shutdown => self.shutdown().await,
             InstrumentCommand::Recover => self.recover().await,
             InstrumentCommand::SetParameter { name, value } => {
-                // Generic parameter setting via SCPI command
-                let scpi_cmd = value
+                // Generic parameter setting via VISA command
+                let visa_cmd = value
                     .as_str()
-                    .ok_or_else(|| anyhow!("Parameter value must be a SCPI command string"))?;
+                    .ok_or_else(|| anyhow!("Parameter value must be a VISA command string"))?;
 
                 info!(
-                    "Setting SCPI parameter '{}' with command: {}",
-                    name, scpi_cmd
+                    "Setting VISA parameter '{}' with command: {}",
+                    name, visa_cmd
                 );
-                self.send_command(scpi_cmd).await?;
+                self.send_command(visa_cmd).await?;
                 Ok(())
             }
             InstrumentCommand::GetParameter { name } => {
@@ -311,15 +356,12 @@ impl Instrument for ScpiInstrumentV2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
-            InstrumentCommand::SnapFrame => {
-                Err(anyhow::anyhow!("SnapFrame command not supported for SCPI instrument"))
-            }
         }
     }
 }
 
-// Additional SCPI-specific methods
-impl ScpiInstrumentV2 {
+// Additional VISA-specific methods
+impl VisaInstrumentV2 {
     /// Start continuous measurement streaming
     async fn start_streaming(&mut self) -> Result<()> {
         if self.state != InstrumentState::Ready {
@@ -338,7 +380,7 @@ impl ScpiInstrumentV2 {
         self.spawn_polling_task();
         self.state = InstrumentState::Acquiring;
 
-        info!("SCPI instrument '{}' started streaming", self.id);
+        info!("VISA instrument '{}' started streaming", self.id);
         Ok(())
     }
 
@@ -358,7 +400,7 @@ impl ScpiInstrumentV2 {
         }
 
         self.state = InstrumentState::Ready;
-        info!("SCPI instrument '{}' stopped streaming", self.id);
+        info!("VISA instrument '{}' stopped streaming", self.id);
         Ok(())
     }
 
@@ -367,7 +409,7 @@ impl ScpiInstrumentV2 {
         self.identity.as_deref()
     }
 
-    /// Execute a SCPI query and return the response
+    /// Execute a VISA query and return the response
     pub async fn query(&self, command: &str) -> Result<String> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
             return Err(anyhow!("Cannot query from state: {:?}", self.state));
@@ -376,7 +418,7 @@ impl ScpiInstrumentV2 {
         self.send_command(command).await
     }
 
-    /// Execute a SCPI write command
+    /// Execute a VISA write command
     pub async fn write(&mut self, command: &str) -> Result<()> {
         if self.state != InstrumentState::Ready && self.state != InstrumentState::Acquiring {
             return Err(anyhow!("Cannot write from state: {:?}", self.state));
@@ -391,26 +433,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scpi_creation() {
+    fn test_visa_creation() {
         let instrument =
-            ScpiInstrumentV2::new("test_scpi".to_string(), "GPIB0::1::INSTR".to_string());
+            VisaInstrumentV2::new("test_visa".to_string(), "GPIB0::1::INSTR".to_string());
 
-        assert_eq!(instrument.id(), "test_scpi");
-        assert_eq!(instrument.instrument_type(), "scpi_v2");
+        assert_eq!(instrument.id(), "test_visa");
+        assert_eq!(instrument.instrument_type(), "visa_v2");
         assert_eq!(instrument.state(), InstrumentState::Disconnected);
 
         assert!(!instrument.enable_streaming);
     }
 
     #[test]
-    fn test_scpi_with_streaming() {
-        let instrument = ScpiInstrumentV2::new(
-            "test_scpi".to_string(),
+    fn test_visa_with_streaming() {
+        let instrument = VisaInstrumentV2::new(
+            "test_visa".to_string(),
             "TCPIP0::192.168.1.100::INSTR".to_string(),
         )
         .with_streaming(true, "MEAS:CURR:DC?".to_string(), 5.0);
 
-        assert_eq!(instrument.id(), "test_scpi");
+        assert_eq!(instrument.id(), "test_visa");
         assert!(instrument.enable_streaming);
         assert_eq!(instrument.streaming_command, "MEAS:CURR:DC?");
         assert_eq!(instrument.streaming_rate_hz, 5.0);
@@ -418,8 +460,8 @@ mod tests {
 
     #[test]
     fn test_identity_storage() {
-        let mut instrument = ScpiInstrumentV2::new(
-            "test_scpi".to_string(),
+        let mut instrument = VisaInstrumentV2::new(
+            "test_visa".to_string(),
             "USB0::0x1234::0x5678::SERIAL::INSTR".to_string(),
         );
 
@@ -438,7 +480,7 @@ mod tests {
     #[test]
     fn test_state_transitions() {
         let instrument =
-            ScpiInstrumentV2::new("test_scpi".to_string(), "GPIB0::5::INSTR".to_string());
+            VisaInstrumentV2::new("test_visa".to_string(), "GPIB0::5::INSTR".to_string());
 
         // Starts disconnected
         assert_eq!(instrument.state(), InstrumentState::Disconnected);

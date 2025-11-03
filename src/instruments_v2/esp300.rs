@@ -508,6 +508,9 @@ impl Instrument for ESP300V2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
+            InstrumentCommand::SnapFrame => {
+                Err(anyhow::anyhow!("SnapFrame command not supported for motion controller"))
+            }
         }
     }
 }

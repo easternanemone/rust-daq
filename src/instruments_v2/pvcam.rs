@@ -371,6 +371,14 @@ impl Instrument for PVCAMInstrumentV2 {
             InstrumentCommand::Shutdown => self.shutdown().await,
             InstrumentCommand::StartAcquisition => self.start_live().await,
             InstrumentCommand::StopAcquisition => self.stop_live().await,
+            InstrumentCommand::SnapFrame => {
+                let image = self.snap().await?;
+                let measurement = Arc::new(Measurement::Image(image));
+                if let Err(e) = self.measurement_tx.send(measurement) {
+                    log::error!("Failed to broadcast snap frame: {}", e);
+                }
+                Ok(())
+            }
             InstrumentCommand::SetParameter { name, value } => match name.as_str() {
                 "exposure_ms" => {
                     if let Some(ms) = value.as_f64() {

@@ -419,7 +419,14 @@ impl Instrument for ElliptecV2 {
                 }
                 Ok(())
             }
-            _ => Ok(()),
+            InstrumentCommand::GetParameter { name } => {
+                info!("Get parameter request for '{}' (not implemented)", name);
+                Ok(())
+            }
+            InstrumentCommand::Recover => self.recover().await,
+            InstrumentCommand::SnapFrame => {
+                Err(anyhow::anyhow!("SnapFrame command not supported for rotator"))
+            }
         }
     }
 

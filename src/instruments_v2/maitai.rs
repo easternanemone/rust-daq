@@ -395,6 +395,9 @@ impl Instrument for MaiTaiV2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
+            InstrumentCommand::SnapFrame => {
+                Err(anyhow::anyhow!("SnapFrame command not supported for tunable laser"))
+            }
         }
     }
 }
