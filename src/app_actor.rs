@@ -101,7 +101,7 @@ use std::{collections::HashMap, time::Duration};
 use tokio::{
     runtime::Runtime,
     sync::{mpsc, Mutex},
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
 };
 
 /// Central actor that owns and manages all DAQ state.
@@ -144,6 +144,9 @@ where
     processor_registry: Arc<ProcessorRegistry>,
     module_registry: Arc<crate::modules::ModuleRegistry<M>>,
     pub instruments: HashMap<String, InstrumentHandle>,
+    /// JoinSet for monitoring instrument task lifecycle (bd-6ae0)
+    /// Allows detection of crashed/completed tasks for automatic cleanup
+    instrument_tasks: JoinSet<(String, Result<()>)>,
     modules: HashMap<String, Arc<Mutex<Box<dyn Module>>>>,
     pub dependency_graph: DependencyGraph,
     data_distributor: Arc<DataDistributor<Arc<Measurement>>>,
@@ -214,6 +217,7 @@ where
             processor_registry,
             module_registry,
             instruments: HashMap::new(),
+            instrument_tasks: JoinSet::new(),
             modules: HashMap::new(),
             dependency_graph: DependencyGraph::new(),
             data_distributor,
@@ -262,9 +266,12 @@ where
             drop(manager_guard);
         }
 
-        while let Some(command) = command_rx.recv().await {
-            match command {
-                DaqCommand::SpawnInstrument { id, response } => {
+        loop {
+            tokio::select! {
+                // Handle incoming commands
+                Some(command) = command_rx.recv() => {
+                    match command {
+                        DaqCommand::SpawnInstrument { id, response } => {
                     let result = self.spawn_instrument(&id).await;
                     let _ = response.send(result);
                 }
@@ -432,11 +439,35 @@ where
                     let _ = response.send(deps);
                 }
 
-                DaqCommand::Shutdown { response } => {
-                    info!("Shutdown command received");
-                    let result = self.shutdown().await;
-                    let _ = response.send(result);
-                    break; // Exit event loop
+                        DaqCommand::Shutdown { response } => {
+                            info!("Shutdown command received");
+                            let result = self.shutdown().await;
+                            let _ = response.send(result);
+                            break; // Exit event loop
+                        }
+                    }
+                }
+
+                // Monitor instrument task completion/crashes (bd-6ae0)
+                Some(Ok((instrument_id, result))) = self.instrument_tasks.join_next() => {
+                    match result {
+                        Ok(_) => {
+                            info!("Instrument '{}' task completed, cleaning up handle", instrument_id);
+                        }
+                        Err(e) => {
+                            error!("Instrument '{}' task crashed: {}", instrument_id, e);
+                        }
+                    }
+                    // Remove stale handle to allow respawn
+                    if let Some(_handle) = self.instruments.remove(&instrument_id) {
+                        info!("Removed stale handle for instrument '{}'", instrument_id);
+                    }
+                }
+
+                // Handle channel closed (no more commands)
+                else => {
+                    info!("Command channel closed, shutting down actor");
+                    break;
                 }
             }
         }
@@ -801,12 +832,31 @@ where
             Ok(())
         });
 
+        // Clone the abort handle for lifecycle monitoring (bd-6ae0)
+        let abort_handle = task.abort_handle();
+        let monitor_id = id.to_string();
+
         let handle = InstrumentHandle {
             task,
             command_tx,
             capabilities,
         };
         self.instruments.insert(id.to_string(), handle);
+
+        // Spawn monitoring task to detect completion/crashes (bd-6ae0)
+        // Uses abort handle to check if task is still running
+        self.instrument_tasks.spawn(async move {
+            // Poll abort handle - when task completes, this will detect it
+            // This is a lightweight way to monitor without awaiting the actual task
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if abort_handle.is_finished() {
+                    break;
+                }
+            }
+            // Task completed or was aborted
+            (monitor_id, Ok(()))
+        });
 
         info!("V2 instrument '{}' spawned successfully", id);
         Ok(())
