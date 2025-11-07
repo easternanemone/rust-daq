@@ -59,13 +59,11 @@
 //! # let settings = rust_daq::config::Settings::default();
 //! # let instrument_registry = std::sync::Arc::new(rust_daq::instrument::InstrumentRegistry::new());
 //! # let processor_registry = std::sync::Arc::new(rust_daq::data::registry::ProcessorRegistry::new());
-//! # let log_buffer = rust_daq::log_capture::LogBuffer::new();
 //! # let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new()?);
 //! let actor = DaqManagerActor::new(
 //!     settings,
 //!     instrument_registry,
 //!     processor_registry,
-//!     log_buffer,
 //!     runtime,
 //! )?;
 //! tokio::spawn(actor.run(cmd_rx));
@@ -82,10 +80,11 @@ use crate::{
     config::{dependencies::DependencyGraph, versioning::VersionManager, Settings},
     core::{InstrumentHandle, MeasurementProcessor},
     data::registry::ProcessorRegistry,
-    instrument::InstrumentRegistry,
+    instrument::{
+        mock_v3::{MockCameraV3, MockPowerMeterV3},
+        InstrumentRegistry,
+    },
     instrument_manager_v3::InstrumentManagerV3,
-    instruments_v2::{mock_instrument::MockInstrumentV2, pvcam::PVCAMInstrumentV2},
-    log_capture::LogBuffer,
     measurement::{DataDistributor, DataDistributorConfig, Measure, SubscriberMetricsSnapshot},
     messages::{DaqCommand, SpawnError},
     metadata::Metadata,
@@ -150,7 +149,6 @@ where
     modules: HashMap<String, Arc<Mutex<Box<dyn Module>>>>,
     pub dependency_graph: DependencyGraph,
     data_distributor: Arc<DataDistributor<Arc<Measurement>>>,
-    log_buffer: LogBuffer,
     metadata: Metadata,
     writer_task: Option<JoinHandle<Result<()>>>,
     writer_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -178,7 +176,6 @@ where
     /// - `settings`: Application configuration (instruments, storage, etc.)
     /// - `instrument_registry`: Factory for creating instrument instances
     /// - `processor_registry`: Factory for creating data processors
-    /// - `log_buffer`: Shared buffer for application logs
     /// - `runtime`: Tokio runtime handle for spawning instrument tasks
     pub fn new(
         settings: Settings,
@@ -186,7 +183,6 @@ where
         instrument_registry_v2: Arc<crate::instrument::InstrumentRegistryV2>,
         processor_registry: Arc<ProcessorRegistry>,
         module_registry: Arc<crate::modules::ModuleRegistry<M>>,
-        log_buffer: LogBuffer,
         runtime: Arc<Runtime>,
     ) -> Result<Self> {
         let distributor_cfg = &settings.application.data_distributor;
@@ -202,13 +198,13 @@ where
         std::fs::create_dir_all(".daq/config_versions")?;
         let version_manager = VersionManager::new(".daq/config_versions".into());
 
-        // V3 Instrument Manager Initialization (Phase 3)
-        // DISABLED: V3 instruments removed as part of Phase 1 (bd-cacd)
-        // V3 architecture will be reconsidered after V2 migration complete
-        let instrument_manager_v3 = None;
-
-        // TODO(Phase 3): Re-enable V3 architecture after V2 migration complete
-        // See docs/V2_MIGRATION_ROADMAP.md Phase 3
+        // V3 Instrument Manager Initialization (Phase 3 vertical slice)
+        let mut manager_v3 = InstrumentManagerV3::new();
+        manager_v3.set_data_distributor(data_distributor.clone());
+        manager_v3.set_timeouts(settings.application.timeouts.clone());
+        manager_v3.register_factory("MockCameraV3", MockCameraV3::from_config);
+        manager_v3.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+        let instrument_manager_v3 = Some(Arc::new(Mutex::new(manager_v3)));
 
         Ok(Self {
             settings,
@@ -221,7 +217,6 @@ where
             modules: HashMap::new(),
             dependency_graph: DependencyGraph::new(),
             data_distributor,
-            log_buffer,
             metadata: Metadata::default(),
             writer_task: None,
             writer_shutdown_tx: None,
@@ -322,6 +317,11 @@ where
                 DaqCommand::GetAvailableChannels { response } => {
                     let channels = self.instrument_registry.list().collect();
                     let _ = response.send(channels);
+                }
+
+                DaqCommand::GetMetrics { response } => {
+                    let metrics = self.distributor_metrics_snapshot().await;
+                    let _ = response.send(metrics);
                 }
 
                 DaqCommand::GetStorageFormat { response } => {
@@ -522,12 +522,18 @@ where
 
         // Try V2 registry first (preferred for native V2 instruments)
         if let Some(v2_instrument) = self.instrument_registry_v2.create(instrument_type, id) {
-            info!("Spawning V2 instrument '{}' of type '{}'", id, instrument_type);
+            info!(
+                "Spawning V2 instrument '{}' of type '{}'",
+                id, instrument_type
+            );
             return self.spawn_v2_instrument(id, v2_instrument).await;
         }
 
         // Fallback to V1 registry (legacy instruments)
-        info!("Spawning V1 instrument '{}' of type '{}'", id, instrument_type);
+        info!(
+            "Spawning V1 instrument '{}' of type '{}'",
+            id, instrument_type
+        );
         let mut instrument = self
             .instrument_registry
             .create(instrument_type, id)
@@ -593,8 +599,11 @@ where
                         match data_point_option {
                             Some(dp) => {
                                 // Extract data from Arc and convert M::Data to daq_core::Measurement using Into trait
-                                // This preserves the actual measurement type (Scalar/Spectrum/Image)
-                                let measurement: daq_core::Measurement = (*dp).clone().into();
+                                // Preserve instrument identity by embedding it into the channel name
+                                let mut measurement: daq_core::Measurement = (*dp).clone().into();
+                                if let daq_core::Measurement::Scalar(ref mut scalar) = measurement {
+                                    scalar.channel = format!("{}:{}", id_clone, scalar.channel);
+                                }
                                 let mut measurements = vec![Arc::new(measurement)];
 
                                 // Process through measurement processor chain
@@ -674,7 +683,9 @@ where
     async fn spawn_v2_instrument(
         &mut self,
         id: &str,
-        mut instrument: std::pin::Pin<Box<dyn daq_core::Instrument>>,
+        mut instrument: std::pin::Pin<
+            Box<dyn daq_core::Instrument + Send + Sync + 'static + Unpin>,
+        >,
     ) -> Result<(), SpawnError> {
         if self.instruments.contains_key(id) {
             return Err(SpawnError::AlreadyRunning(format!(
@@ -683,20 +694,22 @@ where
             )));
         }
 
-        // Initialize the V2 instrument
-        // SAFETY: We own the Pin<Box<>> and the instrument won't be moved
-        unsafe {
-            instrument.as_mut().get_unchecked_mut().initialize().await.map_err(|e| {
+        // Initialize the V2 instrument safely (requires Instrument: Unpin)
+        instrument
+            .as_mut()
+            .get_mut()
+            .initialize()
+            .await
+            .map_err(|e| {
                 SpawnError::ConnectionFailed(format!(
                     "Failed to initialize V2 instrument '{}': {}",
                     id, e
                 ))
             })?;
-        }
         info!("V2 instrument '{}' initialized", id);
 
         // Get measurement stream from instrument
-        let mut measurement_rx = instrument.measurement_stream();
+        let measurement_rx = instrument.as_ref().get_ref().measurement_stream();
         let data_distributor = self.data_distributor.clone();
         let id_clone = id.to_string();
 
@@ -710,6 +723,9 @@ where
         let capabilities = Vec::new();
 
         // Spawn task to handle V2 instrument lifecycle
+        let mut instrument_handle = instrument;
+        let mut measurement_rx = measurement_rx;
+
         let task: JoinHandle<Result<()>> = self.runtime.spawn(async move {
             loop {
                 tokio::select! {
@@ -810,7 +826,7 @@ where
                             _ => {
                                 // Use Pin::get_unchecked_mut() to get mutable reference
                                 // SAFETY: We own the Pin<Box<>> and the instrument won't be moved
-                                if let Err(e) = unsafe { instrument.as_mut().get_unchecked_mut().handle_command(v2_command).await } {
+                                if let Err(e) = instrument_handle.as_mut().get_mut().handle_command(v2_command).await {
                                     error!(
                                         "Failed to handle command for V2 instrument '{}': {}",
                                         id_clone, e
@@ -824,8 +840,7 @@ where
 
             // Graceful shutdown
             info!("Shutting down V2 instrument '{}'", id_clone);
-            // SAFETY: We own the Pin<Box<>> and the instrument won't be moved
-            if let Err(e) = unsafe { instrument.as_mut().get_unchecked_mut().shutdown().await } {
+            if let Err(e) = instrument_handle.as_mut().get_mut().shutdown().await {
                 error!("Error during V2 instrument '{}' shutdown: {}", id_clone, e);
             }
             info!("V2 instrument '{}' disconnected successfully", id_clone);
@@ -1647,7 +1662,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ApplicationSettings, Settings, StorageSettings};
+    use crate::config::{ApplicationSettings, Settings, StorageSettings, TimeoutSettings};
     use crate::instrument::capabilities::position_control_capability_id;
     use crate::measurement::InstrumentMeasurement;
     use crate::modules::{ModuleCapabilityRequirement, ModuleStatus};
@@ -1701,6 +1716,7 @@ mod tests {
                 broadcast_channel_capacity: 64,
                 command_channel_capacity: 16,
                 data_distributor: Default::default(),
+                timeouts: TimeoutSettings::default(),
             },
             storage: StorageSettings {
                 default_path: "./data".to_string(),
@@ -1711,13 +1727,14 @@ mod tests {
             instruments_v3: Vec::new(),
         };
 
+        let runtime = Arc::new(Runtime::new().expect("runtime"));
         let mut actor = DaqManagerActor::<InstrumentMeasurement>::new(
             settings,
             Arc::new(InstrumentRegistry::new()),
+            Arc::new(crate::instrument::InstrumentRegistryV2::new()),
             Arc::new(ProcessorRegistry::new()),
-            Arc::new(crate::modules::ModuleRegistry::new()),
-            LogBuffer::new(),
-            Arc::new(Runtime::new().expect("runtime")),
+            Arc::new(crate::modules::ModuleRegistry::<InstrumentMeasurement>::new()),
+            runtime.clone(),
         )
         .expect("actor created");
 
@@ -1731,7 +1748,7 @@ mod tests {
             .insert("module".to_string(), Arc::new(Mutex::new(module)));
 
         let (command_tx, _command_rx) = mpsc::channel(4);
-        let task = tokio::spawn(async { Ok::<(), anyhow::Error>(()) });
+        let task = runtime.spawn(async { Ok::<(), anyhow::Error>(()) });
         actor.instruments.insert(
             "stage".to_string(),
             InstrumentHandle {
@@ -1752,5 +1769,10 @@ mod tests {
             .expect("module assignment notification");
         assert_eq!(instrument_id, "stage");
         assert_eq!(capability, position_control_capability_id());
+
+        drop(actor);
+        if let Ok(rt) = Arc::try_unwrap(runtime) {
+            rt.shutdown_background();
+        }
     }
 }

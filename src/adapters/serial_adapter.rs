@@ -3,6 +3,8 @@
 //! Provides HardwareAdapter implementation for serial communication,
 //! supporting instruments like Newport 1830-C, ESP300, etc.
 
+use crate::config::TimeoutSettings;
+use crate::error::DaqError;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use daq_core::{AdapterConfig, HardwareAdapter};
@@ -50,12 +52,18 @@ impl SerialAdapter {
         Self {
             port_name,
             baud_rate,
-            timeout: Duration::from_secs(1),
+            timeout: default_serial_timeout(),
             line_terminator: "\r\n".to_string(),
             response_delimiter: '\n',
             #[cfg(feature = "instrument_serial")]
             port: None,
         }
+    }
+
+    /// Apply timeout configuration sourced from [`TimeoutSettings`].
+    pub fn with_timeout_settings(mut self, timeouts: &TimeoutSettings) -> Self {
+        self.timeout = Duration::from_millis(timeouts.serial_read_timeout_ms);
+        self
     }
 
     /// Set read timeout
@@ -85,7 +93,8 @@ impl SerialAdapter {
         let port = self
             .port
             .as_ref()
-            .ok_or_else(|| anyhow!("Serial port not connected"))?;
+            .ok_or(DaqError::SerialPortNotConnected)
+            .map_err(anyhow::Error::from)?;
 
         let command_str = format!("{}{}", command, self.line_terminator);
         let command_for_log = command.to_string(); // Clone for logging
@@ -129,7 +138,7 @@ impl SerialAdapter {
                     }
                     Ok(0) => {
                         // EOF - shouldn't happen with serial ports
-                        return Err(anyhow!("Unexpected EOF from serial port"));
+                        return Err(DaqError::SerialUnexpectedEof.into());
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                         // Port timeout is shorter than our overall timeout
@@ -152,10 +161,12 @@ impl SerialAdapter {
 
     #[cfg(not(feature = "instrument_serial"))]
     pub async fn send_command(&self, _command: &str) -> Result<String> {
-        Err(anyhow!(
-            "Serial support not enabled. Rebuild with --features instrument_serial"
-        ))
+        Err(DaqError::SerialFeatureDisabled.into())
     }
+}
+
+fn default_serial_timeout() -> Duration {
+    Duration::from_millis(TimeoutSettings::default().serial_read_timeout_ms)
 }
 
 #[async_trait]
@@ -195,9 +206,7 @@ impl HardwareAdapter for SerialAdapter {
         #[cfg(not(feature = "instrument_serial"))]
         {
             let _ = config;
-            Err(anyhow!(
-                "Serial support not enabled. Rebuild with --features instrument_serial"
-            ))
+            Err(DaqError::SerialFeatureDisabled.into())
         }
     }
 

@@ -739,6 +739,7 @@ impl PvcamSdk for RealPvcamSdk {
         }
     }
 
+    #[cfg_attr(not(feature = "pvcam_hardware"), allow(unused_variables))]
     fn get_param_u16(&self, handle: &CameraHandle, param: PvcamParam) -> Result<u16, PvcamError> {
         Self::ensure_hardware_enabled("get_param_u16")?;
 
@@ -772,6 +773,7 @@ impl PvcamSdk for RealPvcamSdk {
         }
     }
 
+    #[cfg_attr(not(feature = "pvcam_hardware"), allow(unused_variables))]
     fn set_param_u16(
         &self,
         handle: &CameraHandle,
@@ -824,6 +826,7 @@ impl PvcamSdk for RealPvcamSdk {
         Err(PvcamError::ParamNotSupported(param))
     }
 
+    #[cfg_attr(not(feature = "pvcam_hardware"), allow(unused_variables))]
     fn set_param_i16(
         &self,
         handle: &CameraHandle,
@@ -844,6 +847,7 @@ impl PvcamSdk for RealPvcamSdk {
         Err(PvcamError::ParamNotSupported(param))
     }
 
+    #[cfg_attr(not(feature = "pvcam_hardware"), allow(unused_variables))]
     fn get_param_region(
         &self,
         handle: &CameraHandle,
@@ -899,6 +903,7 @@ impl PvcamSdk for RealPvcamSdk {
         }
     }
 
+    #[cfg_attr(not(feature = "pvcam_hardware"), allow(unused_variables))]
     fn set_param_region(
         &self,
         handle: &CameraHandle,

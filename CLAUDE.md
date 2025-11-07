@@ -85,6 +85,149 @@ git status -s  # See unstaged changes
 
 **Note**: First run requires GitHub authentication via device code flow.
 
+### ast-grep Integration
+
+This project uses `ast-grep` to enforce coding standards and help with migrations. A set of project-specific rules is defined in `rust_daq_ast_grep_rules.yml`.
+
+**Installation:**
+```bash
+# macOS/Linux
+curl -L https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-$(uname -m)-$(uname -s | tr '[:upper:]' '[:lower:]').zip -o ast-grep.zip
+unzip ast-grep.zip
+chmod +x ast-grep
+sudo mv ast-grep /usr/local/bin/
+
+# Or using Homebrew (macOS)
+brew install ast-grep
+
+# Verify installation
+ast-grep --version
+```
+
+**Pre-Commit Hook Setup:**
+
+The pre-commit hook automatically runs ast-grep on staged Rust files before each commit. It blocks commits with ERROR severity violations but allows warnings and hints.
+
+```bash
+# The hook is already installed at .git/hooks/pre-commit
+# Verify it's executable:
+ls -l .git/hooks/pre-commit
+
+# If not executable, run:
+chmod +x .git/hooks/pre-commit
+```
+
+**Usage Workflow:**
+
+1. **During Development** - Run ast-grep on files you're working on:
+   ```bash
+   # Check specific file
+   ast-grep scan --config rust_daq_ast_grep_rules.yml path/to/file.rs
+   
+   # Check all Rust files
+   ast-grep scan --config rust_daq_ast_grep_rules.yml
+   
+   # Get JSON output for scripting
+   ast-grep scan --config rust_daq_ast_grep_rules.yml --json
+   ```
+
+2. **Before Commit** - The pre-commit hook runs automatically:
+   ```bash
+   git add src/gui/mod.rs
+   git commit -m "Fix blocking GUI call"
+   # Pre-commit hook runs ast-grep on staged files
+   # Commit proceeds if no ERROR violations
+   ```
+
+3. **Bypass Hook** (emergency only, not recommended):
+   ```bash
+   git commit --no-verify -m "Emergency fix"
+   ```
+
+4. **CI/CD Pipeline** - GitHub Actions runs ast-grep on all files:
+   - Fails build on ERROR severity violations
+   - Reports warnings and hints (informational only)
+   - Uploads detailed results as artifacts
+
+**Understanding Severity Levels:**
+
+- **ERROR**: Blocks commits and CI builds. Must be fixed before merging.
+  - Example: Blocking calls in GUI code (`blocking_send`/`blocking_recv`)
+  
+- **WARNING**: Informational. Doesn't block commits but should be reviewed.
+  - Example: Use of `.unwrap()` or `.expect()` outside tests
+  - Example: Hardcoded device paths or timeouts
+  
+- **HINT**: Suggestions for improvement. Purely informational.
+  - Example: Redundant else blocks after return
+  - Example: Manual shutdown logic that could use helpers
+
+**Current Rules** (18 total, 15 active):
+
+1. `find-blocking-gui-calls` (ERROR) - Detects blocking async calls in GUI code
+2. `no-unwrap-expect` (WARNING) - Flags `.unwrap()` and `.expect()` outside tests
+3. `no-hardcoded-device-paths` (WARNING) - Detects hardcoded `/dev/ttyUSB*` paths
+4. `no-hardcoded-timeouts` (WARNING) - Flags hardcoded `Duration::from_secs()`
+5. `incomplete-implementation` (INFO) - Finds "Real implementation would..." comments
+6. `use-specific-errors` (HINT) - Suggests `DaqError` over `anyhow!` string literals
+7. `no-debug-macros` (WARNING) - Prevents `println!` and `dbg!` in production
+8. `use-v2-instrument-trait` (WARNING) - Discourages V1 `Instrument` trait usage
+9. `use-v2-measurement` (WARNING) - Flags deprecated `InstrumentMeasurement`
+10. `no-v2-adapter` (INFO) - Identifies temporary `V2InstrumentAdapter` usage
+11. `use-daq-core-result` (HINT) - Prefers `daq_core::Result` over `anyhow::Result`
+12. `incomplete-migration-todo` (WARNING) - Finds V2/V3 migration TODOs
+13. `v1-feature-flag` (INFO) - Identifies V1 feature-gated code
+14. `redundant-else` (HINT) - Detects redundant else after return
+15. `manual-shutdown-logic` (HINT) - Suggests using `shutdown_task` helper
+16. `string-to-string` (HINT) - Reviews `.to_string()` on literals
+17. `unnecessary-to-owned` (HINT) - Reviews `.to_owned()` usage
+18. `std-thread-sleep-in-async` (DISABLED) - Handled by clippy instead
+
+**Troubleshooting:**
+
+- **Hook not running**: Verify `.git/hooks/pre-commit` is executable
+- **jq not found**: Install jq for detailed violation reports (`brew install jq`)
+- **ast-grep not found**: Install ast-grep (see Installation above)
+- **False positives**: Review rule in `rust_daq_ast_grep_rules.yml`, adjust severity or add to `ignores`
+
+**MCP Server (`ast-grep-mcp`)**
+
+For AI agents, the `ast-grep-mcp` server provides a powerful way to interact with the codebase using `ast-grep`.
+
+**Setup:**
+
+1.  **Install `ast-grep-mcp`:**
+    ```bash
+    pip install ast-grep-mcp
+    ```
+
+2.  **Add to MCP config:**
+    Add the following to your MCP configuration file (e.g., `~/.config/claude/config.json`):
+    ```json
+    {
+      "ast-grep": {
+        "command": "ast-grep-mcp",
+        "args": []
+      }
+    }
+    ```
+
+**Usage:**
+
+You can use the `mcp__ast_grep__*` functions to run the rules. For example, to run all rules in the project:
+
+```
+mcp__ast_grep__run --config rust_daq_ast_grep_rules.yml
+```
+
+To run a specific rule:
+
+```
+mcp__ast_grep__run --config rust_daq_ast_grep_rules.yml --rule-id no-unwrap-expect
+```
+
+The output will be in JSON format, which can be easily parsed by AI agents.
+
 ## Architecture Overview
 
 ### Core Traits System (src/core.rs)
@@ -190,6 +333,24 @@ default_path = "./data"
 ```
 
 Processors are optional per-instrument. Missing processor config means raw data flows directly to broadcast channel.
+
+### Timeout Configuration
+
+Global runtime timeouts now live under `[application.timeouts]` and map 1:1 to the `TimeoutSettings` struct (`src/config.rs`). Each field stores milliseconds, defaults to the legacy hardcoded values, and is validated at load time:
+
+```toml
+[application.timeouts]
+serial_read_timeout_ms = 1000      # Serial adapter read/write
+serial_write_timeout_ms = 1000
+scpi_command_timeout_ms = 2000     # SCPI helpers + MaiTai/ESP300
+network_client_timeout_ms = 5000   # Server actor request/response
+network_cleanup_timeout_ms = 10000 # Session cleanup interval
+instrument_connect_timeout_ms = 5000
+instrument_shutdown_timeout_ms = 6000
+instrument_measurement_timeout_ms = 5000
+```
+
+Boundaries are enforced (serial 100–30 000 ms, SCPI 500–60 000 ms, network 1 000–120 000 ms, lifecycle 1 000–60 000 ms). Missing sections are filled via `#[serde(default)]`, so older configs continue to work. These values now drive all timeout-sensitive code paths (serial adapter builders, SCPI transport helpers, instrument manager connect/shutdown, MaiTai/ESP300 drivers, experiment primitives, and the network server actor) via `settings.application.timeouts.*`.
 
 ## Feature Flags
 
@@ -467,3 +628,423 @@ bd import -i .beads/issues.jsonl
 - **bd-22 (GUI Batching)**: Optimized data dispatch to prevent GUI lag
 - **bd-20/21 (Graceful Shutdown)**: Added `InstrumentCommand::Shutdown`, async serial I/O, 5s timeout with fallback abort
 - **Measurement Enum**: Introduced `Measurement` enum to replace JSON metadata workarounds for non-scalar data
+
+# Workflow Instruction
+
+You are a coding agent focused on one codebase. Use the brv CLI to manage working context.
+Core Rules:
+
+- Start from memory. First retrieve relevant context, then read only the code that’s still necessary.
+- Keep a local playbook. playbook.json is your local memory store—update it with what you learn.
+
+## user-centric
+
+Before running any `brv` command, ask the user to choose:
+
+1. **Accept** - Review the command, then run if approved
+2. **Auto-run** - Execute immediately (remember this preference for the session)
+3. **No** - Cancel the command and continue without alternative
+4. **Custom** - Skip the command and provide different instruction
+
+Once the user chooses "Auto-run", apply that preference to all subsequent `brv` commands in this conversation without asking again.
+
+## Daily Flow
+
+1. Always attempt to retrieve relevant context from ByteRover first by running `brv retrieve`.
+
+2. Do the work with minimal code reads
+
+3. Record new or refined knowledge in the playbook
+
+    - Add only specific, actionable, contextual items; avoid secrets. Redact when in doubt.
+
+4. Sync policy (manual by default)
+
+    - Do not auto-push.
+    - When the playbook has meaningful updates, prompt the user to run the command
+    - If the user has explicitly allowed auto-push, proceed non-interactively by running `brv push -y`.
+
+## Playbook Guideline
+
+- Be specific (“Use React Query for data fetching in web modules”).
+- Be actionable (clear instruction a future agent/dev can apply).
+- Be contextual (mention module/service, constraints, links to source).
+- Include source (file + lines or commit) when possible.
+
+## CLI Usage Notes
+
+- Use --help on any command to discover flags. Provide exact arguments for the scenario.
+
+---
+# ByteRover CLI Command Reference
+
+## Memory Commands
+
+### `brv add`
+
+**Description:** Add or update a bullet in the playbook (bypasses ACE workflow for direct agent usage)
+
+**Flags:**
+
+- `-s, --section <string>`: Section name for the bullet (required)
+- `-c, --content <string>`: Content of the bullet (required)
+- `-b, --bullet-id <string>`: Bullet ID to update (optional, creates new if omitted)
+
+**Examples:**
+
+```bash
+brv add --section "Common Errors" --content "Authentication fails when token expires"
+brv add --section "Common Errors" --bullet-id "common-00001" --content "Updated: Auth fails when token expires"
+brv add -s "Best Practices" -c "Always validate user input before processing"
+```
+
+**Suggested Sections:** Common Errors, Best Practices, Strategies, Lessons Learned, Project Structure and Dependencies, Testing, Code Style and Quality, Styling and Design
+
+**Behavior:**
+
+- Warns if using non-standard section name
+- Creates new bullet with auto-generated ID if `--bullet-id` not provided
+- Updates existing bullet if `--bullet-id` matches existing bullet
+- Displays bullet ID, section, content, and tags after operation
+
+**Requirements:** Playbook must exist (run `brv init` first)
+
+---
+
+### `brv retrieve`
+
+**Description:** Retrieve memories from ByteRover Memora service and save to local ACE playbook
+
+**Flags:**
+
+- `-q, --query <string>`: Search query string (required)
+- `-n, --node-keys <string>`: Comma-separated list of node keys (file paths) to filter results
+
+**Examples:**
+
+```bash
+brv retrieve --query "authentication best practices"
+brv retrieve -q "error handling" -n "src/auth/login.ts,src/auth/oauth.ts"
+brv retrieve -q "database connection issues"
+```
+
+**Behavior:**
+
+- **Clears existing playbook first** (destructive operation)
+- Retrieves memories and related memories from Memora service
+- Combines both result sets into playbook
+- Maps memory fields: `bulletId` → `id`, `tags` → `metadata.tags`, `nodeKeys` → `metadata.relatedFiles`
+- Displays results with score, content preview (200 chars), and related file paths
+- Fail-safe: warns on save error but still displays results
+
+**Output:** Shows count of memories and related memories, displays each with score and content
+
+**Requirements:** Must be authenticated and project initialized
+
+---
+
+### `brv push`
+
+**Description:** Push playbook to ByteRover memory storage and clean up local ACE files
+
+**Flags:**
+
+- `-b, --branch <string>`: ByteRover branch name (default: "main", NOT git branch)
+- `-y, --yes`: Skip confirmation prompt
+
+**Examples:**
+
+```bash
+brv push
+brv push --branch develop
+```
+
+---
+
+### `brv complete`
+
+**Description:** Complete ACE workflow: save executor output, generate reflection, and update playbook in one command
+
+**Arguments:**
+
+- `hint`: Short hint for naming output files (e.g., "user-auth", "bug-fix")
+- `reasoning`: Detailed reasoning and approach for completing the task
+- `finalAnswer`: The final answer/solution to the task
+
+**Flags:**
+
+- `-t, --tool-usage <string>`: Comma-separated list of tool calls with arguments (format: "ToolName:argument", required)
+- `-f, --feedback <string>`: Environment feedback about task execution (e.g., "Tests passed", "Build failed", required)
+- `-b, --bullet-ids <string>`: Comma-separated list of playbook bullet IDs referenced (optional)
+- `-u, --update-bullet <string>`: Bullet ID to update with new knowledge (if not provided, adds new bullet)
+
+**Examples:**
+
+```bash
+brv complete "user-auth" "Implemented OAuth2 flow" "Auth works" --tool-usage "Read:src/auth.ts,Edit:src/auth.ts,Bash:npm test" --feedback "All tests passed"
+brv complete "validation-fix" "Analyzed validator" "Fixed bug" --tool-usage "Grep:pattern:\"validate\",Read:src/validator.ts" --bullet-ids "bullet-123" --feedback "Tests passed"
+brv complete "auth-update" "Improved error handling" "Better errors" --tool-usage "Edit:src/auth.ts" --feedback "Tests passed" --update-bullet "bullet-5"
+```
+
+**Behavior:**
+
+- **Phase 1 (Executor):** Saves executor output with hint, reasoning, answer, tool usage, and bullet IDs
+- **Phase 2 (Reflector):** Auto-generates reflection based on feedback and applies tags to playbook
+- **Phase 3 (Curator):** Creates delta operation (ADD or UPDATE) and applies to playbook
+- Adds new bullet to "Lessons Learned" section with tag `['auto-generated']`
+- If `--update-bullet` provided, updates existing bullet instead of adding new one
+- Extracts file paths from tool usage and adds to bullet metadata as `relatedFiles`
+
+**Output:** Shows summary with file paths, tags applied count, and delta operations breakdown
+
+---
+
+### `brv status`
+
+**Description**: Show CLI status and project information. Display local ACE context (ACE playbook) managed by ByteRover CLI.
+
+**Arguments:**
+
+- `DIRECTORY`:Project directory (defaults to current directory).
+
+**Flags:**
+
+- `-f, --format=<option>`: [default: table] Output format. <options: table|json>
+
+**Examples:**
+
+```bash
+brv status
+brv status --format json
+```
+
+## Best Practices
+
+### Efficient Workflow
+
+1. **Retrieve wisely:** Use `brv retrieve` with specific queries and `--node-keys` to filter
+2. **Read only what's needed:** Check playbook with `brv status` to see statistics before reading full content
+3. **Update precisely:** Use `brv add` to add/update specific bullets or `brv complete` for complete workflow
+4. **Push when appropriate:** Prompt user to run `brv push` after completing significant work
+
+### Memory Management
+
+**Retrieve pattern:**
+
+- Use `brv add` to directly add/update bullets
+- `brv retrieve` **clears existing playbook** - use carefully
+- Retrieved memories use actual Memora tags (not "auto-generated")
+- Both memories and related memories are saved to playbook
+
+---
+Generated by ByteRover CLI for Claude Code
+
+# Workflow Instruction
+
+You are a coding agent focused on one codebase. Use the brv CLI to manage working context.
+Core Rules:
+
+- Start from memory. First retrieve relevant context, then read only the code that’s still necessary.
+- Keep a local playbook. playbook.json is your local memory store—update it with what you learn.
+
+## user-centric
+
+Before running any `brv` command, ask the user to choose:
+
+1. **Accept** - Review the command, then run if approved
+2. **Auto-run** - Execute immediately (remember this preference for the session)
+3. **No** - Cancel the command and continue without alternative
+4. **Custom** - Skip the command and provide different instruction
+
+Once the user chooses "Auto-run", apply that preference to all subsequent `brv` commands in this conversation without asking again.
+
+## Daily Flow
+
+1. Always attempt to retrieve relevant context from ByteRover first by running `brv retrieve`.
+
+2. Do the work with minimal code reads
+
+3. Record new or refined knowledge in the playbook
+
+    - Add only specific, actionable, contextual items; avoid secrets. Redact when in doubt.
+
+4. Sync policy (manual by default)
+
+    - Do not auto-push.
+    - When the playbook has meaningful updates, prompt the user to run the command
+    - If the user has explicitly allowed auto-push, proceed non-interactively by running `brv push -y`.
+
+## Playbook Guideline
+
+- Be specific (“Use React Query for data fetching in web modules”).
+- Be actionable (clear instruction a future agent/dev can apply).
+- Be contextual (mention module/service, constraints, links to source).
+- Include source (file + lines or commit) when possible.
+
+## CLI Usage Notes
+
+- Use --help on any command to discover flags. Provide exact arguments for the scenario.
+
+---
+# ByteRover CLI Command Reference
+
+## Memory Commands
+
+### `brv add`
+
+**Description:** Add or update a bullet in the playbook (bypasses ACE workflow for direct agent usage)
+
+**Flags:**
+
+- `-s, --section <string>`: Section name for the bullet (required)
+- `-c, --content <string>`: Content of the bullet (required)
+- `-b, --bullet-id <string>`: Bullet ID to update (optional, creates new if omitted)
+
+**Examples:**
+
+```bash
+brv add --section "Common Errors" --content "Authentication fails when token expires"
+brv add --section "Common Errors" --bullet-id "common-00001" --content "Updated: Auth fails when token expires"
+brv add -s "Best Practices" -c "Always validate user input before processing"
+```
+
+**Suggested Sections:** Common Errors, Best Practices, Strategies, Lessons Learned, Project Structure and Dependencies, Testing, Code Style and Quality, Styling and Design
+
+**Behavior:**
+
+- Warns if using non-standard section name
+- Creates new bullet with auto-generated ID if `--bullet-id` not provided
+- Updates existing bullet if `--bullet-id` matches existing bullet
+- Displays bullet ID, section, content, and tags after operation
+
+**Requirements:** Playbook must exist (run `brv init` first)
+
+---
+
+### `brv retrieve`
+
+**Description:** Retrieve memories from ByteRover Memora service and save to local ACE playbook
+
+**Flags:**
+
+- `-q, --query <string>`: Search query string (required)
+- `-n, --node-keys <string>`: Comma-separated list of node keys (file paths) to filter results
+
+**Examples:**
+
+```bash
+brv retrieve --query "authentication best practices"
+brv retrieve -q "error handling" -n "src/auth/login.ts,src/auth/oauth.ts"
+brv retrieve -q "database connection issues"
+```
+
+**Behavior:**
+
+- **Clears existing playbook first** (destructive operation)
+- Retrieves memories and related memories from Memora service
+- Combines both result sets into playbook
+- Maps memory fields: `bulletId` → `id`, `tags` → `metadata.tags`, `nodeKeys` → `metadata.relatedFiles`
+- Displays results with score, content preview (200 chars), and related file paths
+- Fail-safe: warns on save error but still displays results
+
+**Output:** Shows count of memories and related memories, displays each with score and content
+
+**Requirements:** Must be authenticated and project initialized
+
+---
+
+### `brv push`
+
+**Description:** Push playbook to ByteRover memory storage and clean up local ACE files
+
+**Flags:**
+
+- `-b, --branch <string>`: ByteRover branch name (default: "main", NOT git branch)
+- `-y, --yes`: Skip confirmation prompt
+
+**Examples:**
+
+```bash
+brv push
+brv push --branch develop
+```
+
+---
+
+### `brv complete`
+
+**Description:** Complete ACE workflow: save executor output, generate reflection, and update playbook in one command
+
+**Arguments:**
+
+- `hint`: Short hint for naming output files (e.g., "user-auth", "bug-fix")
+- `reasoning`: Detailed reasoning and approach for completing the task
+- `finalAnswer`: The final answer/solution to the task
+
+**Flags:**
+
+- `-t, --tool-usage <string>`: Comma-separated list of tool calls with arguments (format: "ToolName:argument", required)
+- `-f, --feedback <string>`: Environment feedback about task execution (e.g., "Tests passed", "Build failed", required)
+- `-b, --bullet-ids <string>`: Comma-separated list of playbook bullet IDs referenced (optional)
+- `-u, --update-bullet <string>`: Bullet ID to update with new knowledge (if not provided, adds new bullet)
+
+**Examples:**
+
+```bash
+brv complete "user-auth" "Implemented OAuth2 flow" "Auth works" --tool-usage "Read:src/auth.ts,Edit:src/auth.ts,Bash:npm test" --feedback "All tests passed"
+brv complete "validation-fix" "Analyzed validator" "Fixed bug" --tool-usage "Grep:pattern:\"validate\",Read:src/validator.ts" --bullet-ids "bullet-123" --feedback "Tests passed"
+brv complete "auth-update" "Improved error handling" "Better errors" --tool-usage "Edit:src/auth.ts" --feedback "Tests passed" --update-bullet "bullet-5"
+```
+
+**Behavior:**
+
+- **Phase 1 (Executor):** Saves executor output with hint, reasoning, answer, tool usage, and bullet IDs
+- **Phase 2 (Reflector):** Auto-generates reflection based on feedback and applies tags to playbook
+- **Phase 3 (Curator):** Creates delta operation (ADD or UPDATE) and applies to playbook
+- Adds new bullet to "Lessons Learned" section with tag `['auto-generated']`
+- If `--update-bullet` provided, updates existing bullet instead of adding new one
+- Extracts file paths from tool usage and adds to bullet metadata as `relatedFiles`
+
+**Output:** Shows summary with file paths, tags applied count, and delta operations breakdown
+
+---
+
+### `brv status`
+
+**Description**: Show CLI status and project information. Display local ACE context (ACE playbook) managed by ByteRover CLI.
+
+**Arguments:**
+
+- `DIRECTORY`:Project directory (defaults to current directory).
+
+**Flags:**
+
+- `-f, --format=<option>`: [default: table] Output format. <options: table|json>
+
+**Examples:**
+
+```bash
+brv status
+brv status --format json
+```
+
+## Best Practices
+
+### Efficient Workflow
+
+1. **Retrieve wisely:** Use `brv retrieve` with specific queries and `--node-keys` to filter
+2. **Read only what's needed:** Check playbook with `brv status` to see statistics before reading full content
+3. **Update precisely:** Use `brv add` to add/update specific bullets or `brv complete` for complete workflow
+4. **Push when appropriate:** Prompt user to run `brv push` after completing significant work
+
+### Memory Management
+
+**Retrieve pattern:**
+
+- Use `brv add` to directly add/update bullets
+- `brv retrieve` **clears existing playbook** - use carefully
+- Retrieved memories use actual Memora tags (not "auto-generated")
+- Both memories and related memories are saved to playbook
+
+---
+Generated by ByteRover CLI for Claude Code

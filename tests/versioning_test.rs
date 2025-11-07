@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rust_daq::config::versioning::{VersionId, VersionManager};
-use rust_daq::config::{ApplicationSettings, Settings, StorageSettings};
+use rust_daq::config::{ApplicationSettings, Settings, StorageSettings, TimeoutSettings};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -11,6 +11,7 @@ fn create_test_settings() -> Settings {
             broadcast_channel_capacity: 1024,
             command_channel_capacity: 32,
             data_distributor: Default::default(),
+            timeouts: TimeoutSettings::default(),
         },
         storage: StorageSettings {
             default_path: "/tmp".to_string(),

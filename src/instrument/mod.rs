@@ -7,7 +7,6 @@ pub mod capabilities;
 pub mod config;
 pub mod mock;
 pub mod scpi;
-#[cfg(feature = "instrument_visa")]
 pub mod visa;
 
 // Temporary serial helper for V1 instruments during migration

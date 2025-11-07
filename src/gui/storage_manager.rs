@@ -25,8 +25,7 @@
 //! The `StorageManager` is integrated into the main `Gui` and is rendered when toggled
 //! by the user.
 
-use crate::app::DaqApp;
-use crate::measurement::Measure;
+use crate::config::Settings;
 #[cfg(feature = "storage_arrow")]
 use arrow2::io::ipc::read;
 use csv;
@@ -38,6 +37,7 @@ use log::{error, warn};
 use opener;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct FileInfo {
@@ -137,13 +137,8 @@ impl StorageManager {
         });
     }
 
-    pub fn ui<M>(&mut self, ui: &mut egui::Ui, app: &DaqApp<M>)
-    where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
-        let storage_path =
-            PathBuf::from(&app.with_inner(|inner| inner.settings.storage.default_path.clone()));
+    pub fn ui(&mut self, ui: &mut egui::Ui, settings: &Arc<Settings>) {
+        let storage_path = PathBuf::from(&settings.storage.default_path);
         if self.storage_path != storage_path {
             self.storage_path = storage_path;
             self.refresh_files();

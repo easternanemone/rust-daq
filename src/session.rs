@@ -19,11 +19,9 @@
 //!
 //! - **`save_session`**: Serializes a `Session` object into a JSON file at a specified path.
 //! - **`load_session`**: Deserializes a `Session` object from a JSON file.
-//! - **`Session::from_app`**: A constructor that creates a `Session` object from the current
-//!   state of the `DaqApp`.
-//! - **`Session::apply_to_app`**: A method that applies a loaded session's state back to the
-//!   `DaqApp`, which involves stopping any currently running instruments, starting the ones
-//!   defined in the session, and updating the relevant settings.
+//!
+//! Session construction and application is handled by `DaqManagerActor` which has direct
+//! access to instrument state without needing blocking operations.
 //!
 //! This feature allows for greater experiment consistency and convenience, as complex
 //! setups do not need to be manually reconfigured each time the application is started.
@@ -34,10 +32,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
-
-use crate::app::DaqApp;
-use crate::measurement::Measure;
 
 use std::collections::VecDeque;
 
@@ -52,52 +46,6 @@ pub struct Session {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GuiState {
     pub plot_data: VecDeque<[f64; 2]>,
-}
-
-impl Session {
-    /// Creates a new `Session` from the current application state.
-    pub fn from_app<M>(app: &DaqApp<M>, gui_state: GuiState) -> Self
-    where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
-        app.with_inner(|inner| {
-            let active_instruments: std::collections::HashSet<String> =
-                inner.instruments.keys().collect();
-            let storage_settings = inner.settings.storage.clone();
-            Self {
-                active_instruments,
-                storage_settings,
-                gui_state,
-            }
-        })
-    }
-
-    /// Applies the session state to the application.
-    pub fn apply_to_app<M>(&self, app: &DaqApp<M>)
-    where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
-        app.with_inner(|inner| {
-            // Stop all current instruments
-            let current_instruments: Vec<String> = inner.instruments.keys().collect();
-            for id in &current_instruments {
-                inner.stop_instrument(id);
-            }
-
-            // Start instruments from the session
-            for id in &self.active_instruments {
-                if let Err(e) = inner.spawn_instrument(id) {
-                    log::error!("Failed to start instrument from session '{}': {}", id, e);
-                }
-            }
-
-            // Apply storage settings
-            let settings = Arc::make_mut(&mut inner.settings);
-            settings.storage = self.storage_settings.clone();
-        });
-    }
 }
 
 /// Saves the current session to a file.

@@ -4,11 +4,16 @@
 //! DaqCommand::AddInstrumentDynamic, RemoveInstrumentDynamic, and UpdateInstrumentParameter.
 
 use rust_daq::app_actor::DaqManagerActor;
-use rust_daq::config::{versioning::VersionId, ApplicationSettings, Settings, StorageSettings};
+use rust_daq::config::{
+    versioning::VersionId,
+    ApplicationSettings,
+    Settings,
+    StorageSettings,
+    TimeoutSettings,
+};
 use rust_daq::data::registry::ProcessorRegistry;
-use rust_daq::instrument::mock::MockInstrument;
-use rust_daq::instrument::InstrumentRegistry;
-use rust_daq::log_capture::LogBuffer;
+use rust_daq::instrument::{InstrumentRegistry, InstrumentRegistryV2};
+use rust_daq::instruments_v2::MockInstrumentV2;
 use rust_daq::measurement::InstrumentMeasurement;
 use rust_daq::messages::DaqCommand;
 use rust_daq::modules::ModuleRegistry;
@@ -24,6 +29,7 @@ fn create_test_settings() -> Settings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
             data_distributor: Default::default(),
+            timeouts: TimeoutSettings::default(),
         },
         storage: StorageSettings {
             default_path: "./data".to_string(),
@@ -39,16 +45,16 @@ async fn setup_actor() -> mpsc::Sender<DaqCommand> {
     let settings = create_test_settings();
     let runtime = Arc::new(Runtime::new().expect("Failed to create runtime"));
 
-    // Register mock instrument in registry
-    let mut instrument_registry = InstrumentRegistry::new();
-    instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
+    // Register mock instrument in V2 registry
+    let mut instrument_registry_v2 = InstrumentRegistryV2::new();
+    instrument_registry_v2.register("mock", |id| Box::pin(MockInstrumentV2::new(id.to_string())));
 
-    let actor = DaqManagerActor::<InstrumentMeasurement>::new(
+    let actor = DaqManagerActor::new(
         settings,
-        Arc::new(instrument_registry),
+        Arc::new(InstrumentRegistry::<InstrumentMeasurement>::new()),
+        Arc::new(instrument_registry_v2),
         Arc::new(ProcessorRegistry::new()),
-        Arc::new(ModuleRegistry::new()),
-        LogBuffer::new(),
+        Arc::new(ModuleRegistry::<InstrumentMeasurement>::new()),
         runtime,
     )
     .expect("Failed to create actor");

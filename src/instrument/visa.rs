@@ -1,6 +1,5 @@
-//! Placeholder VISA instrument module.
+//! Deprecated VISA instrument module.
 //!
-//! The full implementation lives in the V2 hardware stack and is gated behind
-//! the `instrument_visa` feature flag. This stub exists to satisfy build tools
-//! that expect the module path to resolve when formatting without optional
-//! features enabled.
+//! VISA-based integrations have been removed from rust_daq. The module remains
+//! as a stub so existing code paths continue to compile, but attempting to
+//! construct a VISA instrument will panic with a clear message.

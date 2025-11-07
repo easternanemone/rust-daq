@@ -549,7 +549,7 @@ impl From<Data> for daq_core::Measurement {
 /// 1. Sent to all instruments during app shutdown
 /// 2. Causes instrument task loop to break
 /// 3. Triggers `instrument.disconnect()` to clean up resources
-/// 4. If timeout (5s) expires, task is aborted
+/// 4. If timeout (5s) expires, task is forcefully terminated
 ///
 /// # Thread Safety
 ///
@@ -1056,14 +1056,14 @@ pub trait MeasurementProcessor: Send + Sync {
 /// This adapter enables backward compatibility by:
 /// 1. Extracting Scalar measurements from Arc<Measurement> inputs
 /// 2. Calling the legacy DataProcessor::process() on DataPoints
-/// 3. Wrapping results back into Arc<Measurement::Scalar>
+/// 3. Wrapping results back into Arc<Measurement>
 ///
 /// Non-scalar measurements (Spectrum, Image) are passed through unchanged.
 ///
 /// # Example
 ///
 /// ```rust
-/// # use rust_daq::core::{DataProcessor, MeasurementProcessor, DataProcessorAdapter, DataPoint};
+/// # use rust_daq::core::{MeasurementProcessor, Measurement, DataPoint, DataProcessor};
 /// # struct MyFilter;
 /// # impl DataProcessor for MyFilter {
 /// #     fn process(&mut self, data: &[DataPoint]) -> Vec<DataPoint> { data.to_vec() }

@@ -47,12 +47,13 @@ impl SerialScpiTransport {
     /// - Terminator: "\r\n"
     /// - Delimiter: b'\n'
     /// - Timeout: 1 second
-    pub fn new_rs232(adapter: SerialAdapter) -> Self {
+    pub fn new_rs232(adapter: SerialAdapter, settings: &Settings) -> Self {
+        let timeout = Duration::from_millis(settings.application.timeouts.serial_read_timeout_ms);
         Self {
             adapter: Arc::new(adapter),
             terminator: "\r\n",
             delimiter: b'\n',
-            timeout: Duration::from_secs(1),
+            timeout,
         }
     }
     
@@ -62,12 +63,13 @@ impl SerialScpiTransport {
     /// - Terminator: "\r"
     /// - Delimiter: b'\r'
     /// - Timeout: 2 seconds
-    pub fn new_maitai(adapter: SerialAdapter) -> Self {
+    pub fn new_maitai(adapter: SerialAdapter, settings: &Settings) -> Self {
+        let timeout = Duration::from_millis(settings.application.timeouts.scpi_command_timeout_ms);
         Self {
             adapter: Arc::new(adapter),
             terminator: "\r",
             delimiter: b'\r',
-            timeout: Duration::from_secs(2),
+            timeout,
         }
     }
 }
@@ -146,6 +148,7 @@ pub fn parse_f64_response(response: &str) -> Result<f64> {
 /// * `query_fn` - Async function that performs the query and returns a measurement
 pub fn spawn_polling_task<F, Fut>(
     interval_duration: Duration,
+    retry_delay: Duration,
     broadcast_tx: broadcast::Sender<Measurement>,
     mut query_fn: F,
 ) -> tokio::task::JoinHandle<()>
@@ -167,7 +170,7 @@ where
                 }
                 Err(e) => {
                     log::error!("Polling query failed: {:?}", e);
-                    sleep(Duration::from_secs(1)).await;
+                    sleep(retry_delay).await;
                 }
             }
         }

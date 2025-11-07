@@ -54,6 +54,7 @@ use crate::{
     config::versioning::{VersionId, VersionInfo},
     core::InstrumentCommand,
     error::DaqError,
+    measurement::SubscriberMetricsSnapshot,
     session::GuiState,
 };
 use anyhow::Result;
@@ -228,6 +229,14 @@ pub enum DaqCommand {
     GetAvailableChannels {
         /// Response channel for channel list
         response: oneshot::Sender<Vec<String>>,
+    },
+
+    /// Retrieves DataDistributor metrics for observability.
+    ///
+    /// Returns per-subscriber metrics including drop counts, drop rates,
+    /// and channel occupancy. Used by GUI to display operational health.
+    GetMetrics {
+        response: oneshot::Sender<Vec<SubscriberMetricsSnapshot>>,
     },
 
     /// Gets the current storage format (csv, hdf5, arrow).
@@ -516,6 +525,12 @@ impl DaqCommand {
     pub fn get_available_channels() -> (Self, oneshot::Receiver<Vec<String>>) {
         let (tx, rx) = oneshot::channel();
         (Self::GetAvailableChannels { response: tx }, rx)
+    }
+
+    /// Helper to create a GetMetrics command
+    pub fn get_metrics() -> (Self, oneshot::Receiver<Vec<SubscriberMetricsSnapshot>>) {
+        let (tx, rx) = oneshot::channel();
+        (Self::GetMetrics { response: tx }, rx)
     }
 
     /// Helper to create a GetStorageFormat command

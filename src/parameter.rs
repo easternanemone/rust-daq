@@ -37,13 +37,14 @@
 //! });
 //! ```
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::{watch, RwLock};
 
 use crate::core_v3::ParameterBase;
+use crate::error::DaqError;
 
 // =============================================================================
 // Constraints
@@ -74,11 +75,7 @@ impl<T: PartialOrd + Clone + Debug> Constraints<T> {
 
             Constraints::Range { min, max } => {
                 if value < min || value > max {
-                    Err(anyhow!(
-                        "Value out of range (min: {:?}, max: {:?})",
-                        min,
-                        max
-                    ))
+                    Err(DaqError::ParameterInvalidChoice.into())
                 } else {
                     Ok(())
                 }
@@ -88,7 +85,7 @@ impl<T: PartialOrd + Clone + Debug> Constraints<T> {
                 if choices.iter().any(|c| c == value) {
                     Ok(())
                 } else {
-                    Err(anyhow!("Value not in allowed choices: {:?}", choices))
+                    Err(DaqError::ParameterInvalidChoice.into())
                 }
             }
 
@@ -326,7 +323,7 @@ where
     /// Returns error if validation fails or hardware write fails.
     pub async fn set(&mut self, value: T) -> Result<()> {
         if self.read_only {
-            return Err(anyhow!("Parameter '{}' is read-only", self.name));
+            return Err(DaqError::ParameterReadOnly.into());
         }
 
         // Validate against constraints
@@ -340,7 +337,7 @@ where
         // Update internal value (notifies subscribers)
         self.value_tx
             .send(value.clone())
-            .map_err(|_| anyhow!("Failed to send value update (no subscribers)"))?;
+            .map_err(|_| DaqError::ParameterNoSubscribers)?;
 
         // Call change listeners
         let listeners = self.change_listeners.read().await;
@@ -359,14 +356,14 @@ where
         let reader = self
             .hardware_reader
             .as_ref()
-            .ok_or_else(|| anyhow!("No hardware reader connected"))?;
+            .ok_or_else(|| DaqError::ParameterNoHardwareReader)?;
 
         let value = reader()?;
 
         // Update internal value without validation
         self.value_tx
             .send(value.clone())
-            .map_err(|_| anyhow!("Failed to send value update (no subscribers)"))?;
+            .map_err(|_| DaqError::ParameterNoSubscribers)?;
 
         // Call change listeners
         let listeners = self.change_listeners.read().await;

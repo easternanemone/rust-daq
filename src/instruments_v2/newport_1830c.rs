@@ -69,6 +69,7 @@ pub enum PowerUnits {
 }
 
 impl PowerUnits {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn from_i32(value: i32) -> Result<Self> {
         match value {
             0 => Ok(PowerUnits::Watts),
@@ -359,9 +360,9 @@ impl Instrument for Newport1830CV2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
-            InstrumentCommand::SnapFrame => {
-                Err(anyhow::anyhow!("SnapFrame command not supported for power meter"))
-            }
+            InstrumentCommand::SnapFrame => Err(anyhow::anyhow!(
+                "SnapFrame command not supported for power meter"
+            )),
         }
     }
 }

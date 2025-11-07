@@ -21,7 +21,7 @@
 #[cfg(feature = "instrument_serial")]
 use crate::adapters::serial::SerialAdapter;
 use crate::{
-    config::Settings,
+    config::{Settings, TimeoutSettings},
     core::{DataPoint, Instrument, InstrumentCommand},
     measurement::InstrumentMeasurement,
 };
@@ -29,6 +29,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use log::{info, warn};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Newport ESP300 instrument implementation
 #[derive(Clone)]
@@ -36,6 +37,8 @@ pub struct ESP300 {
     id: String,
     #[cfg(feature = "instrument_serial")]
     adapter: Option<SerialAdapter>,
+    #[cfg(feature = "instrument_serial")]
+    command_timeout: Duration,
     // Removed sender field - using InstrumentMeasurement with DataDistributor
     num_axes: u8,
     measurement: Option<InstrumentMeasurement>,
@@ -48,6 +51,8 @@ impl ESP300 {
             id: id.to_string(),
             #[cfg(feature = "instrument_serial")]
             adapter: None,
+            #[cfg(feature = "instrument_serial")]
+            command_timeout: default_scpi_timeout(),
             // No sender field
             num_axes: 3, // ESP300 has 3 axes
             measurement: None,
@@ -57,7 +62,6 @@ impl ESP300 {
     #[cfg(feature = "instrument_serial")]
     async fn send_command_async(&self, command: &str) -> Result<String> {
         use super::serial_helper;
-        use std::time::Duration;
 
         let adapter = self
             .adapter
@@ -70,7 +74,7 @@ impl ESP300 {
             &self.id,
             command,
             "\r\n",
-            Duration::from_secs(1),
+            self.command_timeout,
             b'\n',
         )
         .await
@@ -138,6 +142,12 @@ impl Instrument for ESP300 {
             .get("baud_rate")
             .and_then(|v| v.as_integer())
             .unwrap_or(19200) as u32;
+
+        #[cfg(feature = "instrument_serial")]
+        {
+            self.command_timeout =
+                Duration::from_millis(settings.application.timeouts.scpi_command_timeout_ms);
+        }
 
         // Open serial port with NO flow control
         // NOTE: Despite documentation suggesting RTS/CTS, hardware testing confirmed
@@ -350,4 +360,9 @@ impl Instrument for ESP300 {
     async fn handle_command(&mut self, _command: InstrumentCommand) -> Result<()> {
         Err(anyhow!("Serial support not enabled"))
     }
+}
+
+#[cfg(feature = "instrument_serial")]
+fn default_scpi_timeout() -> Duration {
+    Duration::from_millis(TimeoutSettings::default().scpi_command_timeout_ms)
 }

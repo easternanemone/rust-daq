@@ -18,12 +18,14 @@ fn create_test_app() -> DaqApp<InstrumentMeasurement> {
     instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
     let instrument_registry = Arc::new(instrument_registry);
     let processor_registry = Arc::new(ProcessorRegistry::new());
+    let module_registry = Arc::new(ModuleRegistry::<InstrumentMeasurement>::new());
     let log_buffer = LogBuffer::new();
 
     DaqApp::new(
         settings,
         instrument_registry,
         processor_registry,
+        module_registry,
         log_buffer,
     )
     .expect("Failed to create app")

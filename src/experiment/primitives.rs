@@ -4,7 +4,7 @@
 //! patterns: time series acquisition, 1D scans, 2D grid scans, and adaptive sampling.
 
 use super::plan::{LogLevel, Message, Plan, PlanStream};
-use futures::stream::{self, StreamExt};
+use futures::stream;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -203,6 +203,7 @@ impl ScanPlan {
     }
 
     /// Get the value at a given step.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn value_at_step(&self, step: usize) -> f64 {
         let fraction = step as f64 / (self.num_points - 1).max(1) as f64;
         self.start + fraction * (self.end - self.start)
@@ -504,14 +505,18 @@ impl Plan for GridScanPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TimeoutSettings;
     use futures::pin_mut;
+    use futures::StreamExt;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_time_series_plan() {
+        let timeouts = TimeoutSettings::default();
         let mut plan = TimeSeriesPlan::new(
             "test_module".to_string(),
-            Duration::from_secs(5),
-            Duration::from_secs(1),
+            Duration::from_millis(timeouts.instrument_measurement_timeout_ms),
+            Duration::from_millis(timeouts.serial_read_timeout_ms),
         );
 
         assert_eq!(plan.total_steps(), 5);
@@ -539,7 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_plan() {
-        let mut plan = ScanPlan::new(
+        let plan = ScanPlan::new(
             "laser".to_string(),
             "power".to_string(),
             0.0,

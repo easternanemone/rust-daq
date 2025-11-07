@@ -1,3 +1,4 @@
+use crate::config::TimeoutSettings;
 use crate::core::{InstrumentCommand, ParameterValue};
 use crate::messages::DaqCommand;
 use crate::network::protocol::{
@@ -25,12 +26,14 @@ pub struct NetworkServerActor {
     session_manager: SessionManager,
     request_id_counter: Arc<AtomicU32>,
     pending_requests: Arc<tokio::sync::RwLock<HashMap<u32, mpsc::Sender<ControlResponse>>>>,
+    timeouts: TimeoutSettings,
 }
 
 impl NetworkServerActor {
     pub async fn new(
         addr: &str,
         daq_sender: mpsc::Sender<DaqCommand>,
+        timeouts: TimeoutSettings,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(addr).await?;
         info!("Network server listening on {}", addr);
@@ -41,12 +44,15 @@ impl NetworkServerActor {
             session_manager: SessionManager::new(),
             request_id_counter: Arc::new(AtomicU32::new(0)),
             pending_requests: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            timeouts,
         })
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let mut heartbeat_interval = interval(Duration::from_millis(HEARTBEAT_INTERVAL_MS));
-        let mut cleanup_interval = interval(Duration::from_secs(10));
+        let cleanup_duration = Duration::from_millis(self.timeouts.network_cleanup_timeout_ms);
+        let client_timeout = Duration::from_millis(self.timeouts.network_client_timeout_ms);
+        let mut cleanup_interval = interval(cleanup_duration);
 
         loop {
             tokio::select! {
@@ -57,6 +63,7 @@ impl NetworkServerActor {
                             let session_manager = self.session_manager.clone();
                             let request_id_counter = self.request_id_counter.clone();
                             let pending_requests = self.pending_requests.clone();
+                            let client_timeout = client_timeout;
 
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_client(
@@ -66,6 +73,7 @@ impl NetworkServerActor {
                                     session_manager,
                                     request_id_counter,
                                     pending_requests,
+                                    client_timeout,
                                 )
                                 .await
                                 {
@@ -95,6 +103,7 @@ impl NetworkServerActor {
         session_manager: SessionManager,
         request_id_counter: Arc<AtomicU32>,
         pending_requests: Arc<tokio::sync::RwLock<HashMap<u32, mpsc::Sender<ControlResponse>>>>,
+        client_timeout: Duration,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("Client connected: {}", addr);
 
@@ -129,6 +138,7 @@ impl NetworkServerActor {
                             let response = Self::process_request(
                                 req,
                                 &daq_sender,
+                                client_timeout,
                                 &request_id_counter,
                                 &pending_requests,
                             )
@@ -179,6 +189,7 @@ impl NetworkServerActor {
     async fn process_request(
         req: ControlRequest,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
         request_id_counter: &Arc<AtomicU32>,
         pending_requests: &Arc<tokio::sync::RwLock<HashMap<u32, mpsc::Sender<ControlResponse>>>>,
     ) -> ControlResponse {
@@ -186,23 +197,42 @@ impl NetworkServerActor {
 
         match req.request_type {
             RequestType::GetInstruments => {
-                Self::handle_get_instruments(req.request_id, daq_sender).await
+                Self::handle_get_instruments(req.request_id, daq_sender, client_timeout).await
             }
             RequestType::Heartbeat => Self::handle_heartbeat(req.request_id),
             RequestType::StartRecording => {
-                Self::handle_start_recording(req.request_id, req.payload, daq_sender).await
+                Self::handle_start_recording(
+                    req.request_id,
+                    req.payload,
+                    daq_sender,
+                    client_timeout,
+                )
+                .await
             }
             RequestType::StopRecording => {
-                Self::handle_stop_recording(req.request_id, daq_sender).await
+                Self::handle_stop_recording(req.request_id, daq_sender, client_timeout).await
             }
             RequestType::SpawnInstrument => {
-                Self::handle_spawn_instrument(req.request_id, req.payload, daq_sender).await
+                Self::handle_spawn_instrument(
+                    req.request_id,
+                    req.payload,
+                    daq_sender,
+                    client_timeout,
+                )
+                .await
             }
             RequestType::StopInstrument => {
-                Self::handle_stop_instrument(req.request_id, req.payload, daq_sender).await
+                Self::handle_stop_instrument(
+                    req.request_id,
+                    req.payload,
+                    daq_sender,
+                    client_timeout,
+                )
+                .await
             }
             RequestType::SendCommand => {
-                Self::handle_send_command(req.request_id, req.payload, daq_sender).await
+                Self::handle_send_command(req.request_id, req.payload, daq_sender, client_timeout)
+                    .await
             }
         }
     }
@@ -210,12 +240,13 @@ impl NetworkServerActor {
     async fn handle_get_instruments(
         request_id: u32,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let cmd = DaqCommand::GetInstrumentList { response: tx };
 
         match daq_sender.send(cmd).await {
-            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+            Ok(_) => match timeout(client_timeout, rx).await {
                 Ok(Ok(instruments)) => {
                     let payload = serde_json::to_vec(&instruments).unwrap_or_default();
                     ControlResponse::new(request_id, ResponseStatus::Success, payload)
@@ -239,13 +270,14 @@ impl NetworkServerActor {
         request_id: u32,
         payload: Vec<u8>,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         // Payload is ignored - configuration is in settings
         let (tx, rx) = tokio::sync::oneshot::channel();
         let cmd = DaqCommand::StartRecording { response: tx };
 
         match daq_sender.send(cmd).await {
-            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+            Ok(_) => match timeout(client_timeout, rx).await {
                 Ok(Ok(())) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
                 Ok(Err(_)) => {
                     ControlResponse::error(request_id, "Failed to start recording".to_string())
@@ -259,12 +291,13 @@ impl NetworkServerActor {
     async fn handle_stop_recording(
         request_id: u32,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let cmd = DaqCommand::StopRecording { response: tx };
 
         match daq_sender.send(cmd).await {
-            Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+            Ok(_) => match timeout(client_timeout, rx).await {
                 Ok(Ok(())) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
                 Ok(Err(_)) => {
                     ControlResponse::error(request_id, "Failed to stop recording".to_string())
@@ -279,6 +312,7 @@ impl NetworkServerActor {
         request_id: u32,
         payload: Vec<u8>,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         match String::from_utf8(payload) {
             Ok(instrument_id) => {
@@ -289,7 +323,7 @@ impl NetworkServerActor {
                 };
 
                 match daq_sender.send(cmd).await {
-                    Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                    Ok(_) => match timeout(client_timeout, rx).await {
                         Ok(Ok(())) => {
                             ControlResponse::new(request_id, ResponseStatus::Success, vec![])
                         }
@@ -312,6 +346,7 @@ impl NetworkServerActor {
         request_id: u32,
         payload: Vec<u8>,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         match String::from_utf8(payload) {
             Ok(instrument_id) => {
@@ -322,7 +357,7 @@ impl NetworkServerActor {
                 };
 
                 match daq_sender.send(cmd).await {
-                    Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                    Ok(_) => match timeout(client_timeout, rx).await {
                         Ok(()) => ControlResponse::new(request_id, ResponseStatus::Success, vec![]),
                         Err(_) => ControlResponse::error(request_id, "Request timeout".to_string()),
                     },
@@ -395,6 +430,7 @@ impl NetworkServerActor {
         request_id: u32,
         payload: Vec<u8>,
         daq_sender: &mpsc::Sender<DaqCommand>,
+        client_timeout: Duration,
     ) -> ControlResponse {
         match String::from_utf8(payload) {
             Ok(command_json) => match serde_json::from_str::<serde_json::Value>(&command_json) {
@@ -415,7 +451,7 @@ impl NetworkServerActor {
                             };
 
                             match daq_sender.send(cmd).await {
-                                Ok(_) => match timeout(Duration::from_secs(5), rx).await {
+                                Ok(_) => match timeout(client_timeout, rx).await {
                                     Ok(Ok(())) => ControlResponse::new(
                                         request_id,
                                         ResponseStatus::Success,

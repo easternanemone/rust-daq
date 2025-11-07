@@ -552,6 +552,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn emit_scalar(&self, value: f64) {
             let dp = DataPoint {
                 timestamp: chrono::Utc::now(),

@@ -22,9 +22,7 @@ async fn pvcam_hardware_smoke() -> Result<()> {
     let sdk = Arc::new(RealPvcamSdk::new());
     sdk.init().context("pvcam init")?;
 
-    let cameras = sdk
-        .enumerate_cameras()
-        .context("enumerate cameras")?;
+    let cameras = sdk.enumerate_cameras().context("enumerate cameras")?;
     let camera_name = std::env::var("PVCAM_CAMERA_NAME")
         .ok()
         .or_else(|| cameras.first().cloned())
@@ -54,12 +52,9 @@ async fn pvcam_hardware_smoke() -> Result<()> {
 
     assert!(!frame.data.is_empty(), "frame payload empty");
 
-
     drop(guard); // ensure hardware stream stops before explicit shutdown
-    sdk.stop_acquisition(handle)
-        .context("stop acquisition")?;
-    sdk.close_camera(handle)
-        .context("close camera")?;
+    sdk.stop_acquisition(handle).context("stop acquisition")?;
+    sdk.close_camera(handle).context("close camera")?;
     sdk.uninit().context("pvcam uninit")?;
 
     Ok(())

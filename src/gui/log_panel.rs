@@ -21,13 +21,7 @@ use eframe::egui::{self, Color32, ScrollArea, Ui};
 use log::LevelFilter;
 
 /// Renders the log panel.
-use crate::measurement::Measure;
-
-pub fn render<M>(ui: &mut Ui, gui: &mut Gui<M>)
-where
-    M: Measure + 'static,
-    M::Data: Into<daq_core::Measurement>,
-{
+pub fn render(ui: &mut Ui, gui: &mut Gui) {
     ui.heading("Event Log");
 
     // --- Header Controls ---

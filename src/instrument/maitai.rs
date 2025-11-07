@@ -17,7 +17,7 @@
 #[cfg(feature = "instrument_serial")]
 use crate::adapters::serial::SerialAdapter;
 use crate::{
-    config::Settings,
+    config::{Settings, TimeoutSettings},
     core::{DataPoint, Instrument, InstrumentCommand},
     instrument::capabilities::power_measurement_capability_id,
     measurement::InstrumentMeasurement,
@@ -27,6 +27,7 @@ use async_trait::async_trait;
 use log::{info, warn};
 use std::any::TypeId;
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
 /// MaiTai laser instrument implementation
 #[derive(Clone)]
@@ -34,6 +35,8 @@ pub struct MaiTai {
     id: String,
     #[cfg(feature = "instrument_serial")]
     adapter: Option<SerialAdapter>,
+    #[cfg(feature = "instrument_serial")]
+    command_timeout: Duration,
     // Removed sender field - using InstrumentMeasurement with DataDistributor
     measurement: Option<InstrumentMeasurement>,
 }
@@ -45,6 +48,8 @@ impl MaiTai {
             id: id.to_string(),
             #[cfg(feature = "instrument_serial")]
             adapter: None,
+            #[cfg(feature = "instrument_serial")]
+            command_timeout: default_scpi_timeout(),
             // No sender field
             measurement: None,
         }
@@ -53,7 +58,6 @@ impl MaiTai {
     #[cfg(feature = "instrument_serial")]
     async fn send_command_async(&self, command: &str) -> Result<String> {
         use super::serial_helper;
-        use std::time::Duration;
 
         let adapter = self
             .adapter
@@ -66,7 +70,7 @@ impl MaiTai {
             &self.id,
             command,
             "\r",
-            Duration::from_secs(2),
+            self.command_timeout,
             b'\r',
         )
         .await
@@ -116,6 +120,12 @@ impl Instrument for MaiTai {
             .and_then(|v| v.as_integer())
             .unwrap_or(9600) as u32;
 
+        #[cfg(feature = "instrument_serial")]
+        {
+            self.command_timeout =
+                Duration::from_millis(settings.application.timeouts.scpi_command_timeout_ms);
+        }
+
         // MaiTai uses software flow control (XON/XOFF) - validated 2025-11-02
         let port = serialport::new(port_name, baud_rate)
             .timeout(std::time::Duration::from_millis(500))
@@ -124,6 +134,11 @@ impl Instrument for MaiTai {
             .with_context(|| format!("Failed to open serial port '{}' for MaiTai", port_name))?;
 
         self.adapter = Some(SerialAdapter::new(port));
+
+        // CRITICAL: Allow hardware initialization time before first command
+        // Prevents "Failed to read response" race condition in integration tests
+        // Validated fix for bd-194 on 2025-11-02
+        sleep(Duration::from_millis(300)).await;
 
         // Verify connection with identity query
         let id_response = self.send_command_async("*IDN?").await?;
@@ -314,4 +329,9 @@ impl Instrument for MaiTai {
     async fn handle_command(&mut self, _command: InstrumentCommand) -> Result<()> {
         Err(anyhow!("Serial support not enabled"))
     }
+}
+
+#[cfg(feature = "instrument_serial")]
+fn default_scpi_timeout() -> Duration {
+    Duration::from_millis(TimeoutSettings::default().scpi_command_timeout_ms)
 }

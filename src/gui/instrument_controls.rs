@@ -22,11 +22,66 @@
 //!   (e.g., a display of the current position) is often updated immediately, assuming the command
 //!   will be successful. The actual instrument state is updated asynchronously.
 
-use crate::{app::DaqApp, core::InstrumentCommand, measurement::Measure};
+use crate::{app::DaqApp, core::InstrumentCommand, messages::DaqCommand};
 use daq_core::Measurement;
 use egui::{Color32, Slider, Ui};
 use log::error;
 use std::{collections::HashMap, sync::Arc};
+
+/// Helper macro for async command sending with error logging (bd-e116)
+/// Replaces blocking with_inner() pattern with async runtime.spawn()
+macro_rules! send_command_async {
+    ($runtime:expr, $cmd_tx:expr, $id:expr, $cmd:expr) => {{
+        let cmd_tx = $cmd_tx.clone();
+        let id = $id.clone();
+        $runtime.spawn(async move {
+            let (daq_cmd, rx) =
+                crate::messages::DaqCommand::send_instrument_command(id.clone(), $cmd);
+            match tokio::time::timeout(std::time::Duration::from_secs(5), cmd_tx.send(daq_cmd))
+                .await
+            {
+                Ok(Ok(_)) => {
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+                        Ok(Ok(Ok(_))) => {}
+                        Ok(Ok(Err(e))) => error!("Command failed for '{}': {}", id, e),
+                        Ok(Err(_)) => error!("Command channel closed for '{}'", id),
+                        Err(_) => error!("Command timeout for '{}'", id),
+                    }
+                }
+                Ok(Err(e)) => error!("Failed to queue command for '{}': {}", id, e),
+                Err(_) => error!("Timeout queuing command for '{}'", id),
+            }
+        });
+    }};
+}
+
+/// Helper macro for fire-and-forget async commands (bd-e116)
+/// Used for jog buttons and other non-critical commands
+macro_rules! send_command_fire_and_forget {
+    ($runtime:expr, $cmd_tx:expr, $id:expr, $cmd:expr) => {{
+        let cmd_tx = $cmd_tx.clone();
+        let id = $id.clone();
+        $runtime.spawn(async move {
+            let (daq_cmd, _rx) = crate::messages::DaqCommand::send_instrument_command(id, $cmd);
+            let _ = cmd_tx.send(daq_cmd).await;
+        });
+    }};
+}
+
+/// Helper function to extract boolean value from cached measurement data
+fn extract_bool_from_cache(
+    data_cache: &HashMap<String, Arc<Measurement>>,
+    instrument_id: &str,
+    field_name: &str,
+) -> bool {
+    data_cache
+        .get(&format!("{}:{}", instrument_id, field_name))
+        .and_then(|m| match **m {
+            Measurement::Scalar(ref point) => Some(point.value != 0.0),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
 
 /// MaiTai laser control panel
 pub struct MaiTaiControlPanel {
@@ -42,15 +97,14 @@ impl MaiTaiControlPanel {
         }
     }
 
-    pub fn ui<M>(
+    pub fn ui(
         &mut self,
         ui: &mut Ui,
-        app: &DaqApp<M>,
+        _app: &DaqApp,
         data_cache: &HashMap<String, Arc<Measurement>>,
-    ) where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
+        command_tx: &tokio::sync::mpsc::Sender<DaqCommand>,
+        runtime: &std::sync::Arc<tokio::runtime::Runtime>,
+    ) {
         ui.heading("MaiTai Laser Control");
         ui.separator();
 
@@ -67,11 +121,9 @@ impl MaiTaiControlPanel {
                     "wavelength".to_string(),
                     self.target_wavelength.into(),
                 );
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to set wavelength: {}", e);
-                }
+
+                // Async command send (bd-e116) - replaces blocking with_inner()
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
         });
 
@@ -98,7 +150,7 @@ impl MaiTaiControlPanel {
                 }
             })
             .unwrap_or(0.0);
-        let shutter_open = data_cache
+        let _shutter_open = data_cache
             .get(&format!("{}:shutter", self.instrument_id))
             .and_then(|m| {
                 if let Measurement::Scalar(dp) = m.as_ref() {
@@ -150,62 +202,35 @@ impl MaiTaiControlPanel {
 
         ui.add_space(15.0);
 
-        // Control buttons
+        // Shutter control
         ui.horizontal(|ui| {
-            // Shutter button
-            let shutter_text = if shutter_open {
-                "Close Shutter"
-            } else {
-                "Open Shutter"
-            };
-            let shutter_color = if shutter_open {
-                Color32::GREEN
-            } else {
-                Color32::GRAY
-            };
-            if ui
-                .button(egui::RichText::new(shutter_text).color(shutter_color))
-                .clicked()
-            {
-                let new_state = !shutter_open;
+            ui.label("Shutter:");
+            let current_state =
+                extract_bool_from_cache(data_cache, &self.instrument_id, "shutter_open");
+            let mut new_state = current_state;
+            if ui.checkbox(&mut new_state, "Open").changed() {
                 let cmd = InstrumentCommand::SetParameter(
                     "shutter".to_string(),
                     (if new_state { "open" } else { "close" }.to_string()).into(),
                 );
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to toggle shutter: {}", e);
-                }
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
+        });
 
-            ui.add_space(10.0);
+        ui.add_space(10.0);
 
-            // Laser ON/OFF button
-            let laser_text = if laser_on { "Laser ON" } else { "Laser OFF" };
-            let laser_color = if laser_on {
-                Color32::RED
-            } else {
-                Color32::DARK_GRAY
-            };
-            if ui
-                .button(
-                    egui::RichText::new(laser_text)
-                        .color(laser_color)
-                        .size(16.0),
-                )
-                .clicked()
-            {
-                let new_state = !laser_on;
+        // Laser on/off control
+        ui.horizontal(|ui| {
+            ui.label("Laser:");
+            let current_state =
+                extract_bool_from_cache(data_cache, &self.instrument_id, "laser_on");
+            let mut new_state = current_state;
+            if ui.checkbox(&mut new_state, "On").changed() {
                 let cmd = InstrumentCommand::SetParameter(
-                    "laser".to_string(),
+                    "laser_state".to_string(),
                     (if new_state { "on" } else { "off" }.to_string()).into(),
                 );
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to toggle laser: {}", e);
-                }
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
         });
 
@@ -245,15 +270,14 @@ impl Newport1830CControlPanel {
         }
     }
 
-    pub fn ui<M>(
+    pub fn ui(
         &mut self,
         ui: &mut Ui,
-        app: &DaqApp<M>,
+        _app: &DaqApp,
         data_cache: &HashMap<String, Arc<Measurement>>,
-    ) where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
+        command_tx: &tokio::sync::mpsc::Sender<DaqCommand>,
+        runtime: &std::sync::Arc<tokio::runtime::Runtime>,
+    ) {
         ui.heading("Newport 1830-C Power Meter");
         ui.separator();
 
@@ -263,18 +287,14 @@ impl Newport1830CControlPanel {
             ui.add(
                 egui::DragValue::new(&mut self.wavelength)
                     .speed(1.0)
-                    .range(400.0..=1800.0),
+                    .range(400.0..=1100.0),
             );
             if ui.button("Set").clicked() {
                 let cmd = InstrumentCommand::SetParameter(
                     "wavelength".to_string(),
                     self.wavelength.into(),
                 );
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to set Newport wavelength: {}", e);
-                }
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
         });
 
@@ -357,11 +377,7 @@ impl Newport1830CControlPanel {
         // Zero button
         if ui.button("Zero / Dark Current").clicked() {
             let cmd = InstrumentCommand::Execute("zero".to_string(), vec![]);
-            if let Err(e) =
-                app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-            {
-                error!("Failed to zero Newport 1830-C: {}", e);
-            }
+            send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
         }
     }
 }
@@ -383,16 +399,15 @@ impl ElliptecControlPanel {
         }
     }
 
-    pub fn ui<M>(
+    pub fn ui(
         &mut self,
         ui: &mut Ui,
-        app: &DaqApp<M>,
+        _app: &DaqApp,
         data_cache: &HashMap<String, Arc<Measurement>>,
-    ) where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
-        ui.heading("Elliptec Rotation Mounts");
+        command_tx: &tokio::sync::mpsc::Sender<DaqCommand>,
+        runtime: &std::sync::Arc<tokio::runtime::Runtime>,
+    ) {
+        ui.heading("Elliptec Rotation Stages");
         ui.separator();
 
         for (idx, &addr) in self.device_addresses.iter().enumerate() {
@@ -429,11 +444,7 @@ impl ElliptecControlPanel {
                             format!("{}:position", addr),
                             self.target_positions[idx].into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to move axis {}: {}", addr, e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                 });
 
@@ -447,44 +458,28 @@ impl ElliptecControlPanel {
                             format!("{}:position", addr),
                             0.0.into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to set preset position: {}", e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                     if ui.button("45°").clicked() {
                         let cmd = InstrumentCommand::SetParameter(
                             format!("{}:position", addr),
                             45.0.into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to set preset position: {}", e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                     if ui.button("90°").clicked() {
                         let cmd = InstrumentCommand::SetParameter(
                             format!("{}:position", addr),
                             90.0.into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to set preset position: {}", e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                     if ui.button("180°").clicked() {
                         let cmd = InstrumentCommand::SetParameter(
                             format!("{}:position", addr),
                             180.0.into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to set preset position: {}", e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                 });
             });
@@ -495,11 +490,7 @@ impl ElliptecControlPanel {
         // Home all button
         if ui.button("Home All Devices").clicked() {
             let cmd = InstrumentCommand::Execute("home".to_string(), vec![]);
-            if let Err(e) =
-                app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-            {
-                error!("Failed to home Elliptec devices: {}", e);
-            }
+            send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
         }
     }
 }
@@ -522,15 +513,14 @@ impl ESP300ControlPanel {
         }
     }
 
-    pub fn ui<M>(
+    pub fn ui(
         &mut self,
         ui: &mut Ui,
-        app: &DaqApp<M>,
+        _app: &DaqApp,
         data_cache: &HashMap<String, Arc<Measurement>>,
-    ) where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
+        command_tx: &tokio::sync::mpsc::Sender<DaqCommand>,
+        runtime: &std::sync::Arc<tokio::runtime::Runtime>,
+    ) {
         ui.heading("ESP300 Motion Controller");
         ui.separator();
 
@@ -567,11 +557,7 @@ impl ESP300ControlPanel {
                             format!("{}:position", axis + 1),
                             self.target_positions[axis].into(),
                         );
-                        if let Err(e) = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        }) {
-                            error!("Failed to move axis {}: {}", axis + 1, e);
-                        }
+                        send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
                     }
                 });
 
@@ -587,71 +573,93 @@ impl ESP300ControlPanel {
 
                 // Jog buttons
                 ui.horizontal(|ui| {
-                    if ui.button("◀◀ -10").clicked() {
+                    ui.label("Jog:");
+                    if ui.button("<<").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "-10".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
-                    if ui.button("◀ -1").clicked() {
+                    if ui.button("<").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "-1".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
-                    if ui.button("◀ -0.1").clicked() {
+                    if ui.button("-").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "-0.1".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
-                    if ui.button("+0.1 ▶").clicked() {
+                    if ui.button("+").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "0.1".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
-                    if ui.button("+1 ▶").clicked() {
+                    if ui.button(">").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "1".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
-                    if ui.button("+10 ▶▶").clicked() {
+                    if ui.button(">>").clicked() {
                         let cmd = InstrumentCommand::Execute(
                             "move_relative".to_string(),
                             vec![(axis + 1).to_string(), "10".to_string()],
                         );
-                        let _ = app.with_inner(|inner| {
-                            inner.send_instrument_command(&self.instrument_id, cmd)
-                        });
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
+                    }
+
+                    if ui.button("STOP").clicked() {
+                        let cmd = InstrumentCommand::Execute(
+                            "stop".to_string(),
+                            vec![(axis + 1).to_string()],
+                        );
+                        send_command_fire_and_forget!(
+                            runtime,
+                            command_tx,
+                            &self.instrument_id,
+                            cmd
+                        );
                     }
                 });
-
-                if ui.button("Stop").clicked() {
-                    let cmd = InstrumentCommand::Execute(
-                        "stop".to_string(),
-                        vec![(axis + 1).to_string()],
-                    );
-                    let _ = app.with_inner(|inner| {
-                        inner.send_instrument_command(&self.instrument_id, cmd)
-                    });
-                }
             });
 
             ui.add_space(10.0);
@@ -660,11 +668,7 @@ impl ESP300ControlPanel {
         // Home all axes
         if ui.button("Home All Axes").clicked() {
             let cmd = InstrumentCommand::Execute("home".to_string(), vec![]);
-            if let Err(e) =
-                app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-            {
-                error!("Failed to home ESP300 axes: {}", e);
-            }
+            send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
         }
     }
 }
@@ -687,15 +691,14 @@ impl PVCAMControlPanel {
         }
     }
 
-    pub fn ui<M>(
+    pub fn ui(
         &mut self,
         ui: &mut Ui,
-        app: &DaqApp<M>,
+        _app: &DaqApp,
         data_cache: &HashMap<String, Arc<Measurement>>,
-    ) where
-        M: Measure + 'static,
-        M::Data: Into<daq_core::Measurement>,
-    {
+        command_tx: &tokio::sync::mpsc::Sender<DaqCommand>,
+        runtime: &std::sync::Arc<tokio::runtime::Runtime>,
+    ) {
         ui.heading("PVCAM Camera Control");
         ui.separator();
 
@@ -765,20 +768,12 @@ impl PVCAMControlPanel {
                 } else {
                     InstrumentCommand::Execute("stop_acquisition".to_string(), vec![])
                 };
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to toggle PVCAM acquisition: {}", e);
-                }
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
 
             if ui.button("Snap").clicked() {
                 let cmd = InstrumentCommand::Execute("snap".to_string(), vec![]);
-                if let Err(e) =
-                    app.with_inner(|inner| inner.send_instrument_command(&self.instrument_id, cmd))
-                {
-                    error!("Failed to snap PVCAM frame: {}", e);
-                }
+                send_command_async!(runtime, command_tx, &self.instrument_id, cmd);
             }
         });
 

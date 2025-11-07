@@ -17,19 +17,24 @@ use std::sync::Arc;
 use tokio::{runtime::Runtime, sync::mpsc};
 
 /// The main application struct (actor-based implementation)
+///
+/// **DEPRECATION NOTICE**: This struct is a compatibility layer for tests and will be removed
+/// in Phase 3. New code should communicate directly with DaqManagerActor via command channels.
+/// The blocking `with_inner()` method causes GUI freezes and is being phased out (bd-cd89).
 #[derive(Clone)]
-pub struct DaqApp<M>
+pub struct DaqApp<M = crate::measurement::InstrumentMeasurement>
 where
     M: Measure + 'static,
     M::Data: Into<daq_core::Measurement>,
 {
-    command_tx: mpsc::Sender<DaqCommand>,
-    runtime: Arc<Runtime>,
+    pub command_tx: mpsc::Sender<DaqCommand>,
+    pub runtime: Arc<Runtime>,
     // Immutable shared state for GUI access
-    settings: Settings,
-    log_buffer: LogBuffer,
-    instrument_registry: Arc<InstrumentRegistry<M>>,
-    _phantom: std::marker::PhantomData<M>,
+    pub settings: Settings,
+    pub log_buffer: LogBuffer,
+    pub instrument_registry: Arc<InstrumentRegistry<M>>,
+    pub instrument_registry_v2: Arc<crate::instrument::InstrumentRegistryV2>,
+    pub _phantom: std::marker::PhantomData<M>,
 }
 
 impl<M> DaqApp<M>
@@ -39,21 +44,44 @@ where
 {
     /// Creates a new `DaqApp` with actor-based state management
     pub fn new(
-        settings: Settings,
+        settings: Arc<Settings>,
         instrument_registry: Arc<InstrumentRegistry<M>>,
+        processor_registry: Arc<ProcessorRegistry>,
+        module_registry: Arc<crate::modules::ModuleRegistry<M>>,
+        log_buffer: LogBuffer,
+    ) -> Result<Self> {
+        Self::new_with_v2(
+            settings,
+            instrument_registry,
+            Arc::new(crate::instrument::InstrumentRegistryV2::new()),
+            processor_registry,
+            module_registry,
+            log_buffer,
+        )
+    }
+
+    /// Creates a new `DaqApp` with explicit V2 instrument registry (advanced use).
+    pub fn new_with_v2(
+        settings: Arc<Settings>,
+        instrument_registry: Arc<InstrumentRegistry<M>>,
+        instrument_registry_v2: Arc<crate::instrument::InstrumentRegistryV2>,
         processor_registry: Arc<ProcessorRegistry>,
         module_registry: Arc<crate::modules::ModuleRegistry<M>>,
         log_buffer: LogBuffer,
     ) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().context("Failed to create Tokio runtime")?);
 
+        // Settings are shared via Arc for callers but stored by value internally for
+        // backwards compatibility with older APIs.
+        let settings = settings.as_ref().clone();
+
         // Create the actor
         let actor = DaqManagerActor::new(
             settings.clone(),
             instrument_registry.clone(),
+            instrument_registry_v2.clone(),
             processor_registry,
             module_registry,
-            log_buffer.clone(),
             runtime.clone(),
         )?;
 
@@ -87,6 +115,7 @@ where
             settings,
             log_buffer,
             instrument_registry,
+            instrument_registry_v2,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -131,9 +160,16 @@ where
 
     /// Helper method to access actor state (for backwards compatibility with tests)
     ///
+    /// **DEPRECATED**: This method uses blocking operations that freeze the GUI.
+    /// Use async message-passing with DaqCommand instead. Will be removed in Phase 3 (bd-51).
+    ///
     /// This provides a similar interface to the old with_inner() pattern but uses
     /// message-passing under the hood. Note that this is less efficient than direct
     /// async methods and should only be used for compatibility during migration.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use async DaqCommand message-passing instead. Causes GUI freezes."
+    )]
     pub fn with_inner<F, R>(&self, f: F) -> R
     where
         M: 'static,

@@ -382,13 +382,14 @@ mod tests {
         let mut writer = ArrowWriter::new();
 
         // Create a minimal Settings object for testing
-        use crate::config::{ApplicationSettings, StorageSettings};
+        use crate::config::{ApplicationSettings, StorageSettings, TimeoutSettings};
         let settings = Arc::new(crate::config::Settings {
             log_level: "info".to_string(),
             application: ApplicationSettings {
                 broadcast_channel_capacity: 1024,
                 command_channel_capacity: 32,
                 data_distributor: Default::default(),
+                timeouts: TimeoutSettings::default(),
             },
             storage: StorageSettings {
                 default_path: "/tmp".to_string(),

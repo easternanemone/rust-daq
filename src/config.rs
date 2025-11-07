@@ -88,6 +88,8 @@ pub struct ApplicationSettings {
     pub command_channel_capacity: usize,
     #[serde(default)]
     pub data_distributor: DataDistributorSettings,
+    #[serde(default)]
+    pub timeouts: TimeoutSettings,
 }
 
 fn default_broadcast_capacity() -> usize {
@@ -129,6 +131,117 @@ impl Default for DataDistributorSettings {
             metrics_window_secs: 10,
         }
     }
+}
+
+/// Timeout configuration for system operations.
+///
+/// Each timeout is stored in milliseconds for ease of configuration and
+/// alignment with other numeric settings. Defaults match the historical
+/// hardcoded values to preserve existing behavior.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct TimeoutSettings {
+    /// Serial read timeout (milliseconds)
+    pub serial_read_timeout_ms: u64,
+    /// Serial write timeout (milliseconds)
+    pub serial_write_timeout_ms: u64,
+    /// SCPI command timeout (milliseconds)
+    pub scpi_command_timeout_ms: u64,
+    /// Network client operation timeout (milliseconds)
+    pub network_client_timeout_ms: u64,
+    /// Network cleanup timeout (milliseconds)
+    pub network_cleanup_timeout_ms: u64,
+    /// Instrument connection timeout (milliseconds)
+    pub instrument_connect_timeout_ms: u64,
+    /// Instrument shutdown timeout (milliseconds)
+    pub instrument_shutdown_timeout_ms: u64,
+    /// Instrument measurement timeout (milliseconds)
+    pub instrument_measurement_timeout_ms: u64,
+}
+
+impl Default for TimeoutSettings {
+    fn default() -> Self {
+        Self {
+            serial_read_timeout_ms: 1_000,
+            serial_write_timeout_ms: 1_000,
+            scpi_command_timeout_ms: 2_000,
+            network_client_timeout_ms: 5_000,
+            network_cleanup_timeout_ms: 10_000,
+            instrument_connect_timeout_ms: 5_000,
+            instrument_shutdown_timeout_ms: 6_000,
+            instrument_measurement_timeout_ms: 5_000,
+        }
+    }
+}
+
+impl TimeoutSettings {
+    /// Validate that all timeout values fall within the supported ranges.
+    pub fn validate(&self) -> Result<()> {
+        validate_timeout_range(
+            self.serial_read_timeout_ms,
+            100,
+            30_000,
+            "serial_read_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.serial_write_timeout_ms,
+            100,
+            30_000,
+            "serial_write_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.scpi_command_timeout_ms,
+            500,
+            60_000,
+            "scpi_command_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.network_client_timeout_ms,
+            1_000,
+            120_000,
+            "network_client_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.network_cleanup_timeout_ms,
+            1_000,
+            120_000,
+            "network_cleanup_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.instrument_connect_timeout_ms,
+            1_000,
+            60_000,
+            "instrument_connect_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.instrument_shutdown_timeout_ms,
+            1_000,
+            60_000,
+            "instrument_shutdown_timeout_ms",
+        )?;
+        validate_timeout_range(
+            self.instrument_measurement_timeout_ms,
+            1_000,
+            60_000,
+            "instrument_measurement_timeout_ms",
+        )?;
+
+        Ok(())
+    }
+}
+
+fn validate_timeout_range(value: u64, min: u64, max: u64, name: &str) -> Result<()> {
+    if value < min || value > max {
+        anyhow::bail!(
+            "Timeout '{}' = {}ms is out of valid range ({}ms - {}ms). Check [application.timeouts] in config.",
+            name,
+            value,
+            min,
+            max
+        );
+    }
+
+    Ok(())
 }
 
 impl Settings {
@@ -174,6 +287,11 @@ impl Settings {
         if !valid_log_levels.contains(&self.log_level.to_lowercase().as_str()) {
             anyhow::bail!("Invalid log level: {}", self.log_level);
         }
+
+        self.application
+            .timeouts
+            .validate()
+            .context("Invalid timeout configuration")?;
 
         // Validate channel capacities
         is_in_range(self.application.broadcast_channel_capacity, 64..=65536)
@@ -257,6 +375,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_parse_instruments_v3() {
@@ -347,5 +466,424 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Duplicate instrument ID"));
+    }
+
+    #[test]
+    fn test_serial_read_timeout_too_short() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 50;
+        let result = settings.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("serial_read_timeout_ms"));
+        assert!(err_msg.contains("50ms"));
+        assert!(err_msg.contains("100ms - 30000ms"));
+    }
+
+    #[test]
+    fn test_serial_read_timeout_too_long() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 40_000;
+        let result = settings.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("serial_read_timeout_ms"));
+    }
+
+    #[test]
+    fn test_serial_read_timeout_valid_range() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 100;
+        assert!(settings.validate().is_ok());
+        settings.serial_read_timeout_ms = 30_000;
+        assert!(settings.validate().is_ok());
+        settings.serial_read_timeout_ms = 5_000;
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_scpi_command_timeout_too_short() {
+        let mut settings = TimeoutSettings::default();
+        settings.scpi_command_timeout_ms = 400;
+        let result = settings.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("scpi_command_timeout_ms"));
+    }
+
+    #[test]
+    fn test_scpi_command_timeout_valid_range() {
+        let mut settings = TimeoutSettings::default();
+        settings.scpi_command_timeout_ms = 500;
+        assert!(settings.validate().is_ok());
+        settings.scpi_command_timeout_ms = 60_000;
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_network_timeouts_valid_range() {
+        let mut settings = TimeoutSettings::default();
+        settings.network_client_timeout_ms = 1_000;
+        settings.network_cleanup_timeout_ms = 1_000;
+        assert!(settings.validate().is_ok());
+        settings.network_client_timeout_ms = 120_000;
+        settings.network_cleanup_timeout_ms = 120_000;
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_instrument_lifecycle_timeouts_valid_range() {
+        let mut settings = TimeoutSettings::default();
+        settings.instrument_connect_timeout_ms = 1_000;
+        settings.instrument_shutdown_timeout_ms = 1_000;
+        settings.instrument_measurement_timeout_ms = 1_000;
+        assert!(settings.validate().is_ok());
+        settings.instrument_connect_timeout_ms = 60_000;
+        settings.instrument_shutdown_timeout_ms = 60_000;
+        settings.instrument_measurement_timeout_ms = 60_000;
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_default_timeouts_are_valid() {
+        let settings = TimeoutSettings::default();
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_missing_timeout_section_uses_defaults() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+            command_channel_capacity = 32
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 1_000);
+        assert_eq!(settings.application.timeouts.scpi_command_timeout_ms, 2_000);
+        assert_eq!(
+            settings.application.timeouts.network_client_timeout_ms,
+            5_000
+        );
+        assert_eq!(
+            settings.application.timeouts.instrument_connect_timeout_ms,
+            5_000
+        );
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_partial_timeout_section() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+            command_channel_capacity = 32
+
+            [application.timeouts]
+            serial_read_timeout_ms = 5000
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 5_000);
+        assert_eq!(settings.application.timeouts.serial_write_timeout_ms, 1_000);
+        assert_eq!(settings.application.timeouts.scpi_command_timeout_ms, 2_000);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_empty_timeout_section_uses_defaults() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        let defaults = TimeoutSettings::default();
+        assert_eq!(
+            settings.application.timeouts.serial_read_timeout_ms,
+            defaults.serial_read_timeout_ms
+        );
+        assert_eq!(
+            settings.application.timeouts.scpi_command_timeout_ms,
+            defaults.scpi_command_timeout_ms
+        );
+    }
+
+    #[test]
+    fn test_custom_timeouts_load_correctly() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+            serial_read_timeout_ms = 3000
+            serial_write_timeout_ms = 2500
+            scpi_command_timeout_ms = 8000
+            network_client_timeout_ms = 15000
+            network_cleanup_timeout_ms = 20000
+            instrument_connect_timeout_ms = 10000
+            instrument_shutdown_timeout_ms = 12000
+            instrument_measurement_timeout_ms = 25000
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 3_000);
+        assert_eq!(settings.application.timeouts.serial_write_timeout_ms, 2_500);
+        assert_eq!(settings.application.timeouts.scpi_command_timeout_ms, 8_000);
+        assert_eq!(
+            settings.application.timeouts.network_client_timeout_ms,
+            15_000
+        );
+        assert_eq!(
+            settings.application.timeouts.network_cleanup_timeout_ms,
+            20_000
+        );
+        assert_eq!(
+            settings.application.timeouts.instrument_connect_timeout_ms,
+            10_000
+        );
+        assert_eq!(
+            settings.application.timeouts.instrument_shutdown_timeout_ms,
+            12_000
+        );
+        assert_eq!(
+            settings
+                .application
+                .timeouts
+                .instrument_measurement_timeout_ms,
+            25_000
+        );
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_timeout_fails_config_load() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+            serial_read_timeout_ms = 50
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        let result = settings.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = format!("{:#}", err);
+        assert!(err_msg.contains("serial_read_timeout_ms"));
+        assert!(err_msg.contains("50ms"));
+        assert!(err_msg.contains("100ms - 30000ms"));
+    }
+
+    #[test]
+    fn test_timeout_conversion_to_duration() {
+        let settings = TimeoutSettings::default();
+        let serial_timeout = Duration::from_millis(settings.serial_read_timeout_ms);
+        assert_eq!(serial_timeout, Duration::from_secs(1));
+        let scpi_timeout = Duration::from_millis(settings.scpi_command_timeout_ms);
+        assert_eq!(scpi_timeout, Duration::from_secs(2));
+        let connect_timeout = Duration::from_millis(settings.instrument_connect_timeout_ms);
+        assert_eq!(connect_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_settings_new_with_valid_config() {
+        let settings = Settings::new(Some("default"));
+        assert!(settings.is_ok());
+        if let Ok(settings) = settings {
+            assert!(
+                settings.application.timeouts.serial_read_timeout_ms >= 100
+                    && settings.application.timeouts.serial_read_timeout_ms <= 30_000
+            );
+        }
+    }
+
+    #[test]
+    fn test_timeout_at_exact_boundaries() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 100;
+        settings.scpi_command_timeout_ms = 500;
+        settings.network_client_timeout_ms = 1_000;
+        settings.instrument_connect_timeout_ms = 1_000;
+        assert!(settings.validate().is_ok());
+
+        settings.serial_read_timeout_ms = 30_000;
+        settings.scpi_command_timeout_ms = 60_000;
+        settings.network_client_timeout_ms = 120_000;
+        settings.instrument_connect_timeout_ms = 60_000;
+        assert!(settings.validate().is_ok());
+
+        settings.serial_read_timeout_ms = 99;
+        assert!(settings.validate().is_err());
+        settings.serial_read_timeout_ms = 30_001;
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn test_multiple_invalid_timeouts() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 50;
+        settings.scpi_command_timeout_ms = 400;
+        settings.network_client_timeout_ms = 500;
+        let result = settings.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("serial_read_timeout_ms")
+                || err_msg.contains("scpi_command_timeout_ms")
+                || err_msg.contains("network_client_timeout_ms")
+        );
+    }
+
+    #[test]
+    fn test_zero_timeout_fails_validation() {
+        let mut settings = TimeoutSettings::default();
+        settings.serial_read_timeout_ms = 0;
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn test_slow_spectrometer_config() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+            instrument_measurement_timeout_ms = 35000
+            scpi_command_timeout_ms = 10000
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        assert_eq!(
+            settings
+                .application
+                .timeouts
+                .instrument_measurement_timeout_ms,
+            35_000
+        );
+        assert_eq!(
+            settings.application.timeouts.scpi_command_timeout_ms,
+            10_000
+        );
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 1_000);
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_debug_mode_long_timeouts() {
+        let toml_content = r#"
+            log_level = "debug"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+            serial_read_timeout_ms = 30000
+            serial_write_timeout_ms = 30000
+            scpi_command_timeout_ms = 60000
+            network_client_timeout_ms = 60000
+            instrument_connect_timeout_ms = 60000
+            instrument_shutdown_timeout_ms = 60000
+            instrument_measurement_timeout_ms = 60000
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 30_000);
+        assert_eq!(
+            settings.application.timeouts.instrument_connect_timeout_ms,
+            60_000
+        );
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_fast_mock_instruments_config() {
+        let toml_content = r#"
+            log_level = "info"
+
+            [application]
+            broadcast_channel_capacity = 1024
+
+            [application.timeouts]
+            serial_read_timeout_ms = 200
+            instrument_connect_timeout_ms = 1000
+            instrument_measurement_timeout_ms = 1000
+
+            [storage]
+            default_path = "./data"
+            default_format = "csv"
+
+            [instruments]
+        "#;
+
+        let settings: Settings = toml::from_str(toml_content).unwrap();
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 200);
+        assert_eq!(
+            settings.application.timeouts.instrument_connect_timeout_ms,
+            1_000
+        );
+        assert!(settings.validate().is_ok());
     }
 }

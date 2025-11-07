@@ -35,6 +35,7 @@
 //! ```
 
 use crate::core::Instrument;
+use crate::error::DaqError;
 use crate::measurement::Measure;
 use crate::modules::{Module, ModuleConfig, ModuleStatus, ModuleWithInstrument};
 use anyhow::{anyhow, Result};
@@ -67,7 +68,7 @@ impl Default for PowerMonitorConfig {
 
 /// Statistical summary over a time window
 #[derive(Clone, Debug)]
-struct PowerStatistics {
+pub struct PowerStatistics {
     /// Mean power in watts
     mean: f64,
     /// Standard deviation in watts
@@ -150,6 +151,7 @@ impl<M: Measure + 'static> PowerMeterModule<M> {
     /// 2. Removes old measurements outside window
     /// 3. Recalculates statistics
     /// 4. Checks thresholds and generates alerts
+    #[cfg_attr(not(test), allow(dead_code))]
     fn process_power_measurement(&mut self, power_watts: f64) {
         let now = chrono::Utc::now();
 
@@ -173,9 +175,24 @@ impl<M: Measure + 'static> PowerMeterModule<M> {
 
         // Check thresholds
         self.check_thresholds(power_watts);
+
+        if log::log_enabled!(log::Level::Debug) {
+            if let Some(stats) = self.current_stats.as_ref() {
+                log::debug!(
+                    "Module '{}': window stats mean={:.2}W std_dev={:.2}W min={:.2}W max={:.2}W samples={}",
+                    self.name,
+                    stats.mean,
+                    stats.std_dev,
+                    stats.min,
+                    stats.max,
+                    stats.sample_count
+                );
+            }
+        }
     }
 
     /// Updates statistical summary from current power history window
+    #[cfg_attr(not(test), allow(dead_code))]
     fn update_statistics(&mut self) {
         if self.power_history.is_empty() {
             self.current_stats = None;
@@ -204,6 +221,7 @@ impl<M: Measure + 'static> PowerMeterModule<M> {
     }
 
     /// Checks power against thresholds and generates alerts if violated
+    #[cfg_attr(not(test), allow(dead_code))]
     fn check_thresholds(&mut self, power_watts: f64) {
         if power_watts < self.config.low_threshold {
             self.low_threshold_violations += 1;
@@ -363,9 +381,7 @@ impl<M: Measure + 'static> ModuleWithInstrument<M> for PowerMeterModule<M> {
     ) -> Result<()> {
         // Enforce assignment restrictions
         if self.status == ModuleStatus::Running {
-            return Err(anyhow!(
-                "Cannot assign instrument while module is running. Call stop() first."
-            ));
+            return Err(DaqError::ModuleBusyDuringOperation.into());
         }
 
         // Store instrument
@@ -414,7 +430,7 @@ mod tests {
         async fn data_stream(
             &self,
         ) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
-            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
             Ok(rx)
         }
     }

@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::config::InstrumentConfigV3;
+use crate::config::{InstrumentConfigV3, TimeoutSettings};
 use crate::core::ImageData as CoreImageData;
 use crate::core_v3::{Command, ImageMetadata, Instrument, Measurement as V3Measurement, Response};
 use crate::measurement::DataDistributor;
@@ -92,6 +92,9 @@ pub struct InstrumentManagerV3 {
     ///
     /// Tracks spawned data bridge tasks so they can be cancelled during shutdown
     forwarder_handles: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+
+    /// Timeout configuration sourced from application settings
+    timeouts: TimeoutSettings,
 }
 
 impl InstrumentManagerV3 {
@@ -104,7 +107,18 @@ impl InstrumentManagerV3 {
             active_instruments: Arc::new(Mutex::new(HashMap::new())),
             data_distributor: None,
             forwarder_handles: Arc::new(Mutex::new(HashMap::new())),
+            timeouts: TimeoutSettings::default(),
         }
+    }
+
+    /// Override timeout configuration (e.g., after loading application settings).
+    pub fn set_timeouts(&mut self, timeouts: TimeoutSettings) {
+        self.timeouts = timeouts;
+    }
+
+    /// Expose timeout configuration (primarily for tests).
+    pub fn timeout_settings(&self) -> &TimeoutSettings {
+        &self.timeouts
     }
 
     /// Register a factory function for an instrument type
@@ -495,8 +509,9 @@ impl InstrumentManagerV3 {
                     let _ = shutdown_tx.send(());
                 }
 
-                // Await task completion with timeout
-                let timeout_duration = std::time::Duration::from_secs(5);
+                // Await task completion with configured timeout
+                let timeout_duration =
+                    std::time::Duration::from_millis(self.timeouts.instrument_shutdown_timeout_ms);
                 let task_handle = handle.task_handle;
                 tokio::pin!(task_handle);
 
@@ -513,7 +528,11 @@ impl InstrumentManagerV3 {
                         }
                     },
                     Err(_) => {
-                        tracing::warn!("Instrument '{}' shutdown timeout (5s), aborting", id);
+                        tracing::warn!(
+                            "Instrument '{}' shutdown timeout ({}ms), aborting",
+                            id,
+                            self.timeouts.instrument_shutdown_timeout_ms
+                        );
                         task_handle.as_ref().get_ref().abort();
                         if let Err(e) = task_handle.await {
                             tracing::debug!(
@@ -552,6 +571,7 @@ mod tests {
         id: String,
         tx: broadcast::Sender<V3Measurement>,
         params: HashMap<String, Box<dyn ParameterBase>>,
+        task: Option<tokio::task::JoinHandle<()>>,
     }
 
     impl MockInstrumentV3 {
@@ -561,6 +581,7 @@ mod tests {
                 id: id.to_string(),
                 tx,
                 params: HashMap::new(),
+                task: None,
             }))
         }
     }
@@ -572,10 +593,31 @@ mod tests {
         }
 
         async fn initialize(&mut self) -> Result<()> {
+            let tx = self.tx.clone();
+            let id = self.id.clone();
+            self.task = Some(tokio::spawn(async move {
+                loop {
+                    if tx
+                        .send(V3Measurement::Scalar {
+                            name: format!("{}_power", id),
+                            value: 1.0,
+                            unit: "W".to_string(),
+                            timestamp: Utc::now(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }));
             Ok(())
         }
 
         async fn shutdown(&mut self) -> Result<()> {
+            if let Some(handle) = self.task.take() {
+                handle.abort();
+            }
             Ok(())
         }
 
@@ -668,16 +710,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Receive at least one measurement to verify data flow
-        tokio::select! {
-            result = rx.recv() => {
-                let measurement = result.unwrap();
-                assert_eq!(measurement.name(), "power_meter_test_power");
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                panic!("No measurement received within timeout");
-            }
-        }
+        let measurement_timeout = std::time::Duration::from_millis(
+            manager.timeout_settings().instrument_measurement_timeout_ms,
+        );
+        let measurement = tokio::time::timeout(measurement_timeout, rx.recv())
+            .await
+            .expect("should receive measurement")
+            .expect("channel open");
+        assert_eq!(measurement.name(), "power_meter_test_power");
 
         manager.shutdown_all().await.unwrap();
 
@@ -867,9 +907,12 @@ mod tests {
 
         manager.spawn_instrument(&cfg).await.unwrap();
 
-        let mut shutdown_fut = manager.shutdown_all();
+        let shutdown_timeout_ms =
+            manager.timeout_settings().instrument_shutdown_timeout_ms + 1_000;
+        let shutdown_fut = manager.shutdown_all();
         tokio::pin!(shutdown_fut);
-        tokio::time::advance(Duration::from_secs(6)).await;
+        let advance_duration = std::time::Duration::from_millis(shutdown_timeout_ms);
+        tokio::time::advance(advance_duration).await;
         shutdown_fut.as_mut().await.unwrap();
 
         assert!(

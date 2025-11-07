@@ -5,7 +5,8 @@
 use super::{Module, ModuleStatus};
 use super::meta_instruments::Camera;
 use async_trait::async_trait;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use crate::error::DaqError;
 use std::any::Any;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -47,7 +48,7 @@ impl CameraModule {
     /// Returns error if module is currently running. Stop the module before reassignment.
     pub fn assign_camera(&mut self, camera: Box<dyn Camera>) -> Result<()> {
         if self.running {
-            return Err(anyhow!("Cannot assign camera while module is running"));
+            return Err(DaqError::ModuleBusyDuringOperation.into());
         }
         self.camera = Some(Arc::new(Mutex::new(camera)));
         log::info!("Camera assigned to module '{}'", self.name);
@@ -57,7 +58,7 @@ impl CameraModule {
     /// Unassign the current camera from this module
     pub fn unassign_camera(&mut self) -> Result<()> {
         if self.running {
-            return Err(anyhow!("Cannot unassign camera while module is running"));
+            return Err(DaqError::ModuleBusyDuringOperation.into());
         }
         self.camera = None;
         log::info!("Camera unassigned from module '{}'", self.name);
@@ -78,7 +79,7 @@ impl Module for CameraModule {
 
     async fn start(&mut self) -> Result<()> {
         let camera = self.camera.as_ref()
-            .ok_or_else(|| anyhow!("No camera assigned to module"))?
+            .ok_or_else(|| DaqError::CameraNotAssigned.into())?
             .clone();
 
         self.running = true;

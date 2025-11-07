@@ -37,6 +37,9 @@ pub struct ScpiInstrumentV2 {
     /// Instrument identifier
     id: String,
 
+    /// Underlying VISA or serial resource identifier
+    resource: String,
+
     /// VISA adapter for command/response (Arc<Mutex> for shared mutable access)
 
     /// Current instrument state
@@ -80,6 +83,7 @@ impl ScpiInstrumentV2 {
 
         Self {
             id,
+            resource,
 
             state: InstrumentState::Disconnected,
 
@@ -196,7 +200,7 @@ impl ScpiInstrumentV2 {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // Query the instrument
+                        log::trace!("SCPI instrument '{}' polling command '{}' ({} subscribers)", id, command, tx.receiver_count());
 
                     }
                     _ = &mut shutdown_rx => {
@@ -228,7 +232,10 @@ impl Instrument for ScpiInstrumentV2 {
             return Err(anyhow!("Cannot initialize from state: {:?}", self.state));
         }
 
-        info!("Initializing SCPI instrument '{}'", self.id);
+        info!(
+            "Initializing SCPI instrument '{}' using resource '{}'",
+            self.id, self.resource
+        );
         self.state = InstrumentState::Connecting;
 
         // Connect hardware adapter
@@ -311,9 +318,9 @@ impl Instrument for ScpiInstrumentV2 {
                 info!("Get parameter request for '{}' (not implemented)", name);
                 Ok(())
             }
-            InstrumentCommand::SnapFrame => {
-                Err(anyhow::anyhow!("SnapFrame command not supported for SCPI instrument"))
-            }
+            InstrumentCommand::SnapFrame => Err(anyhow::anyhow!(
+                "SnapFrame command not supported for SCPI instrument"
+            )),
         }
     }
 }

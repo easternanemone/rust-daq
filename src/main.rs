@@ -9,38 +9,44 @@
 //!         buffer for display in the GUI (`log_capture::LogCollector`). This provides
 //!         both persistent and interactive logging.
 //!     -   **Configuration**: Loads the `settings.toml` file into the `Settings` struct.
-//!     -   **Instrument Registry**: Creates an `InstrumentRegistry` and registers all the
-//!         available instrument drivers. This acts as a simple "plugin" system where
+//!     -   **Instrument Registry V2**: Creates an `InstrumentRegistryV2` and registers all the
+//!         available V2 instrument drivers. This acts as a simple "plugin" system where
 //!         instrument types are mapped to their constructor functions. Feature flags
 //!         are used to conditionally compile and register drivers that have specific
 //!         dependencies.
 //!     -   **Processor Registry**: Creates a `ProcessorRegistry` for data processing modules.
-//!     -   **Core Application (`DaqApp`)**: Instantiates the central `DaqApp` which manages
-//!         the application's state and logic.
+//!     -   **Actor System**: Creates DaqManagerActor and spawns it in async task.
 //!
 //! 2.  **GUI Launch**: It configures and runs the native GUI using the `eframe` crate.
-//!     It passes the `DaqApp` instance to the `gui::Gui` struct, which then takes control
-//!     of the main event loop.
+//!     It passes the command channel and runtime handle to the `gui::Gui` struct, which then
+//!     takes control of the main event loop.
 //!
 //! 3.  **Shutdown**: After the `eframe` event loop exits (i.e., the user closes the window),
-//!     it calls the `app.shutdown()` method to ensure a graceful termination of all
-//!     background tasks, such as instrument communication threads.
+//!     it sends a shutdown command to the actor for graceful termination.
 
 use anyhow::Result;
 use eframe::NativeOptions;
 use log::{info, LevelFilter};
+#[cfg(feature = "instrument_serial")]
+use rust_daq::instruments_v2::{
+    elliptec::ElliptecV2, esp300::ESP300V2, maitai::MaiTaiV2, newport_1830c::Newport1830CV2,
+};
 use rust_daq::{
-    app::DaqApp,
+    app_actor::DaqManagerActor,
     config::Settings,
-    core::DataPoint,
     data::registry::ProcessorRegistry,
     gui::Gui,
-    instrument::{mock::MockInstrument, scpi::ScpiInstrument, InstrumentRegistry},
+    instrument::{v2_adapter::V2InstrumentAdapter, InstrumentRegistry, InstrumentRegistryV2},
+    instruments_v2::{
+        mock_instrument::MockInstrumentV2, pvcam::PVCAMInstrumentV2, scpi::ScpiInstrumentV2,
+    },
     log_capture::{LogBuffer, LogCollector},
-    measurement::{datapoint::*, InstrumentMeasurement},
-    modules::{power_meter::PowerMeterModule, ModuleRegistry},
+    measurement::InstrumentMeasurement,
+    messages::DaqCommand,
 };
 use std::sync::Arc;
+
+use tokio::sync::mpsc;
 
 fn main() -> Result<()> {
     // --- Custom Log Initialization ---
@@ -74,70 +80,155 @@ fn main() -> Result<()> {
     let settings = Settings::new(None)?;
     info!("Configuration loaded successfully.");
 
-    // Create a registry and register available instruments.
-    // This is our static "plugin" system.
+    // Create V1 and V2 instrument registries. V1 registry is backed by adapters so
+    // legacy APIs continue to list the available instruments while Phase 3 proceeds.
     let mut instrument_registry = InstrumentRegistry::<InstrumentMeasurement>::new();
-    instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
+    let mut instrument_registry_v2 = InstrumentRegistryV2::new();
 
-    // Note: V2 instruments (MockInstrumentV2, etc.) will be integrated in Phase 3 (bd-51)
-    // via native Arc<Measurement> support. V2InstrumentAdapter removed in Phase 2 (bd-62).
+    // Register core V2 instruments (no feature gates)
+    instrument_registry_v2.register("mock", |id| Box::pin(MockInstrumentV2::new(id.to_string())));
+    instrument_registry.register("mock", |id| {
+        Box::new(V2InstrumentAdapter::new(MockInstrumentV2::new(
+            id.to_string(),
+        )))
+    });
 
-    instrument_registry.register("scpi_keithley", |_id| Box::new(ScpiInstrument::new()));
+    instrument_registry_v2.register("scpi_keithley", |id| {
+        Box::pin(ScpiInstrumentV2::new(
+            id.to_string(),
+            "GPIB0::5::INSTR".to_string(),
+        ))
+    });
+    instrument_registry.register("scpi_keithley", |id| {
+        Box::new(V2InstrumentAdapter::new(ScpiInstrumentV2::new(
+            id.to_string(),
+            "GPIB0::5::INSTR".to_string(),
+        )))
+    });
 
-    #[cfg(feature = "instrument_visa")]
-    {
-        use rust_daq::instrument::visa::VisaInstrument;
-        instrument_registry.register("visa_instrument", |id| {
-            Box::new(VisaInstrument::new(id).unwrap())
-        });
-    }
-
-    #[cfg(feature = "instrument_serial")]
-    {
-        use rust_daq::instrument::{
-            elliptec::Elliptec, esp300::ESP300, maitai::MaiTai, newport_1830c::Newport1830C,
-        };
-        instrument_registry.register("newport_1830c", |id| Box::new(Newport1830C::new(id)));
-        instrument_registry.register("maitai", |id| Box::new(MaiTai::new(id)));
-        instrument_registry.register("elliptec", |id| Box::new(Elliptec::new(id)));
-        instrument_registry.register("esp300", |id| Box::new(ESP300::new(id)));
-    }
-
-    // Register PVCAM camera (no feature gate for now)
-    use rust_daq::instrument::pvcam::PVCAMCamera;
-    instrument_registry.register("pvcam", |id| Box::new(PVCAMCamera::new(id)));
-
-    // Register V2 PVCAM camera for image support
-    use rust_daq::instrument::v2_adapter::V2InstrumentAdapter;
-    use rust_daq::instruments_v2::pvcam::PVCAMInstrumentV2;
-
-    instrument_registry.register("pvcam_v2", |id| {
+    instrument_registry_v2.register("pvcam", |id| {
+        Box::pin(PVCAMInstrumentV2::new(id.to_string()))
+    });
+    instrument_registry.register("pvcam", |id| {
         Box::new(V2InstrumentAdapter::new(PVCAMInstrumentV2::new(
             id.to_string(),
         )))
     });
 
+    // Register serial instruments (feature-gated)
+    #[cfg(feature = "instrument_serial")]
+    {
+        instrument_registry_v2.register("newport_1830c", |id| {
+            Box::pin(Newport1830CV2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                9600,
+            ))
+        });
+        instrument_registry.register("newport_1830c", |id| {
+            Box::new(V2InstrumentAdapter::new(Newport1830CV2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                9600,
+            )))
+        });
+        instrument_registry_v2.register("maitai", |id| {
+            Box::pin(MaiTaiV2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                9600,
+            ))
+        });
+        instrument_registry.register("maitai", |id| {
+            Box::new(V2InstrumentAdapter::new(MaiTaiV2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                9600,
+            )))
+        });
+        instrument_registry_v2.register("elliptec", |id| Box::pin(ElliptecV2::new(id.to_string())));
+        instrument_registry.register("elliptec", |id| {
+            Box::new(V2InstrumentAdapter::new(ElliptecV2::new(id.to_string())))
+        });
+        instrument_registry_v2.register("esp300", |id| {
+            Box::pin(ESP300V2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                19200,
+                3,
+            ))
+        });
+        instrument_registry.register("esp300", |id| {
+            Box::new(V2InstrumentAdapter::new(ESP300V2::new(
+                id.to_string(),
+                "/dev/ttyUSB0".to_string(),
+                19200,
+                3,
+            )))
+        });
+    }
+
     let instrument_registry = Arc::new(instrument_registry);
+    let instrument_registry_v2 = Arc::new(instrument_registry_v2);
 
     // Create the processor registry
     let processor_registry = Arc::new(ProcessorRegistry::new());
 
     // Create the module registry and register modules
-    let mut module_registry = ModuleRegistry::<InstrumentMeasurement>::new();
+    let mut module_registry = rust_daq::modules::ModuleRegistry::new();
     module_registry.register("power_meter", |id| {
-        Box::new(PowerMeterModule::<InstrumentMeasurement>::new(id))
+        Box::new(rust_daq::modules::power_meter::PowerMeterModule::<
+            rust_daq::core::DataPoint,
+        >::new(id))
     });
     let module_registry = Arc::new(module_registry);
 
-    // Create the core application state
-    let app = DaqApp::<InstrumentMeasurement>::new(
-        settings,
-        instrument_registry,
-        processor_registry,
-        module_registry,
-        log_buffer,
+    // Create Tokio runtime for async operations
+    let runtime = Arc::new(
+        tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create Tokio runtime: {}", e))?,
+    );
+
+    // Create the DaqManagerActor with both legacy and V2 registries
+    let actor = DaqManagerActor::new(
+        settings.clone(),
+        instrument_registry.clone(),
+        instrument_registry_v2.clone(),
+        processor_registry.clone(),
+        module_registry.clone(),
+        runtime.clone(),
     )?;
-    let app_clone = app.clone();
+
+    // Create command channel
+    let (command_tx, command_rx) = mpsc::channel(settings.application.command_channel_capacity);
+
+    // Clone command_tx for shutdown later
+    let shutdown_tx = command_tx.clone();
+
+    // Spawn instruments from config before starting GUI
+    let instrument_ids: Vec<String> = settings.instruments.keys().cloned().collect();
+
+    // Spawn the actor task
+    let runtime_clone = runtime.clone();
+    runtime_clone.spawn(async move {
+        actor.run(command_rx).await;
+    });
+
+    // Spawn configured instruments asynchronously (non-blocking)
+    for id in instrument_ids {
+        let cmd_tx = command_tx.clone();
+        let id_clone = id.clone();
+        runtime.spawn(async move {
+            let (cmd, rx) = DaqCommand::spawn_instrument(id_clone.clone());
+            if cmd_tx.send(cmd).await.is_ok() {
+                if let Ok(result) = rx.await {
+                    if let Err(e) = result {
+                        log::error!("Failed to spawn instrument '{}': {}", id_clone, e);
+                    }
+                }
+            }
+        });
+    }
 
     // Set up and run the GUI
     let options = NativeOptions::default();
@@ -147,18 +238,25 @@ fn main() -> Result<()> {
         "Rust DAQ",
         options,
         Box::new(move |cc| {
-            // The `eframe` crate provides the `egui` context `cc`
-            // which we can use to style the GUI.
-            // Here we are just passing it to our `Gui` struct.
-            Ok(Box::new(Gui::<InstrumentMeasurement>::new(cc, app_clone)))
+            Ok(Box::new(Gui::new(
+                cc,
+                command_tx,
+                runtime,
+                settings,
+                instrument_registry_v2,
+                log_buffer,
+            )))
         }),
     )
     .map_err(|e| anyhow::anyhow!("Eframe run error: {}", e))?;
 
     // The GUI event loop has finished.
-    // We can now gracefully shut down the application.
-    info!("GUI closed. Shutting down.");
-    app.shutdown()?;
+    // Send shutdown command to actor for graceful shutdown.
+    info!("GUI closed. Shutting down actor...");
+    let (cmd, rx) = DaqCommand::shutdown();
+    if shutdown_tx.blocking_send(cmd).is_ok() {
+        let _ = rx.blocking_recv();
+    }
 
     Ok(())
 }

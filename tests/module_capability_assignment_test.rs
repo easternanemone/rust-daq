@@ -4,11 +4,10 @@
 //! capabilities, and validating the assignment system using the DaqCommand API.
 
 use rust_daq::app_actor::DaqManagerActor;
-use rust_daq::config::{ApplicationSettings, Settings, StorageSettings};
+use rust_daq::config::{ApplicationSettings, Settings, StorageSettings, TimeoutSettings};
 use rust_daq::data::registry::ProcessorRegistry;
 use rust_daq::instrument::capabilities::power_measurement_capability_id;
-use rust_daq::instrument::InstrumentRegistry;
-use rust_daq::log_capture::LogBuffer;
+use rust_daq::instrument::{InstrumentRegistry, InstrumentRegistryV2};
 use rust_daq::measurement::InstrumentMeasurement;
 use rust_daq::messages::DaqCommand;
 use rust_daq::modules::ModuleConfig;
@@ -24,6 +23,7 @@ fn create_test_settings() -> Settings {
             broadcast_channel_capacity: 64,
             command_channel_capacity: 16,
             data_distributor: Default::default(),
+            timeouts: TimeoutSettings::default(),
         },
         storage: StorageSettings {
             default_path: "./data".to_string(),
@@ -40,19 +40,19 @@ async fn setup_actor() -> mpsc::Sender<DaqCommand> {
     let runtime = Arc::new(Runtime::new().expect("Failed to create runtime"));
 
     // Register power_meter module
-    let mut module_registry = rust_daq::modules::ModuleRegistry::new();
+    let mut module_registry = rust_daq::modules::ModuleRegistry::<InstrumentMeasurement>::new();
     module_registry.register("power_meter", |id| {
         Box::new(rust_daq::modules::power_meter::PowerMeterModule::<
             InstrumentMeasurement,
         >::new(id))
     });
 
-    let actor = DaqManagerActor::<InstrumentMeasurement>::new(
-        Arc::new(settings),
-        Arc::new(InstrumentRegistry::new()),
+    let actor = DaqManagerActor::new(
+        settings.clone(),
+        Arc::new(InstrumentRegistry::<InstrumentMeasurement>::new()),
+        Arc::new(InstrumentRegistryV2::new()),
         Arc::new(ProcessorRegistry::new()),
         Arc::new(module_registry),
-        LogBuffer::new(),
         runtime,
     )
     .expect("Failed to create actor");

@@ -316,7 +316,7 @@ impl Instrument for Elliptec {
         for &addr in &self.device_addresses {
             let response = self.send_command_async(addr, "in").await?;
             info!("Elliptec device {} info: {}", addr, response);
-            
+
             // Parse and store device info
             match DeviceInfo::parse(&response) {
                 Ok(info) => {
@@ -479,9 +479,9 @@ mod tests {
     fn test_device_info_parse_device_2() {
         // Actual response from device 2 in integration test
         let response = "2IN0E1140051720231701016800023000";
-        
+
         let info = DeviceInfo::parse(response).expect("Failed to parse device 2 info");
-        
+
         assert_eq!(info.address, 2);
         assert_eq!(info.motor_type, 0x0E); // 14 decimal = ELL14
         assert_eq!(info.serial_no, "11400517");
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(info.range_degrees, 0x0168); // 360 decimal
         assert_eq!(info.pulse_per_rev, 0x00023000); // 143360 decimal
         assert_eq!(info.motor_type_name(), "ELL14 Rotation Mount");
-        
+
         // Verify conversion factor
         let expected_cpd = 143360.0 / 360.0; // 398.222...
         assert!((info.counts_per_degree() - expected_cpd).abs() < 0.001);
@@ -502,9 +502,9 @@ mod tests {
     fn test_device_info_parse_device_3() {
         // Actual response from device 3 in integration test
         let response = "3IN0E1140028420211501016800023000";
-        
+
         let info = DeviceInfo::parse(response).expect("Failed to parse device 3 info");
-        
+
         assert_eq!(info.address, 3);
         assert_eq!(info.motor_type, 0x0E); // 14 decimal = ELL14
         assert_eq!(info.serial_no, "11400284");
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn test_device_info_parse_invalid_length() {
         let response = "2IN0E1140051"; // Too short
-        
+
         let result = DeviceInfo::parse(response);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too short"));
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn test_device_info_parse_invalid_command() {
         let response = "2XX0E1140051720231701016800023000";
-        
+
         let result = DeviceInfo::parse(response);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Expected 'IN'"));
@@ -538,20 +538,26 @@ mod tests {
     fn test_device_info_parse_zero_range() {
         // Response with range_degrees = 0 (positions 21-24)
         let response = "2IN0E1140051720231701000000023000";
-        
+
         let result = DeviceInfo::parse(response);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("range_degrees is zero"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("range_degrees is zero"));
     }
 
     #[test]
     fn test_device_info_parse_zero_pulse_per_rev() {
         // Response with pulse_per_rev = 0 (positions 25-32)
         let response = "2IN0E1140051720231701016800000000";
-        
+
         let result = DeviceInfo::parse(response);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("pulse_per_rev is zero"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("pulse_per_rev is zero"));
     }
 
     #[test]
@@ -568,20 +574,23 @@ mod tests {
             range_degrees: 360,
             pulse_per_rev: 143360,
         };
-        
+
         // Test full rotation
         let counts_full = info.pulse_per_rev;
-        let degrees_full = (counts_full as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
+        let degrees_full =
+            (counts_full as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
         assert!((degrees_full - 360.0).abs() < 0.001);
-        
+
         // Test half rotation
         let counts_half = info.pulse_per_rev / 2;
-        let degrees_half = (counts_half as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
+        let degrees_half =
+            (counts_half as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
         assert!((degrees_half - 180.0).abs() < 0.001);
-        
+
         // Test quarter rotation
         let counts_quarter = info.pulse_per_rev / 4;
-        let degrees_quarter = (counts_quarter as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
+        let degrees_quarter =
+            (counts_quarter as f64 / info.pulse_per_rev as f64) * info.range_degrees as f64;
         assert!((degrees_quarter - 90.0).abs() < 0.001);
     }
 }

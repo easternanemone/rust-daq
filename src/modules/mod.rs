@@ -169,6 +169,7 @@
 //! ```
 
 use crate::core::Instrument;
+use crate::error::DaqError;
 use crate::instrument::capabilities::CapabilityProxyHandle;
 use crate::measurement::Measure;
 use anyhow::{anyhow, Result};
@@ -345,15 +346,15 @@ pub trait Module: Send {
     }
 
     fn start(&mut self) -> Result<()> {
-        Err(anyhow!("Module does not support start operation"))
+        Err(DaqError::ModuleOperationNotSupported("start".to_string()).into())
     }
 
     fn pause(&mut self) -> Result<()> {
-        Err(anyhow!("Module does not support pause operation"))
+        Err(DaqError::ModuleOperationNotSupported("pause".to_string()).into())
     }
 
     fn stop(&mut self) -> Result<()> {
-        Err(anyhow!("Module does not support stop operation"))
+        Err(DaqError::ModuleOperationNotSupported("stop".to_string()).into())
     }
 }
 
@@ -624,7 +625,7 @@ mod tests {
         async fn data_stream(
             &self,
         ) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>> {
-            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
             Ok(rx)
         }
     }

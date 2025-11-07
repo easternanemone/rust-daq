@@ -10,15 +10,17 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use rand::Rng;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio::task::JoinHandle;
+use tokio::time::Duration;
 
 use crate::core_v3::{
     Camera, Command, ImageData, ImageMetadata, Instrument, InstrumentState, Measurement,
-    ParameterBase, PixelBuffer, Response, Roi,
+    ParameterBase, PixelBuffer, PowerMeter, Response, Roi,
 };
 use crate::parameter::{Parameter, ParameterBuilder};
 
@@ -99,6 +101,11 @@ impl MockCameraV3 {
             is_acquiring: false,
             acquisition_task: None,
         }
+    }
+
+    /// Factory helper used by InstrumentManagerV3
+    pub fn from_config(id: &str, _cfg: &serde_json::Value) -> Result<Box<dyn Instrument>> {
+        Ok(Box::new(Self::new(id)))
     }
 
     /// Generate mock image data
@@ -397,6 +404,269 @@ impl Camera for MockCameraV3 {
     }
 }
 
+// =============================================================================
+// MockPowerMeterV3
+// =============================================================================
+
+/// Simple V3 power meter used for the Phase 3 vertical slice
+pub struct MockPowerMeterV3 {
+    id: String,
+    state: InstrumentState,
+    sampling_rate_hz: f64,
+    wavelength_nm: f64,
+    baseline_mw: f64,
+    range_watts: Option<f64>,
+    data_tx: broadcast::Sender<Measurement>,
+    parameters: HashMap<String, Box<dyn ParameterBase>>,
+    task_handle: Option<JoinHandle<()>>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+}
+
+impl MockPowerMeterV3 {
+    const DEFAULT_SAMPLING_RATE_HZ: f64 = 10.0;
+    const DEFAULT_WAVELENGTH_NM: f64 = 532.0;
+
+    pub fn new(id: impl Into<String>, sampling_rate_hz: f64, wavelength_nm: f64) -> Self {
+        let (data_tx, _) = broadcast::channel(128);
+        Self {
+            id: id.into(),
+            state: InstrumentState::Uninitialized,
+            sampling_rate_hz: sampling_rate_hz.max(0.1),
+            wavelength_nm,
+            baseline_mw: 1.0,
+            range_watts: None,
+            data_tx,
+            parameters: HashMap::new(),
+            task_handle: None,
+            shutdown_tx: None,
+        }
+    }
+
+    pub fn from_config(id: &str, cfg: &serde_json::Value) -> Result<Box<dyn Instrument>> {
+        let sampling_rate_hz = cfg
+            .get("sampling_rate")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(Self::DEFAULT_SAMPLING_RATE_HZ);
+        let wavelength_nm = cfg
+            .get("wavelength_nm")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(Self::DEFAULT_WAVELENGTH_NM);
+
+        Ok(Box::new(Self::new(id, sampling_rate_hz, wavelength_nm)))
+    }
+
+    fn start_streaming(&mut self) {
+        if self.task_handle.is_some() {
+            return;
+        }
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let tx = self.data_tx.clone();
+        let id = self.id.clone();
+        let mut interval_secs = 1.0 / self.sampling_rate_hz;
+        if !interval_secs.is_finite() || interval_secs <= 0.0 {
+            interval_secs = 0.1;
+        }
+        let sampling_interval = Duration::from_secs_f64(interval_secs);
+        let baseline = self.baseline_mw;
+        let wavelength_nm = self.wavelength_nm;
+        let range_watts = self.range_watts;
+
+        let task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(sampling_interval);
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    _ = interval.tick() => {
+                        let mut rng = rand::thread_rng();
+                        let noise: f64 = rng.gen_range(-0.05..0.05);
+                        let mut reading_mw = baseline * (1.0 + noise);
+                        if let Some(range) = range_watts {
+                            let max_mw = range * 1000.0;
+                            reading_mw = reading_mw.min(max_mw);
+                        }
+                        let spectral_nudge = (wavelength_nm % 1000.0) * 0.0001;
+
+                        let measurement = Measurement::Scalar {
+                            name: format!("{}_power", id),
+                            value: reading_mw + spectral_nudge,
+                            unit: "mW".to_string(),
+                            timestamp: chrono::Utc::now(),
+                        };
+
+                        let _ = tx.send(measurement);
+                    }
+                }
+            }
+        });
+
+        self.task_handle = Some(task);
+        self.shutdown_tx = Some(shutdown_tx);
+        self.state = InstrumentState::Running;
+    }
+
+    async fn stop_streaming(&mut self) -> Result<()> {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+
+        if let Some(handle) = self.task_handle.take() {
+            if let Err(e) = handle.await {
+                log::warn!("MockPowerMeterV3 '{}' task join error: {e}", self.id);
+            }
+        }
+        Ok(())
+    }
+
+    fn measurement_channel(&self) -> broadcast::Receiver<Measurement> {
+        self.data_tx.subscribe()
+    }
+
+    async fn update_sampling_rate(&mut self, hz: f64) -> Result<()> {
+        if hz <= 0.0 {
+            return Err(anyhow!("sampling_rate_hz must be positive"));
+        }
+        self.sampling_rate_hz = hz;
+        if self.task_handle.is_some() {
+            self.stop_streaming().await?;
+            self.start_streaming();
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Instrument for MockPowerMeterV3 {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn state(&self) -> InstrumentState {
+        self.state
+    }
+
+    async fn initialize(&mut self) -> Result<()> {
+        if matches!(self.state, InstrumentState::Uninitialized) {
+            self.state = InstrumentState::Idle;
+        }
+        self.start_streaming();
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        self.state = InstrumentState::ShuttingDown;
+        self.stop_streaming().await?;
+        Ok(())
+    }
+
+    fn data_channel(&self) -> broadcast::Receiver<Measurement> {
+        self.measurement_channel()
+    }
+
+    async fn execute(&mut self, cmd: Command) -> Result<Response> {
+        match cmd {
+            Command::Start => {
+                self.start_streaming();
+                Ok(Response::State(self.state))
+            }
+            Command::Stop => {
+                self.stop_streaming().await?;
+                self.state = InstrumentState::Idle;
+                Ok(Response::State(self.state))
+            }
+            Command::Pause => {
+                self.stop_streaming().await?;
+                self.state = InstrumentState::Paused;
+                Ok(Response::State(self.state))
+            }
+            Command::Resume => {
+                self.start_streaming();
+                Ok(Response::State(self.state))
+            }
+            Command::GetState => Ok(Response::State(self.state)),
+            Command::GetParameter(name) => {
+                let value = match name.as_str() {
+                    "sampling_rate_hz" => serde_json::json!(self.sampling_rate_hz),
+                    "wavelength_nm" => serde_json::json!(self.wavelength_nm),
+                    "baseline_mw" => serde_json::json!(self.baseline_mw),
+                    _ => return Ok(Response::Error(format!("Unknown parameter '{name}'"))),
+                };
+                Ok(Response::Parameter(value))
+            }
+            Command::SetParameter(name, value) => {
+                if let Err(err) = self.apply_parameter_value(&name, &value).await {
+                    return Ok(Response::Error(err.to_string()));
+                }
+                Ok(Response::Parameter(value))
+            }
+            Command::Configure { params } => {
+                for (name, value) in params {
+                    let json_value = serde_json::to_value(value)
+                        .map_err(|e| anyhow!("Failed to serialize parameter '{name}': {e}"))?;
+                    if let Err(err) = self.apply_parameter_value(&name, &json_value).await {
+                        return Ok(Response::Error(err.to_string()));
+                    }
+                }
+                Ok(Response::Ok)
+            }
+            _ => Ok(Response::Error(format!("Unsupported command: {cmd:?}"))),
+        }
+    }
+
+    fn parameters(&self) -> &HashMap<String, Box<dyn ParameterBase>> {
+        &self.parameters
+    }
+
+    fn parameters_mut(&mut self) -> &mut HashMap<String, Box<dyn ParameterBase>> {
+        &mut self.parameters
+    }
+}
+
+#[async_trait]
+impl PowerMeter for MockPowerMeterV3 {
+    async fn set_wavelength(&mut self, nm: f64) -> Result<()> {
+        self.wavelength_nm = nm;
+        Ok(())
+    }
+
+    async fn set_range(&mut self, watts: f64) -> Result<()> {
+        self.range_watts = Some(watts.max(0.001));
+        Ok(())
+    }
+
+    async fn zero(&mut self) -> Result<()> {
+        self.baseline_mw = 0.0;
+        Ok(())
+    }
+}
+
+impl MockPowerMeterV3 {
+    async fn apply_parameter_value(&mut self, name: &str, value: &serde_json::Value) -> Result<()> {
+        match name {
+            "sampling_rate_hz" => {
+                let hz = value
+                    .as_f64()
+                    .ok_or_else(|| anyhow!("sampling_rate_hz must be numeric"))?;
+                self.update_sampling_rate(hz).await?
+            }
+            "wavelength_nm" => {
+                let nm = value
+                    .as_f64()
+                    .ok_or_else(|| anyhow!("wavelength_nm must be numeric"))?;
+                self.wavelength_nm = nm;
+            }
+            "baseline_mw" => {
+                let baseline = value
+                    .as_f64()
+                    .ok_or_else(|| anyhow!("baseline_mw must be numeric"))?;
+                self.baseline_mw = baseline;
+            }
+            other => return Err(anyhow!("Unknown parameter '{other}'")),
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,5 +764,25 @@ mod tests {
         // Shutdown should stop acquisition
         camera.shutdown().await.unwrap();
         assert_eq!(camera.state(), InstrumentState::ShuttingDown);
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_v3_stream() {
+        let mut meter = MockPowerMeterV3::new("pm_test", 5.0, 532.0);
+        meter.initialize().await.unwrap();
+
+        let mut rx = meter.data_channel();
+        let measurement = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timeout waiting for measurement")
+            .expect("channel closed");
+
+        match measurement {
+            Measurement::Scalar { name, .. } => assert_eq!(name, "pm_test_power"),
+            other => panic!("Expected scalar measurement, got {other:?}"),
+        }
+
+        meter.shutdown().await.unwrap();
+        assert_eq!(meter.state(), InstrumentState::ShuttingDown);
     }
 }

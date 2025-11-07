@@ -392,6 +392,7 @@ mod tests {
     use crate::experiment::plan::PlanStream;
     use futures::stream;
 
+    #[allow(dead_code)]
     struct SimplePlan {
         steps: Vec<String>,
     }

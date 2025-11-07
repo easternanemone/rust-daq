@@ -8,13 +8,14 @@
 //! concurrent access. Instrument factories are stored as boxed closures that take
 //! an ID string and return a pinned boxed trait object implementing Instrument.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::pin::Pin;
 use daq_core::Instrument;
+use std::collections::HashMap;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 /// Type alias for V2 instrument factories
-type InstrumentFactoryV2 = Box<dyn Fn(&str) -> Pin<Box<dyn Instrument>> + Send + Sync>;
+type InstrumentFactoryV2 =
+    Box<dyn Fn(&str) -> Pin<Box<dyn Instrument + Send + Sync + 'static + Unpin>> + Send + Sync>;
 
 /// V2 Instrument Registry - concrete implementation without generics
 pub struct InstrumentRegistryV2 {
@@ -32,7 +33,10 @@ impl InstrumentRegistryV2 {
     /// Register an instrument factory function for the given instrument type
     pub fn register<F>(&mut self, instrument_type: &str, factory: F)
     where
-        F: Fn(&str) -> Pin<Box<dyn Instrument>> + Send + Sync + 'static,
+        F: Fn(&str) -> Pin<Box<dyn Instrument + Send + Sync + 'static + Unpin>>
+            + Send
+            + Sync
+            + 'static,
     {
         let mut factories = self.factories.lock().unwrap();
         factories.insert(instrument_type.to_string(), Box::new(factory));
@@ -40,7 +44,11 @@ impl InstrumentRegistryV2 {
 
     /// Create an instrument instance of the specified type with the given ID
     /// Returns None if the instrument type is not registered
-    pub fn create(&self, instrument_type: &str, id: &str) -> Option<Pin<Box<dyn Instrument>>> {
+    pub fn create(
+        &self,
+        instrument_type: &str,
+        id: &str,
+    ) -> Option<Pin<Box<dyn Instrument + Send + Sync + 'static + Unpin>>> {
         let factories = self.factories.lock().unwrap();
         factories.get(instrument_type).map(|factory| factory(id))
     }
@@ -55,12 +63,11 @@ impl InstrumentRegistryV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::pin::Pin;
     use daq_core::Instrument;
 
-    use daq_core::{InstrumentState, InstrumentCommand, Measurement};
-    use tokio::sync::broadcast;
     use anyhow::Result;
+    use daq_core::{InstrumentCommand, InstrumentState, Measurement};
+    use tokio::sync::broadcast;
 
     struct MockInstrument {
         id: String,
@@ -90,7 +97,7 @@ mod tests {
         }
 
         fn state(&self) -> InstrumentState {
-            self.state
+            self.state.clone()
         }
 
         async fn initialize(&mut self) -> Result<()> {
@@ -126,7 +133,7 @@ mod tests {
     fn test_factory_registration() {
         let mut registry = InstrumentRegistryV2::new();
         registry.register("test_instrument", |id: &str| {
-            Pin::new(Box::new(MockInstrument::new(id.to_string())))
+            Box::pin(MockInstrument::new(id.to_string()))
         });
         assert_eq!(registry.list(), vec!["test_instrument"]);
     }
@@ -135,7 +142,7 @@ mod tests {
     fn test_instrument_creation() {
         let mut registry = InstrumentRegistryV2::new();
         registry.register("mock", |id: &str| {
-            Pin::new(Box::new(MockInstrument::new(id.to_string())))
+            Box::pin(MockInstrument::new(id.to_string()))
         });
 
         let instrument = registry.create("mock", "instrument_1").unwrap();
@@ -146,10 +153,10 @@ mod tests {
     fn test_list_functionality() {
         let mut registry = InstrumentRegistryV2::new();
         registry.register("type_a", |id: &str| {
-            Pin::new(Box::new(MockInstrument::new(id.to_string())))
+            Box::pin(MockInstrument::new(id.to_string()))
         });
         registry.register("type_b", |id: &str| {
-            Pin::new(Box::new(MockInstrument::new(id.to_string())))
+            Box::pin(MockInstrument::new(id.to_string()))
         });
 
         let mut types = registry.list();

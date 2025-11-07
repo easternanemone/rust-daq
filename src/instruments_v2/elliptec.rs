@@ -424,9 +424,9 @@ impl Instrument for ElliptecV2 {
                 Ok(())
             }
             InstrumentCommand::Recover => self.recover().await,
-            InstrumentCommand::SnapFrame => {
-                Err(anyhow::anyhow!("SnapFrame command not supported for rotator"))
-            }
+            InstrumentCommand::SnapFrame => Err(anyhow::anyhow!(
+                "SnapFrame command not supported for rotator"
+            )),
         }
     }
 
@@ -667,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn test_elliptec_lifecycle() {
         let mock_adapter = MockAdapter::new();
-        let mut elliptec = ElliptecV2::with_adapter_and_capacity(
+        let elliptec = ElliptecV2::with_adapter_and_capacity(
             "test_elliptec".to_string(),
             Box::new(mock_adapter),
             1024,

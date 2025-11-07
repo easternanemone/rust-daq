@@ -1,0 +1,168 @@
+================================================================================
+bd-51b1: Timeout Configuration Architecture Design - COMPLETE ✅
+================================================================================
+
+Task Status: COMPLETE - Ready for bd-ltd3 Implementation
+Date: 2025-11-07
+Estimated Implementation Time: 2-3 hours
+
+================================================================================
+DELIVERABLES CHECKLIST
+================================================================================
+
+✅ 1. Updated config.toml with complete [application.timeouts] section
+   Location: config/default.toml (lines 12-39)
+   Contents: 8 timeout fields with comprehensive comments
+
+✅ 2. TimeoutSettings struct definition (Rust code)
+   Location: docs/timeout_settings_struct.rs (400+ lines)
+   Contents: Complete struct, validation, usage examples, checklist
+
+✅ 3. Migration plan for existing deployments
+   Location: docs/TIMEOUT_CONFIG_DESIGN.md (Section 3)
+   Contents: Backward compatibility strategy, deployment steps
+
+✅ 4. Test cases for validation logic
+   Location: docs/timeout_test_cases.rs (400+ lines, 20+ tests)
+   Contents: Validation, compatibility, integration, edge cases
+
+✅ 5. Documentation explaining design choices
+   Location: docs/TIMEOUT_CONFIG_DESIGN.md (500+ lines, 10 sections)
+   Contents: Complete design rationale and implementation guide
+
+✅ BONUS: Completion summary document
+   Location: docs/BD_51B1_COMPLETION_SUMMARY.md
+   Contents: Executive summary of all deliverables
+
+================================================================================
+KEY DESIGN DECISIONS
+================================================================================
+
+1. Config Structure: [application.timeouts] (nested under application)
+   - Matches existing [application.data_distributor] pattern
+   - Consistent with config.toml organizational structure
+
+2. Inheritance Model: Phase 1 = Global defaults only
+   - Simple implementation (2-3 hours)
+   - Phase 2 (per-instrument overrides) deferred to future
+
+3. Timeout Categories: 8 types from 23 hardcoded instances
+   - serial_read_timeout_ms: 1000ms
+   - serial_write_timeout_ms: 1000ms
+   - scpi_command_timeout_ms: 2000ms
+   - network_client_timeout_ms: 5000ms
+   - network_cleanup_timeout_ms: 10000ms
+   - instrument_connect_timeout_ms: 5000ms
+   - instrument_shutdown_timeout_ms: 6000ms
+   - instrument_measurement_timeout_ms: 5000ms
+
+4. Validation Rules: Permissive bounds with fail-fast
+   - Serial I/O: 100ms - 30s
+   - Protocol: 500ms - 60s
+   - Network: 1s - 120s
+   - Instrument: 1s - 60s
+
+5. Backward Compatibility: Zero breaking changes
+   - Missing section → uses defaults
+   - Partial section → missing fields use defaults
+   - Default values identical to current hardcoded values
+
+================================================================================
+IMPLEMENTATION GUIDE (for bd-ltd3)
+================================================================================
+
+Step 1: Copy struct to src/config.rs (15 min)
+   - From: docs/timeout_settings_struct.rs
+   - To: src/config.rs (after ApplicationSettings)
+
+Step 2: Add field to ApplicationSettings (5 min)
+   - Add: #[serde(default)] pub timeouts: TimeoutSettings
+
+Step 3: Add validation call (5 min)
+   - In Settings::validate(), add: self.application.timeouts.validate()?
+
+Step 4: Replace 23 hardcoded timeouts (1-2 hours)
+   - src/adapters/serial_adapter.rs (2 instances)
+   - src/instrument/scpi_common.rs (3 instances)
+   - src/network/server_actor.rs (10 instances)
+   - src/instrument_manager_v3.rs (4 instances)
+   - src/experiment/primitives.rs (2 instances)
+
+Step 5: Add tests (30 min)
+   - Copy from: docs/timeout_test_cases.rs
+   - To: src/config.rs test module
+
+Step 6: Update documentation (15 min)
+   - Add timeout section to CLAUDE.md
+
+Step 7: Verify (30 min)
+   - cargo test (all tests pass)
+   - cargo clippy (no warnings)
+   - Manual testing (default, custom, invalid configs)
+
+================================================================================
+ACCEPTANCE CRITERIA
+================================================================================
+
+Design Phase (bd-51b1): ✅ COMPLETE
+
+✅ Config structure validated and documented
+✅ Backward compatibility ensured
+✅ Migration path defined for existing deployments
+✅ Clear separation between Phase 1 and Phase 2 scope
+✅ All 23 timeout instances categorized into 8 types
+✅ Validation rules specified with min/max bounds
+✅ Testing strategy defined
+✅ Documentation requirements identified
+
+Implementation Phase (bd-ltd3): READY TO BEGIN
+
+Acceptance criteria when bd-ltd3 is complete:
+□ All 23 hardcoded timeouts replaced with config values
+□ Config loads with and without [application.timeouts] section
+□ Validation catches out-of-range values
+□ Existing tests pass
+□ New tests verify timeout behavior
+□ Documentation updated
+□ ast-grep violations reduced by 23 instances
+
+================================================================================
+REFERENCE FILES
+================================================================================
+
+1. TIMEOUT_CONFIG_DESIGN.md
+   - Comprehensive design document (500+ lines)
+   - 10 sections covering all aspects
+   - Primary reference for implementation
+
+2. timeout_settings_struct.rs
+   - Complete Rust struct definition
+   - Validation implementation
+   - Usage examples and integration guide
+
+3. timeout_test_cases.rs
+   - 20+ comprehensive test cases
+   - Copy directly to src/config.rs
+
+4. BD_51B1_COMPLETION_SUMMARY.md
+   - Executive summary of design
+   - Implementation readiness checklist
+
+5. config/default.toml (modified)
+   - [application.timeouts] section added
+   - Ready for immediate use
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Close bd-51b1 (design task) - COMPLETE
+2. Begin bd-ltd3 (implementation task) - READY
+3. Follow implementation guide above
+4. Estimated time: 2-3 hours
+5. Blocks removed: bd-ltd3 can proceed immediately
+
+================================================================================
+DESIGN STATUS: COMPLETE ✅
+IMPLEMENTATION STATUS: READY TO BEGIN
+================================================================================

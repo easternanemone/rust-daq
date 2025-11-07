@@ -137,6 +137,48 @@ Add to MCP config (e.g., `~/.config/claude/config.json`):
 
 Then use `mcp__beads__*` functions instead of CLI commands.
 
+### ast-grep Integration
+
+This project uses `ast-grep` to enforce coding standards and help with migrations. A set of project-specific rules is defined in `rust_daq_ast_grep_rules.yml`.
+
+**MCP Server (`ast-grep-mcp`)**
+
+For AI agents, the `ast-grep-mcp` server provides a powerful way to interact with the codebase using `ast-grep`.
+
+**Setup:**
+
+1.  **Install `ast-grep-mcp`:**
+    ```bash
+    pip install ast-grep-mcp
+    ```
+
+2.  **Add to MCP config:**
+    Add the following to your MCP configuration file (e.g., `~/.config/claude/config.json`):
+    ```json
+    {
+      "ast-grep": {
+        "command": "ast-grep-mcp",
+        "args": []
+      }
+    }
+    ```
+
+**Usage:**
+
+You can use the `mcp__ast_grep__*` functions to run the rules. For example, to run all rules in the project:
+
+```
+mcp__ast_grep__run --config rust_daq_ast_grep_rules.yml
+```
+
+To run a specific rule:
+
+```
+mcp__ast_grep__run --config rust_daq_ast_grep_rules.yml --rule-id no-unwrap-expect
+```
+
+The output will be in JSON format, which can be easily parsed by AI agents.
+
 ### Important Rules
 
 - ✅ Use bd for ALL task tracking

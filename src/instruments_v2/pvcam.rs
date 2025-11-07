@@ -233,6 +233,7 @@ impl PVCAMInstrumentV2 {
     }
 
     /// Convert PVCAM PxRegion to our ROI struct
+    #[allow(dead_code)]
     fn px_region_to_roi(&self, region: &super::pvcam_sdk::PxRegion) -> (ROI, (u16, u16)) {
         let roi = ROI {
             x: region.s1,
@@ -2294,7 +2295,7 @@ mod tests {
 
     #[test]
     fn test_pvcam_error_variants_have_context() {
-        use super::super::pvcam_sdk::{CameraHandle, PvcamError};
+        use super::super::pvcam_sdk::PvcamError;
 
         // Test InitFailed has descriptive message
         let err = PvcamError::InitFailed("SDK not found".to_string());
@@ -2381,7 +2382,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Test open_camera failure
-        use super::super::pvcam_sdk::{CameraHandle, PvcamError};
+        use super::super::pvcam_sdk::PvcamError;
         sdk.set_next_open_fails_with_error(Some(PvcamError::CameraNotFound("TestCam".to_string())));
         let result = sdk.open_camera("PrimeBSI");
         assert!(result.is_err());

@@ -546,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_recovery() {
         // Create instrument with custom adapter that will fail
-        let mut adapter = MockAdapter::new();
+        let adapter = MockAdapter::new();
         adapter.trigger_failure();
         let mut instrument = MockInstrumentV2::with_adapter("test".to_string(), Box::new(adapter));
 

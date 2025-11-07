@@ -5,6 +5,17 @@ use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 
+/// **DEPRECATED**: Stub trait for backward compatibility with V1 code.
+/// This trait was removed in Phase 3. V1 Instrument trait and modules are deprecated.
+/// New code should use V2/V3 architecture with `daq_core::Measurement` enum.
+#[async_trait]
+pub trait Measure: Send + Sync {
+    type Data: Send + Sync + Clone;
+
+    async fn measure(&mut self) -> Result<Self::Data>;
+    async fn data_stream(&self) -> Result<mpsc::Receiver<std::sync::Arc<Self::Data>>>;
+}
+
 /// Fan-out data distributor for efficient multi-consumer broadcasting without backpressure.
 ///
 /// Uses non-blocking try_send() to prevent slow subscribers from blocking fast ones.
@@ -262,14 +273,6 @@ impl<T: Clone> DataDistributor<T> {
             })
             .collect()
     }
-}
-
-#[async_trait]
-pub trait Measure: Send + Sync {
-    type Data: Send + Sync + Clone;
-
-    async fn measure(&mut self) -> Result<Self::Data>;
-    async fn data_stream(&self) -> Result<tokio::sync::mpsc::Receiver<std::sync::Arc<Self::Data>>>;
 }
 
 pub mod datapoint;

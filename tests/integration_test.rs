@@ -1,3 +1,4 @@
+use daq_core::Measurement;
 use rust_daq::modules::ModuleRegistry;
 use rust_daq::{
     app::DaqApp,
@@ -5,6 +6,7 @@ use rust_daq::{
     data::registry::ProcessorRegistry,
     instrument::{mock::MockInstrument, InstrumentRegistry},
     log_capture::LogBuffer,
+    measurement::InstrumentMeasurement,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,13 +20,14 @@ fn test_mock_instrument_spawns_and_produces_data() {
     instrument_registry.register("mock", |_id| Box::new(MockInstrument::new()));
     let instrument_registry = Arc::new(instrument_registry);
     let processor_registry = Arc::new(ProcessorRegistry::new());
+    let module_registry = Arc::new(ModuleRegistry::<InstrumentMeasurement>::new());
     let log_buffer = LogBuffer::new();
 
     let app = DaqApp::new(
         settings.clone(),
         instrument_registry,
         processor_registry,
-        Arc::new(rust_daq::modules::ModuleRegistry::new()),
+        module_registry,
         log_buffer,
     )
     .unwrap();
@@ -40,14 +43,23 @@ fn test_mock_instrument_spawns_and_produces_data() {
 
         // Assert
         assert!(recv_result.is_ok(), "Did not receive data point in time");
-        let data_point = recv_result.unwrap().unwrap();
-        assert!(
-            matches!(
-                data_point.channel.as_str(),
-                "sine_wave" | "cosine_wave" | "sine_wave_filtered" | "cosine_wave_filtered"
-            ) || data_point.channel.ends_with("_fft"),
-            "Unexpected channel name"
-        );
+        let measurement = recv_result.unwrap().unwrap();
+        match measurement.as_ref() {
+            Measurement::Scalar(dp) => {
+                let (_, channel) = dp
+                    .channel
+                    .split_once(':')
+                    .expect("channel should include instrument id");
+                assert!(
+                    matches!(
+                        channel,
+                        "sine_wave" | "cosine_wave" | "sine_wave_filtered" | "cosine_wave_filtered"
+                    ) || channel.ends_with("_fft"),
+                    "Unexpected channel name"
+                );
+            }
+            other => panic!("Expected scalar measurement, got {other:?}"),
+        }
     });
 
     // Teardown

@@ -54,6 +54,69 @@ jobs:
           wait-for-processing: true
         if: always()
 
+  ast-grep:
+    name: AST-Grep Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ast-grep
+        run: |
+          curl -L https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-x86_64-unknown-linux-gnu.zip -o ast-grep.zip
+          unzip ast-grep.zip
+          chmod +x ast-grep
+          sudo mv ast-grep /usr/local/bin/
+
+      - name: Run ast-grep scan
+        id: ast-grep-scan
+        run: |
+          # Run ast-grep and capture JSON output
+          ast-grep scan --config rust_daq_ast_grep_rules.yml --json > ast-grep-results.json || true
+          
+          # Check for ERROR severity violations
+          ERROR_COUNT=$(jq '[.[] | select(.severity == "error")] | length' ast-grep-results.json)
+          WARNING_COUNT=$(jq '[.[] | select(.severity == "warning")] | length' ast-grep-results.json)
+          HINT_COUNT=$(jq '[.[] | select(.severity == "hint")] | length' ast-grep-results.json)
+          
+          echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+          echo "warning_count=$WARNING_COUNT" >> $GITHUB_OUTPUT
+          echo "hint_count=$HINT_COUNT" >> $GITHUB_OUTPUT
+          
+          # Display summary
+          echo "### AST-Grep Results"
+          echo "- Errors: $ERROR_COUNT"
+          echo "- Warnings: $WARNING_COUNT"
+          echo "- Hints: $HINT_COUNT"
+          
+          # Show detailed results if any violations found
+          if [ "$ERROR_COUNT" -gt 0 ] || [ "$WARNING_COUNT" -gt 0 ] || [ "$HINT_COUNT" -gt 0 ]; then
+            echo ""
+            echo "Detailed violations:"
+            jq -r '.[] | "[\(.severity | ascii_upcase)] \(.file):\(.range.start.line) - \(.message)"' ast-grep-results.json
+          fi
+
+      - name: Upload ast-grep results artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ast-grep-results-${{ github.sha }}
+          path: ast-grep-results.json
+          if-no-files-found: error
+
+      - name: Fail on ERROR violations
+        if: steps.ast-grep-scan.outputs.error_count > 0
+        run: |
+          echo "::error::Found ${{ steps.ast-grep-scan.outputs.error_count }} ERROR severity violations"
+          echo "Please fix the ERROR violations before merging."
+          exit 1
+
+      - name: Comment on warnings
+        if: steps.ast-grep-scan.outputs.warning_count > 0 || steps.ast-grep-scan.outputs.hint_count > 0
+        run: |
+          echo "::warning::Found ${{ steps.ast-grep-scan.outputs.warning_count }} warnings and ${{ steps.ast-grep-scan.outputs.hint_count }} hints"
+          echo "These are informational and do not block the build."
+
   security:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -104,7 +167,7 @@ jobs:
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: lint
+    needs: [lint, ast-grep]
     strategy:
       fail-fast: false
       matrix:
@@ -134,7 +197,7 @@ jobs:
   hardware-tests:
     name: Hardware Tests (Tailnet)
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, ast-grep]
     # Only run on main branch to avoid burning through Tailscale auth keys on every PR
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
