@@ -907,8 +907,7 @@ mod tests {
 
         manager.spawn_instrument(&cfg).await.unwrap();
 
-        let shutdown_timeout_ms =
-            manager.timeout_settings().instrument_shutdown_timeout_ms + 1_000;
+        let shutdown_timeout_ms = manager.timeout_settings().instrument_shutdown_timeout_ms + 1_000;
         let shutdown_fut = manager.shutdown_all();
         tokio::pin!(shutdown_fut);
         let advance_duration = std::time::Duration::from_millis(shutdown_timeout_ms);

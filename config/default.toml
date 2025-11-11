@@ -148,13 +148,13 @@ wavelength_nm = 532.0
 # roi = [0, 0, 2048, 2048]
 # binning = [1, 1]
 
-# [[instruments_v3]]
-# id = "newport_pm_v3"
-# type = "Newport1830CV3"
-# port = "/dev/ttyUSB0"
-# wavelength_nm = 532.0
-# range = "auto"
-# units = "watts"
+[[instruments_v3]]
+id = "newport_pm_v3"
+type = "Newport1830CV3"
+port = "/dev/ttyUSB0"
+wavelength_nm = 532.0
+range = "auto"
+units = "watts"
 
 # [[instruments_v3]]
 # id = "elliptec_v3"

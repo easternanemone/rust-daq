@@ -85,6 +85,7 @@ use crate::{
         InstrumentRegistry,
     },
     instrument_manager_v3::InstrumentManagerV3,
+    instruments_v2::Newport1830CV3,
     measurement::{DataDistributor, DataDistributorConfig, Measure, SubscriberMetricsSnapshot},
     messages::{DaqCommand, SpawnError},
     metadata::Metadata,
@@ -204,6 +205,7 @@ where
         manager_v3.set_timeouts(settings.application.timeouts.clone());
         manager_v3.register_factory("MockCameraV3", MockCameraV3::from_config);
         manager_v3.register_factory("MockPowerMeterV3", MockPowerMeterV3::from_config);
+        manager_v3.register_factory("Newport1830CV3", Newport1830CV3::from_config);
         let instrument_manager_v3 = Some(Arc::new(Mutex::new(manager_v3)));
 
         Ok(Self {

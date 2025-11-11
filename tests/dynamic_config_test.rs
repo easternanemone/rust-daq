@@ -5,11 +5,7 @@
 
 use rust_daq::app_actor::DaqManagerActor;
 use rust_daq::config::{
-    versioning::VersionId,
-    ApplicationSettings,
-    Settings,
-    StorageSettings,
-    TimeoutSettings,
+    versioning::VersionId, ApplicationSettings, Settings, StorageSettings, TimeoutSettings,
 };
 use rust_daq::data::registry::ProcessorRegistry;
 use rust_daq::instrument::{InstrumentRegistry, InstrumentRegistryV2};

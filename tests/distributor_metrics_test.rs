@@ -4,11 +4,7 @@ use std::time::Duration;
 
 use rust_daq::app_actor::DaqManagerActor;
 use rust_daq::config::{
-    ApplicationSettings,
-    DataDistributorSettings,
-    Settings,
-    StorageSettings,
-    TimeoutSettings,
+    ApplicationSettings, DataDistributorSettings, Settings, StorageSettings, TimeoutSettings,
 };
 use rust_daq::data::registry::ProcessorRegistry;
 use rust_daq::instrument::InstrumentRegistry;
