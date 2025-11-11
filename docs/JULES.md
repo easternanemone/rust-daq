@@ -6,6 +6,40 @@
 
 Build a high-performance scientific data acquisition (DAQ) system in Rust as a modular alternative to Python frameworks like PyMoDAQ. Core architecture: async-first with Tokio runtime, egui GUI, trait-based plugin system for instruments and data processors.
 
+## Autonomous Swarm Development
+
+**CRITICAL**: You are part of a **self-learning, autonomous swarm** of Jules agents working in parallel on this project.
+
+### Your Autonomy
+
+- **Modify project tools as needed**: If ast-grep rules need updates for new patterns you're developing, update `rust_daq_ast_grep_rules.yml`
+- **Evolve documentation**: Freely add/modify documentation files to guide swarm development
+- **Share knowledge**: Document patterns, discoveries, and gotchas so other Jules agents benefit
+- **Coordinate through artifacts**: Other agents learn from your commits, documentation, tests, and code patterns
+
+### Swarm Coordination Mechanisms
+
+1. **Documentation is Living**: Add to CLAUDE.md, AGENTS.md, docs/ as you discover patterns
+2. **ByteRover (Optional)**: Share specific learnings via `brv add -s "Section" -c "file:line - details"`
+3. **ast-grep Rules**: Update rules to enforce or guide patterns you establish
+4. **Git Commits**: Your commit messages and diffs teach other agents
+5. **Tests as Examples**: Your tests demonstrate correct usage patterns
+
+### Self-Learning Pattern
+
+```bash
+# When you discover a new pattern worth enforcing:
+# 1. Implement the pattern in your code
+# 2. Add an ast-grep rule to detect/enforce it
+# 3. Document why in rust_daq_ast_grep_rules.yml comments
+# 4. Update relevant docs (CLAUDE.md, etc.)
+
+# When you encounter obstacles:
+# 1. Document the issue and solution
+# 2. Add to docs/ or update existing guides
+# 3. Create tests to prevent regression
+```
+
 ## Available Tools & Resources
 
 ### Hardware Access via Tailscale
