@@ -51,6 +51,8 @@ serde_json = "1.0"
 config = { version = "0.14.0", features = ["toml"] }
 toml = "0.8.12"
 flatbuffers = "24.3.25"
+# V4 configuration system
+figment = { version = "0.10", features = ["toml", "env"] }
 
 # Error Handling
 anyhow = "1.0.82"
