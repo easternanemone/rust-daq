@@ -96,24 +96,6 @@ impl Timestamp {
         }
     }
 
-    /// Creates a new timestamp from the current system time.
-    /// 
-    /// This is an alias for `now_system()` for convenience.
-    pub fn now() -> Self {
-        Self::now_system()
-    }
-
-    /// Creates a new timestamp from a chrono DateTime.
-    /// 
-    /// The timestamp will have a System source and unknown accuracy.
-    pub fn from_datetime(dt: DateTime<Utc>) -> Self {
-        Self {
-            time: dt,
-            source: TimestampSource::System,
-            accuracy_ns: None,
-        }
-    }
-
     /// Creates a new timestamp from a hardware source.
     ///
     /// The `time` should be the wall-clock time calculated from the hardware's
@@ -125,15 +107,6 @@ impl Timestamp {
             source: TimestampSource::Hardware,
             accuracy_ns,
         }
-    }
-}
-
-/// Convert from chrono DateTime to Timestamp.
-/// 
-/// The timestamp will have a System source and unknown accuracy.
-impl From<DateTime<Utc>> for Timestamp {
-    fn from(dt: DateTime<Utc>) -> Self {
-        Self::from_datetime(dt)
     }
 }
 
