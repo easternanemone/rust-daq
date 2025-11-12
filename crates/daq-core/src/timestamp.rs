@@ -69,7 +69,7 @@ pub enum TimestampSource {
 /// This struct is used throughout the DAQ system to provide a consistent and
 /// informative way of representing timestamps. By storing the source and an
 /// estimate of the accuracy, it allows downstream systems to make informed
--/// decisions about how to process and correlate measurements.
+/// decisions about how to process and correlate measurements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timestamp {
     /// The time of the measurement.
