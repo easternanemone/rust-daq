@@ -1,18 +1,28 @@
 # rust-daq
 
-`rust-daq` is a high-performance, modular data acquisition (DAQ) application written in Rust. It is designed for scientific and industrial applications that require real-time data acquisition, processing, and visualization.
+`rust-daq` is a high-performance, modular data acquisition (DAQ) application written in Rust, designed for scientific and industrial applications.
 
-## V2 Architecture
+## Project Status: Undergoing V4 Refactoring
 
-The `rust-daq` application has been recently migrated to a modern, actor-based V2 architecture. This new architecture provides several key benefits over the legacy V1 design, including:
+**Warning:** This project is currently undergoing a major architectural refactoring to resolve critical design flaws. The `main` branch may be in a broken state as obsolete code is actively being removed and replaced.
 
-*   **Improved Performance**: The actor model eliminates the lock contention and performance bottlenecks of the previous `Arc<Mutex<>>`-based design.
-*   **Enhanced Scalability**: The V2 architecture is designed to be highly scalable, allowing for the easy addition of new instruments, data processors, and other components.
-*   **Rich Data Type Support**: The V2 architecture natively supports the `Measurement` enum, which allows for the handling of rich data types like images and spectra.
-*   **Clear Separation of Concerns**: The V2 architecture enforces a clear separation of concerns between the core application logic, the instrument drivers, and the GUI.
+The previous V1, V2, and V3 architectures have been deprecated in favor of a single, unified **V4 architecture**. The primary goal is to create a robust, maintainable, and scalable system.
 
-For a more detailed overview of the V2 architecture, please see the [rust-daq Application Architecture Guide](rust-daq-app-architecture.md).
+For a detailed analysis of the issues that prompted this refactor, please see [ARCHITECTURAL_FLAW_ANALYSIS.md](./ARCHITECTURAL_FLAW_ANALYSIS.md).
+
+## V4 Architecture Overview
+
+The new V4 architecture is being built on the following principles and technologies:
+
+*   **Actor-Based Concurrency:** Using the **[Kameo](https://github.com/jprochazk/kameo)** framework, where each instrument is an isolated, stateful actor to ensure robustness and prevent deadlocks.
+*   **High-Performance Data Handling:** Using **[Apache Arrow](https://arrow.apache.org/)** (`arrow-rs`) for in-memory data representation.
+*   **Hierarchical Data Storage:** Using **HDF5** (`hdf5-rust`) for structured, scientific data storage, aligning with common industry practice.
+*   **Modern Tooling:** Adopting best-in-class libraries for logging (`tracing`), configuration (`figment`), and plotting (`egui-plot`).
+
+For a full list of chosen libraries, see [ADDITIONAL_LIBRARY_RESEARCH.md](./ADDITIONAL_LIBRARY_RESEARCH.md).
+
+The detailed V4 refactoring plan is being tracked in the `beads` issue tracker, under the main epic **`bd-xvpw`**.
 
 ## Getting Started
 
-To get started with `rust-daq`, please see the [Getting Started Guide](rust-daq-getting-started.md).
+To get started with the development, please see the [Getting Started Guide](./rust-daq-getting-started.md). Note that some of this documentation may be outdated until the V4 refactor is complete.
