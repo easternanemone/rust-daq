@@ -9,6 +9,33 @@
 
 use rust_daq::config_v4::V4Config;
 
+/// Sanitize configuration by redacting sensitive keys
+fn sanitize_config(value: &toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Table(table) => {
+            let mut sanitized = toml::map::Map::new();
+            for (key, val) in table {
+                let key_lower = key.to_lowercase();
+                if key_lower.contains("password")
+                    || key_lower.contains("token")
+                    || key_lower.contains("secret")
+                    || key_lower.contains("key")
+                    || key_lower.contains("credential")
+                {
+                    sanitized.insert(key.clone(), toml::Value::String("***REDACTED***".to_string()));
+                } else {
+                    sanitized.insert(key.clone(), sanitize_config(val));
+                }
+            }
+            toml::Value::Table(sanitized)
+        }
+        toml::Value::Array(arr) => {
+            toml::Value::Array(arr.iter().map(sanitize_config).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Rust DAQ V4 Configuration Demo ===\n");
 
@@ -47,7 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\n  ID: {}", instrument.id);
         println!("  Type: {}", instrument.r#type);
         println!("  Enabled: {}", instrument.enabled);
-        println!("  Config: {:#?}", instrument.config);
+        // Sanitize config to redact passwords, tokens, and other secrets
+        let sanitized = sanitize_config(&instrument.config);
+        println!("  Config: {:#?}", sanitized);
     }
 
     println!("\n=== Environment Override Demo ===");

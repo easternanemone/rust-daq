@@ -144,6 +144,9 @@ pub fn init_from_config(config: &V4Config) -> Result<(), String> {
 ///
 /// This allows more fine-grained control over tracing initialization.
 ///
+/// This function is idempotent - if tracing is already initialized, it will
+/// return Ok(()) without error. This makes it safe to call in tests and libraries.
+///
 /// # Example
 /// ```no_run
 /// use rust_daq::tracing_v4::{self, TracingConfig, OutputFormat};
@@ -186,7 +189,15 @@ pub fn init(config: TracingConfig) -> Result<(), String> {
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .try_init()
-                .map_err(|e| format!("Failed to initialize tracing: {}", e))?;
+                .or_else(|e| {
+                    // Handle "already initialized" gracefully - this is expected in tests
+                    // and when multiple components try to init tracing
+                    if e.to_string().contains("a global default trace dispatcher has already been set") {
+                        Ok(())
+                    } else {
+                        Err(format!("Failed to initialize tracing: {}", e))
+                    }
+                })?;
         }
         OutputFormat::Compact => {
             let fmt_layer = fmt::layer()
@@ -202,7 +213,13 @@ pub fn init(config: TracingConfig) -> Result<(), String> {
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .try_init()
-                .map_err(|e| format!("Failed to initialize tracing: {}", e))?;
+                .or_else(|e| {
+                    if e.to_string().contains("a global default trace dispatcher has already been set") {
+                        Ok(())
+                    } else {
+                        Err(format!("Failed to initialize tracing: {}", e))
+                    }
+                })?;
         }
         OutputFormat::Json => {
             let fmt_layer = fmt::layer()
@@ -217,7 +234,13 @@ pub fn init(config: TracingConfig) -> Result<(), String> {
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .try_init()
-                .map_err(|e| format!("Failed to initialize tracing: {}", e))?;
+                .or_else(|e| {
+                    if e.to_string().contains("a global default trace dispatcher has already been set") {
+                        Ok(())
+                    } else {
+                        Err(format!("Failed to initialize tracing: {}", e))
+                    }
+                })?;
         }
     }
 

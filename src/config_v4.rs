@@ -181,16 +181,30 @@ mod tests {
     fn test_load_config() {
         // This test requires config.v4.toml to exist
         let result = V4Config::load();
-        match result {
-            Ok(config) => {
-                assert_eq!(config.application.name, "Rust DAQ V4");
-                assert!(config.validate().is_ok());
-            }
-            Err(e) => {
-                // Config file may not exist in test environment
-                eprintln!("Config load failed (expected in CI): {}", e);
-            }
+
+        // In CI or environments without the config file, this test will be skipped
+        // But if the file exists, we must validate it properly
+        if result.is_err() {
+            let err_msg = result.unwrap_err().to_string();
+            // Only accept "file not found" errors - all other errors should fail
+            assert!(
+                err_msg.contains("No such file") || err_msg.contains("cannot find"),
+                "Config load failed with unexpected error: {}",
+                err_msg
+            );
+            eprintln!("Config file not found (expected in CI) - skipping validation");
+            return;
         }
+
+        // If we successfully loaded, validate the config
+        let config = result.unwrap();
+        assert_eq!(config.application.name, "Rust DAQ V4");
+        assert!(config.validate().is_ok(), "Config validation failed");
+
+        // Verify required fields are present
+        assert!(!config.application.log_level.is_empty());
+        assert!(config.actors.default_mailbox_capacity > 0);
+        assert!(!config.storage.default_backend.is_empty());
     }
 
     #[test]
