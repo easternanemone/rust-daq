@@ -184,9 +184,9 @@ jobs:
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install HDF5 dependencies (Linux)
+      - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev libudev-dev pkg-config
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -296,8 +296,8 @@ jobs:
         with:
           components: llvm-tools-preview
 
-      - name: Install HDF5 dependencies
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev libudev-dev pkg-config
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -337,9 +337,9 @@ jobs:
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install HDF5 dependencies (Linux)
+      - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev libudev-dev pkg-config
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
