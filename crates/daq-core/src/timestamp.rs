@@ -146,13 +146,13 @@ lazy_static::lazy_static! {
 /// The drift rate is a simple linear fit of the offset over time, which is
 /// sufficient for many applications. More complex drift models could be
 /// implemented in the future.
-pub async fn synchronize_ntp(server: &str) -> Result<(), rsntp::SntpError> {
+pub async fn synchronize_ntp(server: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = AsyncSntpClient::new();
     let result = client.synchronize(server).await?;
     let sync_time = Utc::now();
-    let clock_offset = result.offset();
+    let clock_offset = result.clock_offset();
 
-    let offset = Duration::nanoseconds(clock_offset);
+    let offset = clock_offset.into_chrono_duration().unwrap();
 
     let mut state = NTP_SYNC_STATE.lock().unwrap();
 
