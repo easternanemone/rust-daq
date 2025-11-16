@@ -6,7 +6,7 @@
 
 The project is undergoing a complete architectural refactor to unify three previously competing cores (V1, V2, V3) into a single, robust, and maintainable system. The legacy architecture documentation has been archived.
 
-For background on the issues that led to this refactoring, please see [ARCHITECTURAL_FLAW_ANALYSIS.md](./ARCHITECTURAL_FLAW_ANALYSIS.md).
+For background on the issues that led to this refactoring, please see [ARCHITECTURAL_FLAW_ANALYSIS.md](./docs/architecture/ARCHITECTURAL_FLAW_ANALYSIS.md).
 
 The guiding principles of the V4 architecture are:
 - **Clarity and Maintainability**: A single, coherent architecture.
@@ -16,7 +16,7 @@ The guiding principles of the V4 architecture are:
 
 ## 2. Core Technologies
 
-The V4 architecture is built upon a stack of modern, best-in-class Rust libraries. The full rationale for these choices is documented in [RUST_LIBRARY_RECOMMENDATIONS.md](./RUST_LIBRARY_RECOMMENDATIONS.md) and [ADDITIONAL_LIBRARY_RESEARCH.md](./ADDITIONAL_LIBRARY_RESEARCH.md).
+The V4 architecture is built upon a stack of modern, best-in-class Rust libraries. The full rationale for these choices is documented in [RUST_LIBRARY_RECOMMENDATIONS.md](./docs/architecture/RUST_LIBRARY_RECOMMENDATIONS.md) and [ADDITIONAL_LIBRARY_RESEARCH.md](./docs/architecture/ADDITIONAL_LIBRARY_RESEARCH.md).
 
 | Component | Library | Role |
 |---|---|---|

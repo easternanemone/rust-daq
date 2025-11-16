@@ -46,7 +46,7 @@ use crate::measurement::DataDistributor;
 use crate::measurement::InstrumentMeasurement;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use daq_core::{Instrument as V2Instrument, InstrumentCommand as V2Command, Measurement};
+use crate::core_v3::{Instrument as V2Instrument, Command as V2Command, Measurement};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle; // Add DataDistributor import

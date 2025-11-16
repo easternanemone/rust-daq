@@ -2,7 +2,7 @@
 
 use crate::core::{DataPoint, DataProcessor, FrequencyBin, MeasurementProcessor, SpectrumData};
 use chrono::Utc;
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use log::debug;
 use num_complex::Complex;
 use rustfft::{Fft, FftPlanner};

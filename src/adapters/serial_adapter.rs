@@ -211,8 +211,8 @@ impl SerialAdapter {
 
 #[async_trait]
 impl BatchExecutor for SerialAdapter {
-    async fn flush(&mut self, batch: &CommandBatch<Self>) -> Result<()> {
-        self.send_commands(batch.commands()).await?;
+    async fn flush(&mut self, commands: &[String]) -> Result<()> {
+        self.send_commands(commands).await?;
         Ok(())
     }
 }

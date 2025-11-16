@@ -4,5 +4,10 @@
       "/Users/briansquires/code/rust-daq-worktrees/",
       "/Users/briansquires/jules-mcp"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "claude-flow@alpha",
+    "flow-nexus",
+    "agentic-payments"
+  ]
 }

@@ -93,7 +93,8 @@ use crate::{
     session::{self, Session},
 };
 use anyhow::{anyhow, Context, Result};
-use daq_core::{timestamp, Measurement};
+use daq_core::timestamp;
+use crate::core_v3::Measurement;
 use log::{error, info, warn};
 use std::path::Path;
 use std::sync::Arc;
@@ -637,7 +638,9 @@ where
 
                                     // Broadcast processed measurements
                                     for measurement in measurements {
-                                        if let Err(e) = data_distributor.broadcast(measurement).await {
+                                        // Convert daq_core::Measurement to core_v3::Measurement
+                                        let v3_measurement = Arc::new((*measurement).clone().into());
+                                        if let Err(e) = data_distributor.broadcast(v3_measurement).await {
                                             error!("Failed to broadcast measurement: {}", e);
                                         }
                                     }
@@ -760,8 +763,10 @@ where
                         measurement_result = measurement_rx.recv() => {
                             match measurement_result {
                                 Ok(measurement) => {
-                                    // V2 instruments produce Arc<Measurement> directly
-                                    if let Err(e) = data_distributor.broadcast(measurement).await {
+                                    // V2 instruments produce Arc<daq_core::Measurement>
+                                    // Convert to core_v3::Measurement for broadcast
+                                    let v3_measurement = Arc::new((*measurement).clone().into());
+                                    if let Err(e) = data_distributor.broadcast(v3_measurement).await {
                                         error!(
                                             "Failed to broadcast measurement from V2 instrument '{}': {}",
                                             id_clone, e
@@ -1480,7 +1485,9 @@ where
 
                                 // Broadcast measurements (no processor chain for dynamic instruments)
                                 for measurement in measurements {
-                                    if let Err(e) = data_distributor.broadcast(measurement).await {
+                                    // Convert daq_core::Measurement to core_v3::Measurement
+                                    let v3_measurement = Arc::new((*measurement).clone().into());
+                                    if let Err(e) = data_distributor.broadcast(v3_measurement).await {
                                         error!("Failed to broadcast measurement: {}", e);
                                     }
                                 }

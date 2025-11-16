@@ -7,7 +7,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait BatchExecutor {
     /// Flushes the command batch, sending all queued commands.
-    async fn flush(&mut self, batch: &CommandBatch<Self>) -> Result<()>;
+    async fn flush(&mut self, commands: &[String]) -> Result<()>;
 }
 
 /// A struct for batching commands to be sent to an instrument.
@@ -37,7 +37,7 @@ impl<'a, E: BatchExecutor> CommandBatch<'a, E> {
 
     /// Flushes the command batch.
     pub async fn flush(&mut self) -> Result<()> {
-        self.executor.flush(self).await
+        self.executor.flush(&self.commands).await
     }
 }
 

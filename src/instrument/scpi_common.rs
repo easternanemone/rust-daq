@@ -10,7 +10,7 @@ use crate::instrument::serial_helper;
 use crate::adapters::serial::SerialAdapter;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

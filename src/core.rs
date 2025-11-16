@@ -74,7 +74,7 @@ use crate::config::Settings;
 use crate::measurement::Measure;
 use crate::metadata::Metadata;
 use async_trait::async_trait;
-pub use daq_core::Measurement;
+pub use crate::core_v3::Measurement;
 use daq_core::timestamp::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
@@ -840,7 +840,7 @@ pub trait Instrument: Send + Sync {
     fn set_v2_data_distributor(
         &mut self,
         _distributor: std::sync::Arc<
-            crate::measurement::DataDistributor<std::sync::Arc<daq_core::Measurement>>,
+            crate::measurement::DataDistributor<std::sync::Arc<crate::core_v3::Measurement>>,
         >,
     ) {
         // Default: no-op for V1 instruments

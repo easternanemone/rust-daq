@@ -54,7 +54,7 @@ use crate::{
     log_capture::{LogBuffer, LogEntry},
     messages::DaqCommand,
 };
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style, TabViewer};
 use egui_plot::{Line, Plot, PlotPoints};

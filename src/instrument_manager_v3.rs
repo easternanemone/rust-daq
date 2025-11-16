@@ -28,11 +28,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::config::{InstrumentConfigV3, TimeoutSettings};
-use crate::core::ImageData as CoreImageData;
-use crate::core_v3::{Command, ImageMetadata, Instrument, Measurement as V3Measurement, Response};
+use crate::core_v3::{Command, ImageMetadata, Instrument, Measurement, Response};
 use crate::measurement::DataDistributor;
-use daq_core::Measurement as V1Measurement;
-use daq_core::SpectrumData as V1SpectrumData;
 use serde_json::Value as JsonValue;
 
 /// Factory function signature for creating V3 instruments from configuration
@@ -86,7 +83,7 @@ pub struct InstrumentManagerV3 {
     ///
     /// Uses non-blocking DataDistributor to forward V3 Measurement to V1 GUI/Storage
     /// during Phase 3 migration, leveraging daq-87/daq-88 backpressure fixes
-    data_distributor: Option<Arc<DataDistributor<Arc<V1Measurement>>>>,
+    data_distributor: Option<Arc<DataDistributor<Arc<Measurement>>>>,
 
     /// Forwarder task handles for graceful shutdown
     ///
@@ -138,7 +135,7 @@ impl InstrumentManagerV3 {
     /// During Phase 3, V3 measurements are bridged to V1 DataDistributor
     /// for backward compatibility with existing DaqApp/GUI/Storage.
     /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
-    pub fn set_data_distributor(&mut self, distributor: Arc<DataDistributor<Arc<V1Measurement>>>) {
+    pub fn set_data_distributor(&mut self, distributor: Arc<DataDistributor<Arc<Measurement>>>) {
         self.data_distributor = Some(distributor);
     }
 
@@ -270,129 +267,28 @@ impl InstrumentManagerV3 {
         Ok(())
     }
 
-    /// Spawn data bridge task for V3 → V1 compatibility
+    /// Spawn data bridge task for V3 measurement forwarding
     ///
     /// Subscribes to V3 measurement channel and forwards to DataDistributor.
     /// Uses non-blocking broadcast() to prevent slow subscribers from blocking data flow.
-    /// Currently only supports Measurement::Scalar; logs warnings for Image/Spectrum.
+    /// No conversion needed - core_v3::Measurement is now the unified type.
     fn spawn_data_bridge(
         instrument_id: String,
-        mut v3_rx: broadcast::Receiver<V3Measurement>,
-        distributor: Arc<DataDistributor<Arc<V1Measurement>>>,
+        mut v3_rx: broadcast::Receiver<Measurement>,
+        distributor: Arc<DataDistributor<Arc<Measurement>>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 match v3_rx.recv().await {
                     Ok(measurement) => {
-                        // Convert V3 Measurement to V1 Measurement for bridge
-                        // Currently only Scalar is supported in Phase 3
-                        let v1_measurement = match &measurement {
-                            V3Measurement::Scalar {
-                                name,
-                                value,
-                                unit,
-                                timestamp,
-                            } => {
-                                let data_point = daq_core::DataPoint {
-                                    channel: name.clone(),
-                                    value: *value,
-                                    timestamp: *timestamp,
-                                    unit: unit.clone(),
-                                };
-                                Some(V1Measurement::Scalar(data_point))
-                            }
-                            V3Measurement::Image {
-                                name,
-                                width,
-                                height,
-                                buffer,
-                                unit,
-                                metadata,
-                                timestamp,
-                            } => {
-                                let width_usize = (*width).max(1) as usize;
-                                let height_usize = (*height).max(1) as usize;
-                                let expected_len = width_usize.saturating_mul(height_usize);
-
-                                if buffer.len() != expected_len {
-                                    tracing::warn!(
-                                        instrument_id = instrument_id,
-                                        channel = name,
-                                        expected_len,
-                                        actual_len = buffer.len(),
-                                        "Image buffer length mismatch during V3→V1 bridge"
-                                    );
-                                }
-
-                                let metadata_value = Self::image_metadata_to_value(metadata);
-
-                                let image_data = CoreImageData {
-                                    timestamp: *timestamp,
-                                    channel: name.clone(),
-                                    width: width_usize,
-                                    height: height_usize,
-                                    pixels: buffer.clone(),
-                                    unit: unit.clone(),
-                                    metadata: metadata_value,
-                                };
-
-                                Some(V1Measurement::Image(image_data.into()))
-                            }
-                            V3Measurement::Spectrum {
-                                name,
-                                frequencies,
-                                amplitudes,
-                                frequency_unit,
-                                amplitude_unit,
-                                metadata,
-                                timestamp,
-                            } => {
-                                if frequencies.len() != amplitudes.len() {
-                                    tracing::warn!(
-                                        instrument_id = instrument_id,
-                                        channel = name,
-                                        freq_len = frequencies.len(),
-                                        amp_len = amplitudes.len(),
-                                        "Spectrum measurement length mismatch during V3→V1 bridge"
-                                    );
-                                    None
-                                } else {
-                                    let spectrum = V1SpectrumData {
-                                        timestamp: *timestamp,
-                                        channel: name.clone(),
-                                        wavelengths: frequencies.clone(),
-                                        intensities: amplitudes.clone(),
-                                        unit_x: frequency_unit
-                                            .clone()
-                                            .unwrap_or_else(|| "Hz".to_string()),
-                                        unit_y: amplitude_unit
-                                            .clone()
-                                            .unwrap_or_else(|| "arb".to_string()),
-                                        metadata: metadata.clone(),
-                                    };
-
-                                    Some(V1Measurement::Spectrum(spectrum))
-                                }
-                            }
-                            V3Measurement::Vector { .. } => {
-                                tracing::warn!(
-                                    instrument_id = instrument_id,
-                                    "Vector measurement not yet supported by V3→V1 bridge"
-                                );
-                                None
-                            }
-                        };
-
-                        // Forward converted measurement if successful
-                        if let Some(v1_msg) = v1_measurement {
-                            if let Err(e) = distributor.broadcast(Arc::new(v1_msg)).await {
-                                tracing::error!(
-                                    "Data bridge broadcast failed for '{}': {}",
-                                    instrument_id,
-                                    e
-                                );
-                                break;
-                            }
+                        // Forward measurement directly (no conversion needed)
+                        if let Err(e) = distributor.broadcast(Arc::new(measurement)).await {
+                            tracing::error!(
+                                "Data bridge broadcast failed for '{}': {}",
+                                instrument_id,
+                                e
+                            );
+                            break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {

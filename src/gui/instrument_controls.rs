@@ -23,7 +23,7 @@
 //!   will be successful. The actual instrument state is updated asynchronously.
 
 use crate::{app::DaqApp, core::InstrumentCommand, messages::DaqCommand};
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use egui::{Color32, Slider, Ui};
 use log::error;
 use std::{collections::HashMap, sync::Arc};

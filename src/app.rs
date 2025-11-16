@@ -10,7 +10,7 @@ use crate::{
     messages::DaqCommand, session,
 };
 use anyhow::{Context, Result};
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use log::info;
 use std::path::Path;
 use std::sync::Arc;

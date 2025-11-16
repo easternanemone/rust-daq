@@ -58,7 +58,7 @@ use crate::{
     session::GuiState,
 };
 use anyhow::Result;
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};

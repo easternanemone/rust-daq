@@ -68,3 +68,13 @@ pub mod instruments_v2;
 // Phase 2: Networking layer (bd-63)
 #[cfg(feature = "networking")]
 pub mod network;
+
+// V4 Architecture (Kameo Actors + Arrow Data)
+#[cfg(feature = "v4")]
+pub mod actors;
+
+#[cfg(feature = "v4")]
+pub mod traits;
+
+#[cfg(feature = "v4")]
+pub mod hardware;

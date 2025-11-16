@@ -8,7 +8,7 @@
 
 The previous V1, V2, and V3 architectures have been deprecated in favor of a single, unified **V4 architecture**. The primary goal is to create a robust, maintainable, and scalable system.
 
-For a detailed analysis of the issues that prompted this refactor, please see [ARCHITECTURAL_FLAW_ANALYSIS.md](./ARCHITECTURAL_FLAW_ANALYSIS.md).
+For a detailed analysis of the issues that prompted this refactor, please see [ARCHITECTURAL_FLAW_ANALYSIS.md](./docs/architecture/ARCHITECTURAL_FLAW_ANALYSIS.md).
 
 ## V4 Architecture Overview
 
@@ -19,10 +19,10 @@ The new V4 architecture is being built on the following principles and technolog
 *   **Hierarchical Data Storage:** Using **HDF5** (`hdf5-rust`) for structured, scientific data storage, aligning with common industry practice.
 *   **Modern Tooling:** Adopting best-in-class libraries for logging (`tracing`), configuration (`figment`), and plotting (`egui-plot`).
 
-For a full list of chosen libraries, see [ADDITIONAL_LIBRARY_RESEARCH.md](./ADDITIONAL_LIBRARY_RESEARCH.md).
+For a full list of chosen libraries, see [ADDITIONAL_LIBRARY_RESEARCH.md](./docs/architecture/ADDITIONAL_LIBRARY_RESEARCH.md).
 
 The detailed V4 refactoring plan is being tracked in the `beads` issue tracker, under the main epic **`bd-xvpw`**.
 
 ## Getting Started
 
-To get started with the development, please see the [Getting Started Guide](./rust-daq-getting-started.md). Note that some of this documentation may be outdated until the V4 refactor is complete.
+To get started with the development, please see the [Getting Started Guide](./docs/getting_started/rust-daq-getting-started.md). Note that some of this documentation may be outdated until the V4 refactor is complete.

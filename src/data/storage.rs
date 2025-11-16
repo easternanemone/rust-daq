@@ -2,7 +2,7 @@
 use crate::{config::Settings, core::StorageWriter, error::DaqError, metadata::Metadata};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use daq_core::Measurement;
+use crate::core_v3::Measurement;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;

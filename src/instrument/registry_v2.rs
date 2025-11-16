@@ -8,7 +8,7 @@
 //! concurrent access. Instrument factories are stored as boxed closures that take
 //! an ID string and return a pinned boxed trait object implementing Instrument.
 
-use daq_core::Instrument;
+use crate::core_v3::Instrument;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,7 @@ impl InstrumentRegistryV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daq_core::Instrument;
+    use crate::core_v3::Instrument;
 
     use anyhow::Result;
     use daq_core::{InstrumentCommand, InstrumentState, Measurement};
