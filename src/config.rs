@@ -291,7 +291,13 @@ fn validate_timeout_range(value: u64, min: u64, max: u64, name: &str) -> Result<
 }
 
 impl Settings {
-    pub fn new(config_name: Option<&str>) -> Result<Self> {
+    pub fn load_v5() -> Result<Self> {
+        let figment = Figment::from(Settings::default());
+        let settings: Settings = figment.extract()?;
+        Ok(settings)
+    }
+
+    pub fn new_legacy(config_name: Option<&str>) -> Result<Self> {
         let config_path = format!("config/{}", config_name.unwrap_or("default"));
         let s = Config::builder()
             .add_source(config::File::with_name(&config_path))
