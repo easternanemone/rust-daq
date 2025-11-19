@@ -31,31 +31,36 @@ struct Probe {
     fallback_baud_rates: &'static [u32],
     command: &'static [u8],
     expected_response: &'static str,
+    // Flow control setting
+    flow_control: serialport::FlowControl,
 }
 
 const PROBES: &[Probe] = &[
     // Newport 1830-C Power Meter
-    // Protocol: Standard SCPI (Ascii)
-    // Command: *IDN?
-    // Expected: "1830-C" (Full response often "NEWPORT 1830-C vX.X")
+    // Protocol: Simple ASCII commands (NOT SCPI)
+    // Command: D? (Query power reading)
+    // Expected: Scientific notation like "9E-9"
+    // NOTE: Uses LF terminator only, no flow control
     Probe {
         name: "Newport 1830-C",
         default_baud_rate: 9600,
         fallback_baud_rates: &[19200, 38400, 115200],
-        command: b"*IDN?\r\n",
-        expected_response: "1830-C",
+        command: b"D?\n",
+        expected_response: "E",  // Scientific notation contains "E"
+        flow_control: serialport::FlowControl::None,
     },
     // Spectra Physics MaiTai Laser
-    // Protocol: Standard SCPI-like
+    // Protocol: SCPI-like with CR terminator
     // Command: *IDN?
-    // Expected: "Spectra-Physics"
-    // Note: Baud rate is usually 9600, but check DIP switches on specific unit.
+    // Expected: "Spectra Physics" (note: no dash in actual response!)
+    // Note: Requires XON/XOFF flow control, CR terminator
     Probe {
         name: "Spectra Physics MaiTai",
-        default_baud_rate: 9600, 
+        default_baud_rate: 9600,
         fallback_baud_rates: &[19200, 38400, 57600, 115200],
-        command: b"*IDN?\r\n",
-        expected_response: "Spectra-Physics", 
+        command: b"*IDN?\r",
+        expected_response: "Spectra Physics",  // No dash!
+        flow_control: serialport::FlowControl::Software,  // XON/XOFF
     },
     // Thorlabs Elliptec Rotation Mounts (ELL14)
     // Protocol: Binary/ASCII hybrid (Manual Issue 7, Page 11)
@@ -67,20 +72,22 @@ const PROBES: &[Probe] = &[
         name: "Elliptec Bus (Address 0)",
         default_baud_rate: 9600,
         fallback_baud_rates: &[], // Elliptec is strictly 9600
-        command: b"0in", 
-        expected_response: "0IN", 
+        command: b"0in",
+        expected_response: "0IN",
+        flow_control: serialport::FlowControl::None,
     },
     // Newport ESP300 Stage Controller
     // Protocol: ASCII
     // Command: ID?
     // Expected: "ESP300"
-    // Note: Unlike most devices, ESP300 defaults to 19200 baud.
+    // Note: Unlike most devices, ESP300 defaults to 19200 baud with hardware flow control.
     Probe {
         name: "Newport ESP300",
         default_baud_rate: 19200,
         fallback_baud_rates: &[9600, 38400, 115200],
-        command: b"ID?\r", 
+        command: b"ID?\r",
         expected_response: "ESP300",
+        flow_control: serialport::FlowControl::Hardware,  // RTS/CTS
     },
 ];
 
@@ -138,13 +145,14 @@ fn main() {
 
 fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
     // "Gentle Handshake" Strategy with Fallback:
-    // 1. Open port with specified baud rate
+    // 1. Open port with specified baud rate and flow control
     // 2. Set short timeout (250ms) to fail fast
     // 3. Clear buffers to remove stale data
     // 4. Send challenge command
     // 5. Check response substring
     let port_result = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(250)) 
+        .timeout(Duration::from_millis(250))
+        .flow_control(probe.flow_control)
         .open();
 
     match port_result {

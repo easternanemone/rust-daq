@@ -165,7 +165,7 @@ path = "src/main.rs"
 [[bin]]
 name = "discovery"
 path = "tools/discovery/main.rs"
-required-features = ["serialport"]
+required-features = ["instrument_serial"]
 
 [[test]]
 name = "storage_shutdown_test"
