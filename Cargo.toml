@@ -83,6 +83,8 @@ kameo = { version = "0.17", optional = true }
 
 # Instrument Communication
 serialport = { version = "4.3.0", optional = true }
+tokio-serial = { version = "5.4", optional = true }
+bytes = "1.0"
 pvcam-sys = { path = "pvcam-sys", optional = true }
 
 # V4 Instrument Communication
@@ -121,6 +123,7 @@ storage_matlab = ["dep:matrw"]
 storage_netcdf = ["dep:netcdf"]
 instrument_serial = ["dep:serialport"]
 instrument_visa = ["dep:visa-rs"]
+instrument_thorlabs = ["dep:tokio-serial"]
 # Phase 2 (bd-63): Networking layer with FlatBuffers protocol
 networking = []
 # Phase 3B (bd-64): Module system with runtime instrument assignment

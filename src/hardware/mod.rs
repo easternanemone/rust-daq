@@ -2,6 +2,10 @@ pub mod adapter;
 pub mod capabilities;
 pub mod mock;
 
+// Real hardware drivers
+#[cfg(feature = "instrument_thorlabs")]
+pub mod ell14;
+
 // Re-export core capability traits
 pub use capabilities::{
     ExposureControl, FrameProducer, Movable, Readable, Triggerable,
