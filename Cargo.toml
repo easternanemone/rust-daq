@@ -115,21 +115,43 @@ tracing-test = "0.2"
 # NOTE: Phase 1 (bd-61) migrated to actor-based state management
 # For rollback instructions, see ROLLBACK_ACTOR.md
 default = ["storage_csv", "instrument_serial"]
-full = ["storage_csv", "storage_hdf5", "storage_arrow", "storage_matlab", "storage_netcdf", "instrument_serial", "modules", "networking"]
+full = ["storage_csv", "storage_hdf5", "storage_arrow", "storage_matlab", "storage_netcdf", "instrument_serial", "modules", "networking", "all_hardware"]
+
+# Storage backends
 storage_csv = ["dep:csv"]
 storage_hdf5 = ["dep:hdf5"]
 storage_arrow = ["dep:arrow"]
 storage_matlab = ["dep:matrw"]
 storage_netcdf = ["dep:netcdf"]
+
+# Legacy instrument support
 instrument_serial = ["dep:serialport"]
 instrument_visa = ["dep:visa-rs"]
+
+# V5 Hardware drivers (async, capability-based)
 instrument_thorlabs = ["dep:tokio-serial"]
+instrument_newport = ["dep:tokio-serial"]
+instrument_photometrics = ["dep:tokio-serial"]
+instrument_spectra_physics = ["dep:tokio-serial"]
+instrument_newport_power_meter = ["dep:tokio-serial"]
+
+# Convenience feature to enable all V5 hardware drivers
+all_hardware = [
+    "instrument_thorlabs",
+    "instrument_newport",
+    "instrument_photometrics",
+    "instrument_spectra_physics",
+    "instrument_newport_power_meter"
+]
+
 # Phase 2 (bd-63): Networking layer with FlatBuffers protocol
 networking = []
+
 # Phase 3B (bd-64): Module system with runtime instrument assignment
 modules = []
-# Hardware integrations
-pvcam_hardware = ["dep:pvcam-sys"]  # Enable real PVCAM SDK integration (requires SDK installed)
+
+# PVCAM SDK integration (requires PVCAM SDK installed)
+pvcam_hardware = ["dep:pvcam-sys"]
 hardware_tests = []
 
 # V4 Architecture (temporary for migration)

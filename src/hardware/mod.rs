@@ -2,9 +2,29 @@ pub mod adapter;
 pub mod capabilities;
 pub mod mock;
 
-// Real hardware drivers
+// =============================================================================
+// Real Hardware Drivers
+// =============================================================================
+
+// Thorlabs Elliptec rotation mount
 #[cfg(feature = "instrument_thorlabs")]
 pub mod ell14;
+
+// Newport ESP300 multi-axis motion controller
+#[cfg(feature = "instrument_newport")]
+pub mod esp300;
+
+// Photometrics PVCAM cameras (Prime BSI, Prime 95B)
+#[cfg(feature = "instrument_photometrics")]
+pub mod pvcam;
+
+// Spectra-Physics MaiTai Ti:Sapphire laser
+#[cfg(feature = "instrument_spectra_physics")]
+pub mod maitai;
+
+// Newport 1830-C optical power meter
+#[cfg(feature = "instrument_newport_power_meter")]
+pub mod newport_1830c;
 
 // Re-export core capability traits
 pub use capabilities::{
