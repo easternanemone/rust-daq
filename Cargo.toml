@@ -84,6 +84,7 @@ kameo = { version = "0.17", optional = true }
 # Instrument Communication
 serialport = { version = "4.3.0", optional = true }
 tokio-serial = { version = "5.4", optional = true }
+serial2-tokio = { version = "0.1.19", optional = true }  # Recommended for safe async serial communication
 bytes = "1.0"
 pvcam-sys = { path = "pvcam-sys", optional = true }
 
@@ -128,7 +129,11 @@ storage_netcdf = ["dep:netcdf"]
 instrument_serial = ["dep:serialport"]
 instrument_visa = ["dep:visa-rs"]
 
+# V5+ Serial communication (safe async for laboratory devices)
+serial2_tokio = ["dep:serial2-tokio"]
+
 # V5 Hardware drivers (async, capability-based)
+# NOTE: These currently use tokio-serial, will be migrated to serial2-tokio per bd-rxur
 instrument_thorlabs = ["dep:tokio-serial"]
 instrument_newport = ["dep:tokio-serial"]
 instrument_photometrics = ["dep:tokio-serial"]
