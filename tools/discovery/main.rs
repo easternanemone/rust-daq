@@ -151,7 +151,7 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
     // 4. Send challenge command
     // 5. Check response substring
     let port_result = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(250))
+        .timeout(Duration::from_millis(1000))  // Laboratory instruments need more time
         .flow_control(probe.flow_control)
         .open();
 
@@ -165,8 +165,8 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
                 return false;
             }
             
-            // Wait briefly for hardware processing time
-            thread::sleep(Duration::from_millis(100));
+            // Wait for hardware processing time (laboratory instruments need this)
+            thread::sleep(Duration::from_millis(200));
 
             // Read Response
             let mut serial_buf: Vec<u8> = vec![0; 1024];
