@@ -65,19 +65,16 @@ pub mod parameter;
 // pub mod adapters;
 // pub mod instruments_v2;
 
-// Phase 2: Networking layer (bd-63)
-#[cfg(feature = "networking")]
-pub mod network;
+// V4 Architecture REMOVED (bd-9si6) - Kameo actors deleted
+// #[cfg(feature = "v4")]
+// pub mod actors;
+// #[cfg(feature = "v4")]
+// pub mod traits;
 
-// V4 Architecture (Kameo Actors + Arrow Data)
-#[cfg(feature = "v4")]
-pub mod actors;
-
-#[cfg(feature = "v4")]
-pub mod traits;
-
-pub mod hardware;
-pub mod scripting;
+// V5 Headless-First Architecture (bd-oq51)
+pub mod hardware;     // Phase 1: Capability traits + Mock implementations
+pub mod scripting;    // Phase 2: Rhai scripting engine
 
 // Phase 3: gRPC remote control server (bd-8gsx)
+#[cfg(feature = "networking")]
 pub mod grpc;

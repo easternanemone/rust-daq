@@ -112,11 +112,12 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
 }
 
 async fn start_daemon(port: u16) -> Result<()> {
-    println!("🌐 Starting gRPC daemon on port {}...", port);
-    println!("⚠️  Daemon mode not yet implemented (Phase 3)");
-    println!("   This will be implemented in Task H (bd-8gsx)");
+    println!("🌐 Starting Headless DAQ Daemon");
+    println!("   Architecture: V5 (Headless-First + Scriptable)");
+    println!("   gRPC Port: {}", port);
+    println!();
 
-    // Phase 4: Data Plane - Ring Buffer + HDF5 Writer
+    // Phase 4: Data Plane - Ring Buffer + HDF5 Writer (optional)
     #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
     {
         use std::path::Path;
@@ -124,7 +125,7 @@ async fn start_daemon(port: u16) -> Result<()> {
         use rust_daq::data::ring_buffer::RingBuffer;
         use rust_daq::data::hdf5_writer::HDF5Writer;
 
-        println!("\n📊 Initializing data plane (Phase 4)...");
+        println!("📊 Initializing data plane (Phase 4)...");
         println!("   - Ring buffer: 100 MB in /tmp/rust_daq_ring");
         println!("   - HDF5 output: experiment_data.h5");
         println!("   - Background flush: every 1 second");
@@ -144,13 +145,46 @@ async fn start_daemon(port: u16) -> Result<()> {
             writer.run().await;
         });
 
-        println!("✅ Data plane ready - hardware can write to ring buffer");
-        println!("   Scientists will receive standard HDF5 files");
+        println!("✅ Data plane ready");
         println!();
     }
 
-    // Placeholder for Phase 3
-    tokio::signal::ctrl_c().await?;
+    // Phase 3: Start gRPC server
+    #[cfg(feature = "networking")]
+    {
+        use rust_daq::grpc::server::DaqServer;
+        use rust_daq::grpc::proto::control_service_server::ControlServiceServer;
+
+        let addr = format!("0.0.0.0:{}", port).parse()?;
+        let server = DaqServer::new();
+
+        println!("✅ gRPC server ready");
+        println!("   Listening on: {}", addr);
+        println!("   Features:");
+        println!("     - Script upload & execution");
+        println!("     - Remote hardware control");
+        println!("     - Real-time status streaming");
+        println!();
+        println!("📡 Daemon running - Press Ctrl+C to stop");
+        println!();
+
+        Server::builder()
+            .add_service(ControlServiceServer::new(server))
+            .serve(addr)
+            .await?;
+
+        return Ok(());
+    }
+
+    // Fallback if networking feature not enabled
+    #[cfg(not(feature = "networking"))]
+    {
+        println!("⚠️  Networking feature not enabled - daemon mode requires 'networking' feature");
+        println!("   Rebuild with: cargo build --features networking");
+        println!();
+        println!("   Keeping daemon alive for data plane... Press Ctrl+C to stop");
+        tokio::signal::ctrl_c().await?;
+    }
     println!("\n👋 Daemon shutting down...");
     Ok(())
 }
