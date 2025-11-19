@@ -162,6 +162,11 @@ v4_full = ["v4", "dep:visa-rs", "dep:hdf5"]
 name = "rust_daq"
 path = "src/main.rs"
 
+[[bin]]
+name = "discovery"
+path = "tools/discovery/main.rs"
+required-features = ["serialport"]
+
 [[test]]
 name = "storage_shutdown_test"
 path = "tests/storage_shutdown_test.rs"
