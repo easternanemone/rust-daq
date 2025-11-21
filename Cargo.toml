@@ -82,8 +82,6 @@ tokio-stream = "0.1"
 # Instrument Communication
 serialport = { version = "4.3.0", optional = true }
 tokio-serial = { version = "5.4", optional = true }
-serial2 = { version = "0.2", optional = true }  # Base serial2 library
-serial2-tokio = { version = "0.1.19", optional = true }  # Recommended for safe async serial communication
 bytes = "1.0"
 pvcam-sys = { path = "pvcam-sys", optional = true }
 
@@ -129,15 +127,15 @@ instrument_serial = ["dep:serialport"]
 instrument_visa = ["dep:visa-rs"]
 
 # V5+ Serial communication (safe async for laboratory devices)
-serial2_tokio = ["dep:serial2", "dep:serial2-tokio"]
+tokio_serial = ["dep:tokio-serial", "instrument_serial"]
 
 # V5 Hardware drivers (async, capability-based)
-# Serial drivers now use serial2-tokio (migrated per bd-ie88)
-instrument_thorlabs = ["serial2_tokio"]
-instrument_newport = ["serial2_tokio"]
-instrument_photometrics = ["serial2_tokio"]
-instrument_spectra_physics = ["serial2_tokio"]
-instrument_newport_power_meter = ["serial2_tokio"]
+# Serial drivers now use tokio-serial
+instrument_thorlabs = ["tokio_serial"]
+instrument_newport = ["tokio_serial"]
+instrument_photometrics = ["tokio_serial"]
+instrument_spectra_physics = ["tokio_serial"]
+instrument_newport_power_meter = ["tokio_serial"]
 
 # Convenience feature to enable all V5 hardware drivers
 all_hardware = [
@@ -146,7 +144,6 @@ all_hardware = [
     "instrument_photometrics",
     "instrument_spectra_physics",
     "instrument_newport_power_meter",
-    "serial2_tokio"
 ]
 
 # Phase 2 (bd-63): Networking layer with FlatBuffers protocol
@@ -179,6 +176,11 @@ required-features = ["instrument_serial"]
 [[bin]]
 name = "script_runner"
 path = "tools/script_runner/main.rs"
+
+[[example]]
+name = "test_maitai_serial"
+path = "examples/test_maitai_serial.rs"
+required-features = ["tokio_serial"]
 
 # Tests removed - files do not exist
 # [[test]]
