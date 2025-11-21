@@ -1,0 +1,8 @@
+# Jules session-specific files (don't commit)
+.session/
+*.session.json
+.cache/
+
+# Build artifacts that Jules might create during setup
+*.log
+.build-cache/
