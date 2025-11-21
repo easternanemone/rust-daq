@@ -1,0 +1,341 @@
+warning: unused imports: `Format` and `Toml`
+  --> src/config.rs:44:17
+   |
+44 | ...::{Format, Serialized, Toml},
+   |       ^^^^^^              ^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::config::Settings`
+  --> src/core.rs:38:5
+   |
+38 | use crate::config::Settings;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::measurement::Measure`
+  --> src/core.rs:40:5
+   |
+40 | use crate::measurement::Measure;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::metadata::Metadata`
+  --> src/core.rs:41:5
+   |
+41 | use crate::metadata::Metadata;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `async_trait::async_trait`
+  --> src/core.rs:42:5
+   |
+42 | use async_trait::async_trait;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::any::TypeId`
+  --> src/core.rs:45:5
+   |
+45 | use std::any::TypeId;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::convert::TryFrom`
+  --> src/core.rs:47:5
+   |
+47 | use std::convert::TryFrom;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::mpsc`
+  --> src/core.rs:50:5
+   |
+50 | use tokio::sync::mpsc;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AbortHandle` and `JoinHandle`
+  --> src/core.rs:51:19
+   |
+51 | ...::{AbortHandle, JoinHandle};
+   |       ^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `SpectrumData`
+ --> src/data/fft.rs:3:66
+  |
+3 | ...or, SpectrumData};
+  |        ^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+  --> src/data/hdf5_writer.rs:11:14
+   |
+11 | use anyhow::{anyhow, R...
+   |              ^^^^^^
+
+warning: unused import: `DataPoint`
+ --> src/data/iir_filter.rs:2:19
+  |
+2 | ...re::{DataPoint, Meas...
+  |         ^^^^^^^^^
+
+warning: unused variable: `attempt`
+  --> src/error_recovery.rs:54:9
+   |
+54 |     for attempt in 0.....
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_attempt`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:119:30
+    |
+119 | ...f, settings: &Arc<...
+    |       ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:144:38
+    |
+144 | ...f, metadata: &Meta...
+    |       ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:154:31
+    |
+154 | ...elf, data: &[Arc<M...
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:576:30
+    |
+576 | ...f, settings: &Arc<...
+    |       ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:604:38
+    |
+604 | ...f, metadata: &Meta...
+    |       ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:618:31
+    |
+618 | ...elf, data: &[Arc<M...
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: field `output_path` is never read
+  --> src/data/hdf5_writer.rs:59:5
+   |
+58 | pub struct HDF5Writer {
+   |            ---------- field in this struct
+59 |     output_path: PathBuf,
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `mmap` is never read
+  --> src/data/ring_buffer.rs:77:5
+   |
+75 | pub struct RingBuffer {
+   |            ---------- field in this struct
+76 |     /// Memory-mappe...
+77 |     mmap: MmapMut,
+   |     ^^^^
+
+warning: field `runtime` is never read
+ --> src/scripting/engine.rs:8:5
+  |
+6 | pub struct ScriptHost {
+  |            ---------- field in this struct
+7 |     engine: Engine,
+8 |     runtime: Handle,
+  |     ^^^^^^^
+
+warning: `rust_daq` (lib) generated 22 warnings (run `cargo fix --lib -p rust_daq` to apply 12 suggestions)
+tools/discovery/quick_test.rs:2:24: warning: unused import: `SerialPort`
+tools/discovery/main.rs:20:18: warning: unused import: `SerialPortType`
+tools/discovery/main.rs:20:34: warning: unused import: `SerialPort`
+warning: `rust_daq` (bin "quick_test") generated 1 warning
+warning: `rust_daq` (bin "discovery") generated 2 warnings (run `cargo fix --bin "discovery"` to apply 1 suggestion)
+   Compiling rust_daq v0.1.0 (/Users/briansquires/code/rust-daq)
+warning: `rust_daq` (bin "discovery" test) generated 2 warnings (2 duplicates)
+error: couldn't read `tests/storage_shutdown_test.rs`: No such file or directory (os error 2)
+
+error: could not compile `rust_daq` (test "storage_shutdown_test") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: couldn't read `tests/v2_instrument_test.rs`: No such file or directory (os error 2)
+
+error: could not compile `rust_daq` (test "v2_instrument_test") due to 1 previous error
+warning: unused import: `SerialPort`
+ --> tools/discovery/quick_test.rs:2:24
+  |
+2 | use serialport::{self, SerialPort};
+  |                        ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+error[E0432]: unresolved import `rust_daq::network`
+ --> tests/grpc_api_test.rs:2:15
+  |
+2 | use rust_daq::network::proto;
+  |               ^^^^^^^ could not find `network` in `rust_daq`
+
+error[E0432]: unresolved import `rust_daq::network`
+ --> tests/grpc_api_test.rs:3:15
+  |
+3 | use rust_daq::network::{
+  |               ^^^^^^^ could not find `network` in `rust_daq`
+
+error[E0432]: unresolved import `rust_daq::grpc`
+  --> tests/grpc_server_test.rs:1:15
+   |
+1  | use rust_daq::grpc::{DaqServer, ControlService, UploadRequest, StartRequest, StatusRequest};
+   |               ^^^^ could not find `grpc` in `rust_daq`
+   |
+note: found an item that was configured out
+  --> /Users/briansquires/code/rust-daq/src/lib.rs:80:9
+   |
+80 | pub mod grpc;
+   |         ^^^^
+note: the item is gated behind the `networking` feature
+  --> /Users/briansquires/code/rust-daq/src/lib.rs:79:7
+   |
+79 | #[cfg(feature = "networking")]
+   |       ^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `rust_daq` (test "grpc_api_test") due to 2 previous errors
+error: could not compile `rust_daq` (test "grpc_server_test") due to 1 previous error
+warning: `rust_daq` (bin "quick_test" test) generated 1 warning
+warning: unused imports: `Format` and `Toml`
+  --> src/config.rs:44:17
+   |
+44 |     providers::{Format, Serialized, Toml},
+   |                 ^^^^^^              ^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `AbortHandle` and `JoinHandle`
+  --> src/core.rs:51:19
+   |
+51 | use tokio::task::{AbortHandle, JoinHandle};
+   |                   ^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `SpectrumData`
+ --> src/data/fft.rs:3:66
+  |
+3 | use crate::core::{DataPoint, FrequencyBin, MeasurementProcessor, SpectrumData};
+  |                                                                  ^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+  --> src/data/hdf5_writer.rs:11:14
+   |
+11 | use anyhow::{anyhow, Result};
+   |              ^^^^^^
+
+warning: unused import: `TempDir`
+   --> src/data/hdf5_writer.rs:268:35
+    |
+268 |     use tempfile::{NamedTempFile, TempDir};
+    |                                   ^^^^^^^
+
+warning: unused import: `DataPoint`
+ --> src/data/iir_filter.rs:2:19
+  |
+2 | use crate::core::{DataPoint, MeasurementProcessor};
+  |                   ^^^^^^^^^
+
+warning: unused variable: `attempt`
+  --> src/error_recovery.rs:54:9
+   |
+54 |     for attempt in 0..policy.max_attempts {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_attempt`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+error[E0599]: no function or associated item named `new` found for struct `config::Settings` in the current scope
+   --> src/config.rs:791:34
+    |
+84  | pub struct Settings {
+    | ------------------- function or associated item `new` not found for this struct
+...
+791 |         let settings = Settings::new(Some("default"));
+    |                                  ^^^ function or associated item not found in `config::Settings`
+    |
+note: if you're trying to build a new `config::Settings` consider using one of the following associated functions:
+      config::Settings::load_v5
+      config::Settings::new_legacy
+   --> src/config.rs:294:5
+    |
+294 |     pub fn load_v5() -> Result<Self> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+300 |     pub fn new_legacy(config_name: Option<&str>) -> Result<Self> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Paint` which provides `new` is implemented but not in scope; perhaps you want to import it
+    |
+429 +     use yansi::paint::Paint;
+    |
+
+error[E0599]: no method named `and_utc` found for struct `DateTime` in the current scope
+   --> src/data/fft.rs:292:78
+    |
+292 |                 timestamp: Utc.timestamp_nanos((t * 1_000_000_000.0) as i64).and_utc(),
+    |                                                                              ^^^^^^^ method not found in `DateTime<chrono::Utc>`
+
+error[E0599]: no method named `process` found for struct `iir_filter::IirFilter` in the current scope
+   --> src/data/iir_filter.rs:193:37
+    |
+52  | pub struct IirFilter {
+    | -------------------- method `process` not found for this struct
+...
+193 |         let processed_data = filter.process(&data);
+    |                                     ^^^^^^^ method not found in `iir_filter::IirFilter`
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following trait defines an item `process`, perhaps you need to implement it:
+            candidate #1: `Fft`
+
+warning: variable does not need to be mutable
+   --> src/config_v4.rs:236:13
+    |
+236 |         let mut config = V4Config {
+    |             ----^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:119:30
+    |
+119 |     async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
+    |                              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:144:38
+    |
+144 |     async fn set_metadata(&mut self, metadata: &Metadata) -> Result<()> {
+    |                                      ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:154:31
+    |
+154 |     async fn write(&mut self, data: &[Arc<Measurement>]) -> Result<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:576:30
+    |
+576 |     async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
+    |                              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:604:38
+    |
+604 |     async fn set_metadata(&mut self, metadata: &Metadata) -> Result<()> {
+    |                                      ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:618:31
+    |
+618 |     async fn write(&mut self, data: &[Arc<Measurement>]) -> Result<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `rust_daq` (lib test) generated 21 warnings (7 duplicates)
+error: could not compile `rust_daq` (lib test) due to 3 previous errors; 21 warnings emitted

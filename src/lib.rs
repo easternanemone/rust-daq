@@ -65,12 +65,6 @@ pub mod parameter;
 // pub mod adapters;
 // pub mod instruments_v2;
 
-// V4 Architecture REMOVED (bd-9si6) - Kameo actors deleted
-// #[cfg(feature = "v4")]
-// pub mod actors;
-// #[cfg(feature = "v4")]
-// pub mod traits;
-
 // V5 Headless-First Architecture (bd-oq51)
 pub mod hardware; // Phase 1: Capability traits + Mock implementations
 pub mod scripting; // Phase 2: Rhai scripting engine

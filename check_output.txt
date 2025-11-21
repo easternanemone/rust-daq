@@ -1,0 +1,148 @@
+    Checking rust_daq v0.1.0 (/Users/briansquires/code/rust-daq)
+warning: unused imports: `Format` and `Toml`
+  --> src/config.rs:44:17
+   |
+44 |     providers::{Format, Serialized, Toml},
+   |                 ^^^^^^              ^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::config::Settings`
+  --> src/core.rs:38:5
+   |
+38 | use crate::config::Settings;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::measurement::Measure`
+  --> src/core.rs:40:5
+   |
+40 | use crate::measurement::Measure;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::metadata::Metadata`
+  --> src/core.rs:41:5
+   |
+41 | use crate::metadata::Metadata;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `async_trait::async_trait`
+  --> src/core.rs:42:5
+   |
+42 | use async_trait::async_trait;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::any::TypeId`
+  --> src/core.rs:45:5
+   |
+45 | use std::any::TypeId;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::convert::TryFrom`
+  --> src/core.rs:47:5
+   |
+47 | use std::convert::TryFrom;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::mpsc`
+  --> src/core.rs:50:5
+   |
+50 | use tokio::sync::mpsc;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AbortHandle` and `JoinHandle`
+  --> src/core.rs:51:19
+   |
+51 | use tokio::task::{AbortHandle, JoinHandle};
+   |                   ^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `SpectrumData`
+ --> src/data/fft.rs:3:66
+  |
+3 | use crate::core::{DataPoint, FrequencyBin, MeasurementProcessor, SpectrumData};
+  |                                                                  ^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+  --> src/data/hdf5_writer.rs:11:14
+   |
+11 | use anyhow::{anyhow, Result};
+   |              ^^^^^^
+
+warning: unused import: `DataPoint`
+ --> src/data/iir_filter.rs:2:19
+  |
+2 | use crate::core::{DataPoint, MeasurementProcessor};
+  |                   ^^^^^^^^^
+
+warning: unused variable: `attempt`
+  --> src/error_recovery.rs:54:9
+   |
+54 |     for attempt in 0..policy.max_attempts {
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_attempt`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+error[E0027]: pattern does not mention field `metadata`
+  --> src/data/iir_filter.rs:91:20
+   |
+91 |             if let Measurement::Scalar { name, value, unit, timestamp } = m.as_ref() {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing field `metadata`
+   |
+help: include the missing field in the pattern
+   |
+91 |             if let Measurement::Scalar { name, value, unit, timestamp, metadata } = m.as_ref() {
+   |                                                                      ++++++++++
+help: if you don't care about this missing field, you can explicitly ignore it
+   |
+91 |             if let Measurement::Scalar { name, value, unit, timestamp, metadata: _ } = m.as_ref() {
+   |                                                                      +++++++++++++
+help: or always ignore missing fields here
+   |
+91 |             if let Measurement::Scalar { name, value, unit, timestamp, .. } = m.as_ref() {
+   |                                                                      ++++
+
+error[E0063]: missing field `metadata` in initializer of `Measurement`
+  --> src/data/iir_filter.rs:93:39
+   |
+93 |                 results.push(Arc::new(Measurement::Scalar {
+   |                                       ^^^^^^^^^^^^^^^^^^^ missing `metadata`
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:119:30
+    |
+119 |     async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
+    |                              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:144:38
+    |
+144 |     async fn set_metadata(&mut self, metadata: &Metadata) -> Result<()> {
+    |                                      ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:154:31
+    |
+154 |     async fn write(&mut self, data: &[Arc<Measurement>]) -> Result<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `settings`
+   --> src/data/storage.rs:576:30
+    |
+576 |     async fn init(&mut self, settings: &Arc<Settings>) -> Result<()> {
+    |                              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_settings`
+
+warning: unused variable: `metadata`
+   --> src/data/storage.rs:604:38
+    |
+604 |     async fn set_metadata(&mut self, metadata: &Metadata) -> Result<()> {
+    |                                      ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `data`
+   --> src/data/storage.rs:618:31
+    |
+618 |     async fn write(&mut self, data: &[Arc<Measurement>]) -> Result<()> {
+    |                               ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+Some errors have detailed explanations: E0027, E0063.
+For more information about an error, try `rustc --explain E0027`.
+warning: `rust_daq` (lib) generated 19 warnings
+error: could not compile `rust_daq` (lib) due to 2 previous errors; 19 warnings emitted
