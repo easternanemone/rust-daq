@@ -107,16 +107,16 @@ impl PyO3Engine {
     /// Convert a ScriptValue to a Python object
     fn script_value_to_py(value: ScriptValue, py: Python) -> PyResult<Py<PyAny>> {
         // Try to downcast to common types
-        if let Ok(s) = value.downcast_ref::<String>() {
+        if let Some(s) = value.downcast_ref::<String>() {
             return Ok(s.to_object(py));
         }
-        if let Ok(i) = value.downcast_ref::<i64>() {
+        if let Some(i) = value.downcast_ref::<i64>() {
             return Ok(i.to_object(py));
         }
-        if let Ok(f) = value.downcast_ref::<f64>() {
+        if let Some(f) = value.downcast_ref::<f64>() {
             return Ok(f.to_object(py));
         }
-        if let Ok(b) = value.downcast_ref::<bool>() {
+        if let Some(b) = value.downcast_ref::<bool>() {
             return Ok(b.to_object(py));
         }
 
@@ -143,7 +143,7 @@ impl PyO3Engine {
         // If we can't convert, return an error
         Err(ScriptError::TypeConversionError {
             expected: "String, i64, f64, or bool".to_string(),
-            found: obj.get_type().name().unwrap_or("unknown").to_string(),
+            found: obj.get_type().name().map(|s| s.to_string()).unwrap_or_else(|_| "unknown".to_string()),
         })
     }
 }
@@ -199,10 +199,8 @@ impl ScriptEngine for PyO3Engine {
                 drop(globals_lock);
 
                 // Try to get a return value (if the script has one)
-                if let Ok(result) = module_dict.get_item("result") {
-                    if let Ok(result) = result {
-                        return Self::py_to_script_value(&result);
-                    }
+                if let Ok(Some(result)) = module_dict.get_item("result") {
+                    return Self::py_to_script_value(&result);
                 }
 
                 // If no explicit result, return None

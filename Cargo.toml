@@ -57,6 +57,7 @@ thiserror = "1.0.59"
 
 # Scripting
 rhai = { version = "1.19", features = ["sync"] }
+pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
 
 # Logging
 log = "0.4.21"
@@ -157,6 +158,9 @@ modules = []
 # PVCAM SDK integration (requires PVCAM SDK installed)
 pvcam_hardware = ["dep:pvcam-sys"]
 hardware_tests = []
+
+# Python scripting backend
+scripting_python = ["dep:pyo3"]
 
 [[bin]]
 name = "rust_daq"
