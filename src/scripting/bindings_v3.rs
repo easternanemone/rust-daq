@@ -47,7 +47,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::task::block_in_place;
 
-use crate::core_v3::{Camera, Instrument, Laser, PowerMeter, Roi, Stage};
+use crate::core_v3::{Camera, Laser, PowerMeter, Roi, Stage};
 
 // =============================================================================
 // Handle Types - V3 Rhai-Compatible Wrappers
@@ -596,7 +596,6 @@ pub fn register_v3_hardware(engine: &mut Engine) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rhai::Scope;
 
     #[test]
     fn test_register_v3_hardware_succeeds() {

@@ -43,11 +43,6 @@ use pyo3::prelude::*;
 #[cfg(feature = "scripting_python")]
 use pyo3::types::PyModule;
 
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-use super::script_engine::{ScriptEngine, ScriptError, ScriptValue};
 
 /// PyO3-based Python scripting engine
 ///
