@@ -42,14 +42,9 @@ pub mod core;
 pub mod data; // Re-enabled for ring buffer implementation (Phase 4J: bd-q2we)
 pub mod error;
 pub mod error_recovery;
-// pub mod experiment; // DISABLED - References messages (to be fixed separately)
-// pub mod gui; // REMOVED: GUI deleted for headless-first pivot (bd-9si6)
-// pub mod instrument; // DISABLED - References removed adapters module (to be fixed separately)
 pub mod log_capture;
 pub mod measurement;
-// pub mod messages; // DISABLED - References modules (to be fixed separately)
 pub mod metadata;
-// pub mod modules; // DISABLED - References instrument module (to be fixed separately)
 pub mod session;
 pub mod tracing_v4; // V4 tracing infrastructure (bd-fxb7)
 pub mod validation;
@@ -57,9 +52,6 @@ pub mod validation;
 // Phase 1: Architectural redesign - New core abstractions (coexist with old)
 pub mod core_v3;
 pub mod parameter;
-
-// Phase 3: V3 Orchestration layer (instrument manager)
-// pub mod instrument_manager_v3; // DISABLED - References V1Measurement (to be fixed separately)
 
 // V2 modules REMOVED (bd-9si6) - all depend on deleted daq_core crate
 // pub mod adapters;
