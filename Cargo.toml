@@ -132,12 +132,12 @@ instrument_visa = ["dep:visa-rs"]
 serial2_tokio = ["dep:serial2", "dep:serial2-tokio"]
 
 # V5 Hardware drivers (async, capability-based)
-# NOTE: These currently use tokio-serial, will be migrated to serial2-tokio per bd-rxur
-instrument_thorlabs = ["dep:tokio-serial"]
-instrument_newport = ["dep:tokio-serial"]
-instrument_photometrics = ["dep:tokio-serial"]
-instrument_spectra_physics = ["dep:tokio-serial"]
-instrument_newport_power_meter = ["dep:tokio-serial"]
+# Serial drivers now use serial2-tokio (migrated per bd-ie88)
+instrument_thorlabs = ["serial2_tokio"]
+instrument_newport = ["serial2_tokio"]
+instrument_photometrics = ["serial2_tokio"]
+instrument_spectra_physics = ["serial2_tokio"]
+instrument_newport_power_meter = ["serial2_tokio"]
 
 # Convenience feature to enable all V5 hardware drivers
 all_hardware = [
