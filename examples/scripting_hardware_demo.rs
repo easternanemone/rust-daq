@@ -29,12 +29,14 @@ async fn main() {
         "stage",
         StageHandle {
             driver: stage.clone(),
+            data_tx: None,
         },
     );
     scope.push(
         "camera",
         CameraHandle {
             driver: camera.clone(),
+            data_tx: None,
         },
     );
 

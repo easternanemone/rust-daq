@@ -21,6 +21,15 @@ service ControlService {
 
   // Stream measurement data
   rpc StreamMeasurements(MeasurementRequest) returns (stream DataPoint);
+
+  // List all uploaded scripts
+  rpc ListScripts(ListScriptsRequest) returns (ListScriptsResponse);
+
+  // List all executions (running, completed, errored)
+  rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
+
+  // Get daemon version and capabilities
+  rpc GetDaemonInfo(DaemonInfoRequest) returns (DaemonInfoResponse);
 }
 
 // Request to upload a script
@@ -52,11 +61,13 @@ message StartResponse {
 // Request to stop script execution
 message StopRequest {
   string execution_id = 1;
+  bool force = 2;  // If true, immediately kill; if false, try graceful stop
 }
 
 // Response from stopping script
 message StopResponse {
   bool stopped = 1;
+  string message = 2;  // Explanation of stop result
 }
 
 // Request for status information
@@ -67,10 +78,15 @@ message StatusRequest {
 // Status of a script execution
 message ScriptStatus {
   string execution_id = 1;
-  string state = 2; // PENDING, RUNNING, COMPLETED, ERROR
+  string state = 2; // PENDING, RUNNING, COMPLETED, ERROR, STOPPED
   string error_message = 3;
   uint64 start_time_ns = 4;
   uint64 end_time_ns = 5;
+
+  // Detailed execution info
+  string script_id = 6;         // Which script was executed
+  uint32 progress_percent = 7;  // Estimated progress (0-100)
+  string current_line = 8;      // Current line being executed (if available)
 }
 
 // System status snapshot
@@ -92,4 +108,46 @@ message DataPoint {
   string channel = 1;
   double value = 2;
   uint64 timestamp_ns = 3;
+}
+
+// Request to list all scripts
+message ListScriptsRequest {
+  // Empty for now, could add filtering later
+}
+
+// Response with all uploaded scripts
+message ListScriptsResponse {
+  repeated ScriptInfo scripts = 1;
+}
+
+// Information about a single script
+message ScriptInfo {
+  string script_id = 1;
+  string name = 2;
+  uint64 upload_time_ns = 3;
+  map<string, string> metadata = 4;
+}
+
+// Request to list executions
+message ListExecutionsRequest {
+  optional string script_id = 1;  // Filter by script ID
+  optional string state = 2;      // Filter by state
+}
+
+// Response with matching executions
+message ListExecutionsResponse {
+  repeated ScriptStatus executions = 1;
+}
+
+// Request for daemon information
+message DaemonInfoRequest {
+  // Empty
+}
+
+// Daemon information response
+message DaemonInfoResponse {
+  string version = 1;
+  repeated string features = 2;          // e.g., ["storage_hdf5", "networking"]
+  repeated string available_hardware = 3; // e.g., ["Stage", "Camera"]
+  uint64 uptime_seconds = 4;
 }

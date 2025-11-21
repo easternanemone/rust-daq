@@ -37,9 +37,11 @@
 use rhai::{Dynamic, Engine};
 use std::sync::Arc;
 use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 use tokio::task::block_in_place;
 
 use crate::hardware::capabilities::{Camera, Movable};
+use crate::measurement_types::DataPoint;
 
 // =============================================================================
 // Handle Types - Rhai-Compatible Wrappers
@@ -60,6 +62,8 @@ use crate::hardware::capabilities::{Camera, Movable};
 #[derive(Clone)]
 pub struct StageHandle {
     pub driver: Arc<dyn Movable>,
+    /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
+    pub data_tx: Option<Arc<broadcast::Sender<DataPoint>>>,
 }
 
 /// Handle to a camera device that can be used in Rhai scripts
@@ -77,6 +81,8 @@ pub struct StageHandle {
 #[derive(Clone)]
 pub struct CameraHandle {
     pub driver: Arc<dyn Camera>,
+    /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
+    pub data_tx: Option<Arc<broadcast::Sender<DataPoint>>>,
 }
 
 // =============================================================================
@@ -110,7 +116,24 @@ pub fn register_hardware(engine: &mut Engine) {
 
     // stage.move_abs(10.0) - Move to absolute position
     engine.register_fn("move_abs", move |stage: &mut StageHandle, pos: f64| {
-        block_in_place(|| Handle::current().block_on(stage.driver.move_abs(pos))).unwrap()
+        block_in_place(|| Handle::current().block_on(stage.driver.move_abs(pos))).unwrap();
+
+        // Send data point to broadcast channel if sender available
+        if let Some(ref tx) = stage.data_tx {
+            let timestamp_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+
+            let data_point = DataPoint {
+                channel: "stage_position".to_string(),
+                value: pos,
+                timestamp_ns,
+            };
+
+            // Ignore errors if no receivers (non-critical)
+            let _ = tx.send(data_point);
+        }
     });
 
     // stage.move_rel(5.0) - Move relative distance
@@ -149,7 +172,24 @@ pub fn register_hardware(engine: &mut Engine) {
         move |camera: &mut CameraHandle| match block_in_place(|| {
             Handle::current().block_on(camera.driver.trigger())
         }) {
-            Ok(_) => (),
+            Ok(_) => {
+                // Send data point to broadcast channel if sender available
+                if let Some(ref tx) = camera.data_tx {
+                    let timestamp_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64;
+
+                    let data_point = DataPoint {
+                        channel: "camera_trigger".to_string(),
+                        value: 1.0, // Trigger event indicator
+                        timestamp_ns,
+                    };
+
+                    // Ignore errors if no receivers (non-critical)
+                    let _ = tx.send(data_point);
+                }
+            }
             Err(e) => panic!("Camera trigger failed: {}", e),
         },
     );
@@ -196,6 +236,7 @@ mod tests {
         let stage = Arc::new(MockStage::new());
         let handle1 = StageHandle {
             driver: stage.clone(),
+            data_tx: None,
         };
         let handle2 = handle1.clone();
 
@@ -208,6 +249,7 @@ mod tests {
         let camera = Arc::new(MockCamera::new(1920, 1080));
         let handle1 = CameraHandle {
             driver: camera.clone(),
+            data_tx: None,
         };
         let handle2 = handle1.clone();
 
@@ -221,7 +263,13 @@ mod tests {
 
         let stage = Arc::new(MockStage::new());
         let mut scope = Scope::new();
-        scope.push("stage", StageHandle { driver: stage });
+        scope.push(
+            "stage",
+            StageHandle {
+                driver: stage,
+                data_tx: None,
+            },
+        );
 
         // Test that all stage methods are registered and callable
         let script = r#"
@@ -243,7 +291,13 @@ mod tests {
 
         let camera = Arc::new(MockCamera::new(1920, 1080));
         let mut scope = Scope::new();
-        scope.push("camera", CameraHandle { driver: camera });
+        scope.push(
+            "camera",
+            CameraHandle {
+                driver: camera,
+                data_tx: None,
+            },
+        );
 
         // Test camera methods
         let script = r#"

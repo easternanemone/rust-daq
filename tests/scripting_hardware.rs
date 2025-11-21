@@ -16,6 +16,7 @@ async fn test_stage_movement_from_script() {
     let stage = Arc::new(MockStage::new());
     let stage_handle = StageHandle {
         driver: stage.clone(),
+        data_tx: None,
     };
 
     let mut scope = rhai::Scope::new();
@@ -43,7 +44,13 @@ async fn test_stage_relative_movement() {
     let stage = Arc::new(MockStage::new());
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
 
     let script = r#"
         stage.move_abs(5.0);
@@ -65,7 +72,13 @@ async fn test_stage_wait_settled() {
     let stage = Arc::new(MockStage::new());
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
 
     // Test that wait_settled can be called without error
     let script = r#"
@@ -87,6 +100,7 @@ async fn test_camera_trigger_from_script() {
     let camera = Arc::new(MockCamera::new(1920, 1080));
     let camera_handle = CameraHandle {
         driver: camera.clone(),
+        data_tx: None,
     };
 
     let mut scope = rhai::Scope::new();
@@ -115,7 +129,13 @@ async fn test_camera_resolution_access() {
     let camera = Arc::new(MockCamera::new(640, 480));
 
     let mut scope = rhai::Scope::new();
-    scope.push("camera", CameraHandle { driver: camera });
+    scope.push(
+        "camera",
+        CameraHandle {
+            driver: camera,
+            data_tx: None,
+        },
+    );
 
     let script = r#"
         let res = camera.resolution();
@@ -138,8 +158,20 @@ async fn test_multi_device_script() {
     let camera = Arc::new(MockCamera::new(1920, 1080));
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
-    scope.push("camera", CameraHandle { driver: camera });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
+    scope.push(
+        "camera",
+        CameraHandle {
+            driver: camera,
+            data_tx: None,
+        },
+    );
 
     let script = r#"
         // Simple scan experiment
@@ -166,11 +198,18 @@ async fn test_scan_with_settle_and_trigger() {
     let camera = Arc::new(MockCamera::new(1920, 1080));
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
     scope.push(
         "camera",
         CameraHandle {
             driver: camera.clone(),
+            data_tx: None,
         },
     );
 
@@ -218,11 +257,18 @@ async fn test_complex_workflow() {
     let camera = Arc::new(MockCamera::new(1920, 1080));
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
     scope.push(
         "camera",
         CameraHandle {
             driver: camera.clone(),
+            data_tx: None,
         },
     );
 
@@ -269,7 +315,13 @@ async fn test_error_handling_unarmed_camera() {
     let camera = Arc::new(MockCamera::new(1920, 1080));
 
     let mut scope = rhai::Scope::new();
-    scope.push("camera", CameraHandle { driver: camera });
+    scope.push(
+        "camera",
+        CameraHandle {
+            driver: camera,
+            data_tx: None,
+        },
+    );
 
     // Trigger without arming should cause panic
     let script = "camera.trigger()";
@@ -288,6 +340,7 @@ async fn test_multiple_triggers_same_arm() {
         "camera",
         CameraHandle {
             driver: camera.clone(),
+            data_tx: None,
         },
     );
 
@@ -315,7 +368,13 @@ async fn test_safety_limit_respected() {
     let stage = Arc::new(MockStage::new());
 
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage,
+            data_tx: None,
+        },
+    );
 
     // Script with too many operations (>10000)
     let script = r#"

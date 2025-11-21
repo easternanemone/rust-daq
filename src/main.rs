@@ -34,6 +34,11 @@ use std::sync::Arc;
 #[cfg(feature = "networking")]
 use tonic::transport::Server;
 
+#[cfg(feature = "networking")]
+use std::collections::HashMap;
+#[cfg(feature = "networking")]
+use rust_daq::grpc::proto::*;
+
 #[derive(Parser)]
 #[command(name = "rust-daq")]
 #[command(about = "Headless DAQ system with scriptable control", long_about = None)]
@@ -60,6 +65,64 @@ enum Commands {
         #[arg(long, default_value = "50051")]
         port: u16,
     },
+
+    /// Remote control commands (connect to daemon)
+    #[cfg(feature = "networking")]
+    #[command(subcommand)]
+    Client(ClientCommands),
+}
+
+#[cfg(feature = "networking")]
+#[derive(Subcommand)]
+enum ClientCommands {
+    /// Upload a script to the daemon
+    Upload {
+        /// Path to script file
+        script: PathBuf,
+        /// Optional script name
+        #[arg(long)]
+        name: Option<String>,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
+
+    /// Start a previously uploaded script
+    Start {
+        /// Script ID (from upload response)
+        script_id: String,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
+
+    /// Stop a running script
+    Stop {
+        /// Execution ID (from start response)
+        execution_id: String,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
+
+    /// Get status of a script execution
+    Status {
+        /// Execution ID
+        execution_id: String,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
+
+    /// Stream measurement data from daemon
+    Stream {
+        /// Channel names to subscribe to
+        #[arg(long)]
+        channels: Vec<String>,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
 }
 
 #[tokio::main]
@@ -73,6 +136,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Run { script, config } => run_script_once(script, config).await,
         Commands::Daemon { port } => start_daemon(port).await,
+        #[cfg(feature = "networking")]
+        Commands::Client(cmd) => handle_client_command(cmd).await,
     }
 }
 
@@ -94,12 +159,14 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
         "stage",
         ScriptValue::new(StageHandle {
             driver: Arc::new(stage),
+            data_tx: None, // No data plane in one-shot script mode
         }),
     )?;
     engine.set_global(
         "camera",
         ScriptValue::new(CameraHandle {
             driver: Arc::new(camera),
+            data_tx: None, // No data plane in one-shot script mode
         }),
     )?;
 
@@ -129,7 +196,7 @@ async fn start_daemon(port: u16) -> Result<()> {
 
     // Phase 4: Data Plane - Ring Buffer + HDF5 Writer (optional)
     #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
-    {
+    let ring_buffer = {
         use rust_daq::data::hdf5_writer::HDF5Writer;
         use rust_daq::data::ring_buffer::RingBuffer;
         use std::path::Path;
@@ -152,7 +219,9 @@ async fn start_daemon(port: u16) -> Result<()> {
 
         println!("✅ Data plane ready");
         println!();
-    }
+
+        Some(ring_buffer)
+    };
 
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]
@@ -161,6 +230,12 @@ async fn start_daemon(port: u16) -> Result<()> {
         use rust_daq::grpc::server::DaqServer;
 
         let addr = format!("0.0.0.0:{}", port).parse()?;
+
+        // Pass RingBuffer to DaqServer if storage features enabled
+        #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
+        let server = DaqServer::new(ring_buffer);
+
+        #[cfg(not(all(feature = "storage_hdf5", feature = "storage_arrow")))]
         let server = DaqServer::new();
 
         println!("✅ gRPC server ready");
@@ -178,7 +253,8 @@ async fn start_daemon(port: u16) -> Result<()> {
             .serve(addr)
             .await?;
 
-        return Ok(());
+        println!("\n👋 Daemon shutting down...");
+        Ok(())
     }
 
     // Fallback if networking feature not enabled
@@ -189,7 +265,128 @@ async fn start_daemon(port: u16) -> Result<()> {
         println!();
         println!("   Keeping daemon alive for data plane... Press Ctrl+C to stop");
         tokio::signal::ctrl_c().await?;
+        println!("\n👋 Daemon shutting down...");
+        Ok(())
     }
-    println!("\n👋 Daemon shutting down...");
-    Ok(())
+}
+
+#[cfg(feature = "networking")]
+async fn handle_client_command(cmd: ClientCommands) -> Result<()> {
+    use rust_daq::grpc::proto::control_service_client::ControlServiceClient;
+
+    match cmd {
+        ClientCommands::Upload { script, name, addr } => {
+            println!("📤 Uploading script to daemon at {}", addr);
+            let mut client = ControlServiceClient::connect(addr).await?;
+            let content = tokio::fs::read_to_string(&script).await?;
+
+            let response = client
+                .upload_script(UploadRequest {
+                    script_content: content,
+                    name: name.unwrap_or_else(|| script.display().to_string()),
+                    metadata: HashMap::new(),
+                })
+                .await?;
+
+            let resp = response.into_inner();
+            if resp.success {
+                println!("✅ Script uploaded successfully");
+                println!("   Script ID: {}", resp.script_id);
+                println!();
+                println!("   Next: Start the script with:");
+                println!("   rust-daq client start {}", resp.script_id);
+            } else {
+                eprintln!("❌ Upload failed: {}", resp.error_message);
+            }
+            Ok(())
+        }
+
+        ClientCommands::Start { script_id, addr } => {
+            println!("▶️  Starting script {} on daemon at {}", script_id, addr);
+            let mut client = ControlServiceClient::connect(addr).await?;
+            let response = client
+                .start_script(StartRequest {
+                    script_id,
+                    parameters: HashMap::new(),
+                })
+                .await?;
+
+            let resp = response.into_inner();
+            if resp.started {
+                println!("✅ Script started successfully");
+                println!("   Execution ID: {}", resp.execution_id);
+                println!();
+                println!("   Monitor with:");
+                println!("   rust-daq client status {}", resp.execution_id);
+            } else {
+                eprintln!("❌ Failed to start script");
+            }
+            Ok(())
+        }
+
+        ClientCommands::Stop { execution_id, addr } => {
+            println!("⏹️  Stopping execution {} on daemon at {}", execution_id, addr);
+            let mut client = ControlServiceClient::connect(addr).await?;
+            let response = client
+                .stop_script(StopRequest {
+                    execution_id,
+                    force: false, // Try graceful stop first
+                })
+                .await?;
+
+            let resp = response.into_inner();
+            if resp.stopped {
+                println!("✅ Script stopped successfully");
+            } else {
+                println!("⚠️  Script did not stop (may have already completed)");
+            }
+            Ok(())
+        }
+
+        ClientCommands::Status { execution_id, addr } => {
+            println!("📊 Checking status of execution {} on daemon at {}", execution_id, addr);
+            let mut client = ControlServiceClient::connect(addr).await?;
+            let response = client
+                .get_script_status(StatusRequest { execution_id })
+                .await?;
+
+            let status = response.into_inner();
+            println!();
+            println!("Status: {}", status.state);
+            if status.start_time_ns > 0 {
+                println!("Started: {} ns", status.start_time_ns);
+            }
+            if status.end_time_ns > 0 {
+                println!("Ended: {} ns", status.end_time_ns);
+            }
+            if !status.error_message.is_empty() {
+                println!("Error: {}", status.error_message);
+            }
+            Ok(())
+        }
+
+        ClientCommands::Stream { channels, addr } => {
+            println!("📡 Streaming data from daemon at {}", addr);
+            println!("   Channels: {:?}", channels);
+            println!("   Press Ctrl+C to stop");
+            println!();
+
+            let mut client = ControlServiceClient::connect(addr).await?;
+            let mut stream = client
+                .stream_measurements(MeasurementRequest {
+                    channels,
+                    max_rate_hz: 100,
+                })
+                .await?
+                .into_inner();
+
+            while let Some(data) = stream.message().await? {
+                println!(
+                    "[{}] {} = {}",
+                    data.timestamp_ns, data.channel, data.value
+                );
+            }
+            Ok(())
+        }
+    }
 }

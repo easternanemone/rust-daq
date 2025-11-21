@@ -61,6 +61,9 @@ pub mod parameter;
 pub mod hardware; // Phase 1: Capability traits + Mock implementations
 pub mod scripting; // Phase 2: Rhai scripting engine
 
+// Measurement data types (shared between scripting and grpc modules)
+pub mod measurement_types;
+
 // Phase 3: gRPC remote control server (bd-8gsx)
 #[cfg(feature = "networking")]
 pub mod grpc;

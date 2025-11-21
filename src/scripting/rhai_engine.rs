@@ -583,6 +583,7 @@ mod tests {
                 "stage",
                 ScriptValue::new(StageHandle {
                     driver: Arc::new(MockStage::new()),
+                    data_tx: None,
                 }),
             )
             .unwrap();
