@@ -1,4 +1,3 @@
-
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -27,7 +26,6 @@ pub enum AdapterError {
     #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }
-
 
 #[async_trait]
 pub trait HardwareAdapter: Send + Sync {

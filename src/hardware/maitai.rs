@@ -36,10 +36,10 @@
 use crate::hardware::capabilities::Readable;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use serial2_tokio::SerialPort;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
-use serial2_tokio::SerialPort;
 
 /// Driver for Spectra-Physics MaiTai tunable Ti:Sapphire laser
 ///
@@ -66,8 +66,8 @@ impl MaiTaiDriver {
         use serial2::SerialPort as Serial2Settings;
 
         // Open serial port with 9600 baud
-        let mut port = SerialPort::open(port_path, 9600)
-            .context("Failed to open MaiTai serial port")?;
+        let mut port =
+            SerialPort::open(port_path, 9600).context("Failed to open MaiTai serial port")?;
 
         // Configure XON/XOFF software flow control
         port.set_flow_control(serial2::FlowControl::XonXoff)

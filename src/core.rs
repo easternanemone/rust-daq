@@ -34,7 +34,7 @@
 //!
 //! ## Implementing an Instrument
 //!
-//! 
+//!
 use crate::config::Settings;
 pub use crate::core_v3::Measurement;
 use crate::measurement::Measure;
@@ -512,14 +512,6 @@ impl From<Vec<i32>> for ParameterValue {
     }
 }
 
-
-
-
-
-
-
-
-
 /// Trait for processing measurements with support for different data types.
 ///
 /// `MeasurementProcessor` is the next-generation processor interface that works
@@ -615,10 +607,6 @@ pub trait MeasurementProcessor: Send + Sync {
     /// storage, and GUI without cloning large data arrays.
     fn process_measurements(&mut self, data: &[Arc<Measurement>]) -> Vec<Arc<Measurement>>;
 }
-
-
-
-
 
 //==============================================================================
 // Phase 2 Complete: V2 Infrastructure Ready (bd-62)

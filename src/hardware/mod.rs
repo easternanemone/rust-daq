@@ -27,9 +27,7 @@ pub mod maitai;
 pub mod newport_1830c;
 
 // Re-export core capability traits
-pub use capabilities::{
-    ExposureControl, FrameProducer, Movable, Readable, Triggerable,
-};
+pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable};
 
 // =============================================================================
 // Data Types

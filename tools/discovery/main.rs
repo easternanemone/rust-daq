@@ -17,10 +17,10 @@
  * to detect cameras via the PVCAM C-Library.
  */
 
-use serialport::{SerialPortType, SerialPort};
-use std::time::Duration;
+use serialport::{SerialPort, SerialPortType};
 use std::io::{Read, Write};
 use std::thread;
+use std::time::Duration;
 
 /// Configuration for a hardware probe
 struct Probe {
@@ -46,7 +46,7 @@ const PROBES: &[Probe] = &[
         default_baud_rate: 9600,
         fallback_baud_rates: &[19200, 38400, 115200],
         command: b"D?\n",
-        expected_response: "E",  // Scientific notation contains "E"
+        expected_response: "E", // Scientific notation contains "E"
         flow_control: serialport::FlowControl::None,
     },
     // Spectra Physics MaiTai Laser
@@ -59,8 +59,8 @@ const PROBES: &[Probe] = &[
         default_baud_rate: 9600,
         fallback_baud_rates: &[19200, 38400, 57600, 115200],
         command: b"*IDN?\r",
-        expected_response: "Spectra Physics",  // No dash!
-        flow_control: serialport::FlowControl::Software,  // XON/XOFF
+        expected_response: "Spectra Physics", // No dash!
+        flow_control: serialport::FlowControl::Software, // XON/XOFF
     },
     // Thorlabs Elliptec Rotation Mounts (ELL14)
     // Protocol: Binary/ASCII hybrid (Manual Issue 7, Page 11)
@@ -87,16 +87,16 @@ const PROBES: &[Probe] = &[
         fallback_baud_rates: &[9600, 38400, 115200],
         command: b"ID?\r",
         expected_response: "ESP300",
-        flow_control: serialport::FlowControl::Hardware,  // RTS/CTS
+        flow_control: serialport::FlowControl::Hardware, // RTS/CTS
     },
 ];
 
 fn main() {
     println!("🔍 Starting Hardware Discovery Scan...");
     println!("⚠️  WARNING: Ensure high-power devices (Lasers) are in a safe state.");
-    
+
     let ports = serialport::available_ports().expect("No ports found!");
-    
+
     if ports.is_empty() {
         println!("❌ No serial ports detected on this system.");
         return;
@@ -104,7 +104,7 @@ fn main() {
 
     for p in ports {
         println!("Checking port: {}", p.port_name);
-        
+
         // Optimization: Filter out obvious non-instrument ports on Linux/Mac
         // if p.port_name.contains("Bluetooth") { continue; }
 
@@ -117,27 +117,32 @@ fn main() {
 
             for &baud in &rates_to_try {
                 if try_probe(&p.port_name, probe, baud) {
-                    println!("✅ FOUND: {} on {} (Baud: {})", probe.name, p.port_name, baud);
-                    
+                    println!(
+                        "✅ FOUND: {} on {} (Baud: {})",
+                        probe.name, p.port_name, baud
+                    );
+
                     // Special handling for Elliptec Bus Enumeration
                     // The Elliptec protocol allows multiple devices on one bus.
                     // Once the port is identified, we scan specifically for addresses 0-F.
                     if probe.name.contains("Elliptec") {
                         scan_elliptec_bus(&p.port_name);
                     }
-                    
+
                     identified = true;
-                    break; 
+                    break;
                 }
             }
-            if identified { break; } // Stop probing this port if found
+            if identified {
+                break;
+            } // Stop probing this port if found
         }
 
         if !identified {
             println!("   (Unknown Device or No Response)");
         }
     }
-    
+
     // Reminder for non-serial hardware
     println!("\nNOTE: Photometrics Prime BSI is NOT a serial device.");
     println!("      It must be detected via the PVCAM C-Library driver initialization.");
@@ -151,7 +156,7 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
     // 4. Send challenge command
     // 5. Check response substring
     let port_result = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(3000))  // MaiTai needs 2+ seconds to respond
+        .timeout(Duration::from_millis(3000)) // MaiTai needs 2+ seconds to respond
         .flow_control(probe.flow_control)
         .open();
 
@@ -159,7 +164,7 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
         Ok(mut port) => {
             // Clear buffer to ensure we aren't reading old garbage
             let _ = port.clear(serialport::ClearBuffer::All);
-            
+
             // Send Command
             if let Err(_) = port.write_all(probe.command) {
                 return false;
@@ -171,7 +176,7 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
             }
 
             // Wait for hardware processing time (MaiTai needs 2+ seconds)
-            thread::sleep(Duration::from_millis(2000));  // MaiTai is very slow to respond
+            thread::sleep(Duration::from_millis(2000)); // MaiTai is very slow to respond
 
             // Read Response
             let mut serial_buf: Vec<u8> = vec![0; 1024];
@@ -194,27 +199,33 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
 /// Iterates addresses 0-9 and A-F to find attached ELL14 units.
 fn scan_elliptec_bus(port_name: &str) {
     println!("   Create Elliptec Bus Map for {}:", port_name);
-    
+
     // Try addresses 0-9 and A-F
     let addresses = "0123456789ABCDEF";
-    
-    if let Ok(mut port) = serialport::new(port_name, 9600).timeout(Duration::from_millis(100)).open() {
+
+    if let Ok(mut port) = serialport::new(port_name, 9600)
+        .timeout(Duration::from_millis(100))
+        .open()
+    {
         for char_addr in addresses.chars() {
             let cmd = format!("{}in", char_addr); // e.g., "0in", "1in"
             let _ = port.write_all(cmd.as_bytes());
             thread::sleep(Duration::from_millis(50));
-            
+
             let mut buf = [0u8; 32];
             if let Ok(n) = port.read(&mut buf) {
                 let resp = String::from_utf8_lossy(&buf[..n]);
                 // Valid response format: {Addr}IN{ModelInfo} e.g. "0INELL14"
                 if resp.len() >= 3 && resp.contains("IN") {
-                     // Check if response starts with our address
-                     if resp.starts_with(char_addr) {
-                         // Parse Model (e.g., "0INELL14")
-                         let model = resp.replace(&format!("{}IN", char_addr), "").trim().to_string();
-                         println!("   -> Address [{}]: Active (Model: {})", char_addr, model);
-                     }
+                    // Check if response starts with our address
+                    if resp.starts_with(char_addr) {
+                        // Parse Model (e.g., "0INELL14")
+                        let model = resp
+                            .replace(&format!("{}IN", char_addr), "")
+                            .trim()
+                            .to_string();
+                        println!("   -> Address [{}]: Active (Model: {})", char_addr, model);
+                    }
                 }
             }
         }

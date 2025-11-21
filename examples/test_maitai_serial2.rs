@@ -27,7 +27,10 @@ async fn main() -> Result<()> {
     // Check if port exists before trying to open
     if !Path::new(port_path).exists() {
         println!("✓ serial2-tokio compilation successful");
-        println!("⚠ Hardware port {} not found (expected on dev machine)", port_path);
+        println!(
+            "⚠ Hardware port {} not found (expected on dev machine)",
+            port_path
+        );
         println!("⚠ This test requires running on maitai@100.117.5.12");
         return Ok(());
     }

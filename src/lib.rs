@@ -72,8 +72,8 @@ pub mod parameter;
 // pub mod traits;
 
 // V5 Headless-First Architecture (bd-oq51)
-pub mod hardware;     // Phase 1: Capability traits + Mock implementations
-pub mod scripting;    // Phase 2: Rhai scripting engine
+pub mod hardware; // Phase 1: Capability traits + Mock implementations
+pub mod scripting; // Phase 2: Rhai scripting engine
 
 // Phase 3: gRPC remote control server (bd-8gsx)
 #[cfg(feature = "networking")]

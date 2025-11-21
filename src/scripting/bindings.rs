@@ -133,20 +133,26 @@ pub fn register_hardware(engine: &mut Engine) {
     // =========================================================================
 
     // camera.arm() - Prepare camera for trigger
-    engine.register_fn("arm", move |camera: &mut CameraHandle| {
-        match block_in_place(|| Handle::current().block_on(camera.driver.arm())) {
+    engine.register_fn(
+        "arm",
+        move |camera: &mut CameraHandle| match block_in_place(|| {
+            Handle::current().block_on(camera.driver.arm())
+        }) {
             Ok(_) => (),
             Err(e) => panic!("Camera arm failed: {}", e),
-        }
-    });
+        },
+    );
 
     // camera.trigger() - Capture frame
-    engine.register_fn("trigger", move |camera: &mut CameraHandle| {
-        match block_in_place(|| Handle::current().block_on(camera.driver.trigger())) {
+    engine.register_fn(
+        "trigger",
+        move |camera: &mut CameraHandle| match block_in_place(|| {
+            Handle::current().block_on(camera.driver.trigger())
+        }) {
             Ok(_) => (),
             Err(e) => panic!("Camera trigger failed: {}", e),
-        }
-    });
+        },
+    );
 
     // let res = camera.resolution() - Get [width, height] array
     engine.register_fn("resolution", move |camera: &mut CameraHandle| -> Dynamic {
@@ -226,9 +232,7 @@ mod tests {
             pos
         "#;
 
-        let result = engine
-            .eval_with_scope::<f64>(&mut scope, script)
-            .unwrap();
+        let result = engine.eval_with_scope::<f64>(&mut scope, script).unwrap();
         assert_eq!(result, 7.0); // 5.0 + 2.0
     }
 
@@ -249,9 +253,7 @@ mod tests {
             res[0]
         "#;
 
-        let result = engine
-            .eval_with_scope::<i64>(&mut scope, script)
-            .unwrap();
+        let result = engine.eval_with_scope::<i64>(&mut scope, script).unwrap();
         assert_eq!(result, 1920);
     }
 

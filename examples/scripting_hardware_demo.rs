@@ -25,7 +25,12 @@ async fn main() {
 
     // Create handles for script access
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: stage.clone() });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: stage.clone(),
+        },
+    );
     scope.push(
         "camera",
         CameraHandle {

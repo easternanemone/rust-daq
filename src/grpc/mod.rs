@@ -21,7 +21,6 @@
 ///     Ok(())
 /// }
 /// ```
-
 pub mod server;
 
 /// Protocol Buffer definitions for the DAQ Control Service
@@ -37,12 +36,12 @@ pub mod proto {
     tonic::include_proto!("daq");
 }
 
-pub use server::{DaqServer, start_server};
+pub use server::{start_server, DaqServer};
 
 // Re-export commonly used proto types
-pub use proto::control_service_server::{ControlService, ControlServiceServer};
 pub use proto::control_service_client::ControlServiceClient;
+pub use proto::control_service_server::{ControlService, ControlServiceServer};
 pub use proto::{
-    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StartResponse,
-    StatusRequest, StopRequest, StopResponse, SystemStatus, UploadRequest, UploadResponse,
+    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StartResponse, StatusRequest,
+    StopRequest, StopResponse, SystemStatus, UploadRequest, UploadResponse,
 };

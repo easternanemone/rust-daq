@@ -151,22 +151,27 @@ impl HDF5Writer {
         #[cfg(not(feature = "storage_arrow"))]
         {
             // Fallback: Write raw bytes
-            batch_group.new_dataset::<u8>()
+            batch_group
+                .new_dataset::<u8>()
                 .create("raw_data", snapshot.len())?
                 .write(&snapshot)?;
         }
 
         // Add metadata
-        batch_group.new_attr::<u64>()
+        batch_group
+            .new_attr::<u64>()
             .create("ring_tail")?
             .write_scalar(&current_tail)?;
 
-        batch_group.new_attr::<u64>()
+        batch_group
+            .new_attr::<u64>()
             .create("timestamp_ns")?
-            .write_scalar(&std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64)?;
+            .write_scalar(
+                &std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+            )?;
 
         // Update last read position
         self.last_read_tail.store(current_tail, Ordering::Release);
@@ -216,33 +221,38 @@ impl HDF5Writer {
                 match column.data_type() {
                     arrow::datatypes::DataType::Float64 => {
                         use arrow::array::Float64Array;
-                        let array = column.as_any().downcast_ref::<Float64Array>()
+                        let array = column
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
                             .ok_or_else(|| anyhow!("Failed to downcast Float64Array"))?;
 
-                        let values: Vec<f64> = (0..array.len())
-                            .map(|i| array.value(i))
-                            .collect();
+                        let values: Vec<f64> = (0..array.len()).map(|i| array.value(i)).collect();
 
-                        group.new_dataset::<f64>()
+                        group
+                            .new_dataset::<f64>()
                             .create(dataset_name, values.len())?
                             .write(&values)?;
                     }
                     arrow::datatypes::DataType::Int64 => {
                         use arrow::array::Int64Array;
-                        let array = column.as_any().downcast_ref::<Int64Array>()
+                        let array = column
+                            .as_any()
+                            .downcast_ref::<Int64Array>()
                             .ok_or_else(|| anyhow!("Failed to downcast Int64Array"))?;
 
-                        let values: Vec<i64> = (0..array.len())
-                            .map(|i| array.value(i))
-                            .collect();
+                        let values: Vec<i64> = (0..array.len()).map(|i| array.value(i)).collect();
 
-                        group.new_dataset::<i64>()
+                        group
+                            .new_dataset::<i64>()
                             .create(dataset_name, values.len())?
                             .write(&values)?;
                     }
                     _ => {
                         // Fallback for unsupported types - write as string
-                        eprintln!("Warning: Unsupported Arrow type for HDF5: {:?}", column.data_type());
+                        eprintln!(
+                            "Warning: Unsupported Arrow type for HDF5: {:?}",
+                            column.data_type()
+                        );
                     }
                 }
             }
@@ -301,7 +311,8 @@ mod tests {
         let writer = HDF5Writer::new(hdf5_temp.path(), ring.clone()).unwrap();
 
         // Write some data to ring buffer
-        ring.write(b"Test data for non-blocking verification").unwrap();
+        ring.write(b"Test data for non-blocking verification")
+            .unwrap();
 
         // Start background task
         let handle = tokio::spawn(async move {
@@ -366,7 +377,8 @@ mod tests {
         let batch = RecordBatch::try_new(
             StdArc::new(schema),
             vec![StdArc::new(timestamps), StdArc::new(voltages)],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Write to ring buffer
         ring.write_arrow_batch(&batch).unwrap();

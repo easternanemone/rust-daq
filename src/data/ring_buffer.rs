@@ -189,9 +189,7 @@ impl RingBuffer {
         // Validate header
         // SAFETY: File was created with create(), header is valid
         let header = mmap.as_mut_ptr() as *mut RingBufferHeader;
-        let (magic, capacity) = unsafe {
-            ((*header).magic, (*header).capacity_bytes)
-        };
+        let (magic, capacity) = unsafe { ((*header).magic, (*header).capacity_bytes) };
 
         if magic != MAGIC {
             return Err(anyhow!(
@@ -536,6 +534,10 @@ mod tests {
         println!("Write performance: {:.0} ops/sec", ops_per_sec);
 
         // Should achieve 10k+ writes/sec
-        assert!(ops_per_sec > 10_000.0, "Performance too low: {} ops/sec", ops_per_sec);
+        assert!(
+            ops_per_sec > 10_000.0,
+            "Performance too low: {} ops/sec",
+            ops_per_sec
+        );
     }
 }

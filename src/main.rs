@@ -23,11 +23,11 @@
 //! rust-daq daemon --port 50051
 //! ```
 
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 use anyhow::Result;
-use rust_daq::scripting::{ScriptHost, StageHandle, CameraHandle};
-use rust_daq::hardware::mock::{MockStage, MockCamera};
+use clap::{Parser, Subcommand};
+use rust_daq::hardware::mock::{MockCamera, MockStage};
+use rust_daq::scripting::{CameraHandle, ScriptHost, StageHandle};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(feature = "networking")]
@@ -70,12 +70,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { script, config } => {
-            run_script_once(script, config).await
-        },
-        Commands::Daemon { port } => {
-            start_daemon(port).await
-        },
+        Commands::Run { script, config } => run_script_once(script, config).await,
+        Commands::Daemon { port } => start_daemon(port).await,
     }
 }
 
@@ -93,19 +89,32 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
 
     // Register hardware
     let mut scope = rhai::Scope::new();
-    scope.push("stage", StageHandle { driver: Arc::new(stage) });
-    scope.push("camera", CameraHandle { driver: Arc::new(camera) });
+    scope.push(
+        "stage",
+        StageHandle {
+            driver: Arc::new(stage),
+        },
+    );
+    scope.push(
+        "camera",
+        CameraHandle {
+            driver: Arc::new(camera),
+        },
+    );
 
     println!("▶️  Executing script...");
     println!();
 
-    match host.engine_mut().eval_with_scope::<rhai::Dynamic>(&mut scope, &script_content) {
+    match host
+        .engine_mut()
+        .eval_with_scope::<rhai::Dynamic>(&mut scope, &script_content)
+    {
         Ok(result) => {
             println!();
             println!("✅ Script completed successfully");
             println!("   Result: {:?}", result);
             Ok(())
-        },
+        }
         Err(e) => {
             eprintln!();
             eprintln!("❌ Script error: {}", e);
@@ -123,10 +132,10 @@ async fn start_daemon(port: u16) -> Result<()> {
     // Phase 4: Data Plane - Ring Buffer + HDF5 Writer (optional)
     #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
     {
+        use rust_daq::data::hdf5_writer::HDF5Writer;
+        use rust_daq::data::ring_buffer::RingBuffer;
         use std::path::Path;
         use std::sync::Arc;
-        use rust_daq::data::ring_buffer::RingBuffer;
-        use rust_daq::data::hdf5_writer::HDF5Writer;
 
         println!("📊 Initializing data plane (Phase 4)...");
         println!("   - Ring buffer: 100 MB in /tmp/rust_daq_ring");
@@ -134,15 +143,10 @@ async fn start_daemon(port: u16) -> Result<()> {
         println!("   - Background flush: every 1 second");
 
         // Create ring buffer (100 MB)
-        let ring_buffer = Arc::new(
-            RingBuffer::create(Path::new("/tmp/rust_daq_ring"), 100)?
-        );
+        let ring_buffer = Arc::new(RingBuffer::create(Path::new("/tmp/rust_daq_ring"), 100)?);
 
         // Start background HDF5 writer
-        let writer = HDF5Writer::new(
-            Path::new("experiment_data.h5"),
-            ring_buffer.clone()
-        )?;
+        let writer = HDF5Writer::new(Path::new("experiment_data.h5"), ring_buffer.clone())?;
 
         tokio::spawn(async move {
             writer.run().await;
@@ -155,8 +159,8 @@ async fn start_daemon(port: u16) -> Result<()> {
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]
     {
-        use rust_daq::grpc::server::DaqServer;
         use rust_daq::grpc::proto::control_service_server::ControlServiceServer;
+        use rust_daq::grpc::server::DaqServer;
 
         let addr = format!("0.0.0.0:{}", port).parse()?;
         let server = DaqServer::new();

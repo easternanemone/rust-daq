@@ -36,7 +36,11 @@ fn main() -> Result<()> {
     println!("   Wrote {} bytes", test_message.len());
 
     let snapshot = ring_buffer.read_snapshot();
-    println!("   Read {} bytes: {:?}\n", snapshot.len(), String::from_utf8_lossy(&snapshot));
+    println!(
+        "   Read {} bytes: {:?}\n",
+        snapshot.len(),
+        String::from_utf8_lossy(&snapshot)
+    );
 
     // 3. Performance test - single thread
     println!("3. Single-threaded performance test");
@@ -50,7 +54,8 @@ fn main() -> Result<()> {
     let elapsed = start.elapsed();
 
     let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
-    let mb_per_sec = (iterations * test_data.len()) as f64 / 1024.0 / 1024.0 / elapsed.as_secs_f64();
+    let mb_per_sec =
+        (iterations * test_data.len()) as f64 / 1024.0 / 1024.0 / elapsed.as_secs_f64();
 
     println!("   Writes: {}", iterations);
     println!("   Time: {:?}", elapsed);
@@ -101,12 +106,18 @@ fn main() -> Result<()> {
                 total_bytes += snapshot.len();
 
                 if snapshots_read % 10 == 0 {
-                    println!("   Consumer: Read {} snapshots ({} bytes)", snapshots_read, total_bytes);
+                    println!(
+                        "   Consumer: Read {} snapshots ({} bytes)",
+                        snapshots_read, total_bytes
+                    );
                 }
             }
             thread::sleep(Duration::from_millis(10));
         }
-        println!("   Consumer: Finished reading {} snapshots ({} total bytes)", snapshots_read, total_bytes);
+        println!(
+            "   Consumer: Finished reading {} snapshots ({} total bytes)",
+            snapshots_read, total_bytes
+        );
     });
 
     producer.join().unwrap();
@@ -122,7 +133,11 @@ fn main() -> Result<()> {
     let chunk = vec![0x42; 256 * 1024]; // 256 KB chunks
     for i in 0..10 {
         small_buffer.write(&chunk)?;
-        println!("   Wrote chunk {} (write_head: {})", i, small_buffer.write_head());
+        println!(
+            "   Wrote chunk {} (write_head: {})",
+            i,
+            small_buffer.write_head()
+        );
     }
 
     let final_snapshot = small_buffer.read_snapshot();
@@ -131,7 +146,10 @@ fn main() -> Result<()> {
 
     // 6. Memory layout information
     println!("6. Memory layout information (for Python/C++ interop)");
-    println!("   Data region address: 0x{:016x}", ring_buffer.data_address());
+    println!(
+        "   Data region address: 0x{:016x}",
+        ring_buffer.data_address()
+    );
     println!("   Capacity: {} bytes", ring_buffer.capacity());
     println!("   Header size: 128 bytes (fixed)");
     println!("   Total file size: {} bytes", 128 + ring_buffer.capacity());

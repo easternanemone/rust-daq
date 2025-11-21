@@ -330,5 +330,9 @@ async fn test_safety_limit_respected() {
     // Script should be terminated due to safety limit
     let err = result.unwrap_err();
     let err_msg = err.to_string();
-    assert!(err_msg.contains("terminated"), "Expected 'terminated' in error, got: {}", err_msg);
+    assert!(
+        err_msg.contains("terminated"),
+        "Expected 'terminated' in error, got: {}",
+        err_msg
+    );
 }

@@ -80,7 +80,11 @@ impl Ell14Driver {
     /// * `port_path` - Serial port path
     /// * `address` - Device address
     /// * `pulses_per_degree` - Custom calibration (varies by device)
-    pub fn with_calibration(port_path: &str, address: &str, pulses_per_degree: f64) -> Result<Self> {
+    pub fn with_calibration(
+        port_path: &str,
+        address: &str,
+        pulses_per_degree: f64,
+    ) -> Result<Self> {
         let mut driver = Self::new(port_path, address)?;
         driver.pulses_per_degree = pulses_per_degree;
         Ok(driver)
@@ -103,7 +107,8 @@ impl Ell14Driver {
         // Construct packet: Address + Command
         // Example: "0gs" (Get Status for device 0)
         let payload = format!("{}{}", self.address, command);
-        port.write_all(payload.as_bytes()).await
+        port.write_all(payload.as_bytes())
+            .await
             .context("ELL14 write failed")?;
 
         // Read response with timeout
@@ -132,24 +137,24 @@ impl Ell14Driver {
     /// Example response to 'gp': "0PO00002000"
     fn parse_position_response(&self, response: &str) -> Result<f64> {
         if response.len() < 5 {
-             return Err(anyhow!("Response too short: {}", response));
+            return Err(anyhow!("Response too short: {}", response));
         }
 
         // Look for position response marker "PO"
         if let Some(idx) = response.find("PO") {
-             let hex_str = &response[idx+2..].trim();
+            let hex_str = &response[idx + 2..].trim();
 
-             // Handle variable length hex strings
-             let hex_clean = if hex_str.len() > 8 {
-                 &hex_str[..8]
-             } else {
-                 hex_str
-             };
+            // Handle variable length hex strings
+            let hex_clean = if hex_str.len() > 8 {
+                &hex_str[..8]
+            } else {
+                hex_str
+            };
 
-             let pulses = i32::from_str_radix(hex_clean, 16)
+            let pulses = i32::from_str_radix(hex_clean, 16)
                 .context(format!("Failed to parse position hex: {}", hex_clean))?;
 
-             return Ok(pulses as f64 / self.pulses_per_degree);
+            return Ok(pulses as f64 / self.pulses_per_degree);
         }
 
         Err(anyhow!("Unexpected position format: {}", response))
@@ -207,7 +212,7 @@ impl Movable for Ell14Driver {
 
             // Response format: "0GS{StatusHex}"
             if let Some(idx) = resp.find("GS") {
-                let hex_str = &resp[idx+2..].trim();
+                let hex_str = &resp[idx + 2..].trim();
 
                 // Handle variable length status
                 let hex_clean = if hex_str.len() > 2 {

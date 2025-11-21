@@ -39,11 +39,11 @@ use crate::validation::{is_in_range, is_not_empty, is_valid_ip, is_valid_path, i
 pub mod dependencies;
 use anyhow::{Context, Result};
 use config::Config;
-use serde::{Deserialize, Serialize};
 use figment::{
     providers::{Format, Serialized, Toml},
     Figment, Provider,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod versioning;
@@ -53,11 +53,12 @@ impl Provider for Settings {
         figment::Metadata::named("Library Defaults")
     }
 
-    fn data(&self) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
         Serialized::defaults(Settings::default()).data()
     }
 }
-
 
 /// Configuration for V3 instruments (Phase 3)
 ///

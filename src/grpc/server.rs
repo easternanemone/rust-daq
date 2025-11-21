@@ -1,13 +1,13 @@
-use tonic::{transport::Server, Request, Response, Status};
 use crate::grpc::proto::{
     control_service_server::{ControlService, ControlServiceServer},
-    UploadRequest, UploadResponse, StartRequest, StartResponse,
-    StopRequest, StopResponse, StatusRequest, ScriptStatus, SystemStatus,
+    ScriptStatus, StartRequest, StartResponse, StatusRequest, StopRequest, StopResponse,
+    SystemStatus, UploadRequest, UploadResponse,
 };
 use crate::scripting::ScriptHost;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
+use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
 /// State of a script execution
@@ -31,9 +31,9 @@ impl DaqServer {
     /// Create a new DAQ server instance
     pub fn new() -> Self {
         Self {
-            script_host: Arc::new(RwLock::new(
-                ScriptHost::with_hardware(tokio::runtime::Handle::current())
-            )),
+            script_host: Arc::new(RwLock::new(ScriptHost::with_hardware(
+                tokio::runtime::Handle::current(),
+            ))),
             scripts: Arc::new(RwLock::new(HashMap::new())),
             executions: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -67,7 +67,10 @@ impl ControlService for DaqServer {
         }
 
         // Store validated script
-        self.scripts.write().await.insert(script_id.clone(), req.script_content);
+        self.scripts
+            .write()
+            .await
+            .insert(script_id.clone(), req.script_content);
 
         Ok(Response::new(UploadResponse {
             script_id,
@@ -84,22 +87,26 @@ impl ControlService for DaqServer {
         let req = request.into_inner();
         let scripts = self.scripts.read().await;
 
-        let script = scripts.get(&req.script_id)
+        let script = scripts
+            .get(&req.script_id)
             .ok_or_else(|| Status::not_found("Script not found"))?;
 
         let execution_id = Uuid::new_v4().to_string();
 
         // Record execution start
-        self.executions.write().await.insert(execution_id.clone(), ExecutionState {
-            script_id: req.script_id,
-            state: "RUNNING".to_string(),
-            start_time: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
-            end_time: None,
-            error: None,
-        });
+        self.executions.write().await.insert(
+            execution_id.clone(),
+            ExecutionState {
+                script_id: req.script_id,
+                state: "RUNNING".to_string(),
+                start_time: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+                end_time: None,
+                error: None,
+            },
+        );
 
         // Execute script in background (non-blocking)
         let script_clone = script.clone();
@@ -115,10 +122,12 @@ impl ControlService for DaqServer {
             let mut executions = executions_clone.write().await;
             if let Some(exec) = executions.get_mut(&exec_id_clone) {
                 exec.state = if result.is_ok() { "COMPLETED" } else { "ERROR" }.to_string();
-                exec.end_time = Some(std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64);
+                exec.end_time = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64,
+                );
                 if let Err(e) = result {
                     exec.error = Some(e.to_string());
                 }
@@ -138,9 +147,7 @@ impl ControlService for DaqServer {
     ) -> Result<Response<StopResponse>, Status> {
         // TODO: Implement script cancellation with tokio::task::JoinHandle
         // For now, scripts run to completion
-        Ok(Response::new(StopResponse {
-            stopped: false,
-        }))
+        Ok(Response::new(StopResponse { stopped: false }))
     }
 
     /// Get current status of a script execution
@@ -151,7 +158,8 @@ impl ControlService for DaqServer {
         let req = request.into_inner();
         let executions = self.executions.read().await;
 
-        let exec = executions.get(&req.execution_id)
+        let exec = executions
+            .get(&req.execution_id)
             .ok_or_else(|| Status::not_found("Execution not found"))?;
 
         Ok(Response::new(ScriptStatus {
@@ -195,10 +203,13 @@ impl ControlService for DaqServer {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
-    type StreamMeasurementsStream = tokio_stream::wrappers::ReceiverStream<Result<crate::grpc::proto::DataPoint, Status>>;
+    type StreamMeasurementsStream =
+        tokio_stream::wrappers::ReceiverStream<Result<crate::grpc::proto::DataPoint, Status>>;
 
     /// Stream measurement data from specified channels
     async fn stream_measurements(
@@ -211,7 +222,9 @@ impl ControlService for DaqServer {
         // For now, just close the channel (no data)
         drop(tx);
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }
 
@@ -308,7 +321,11 @@ mod tests {
         let status_req = Request::new(StatusRequest {
             execution_id: start_resp.execution_id,
         });
-        let status_resp = server.get_script_status(status_req).await.unwrap().into_inner();
+        let status_resp = server
+            .get_script_status(status_req)
+            .await
+            .unwrap()
+            .into_inner();
         assert_eq!(status_resp.state, "COMPLETED");
         assert_eq!(status_resp.error_message, "");
     }
