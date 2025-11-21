@@ -118,7 +118,7 @@ async fn run_script(args: &Args) -> Result<(), ScriptError> {
     );
 
     // Create script engine based on selected type
-    let mut engine = create_engine(args.engine, args.max_operations);
+    let mut engine = create_engine(args.engine.clone(), args.max_operations);
 
     // Set global variables if provided
     set_globals(&mut engine, &args.globals)?;
@@ -136,7 +136,7 @@ fn create_engine(engine_type: EngineType, max_operations: u64) -> Box<dyn Script
     match engine_type {
         EngineType::Rhai => {
             log::debug!("Creating Rhai engine with limit {}", max_operations);
-            Box::new(RhaiEngine::with_limit(max_operations))
+            Box::new(RhaiEngine::with_limit(max_operations).unwrap())
         }
     }
 }
@@ -241,7 +241,7 @@ async fn execute_script(
 fn display_result(result: &ScriptValue) {
     use rhai::Dynamic;
 
-    if let Ok(dynamic) = result.downcast_ref::<Dynamic>() {
+    if let Some(dynamic) = result.downcast_ref::<Dynamic>() {
         println!("Result: {}", dynamic);
     } else {
         println!("Result: (non-displayable type)");
@@ -255,19 +255,8 @@ fn display_result(result: &ScriptValue) {
 /// Format ScriptError for human-readable display
 fn format_error(error: &ScriptError) -> String {
     match error {
-        ScriptError::CompilationError {
-            message,
-            line,
-            column,
-        } => {
-            let mut output = format!("Compilation Error: {}", message);
-            if let Some(line_num) = line {
-                output.push_str(&format!("\n  at line {}", line_num));
-            }
-            if let Some(col_num) = column {
-                output.push_str(&format!(", column {}", col_num));
-            }
-            output
+        ScriptError::SyntaxError { message } => {
+            format!("Syntax Error: {}", message)
         }
         ScriptError::RuntimeError { message, backtrace } => {
             let mut output = format!("Runtime Error: {}", message);
@@ -350,20 +339,17 @@ mod tests {
     }
 
     #[test]
-    fn test_format_compilation_error() {
-        let error = ScriptError::CompilationError {
+    fn test_format_syntax_error() {
+        let error = ScriptError::SyntaxError {
             message: "unexpected token".to_string(),
-            line: Some(10),
-            column: Some(5),
         };
         let formatted = format_error(&error);
-        assert!(formatted.contains("line 10"));
-        assert!(formatted.contains("column 5"));
+        assert!(formatted.contains("unexpected token"));
     }
 
     #[tokio::test]
     async fn test_validate_script() {
-        let engine: Box<dyn ScriptEngine> = Box::new(RhaiEngine::new());
+        let engine: Box<dyn ScriptEngine> = Box::new(RhaiEngine::new().unwrap());
         let script = "let x = 10; x * 2";
         let path = PathBuf::from("test.rhai");
 
@@ -373,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_simple_script() {
-        let mut engine: Box<dyn ScriptEngine> = Box::new(RhaiEngine::new());
+        let mut engine: Box<dyn ScriptEngine> = Box::new(RhaiEngine::new().unwrap());
         let script = "5 + 5";
         let path = PathBuf::from("test.rhai");
 

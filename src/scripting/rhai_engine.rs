@@ -130,12 +130,17 @@ impl RhaiEngine {
     ///
     /// Always succeeds for Rhai (returns Ok). Signature matches trait requirements.
     pub fn new() -> Result<Self, ScriptError> {
+        Self::with_limit(10_000)
+    }
+
+    /// Create a new RhaiEngine with a specific operations limit.
+    pub fn with_limit(max_operations: u64) -> Result<Self, ScriptError> {
         let mut engine = Engine::new();
 
         // Safety: Limit operations to prevent infinite loops
-        engine.on_progress(|count| {
-            if count > 10_000 {
-                Some("Safety limit exceeded: maximum 10,000 operations".into())
+        engine.on_progress(move |count| {
+            if count > max_operations {
+                Some(format!("Safety limit exceeded: maximum {} operations", max_operations).into())
             } else {
                 None
             }
