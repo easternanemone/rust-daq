@@ -39,7 +39,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use serial2_tokio::SerialPort;
 
 /// Driver for Spectra-Physics MaiTai tunable Ti:Sapphire laser
 ///
@@ -47,7 +47,7 @@ use tokio_serial::{SerialPortBuilderExt, SerialStream};
 /// Uses MaiTai's ASCII protocol for hardware communication.
 pub struct MaiTaiDriver {
     /// Serial port protected by Mutex for exclusive access
-    port: Mutex<BufReader<SerialStream>>,
+    port: Mutex<BufReader<SerialPort>>,
     /// Command timeout duration
     timeout: Duration,
     /// Current wavelength setting (cached for reference)
@@ -63,13 +63,15 @@ impl MaiTaiDriver {
     /// # Errors
     /// Returns error if serial port cannot be opened
     pub fn new(port_path: &str) -> Result<Self> {
-        let port = tokio_serial::new(port_path, 9600)
-            .data_bits(tokio_serial::DataBits::Eight)
-            .parity(tokio_serial::Parity::None)
-            .stop_bits(tokio_serial::StopBits::One)
-            .flow_control(tokio_serial::FlowControl::Software) // XON/XOFF
-            .open_native_async()
+        use serial2::SerialPort as Serial2Settings;
+
+        // Open serial port with 9600 baud
+        let mut port = SerialPort::open(port_path, 9600)
             .context("Failed to open MaiTai serial port")?;
+
+        // Configure XON/XOFF software flow control
+        port.set_flow_control(serial2::FlowControl::XonXoff)
+            .context("Failed to set flow control")?;
 
         Ok(Self {
             port: Mutex::new(BufReader::new(port)),
