@@ -17,7 +17,7 @@
  * to detect cameras via the PVCAM C-Library.
  */
 
-use serialport::{SerialPort, SerialPortType};
+use serial2::SerialPort;
 use std::io::{Read, Write};
 use std::thread;
 use std::time::Duration;
@@ -32,7 +32,7 @@ struct Probe {
     command: &'static [u8],
     expected_response: &'static str,
     // Flow control setting
-    flow_control: serialport::FlowControl,
+    flow_control: serial2::FlowControl,
 }
 
 const PROBES: &[Probe] = &[
@@ -47,7 +47,7 @@ const PROBES: &[Probe] = &[
         fallback_baud_rates: &[19200, 38400, 115200],
         command: b"D?\n",
         expected_response: "E", // Scientific notation contains "E"
-        flow_control: serialport::FlowControl::None,
+        flow_control: serial2::FlowControl::None,
     },
     // Spectra Physics MaiTai Laser
     // Protocol: SCPI-like with CR terminator
@@ -60,7 +60,7 @@ const PROBES: &[Probe] = &[
         fallback_baud_rates: &[19200, 38400, 57600, 115200],
         command: b"*IDN?\r",
         expected_response: "Spectra Physics", // No dash!
-        flow_control: serialport::FlowControl::Software, // XON/XOFF
+        flow_control: serial2::FlowControl::Software, // XON/XOFF
     },
     // Thorlabs Elliptec Rotation Mounts (ELL14)
     // Protocol: Binary/ASCII hybrid (Manual Issue 7, Page 11)
@@ -74,7 +74,7 @@ const PROBES: &[Probe] = &[
         fallback_baud_rates: &[], // Elliptec is strictly 9600
         command: b"0in",
         expected_response: "0IN",
-        flow_control: serialport::FlowControl::None,
+        flow_control: serial2::FlowControl::None,
     },
     // Newport ESP300 Stage Controller
     // Protocol: ASCII
@@ -87,7 +87,7 @@ const PROBES: &[Probe] = &[
         fallback_baud_rates: &[9600, 38400, 115200],
         command: b"ID?\r",
         expected_response: "ESP300",
-        flow_control: serialport::FlowControl::Hardware, // RTS/CTS
+        flow_control: serial2::FlowControl::Hardware, // RTS/CTS
     },
 ];
 
@@ -95,18 +95,18 @@ fn main() {
     println!("🔍 Starting Hardware Discovery Scan...");
     println!("⚠️  WARNING: Ensure high-power devices (Lasers) are in a safe state.");
 
-    let ports = serialport::available_ports().expect("No ports found!");
+    let ports = serial2::SerialPort::available_ports().expect("Failed to enumerate ports");
 
     if ports.is_empty() {
         println!("❌ No serial ports detected on this system.");
         return;
     }
 
-    for p in ports {
-        println!("Checking port: {}", p.port_name);
+    for port_name in ports {
+        println!("Checking port: {}", port_name);
 
         // Optimization: Filter out obvious non-instrument ports on Linux/Mac
-        // if p.port_name.contains("Bluetooth") { continue; }
+        // if port_name.contains("Bluetooth") { continue; }
 
         let mut identified = false;
 
@@ -116,17 +116,17 @@ fn main() {
             rates_to_try.extend_from_slice(probe.fallback_baud_rates);
 
             for &baud in &rates_to_try {
-                if try_probe(&p.port_name, probe, baud) {
+                if try_probe(&port_name, probe, baud) {
                     println!(
                         "✅ FOUND: {} on {} (Baud: {})",
-                        probe.name, p.port_name, baud
+                        probe.name, port_name, baud
                     );
 
                     // Special handling for Elliptec Bus Enumeration
                     // The Elliptec protocol allows multiple devices on one bus.
                     // Once the port is identified, we scan specifically for addresses 0-F.
                     if probe.name.contains("Elliptec") {
-                        scan_elliptec_bus(&p.port_name);
+                        scan_elliptec_bus(&port_name);
                     }
 
                     identified = true;
@@ -155,23 +155,25 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
     // 3. Clear buffers to remove stale data
     // 4. Send challenge command
     // 5. Check response substring
-    let port_result = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(3000)) // MaiTai needs 2+ seconds to respond
-        .flow_control(probe.flow_control)
-        .open();
+    let port_result = SerialPort::open(port_name, baud_rate);
 
     match port_result {
-        Ok(mut port) => {
-            // Clear buffer to ensure we aren't reading old garbage
-            let _ = port.clear(serialport::ClearBuffer::All);
-
-            // Send Command
-            if let Err(_) = port.write_all(probe.command) {
+        Ok(port) => {
+            // Configure port settings
+            if port.set_flow_control(probe.flow_control).is_err() {
                 return false;
             }
 
-            // Flush to ensure command is actually sent
-            if let Err(_) = port.flush() {
+            // Set timeout for reads (MaiTai needs 2+ seconds to respond)
+            if port.set_read_timeout(Duration::from_millis(3000)).is_err() {
+                return false;
+            }
+
+            // Discard any stale data in buffers
+            let _ = port.discard_buffers();
+
+            // Send Command
+            if port.write_all(probe.command).is_err() {
                 return false;
             }
 
@@ -180,7 +182,7 @@ fn try_probe(port_name: &str, probe: &Probe, baud_rate: u32) -> bool {
 
             // Read Response
             let mut serial_buf: Vec<u8> = vec![0; 1024];
-            match port.read(serial_buf.as_mut_slice()) {
+            match port.read(&mut serial_buf) {
                 Ok(t) => {
                     let response = String::from_utf8_lossy(&serial_buf[..t]);
                     if response.contains(probe.expected_response) {
@@ -203,10 +205,10 @@ fn scan_elliptec_bus(port_name: &str) {
     // Try addresses 0-9 and A-F
     let addresses = "0123456789ABCDEF";
 
-    if let Ok(mut port) = serialport::new(port_name, 9600)
-        .timeout(Duration::from_millis(100))
-        .open()
-    {
+    if let Ok(port) = SerialPort::open(port_name, 9600) {
+        // Set short timeout for bus scanning
+        let _ = port.set_read_timeout(Duration::from_millis(100));
+
         for char_addr in addresses.chars() {
             let cmd = format!("{}in", char_addr); // e.g., "0in", "1in"
             let _ = port.write_all(cmd.as_bytes());

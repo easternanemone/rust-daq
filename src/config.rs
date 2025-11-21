@@ -185,24 +185,86 @@ impl Default for DataDistributorSettings {
 /// Each timeout is stored in milliseconds for ease of configuration and
 /// alignment with other numeric settings. Defaults match the historical
 /// hardcoded values to preserve existing behavior.
+///
+/// # Driver Timeout Usage
+///
+/// Different drivers use different timeout fields based on their communication method:
+///
+/// - **Serial Instruments** (MaiTai, Newport, ESP300, ELL14):
+///   - Use `serial_read_timeout_ms` and `serial_write_timeout_ms` for port operations
+///   - Use `scpi_command_timeout_ms` for SCPI command execution (if applicable)
+///   - Use `instrument_measurement_timeout_ms` for long-running measurements
+///
+/// - **Network Instruments** (SCPI over TCP/IP):
+///   - Use `network_client_timeout_ms` for socket operations
+///   - Use `scpi_command_timeout_ms` for SCPI command execution
+///   - Use `instrument_measurement_timeout_ms` for long-running measurements
+///
+/// - **All Instruments**:
+///   - Use `instrument_connect_timeout_ms` during initialization/connection
+///   - Use `instrument_shutdown_timeout_ms` during cleanup/disconnection
+///
+/// # Historical Driver Defaults (Before Configurable Timeouts)
+///
+/// For reference, these were the hardcoded values in driver implementations:
+///
+/// - MaiTai: 5000ms (instrument_measurement_timeout_ms)
+/// - Newport: 500ms (serial_read_timeout_ms)
+/// - ESP300: 5000ms (scpi_command_timeout_ms)
+/// - ELL14: 500ms (serial_read_timeout_ms)
+///
+/// These defaults are now configurable via the `[application.timeouts]` section in config.toml
+/// or via environment variables like `RUSTDAQ_APPLICATION__TIMEOUTS__SERIAL_READ_TIMEOUT_MS=2000`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct TimeoutSettings {
-    /// Serial read timeout (milliseconds)
+    /// Serial port read timeout in milliseconds (100-30000ms, default: 1000ms).
+    ///
+    /// Used by serial instruments (MaiTai, Newport, ESP300, ELL14) for blocking read operations.
+    /// Increase for slow instruments or noisy serial lines.
     pub serial_read_timeout_ms: u64,
-    /// Serial write timeout (milliseconds)
+
+    /// Serial port write timeout in milliseconds (100-30000ms, default: 1000ms).
+    ///
+    /// Used by serial instruments for blocking write operations.
+    /// Increase if experiencing write timeouts on slow serial connections.
     pub serial_write_timeout_ms: u64,
-    /// SCPI command timeout (milliseconds)
+
+    /// SCPI command execution timeout in milliseconds (500-60000ms, default: 2000ms).
+    ///
+    /// Used by SCPI-compatible instruments (network and serial) for command execution.
+    /// Increase for instruments with slow response times or complex commands.
     pub scpi_command_timeout_ms: u64,
-    /// Network client operation timeout (milliseconds)
+
+    /// Network client operation timeout in milliseconds (1000-120000ms, default: 5000ms).
+    ///
+    /// Used by network-connected instruments for TCP/IP socket operations (connect, read, write).
+    /// Increase for instruments on slow or unreliable networks.
     pub network_client_timeout_ms: u64,
-    /// Network cleanup timeout (milliseconds)
+
+    /// Network resource cleanup timeout in milliseconds (1000-120000ms, default: 10000ms).
+    ///
+    /// Used when closing network connections and cleaning up resources.
+    /// Increase if experiencing incomplete shutdowns or resource leaks.
     pub network_cleanup_timeout_ms: u64,
-    /// Instrument connection timeout (milliseconds)
+
+    /// Instrument connection/initialization timeout in milliseconds (1000-60000ms, default: 5000ms).
+    ///
+    /// Used during instrument connect(), initialize(), and initial handshake operations.
+    /// Increase for instruments with slow startup or extensive self-test procedures.
     pub instrument_connect_timeout_ms: u64,
-    /// Instrument shutdown timeout (milliseconds)
+
+    /// Instrument shutdown/disconnect timeout in milliseconds (1000-60000ms, default: 6000ms).
+    ///
+    /// Used during instrument disconnect() and cleanup operations.
+    /// Increase if instruments need time to safely power down or save state.
     pub instrument_shutdown_timeout_ms: u64,
-    /// Instrument measurement timeout (milliseconds)
+
+    /// Instrument measurement timeout in milliseconds (1000-60000ms, default: 5000ms).
+    ///
+    /// Used for long-running measurement operations (e.g., spectroscopy scans, multi-sample acquisitions).
+    /// Increase for instruments with slow integration times or large data transfers.
+    /// Historical defaults: MaiTai 5000ms, ESP300 5000ms.
     pub instrument_measurement_timeout_ms: u64,
 }
 
@@ -292,10 +354,73 @@ fn validate_timeout_range(value: u64, min: u64, max: u64, name: &str) -> Result<
 }
 
 impl Settings {
-    pub fn load_v5() -> Result<Self> {
-        let figment = Figment::from(Settings::default());
-        let settings: Settings = figment.extract()?;
+    /// Load configuration using Figment (V5 architecture)
+    ///
+    /// This method implements the layered configuration approach:
+    /// 1. Base Layer: Hardcoded defaults from `Settings::default()`
+    /// 2. File Layer: config/config.toml (optional, warns if missing)
+    /// 3. Environment Layer: Environment variables prefixed with `RUSTDAQ_`
+    ///
+    /// The layering ensures that every field has a valid value, with each
+    /// layer overriding the previous one.
+    ///
+    /// # Environment Variables
+    ///
+    /// All configuration fields can be overridden via environment variables using the
+    /// `RUSTDAQ_` prefix. Nested fields use double underscores. Examples:
+    ///
+    /// - `RUSTDAQ_LOG_LEVEL=debug` → sets `log_level`
+    /// - `RUSTDAQ_APPLICATION__TIMEOUTS__SERIAL_READ_TIMEOUT_MS=2000` → sets `application.timeouts.serial_read_timeout_ms`
+    /// - `RUSTDAQ_STORAGE__DEFAULT_PATH=/data` → sets `storage.default_path`
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Optional path to a config file. If None, uses "config/config.toml"
+    pub fn load_v5(config_path: Option<std::path::PathBuf>) -> Result<Self> {
+        use figment::providers::{Env, Format, Toml};
+
+        // Layer 1: Start with defaults
+        // The Provider trait implementation allows Settings to act as a data source
+        let mut figment = Figment::from(Settings::default());
+
+        // Layer 2: Config File (optional)
+        // Priority: Explicit path > config.toml > skip if neither exists
+        let file_path = config_path.unwrap_or_else(|| "config/config.toml".into());
+
+        if file_path.exists() {
+            figment = figment.merge(Toml::file(&file_path));
+        } else {
+            // Warn but don't fail - defaults are sufficient
+            eprintln!(
+                "⚠️  Config file not found: {}. Using defaults.",
+                file_path.display()
+            );
+        }
+
+        // Layer 3: Environment Variables
+        // Prefix: RUSTDAQ_
+        // Nested fields use double underscores: RUSTDAQ_APPLICATION__TIMEOUTS__SERIAL_READ_TIMEOUT_MS
+        figment = figment.merge(Env::prefixed("RUSTDAQ_").split("__"));
+
+        // Extract (deserialize) the final configuration
+        let settings: Settings = figment
+            .extract()
+            .context("Failed to extract configuration from Figment")?;
+
+        // Validate the configuration
+        settings
+            .validate()
+            .context("Configuration validation failed")?;
+
         Ok(settings)
+    }
+
+    /// Load configuration using the legacy config crate (backward compatibility)
+    ///
+    /// This method is deprecated and will be removed once the Figment migration is complete.
+    /// Use `load_v5()` for new code.
+    pub fn new(config_name: Option<&str>) -> Result<Self> {
+        Self::new_legacy(config_name)
     }
 
     pub fn new_legacy(config_name: Option<&str>) -> Result<Self> {
@@ -429,6 +554,48 @@ impl Settings {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn test_load_v5_with_defaults() {
+        // Test that load_v5() successfully loads with default values
+        // Use a non-existent path to ensure we're testing defaults-only
+        let settings = Settings::load_v5(Some("config/nonexistent.toml".into()));
+        // Will warn about missing config file, but should succeed with defaults
+        if let Err(ref e) = settings {
+            eprintln!("Error loading settings: {:#}", e);
+        }
+        assert!(settings.is_ok());
+
+        let settings = settings.unwrap();
+        assert_eq!(settings.log_level, "info");
+        assert_eq!(settings.storage.default_path, "./data");
+        assert_eq!(settings.storage.default_format, "hdf5");
+        assert_eq!(settings.application.broadcast_channel_capacity, 1024);
+        assert_eq!(settings.application.command_channel_capacity, 32);
+
+        // Verify timeouts are set to defaults
+        assert_eq!(settings.application.timeouts.serial_read_timeout_ms, 1_000);
+        assert_eq!(settings.application.timeouts.scpi_command_timeout_ms, 2_000);
+        assert_eq!(
+            settings.application.timeouts.instrument_connect_timeout_ms,
+            5_000
+        );
+    }
+
+    #[test]
+    fn test_load_v5_validates_defaults() {
+        // Test that load_v5() validates the configuration
+        // Since we're using defaults, this should always pass
+        let settings = Settings::load_v5(Some("config/nonexistent.toml".into()));
+        if let Err(ref e) = settings {
+            eprintln!("Error loading settings: {:#}", e);
+        }
+        assert!(settings.is_ok());
+
+        // Verify that the returned settings pass validation
+        let settings = settings.unwrap();
+        assert!(settings.validate().is_ok());
+    }
 
     #[test]
     fn test_parse_instruments_v3() {
