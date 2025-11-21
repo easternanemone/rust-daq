@@ -11,6 +11,7 @@
 //! - Type-safe value passing between Rust and Rhai
 //! - Async-compatible execution model
 //! - Safety limits to prevent infinite loops
+//! - Hardware bindings for controlling stages and cameras
 //!
 //! # Advantages of Rhai
 //!
@@ -20,7 +21,7 @@
 //! - **Sandboxed**: Cannot access filesystem or network by default
 //! - **Small footprint**: Entire engine is ~200KB compiled
 //!
-//! # Example
+//! # Example: Basic Scripting
 //!
 //! ```rust,ignore
 //! use rust_daq::scripting::{ScriptEngine, RhaiEngine, ScriptValue};
@@ -46,6 +47,50 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # Example: Hardware Control
+//!
+//! ```rust,ignore
+//! use rust_daq::scripting::{ScriptEngine, RhaiEngine, ScriptValue, StageHandle};
+//! use rust_daq::hardware::mock::MockStage;
+//! use std::sync::Arc;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Use with_hardware() to enable stage/camera control
+//!     let mut engine = RhaiEngine::with_hardware()?;
+//!
+//!     // Create hardware and register as global
+//!     engine.set_global("stage", ScriptValue::new(StageHandle {
+//!         driver: Arc::new(MockStage::new()),
+//!     }))?;
+//!
+//!     // Execute script that controls hardware
+//!     let script = r#"
+//!         print("Moving to 10mm...");
+//!         stage.move_abs(10.0);
+//!         stage.wait_settled();
+//!         let pos = stage.position();
+//!         print(`Position: ${pos}mm`);
+//!     "#;
+//!
+//!     engine.execute_script(script).await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Function Registration Limitation
+//!
+//! Rhai requires compile-time type information for function registration via
+//! `Engine::register_fn()`. The generic `ScriptEngine::register_function()`
+//! interface cannot support this.
+//!
+//! **Solutions:**
+//! 1. Use `RhaiEngine::with_hardware()` for stage/camera bindings
+//! 2. Create custom constructors that register functions before Arc::new()
+//! 3. Use PyO3Engine for runtime function registration
+//!
+//! See [`RhaiEngine::register_function`] documentation for details.
 
 use async_trait::async_trait;
 use rhai::{Dynamic, Engine, EvalAltResult, Scope};
@@ -102,6 +147,74 @@ impl RhaiEngine {
         })
     }
 
+    /// Create a new RhaiEngine with hardware bindings registered
+    ///
+    /// This constructor calls [`crate::scripting::bindings::register_hardware`]
+    /// to enable script access to Stage and Camera handles. Use this when
+    /// executing scripts that need to control hardware devices.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use rust_daq::scripting::{RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
+    /// use rust_daq::hardware::mock::MockStage;
+    /// use std::sync::Arc;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let mut engine = RhaiEngine::with_hardware()?;
+    ///
+    ///     // Set hardware handle as global variable
+    ///     engine.set_global("stage", ScriptValue::new(StageHandle {
+    ///         driver: Arc::new(MockStage::new()),
+    ///     }))?;
+    ///
+    ///     // Execute script that controls hardware
+    ///     engine.execute_script("stage.move_abs(10.0);").await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Hardware Methods Available in Scripts
+    ///
+    /// **Stage methods:**
+    /// - `stage.move_abs(pos)` - Move to absolute position
+    /// - `stage.move_rel(dist)` - Move relative distance
+    /// - `stage.position()` - Get current position
+    /// - `stage.wait_settled()` - Wait for motion to complete
+    ///
+    /// **Camera methods:**
+    /// - `camera.arm()` - Prepare camera for trigger
+    /// - `camera.trigger()` - Capture frame
+    /// - `camera.resolution()` - Get [width, height] array
+    ///
+    /// **Utility functions:**
+    /// - `sleep(seconds)` - Sleep for specified seconds
+    ///
+    /// # Errors
+    ///
+    /// Always succeeds for Rhai (returns Ok). Signature matches trait requirements.
+    pub fn with_hardware() -> Result<Self, ScriptError> {
+        let mut engine = Engine::new();
+
+        // Safety: Limit operations to prevent infinite loops
+        engine.on_progress(|count| {
+            if count > 10_000 {
+                Some("Safety limit exceeded: maximum 10,000 operations".into())
+            } else {
+                None
+            }
+        });
+
+        // Register hardware bindings
+        crate::scripting::bindings::register_hardware(&mut engine);
+
+        Ok(Self {
+            engine: Arc::new(engine),
+            scope: Arc::new(Mutex::new(Scope::new())),
+        })
+    }
+
     /// Convert a Rhai Dynamic to ScriptValue
     fn dynamic_to_script_value(value: Dynamic) -> ScriptValue {
         // Try to extract common types
@@ -123,7 +236,9 @@ impl RhaiEngine {
 
     /// Convert a ScriptValue to Rhai Dynamic
     fn script_value_to_dynamic(value: ScriptValue) -> Result<Dynamic, ScriptError> {
-        // Try to extract common types
+        use crate::scripting::{CameraHandle, StageHandle};
+
+        // Try to extract common types first
         if let Some(i) = value.downcast_ref::<i64>() {
             Ok(Dynamic::from(*i))
         } else if let Some(f) = value.downcast_ref::<f64>() {
@@ -136,15 +251,24 @@ impl RhaiEngine {
             Ok(Dynamic::from(*s))
         } else if value.downcast_ref::<()>().is_some() {
             Ok(Dynamic::UNIT)
-        } else {
-            // Try to extract Dynamic directly if that's what was wrapped
-            match value.downcast::<Dynamic>() {
-                Ok(dyn_val) => Ok(dyn_val),
-                Err(_) => Err(ScriptError::TypeConversionError {
-                    expected: "i64, f64, bool, String, or Dynamic".to_string(),
-                    found: "unknown type".to_string(),
-                }),
-            }
+        }
+        // Handle hardware types
+        else if let Some(stage) = value.downcast_ref::<StageHandle>() {
+            Ok(Dynamic::from(stage.clone()))
+        } else if let Some(camera) = value.downcast_ref::<CameraHandle>() {
+            Ok(Dynamic::from(camera.clone()))
+        }
+        // Try to extract Dynamic directly if that's what was wrapped
+        else if let Ok(dyn_val) = value.downcast::<Dynamic>() {
+            Ok(dyn_val)
+        }
+        // As a last resort, try extracting custom Rhai types
+        else {
+            Err(ScriptError::TypeConversionError {
+                expected: "i64, f64, bool, String, StageHandle, CameraHandle, or Dynamic"
+                    .to_string(),
+                found: "unknown type".to_string(),
+            })
         }
     }
 
@@ -215,15 +339,37 @@ impl ScriptEngine for RhaiEngine {
         _function: Box<dyn std::any::Any + Send + Sync>,
     ) -> Result<(), ScriptError> {
         // For Rhai, function registration is more complex because Rhai functions
-        // need to be registered with the engine's type system at compile time.
-        // This would require generic closures or macros like register_fn!.
+        // need to be registered with the engine's type system at compile time
+        // using generics. This would require generic closures or macros like
+        // Engine::register_fn!.
         //
-        // For now, return an error indicating this needs specialized registration.
+        // The generic register_function() interface cannot support Rhai's
+        // compile-time type-safe registration without macros.
+        //
+        // WORKAROUND: Use RhaiEngine::with_hardware() constructor which
+        // pre-registers all hardware control functions (move_abs, trigger, etc.).
+        //
+        // For custom functions, you must create a custom RhaiEngine constructor
+        // that calls Engine::register_fn() before wrapping in Arc.
         Err(ScriptError::FunctionRegistrationError {
             message: format!(
-                "Rhai function '{}' must be registered directly on Engine using register_fn(). \
-                 The generic register_function() interface cannot support Rhai's type-safe \
-                 registration without macros.",
+                "Cannot register Rhai function '{}' via generic interface. \n\
+                 \n\
+                 Rhai requires compile-time type information for function registration.\n\
+                 \n\
+                 Solutions:\n\
+                 1. Use RhaiEngine::with_hardware() for hardware bindings (stage, camera)\n\
+                 2. Create a custom constructor that calls Engine::register_fn() before Arc::new()\n\
+                 3. For Python or other backends, use PyO3Engine which supports runtime registration\n\
+                 \n\
+                 Example custom constructor:\n\
+                 ```rust\n\
+                 pub fn with_custom_functions() -> Result<Self, ScriptError> {{\n\
+                     let mut engine = Engine::new();\n\
+                     engine.register_fn(\"my_function\", |x: i64| x * 2);\n\
+                     Ok(Self {{ engine: Arc::new(engine), scope: Arc::new(Mutex::new(Scope::new())) }})\n\
+                 }}\n\
+                 ```",
                 name
             ),
         })
@@ -394,5 +540,62 @@ mod tests {
         let result = engine.execute_script("counter + 5").await.unwrap();
         let value: i64 = result.downcast().unwrap();
         assert_eq!(value, 15);
+    }
+
+    #[test]
+    fn test_register_function_error_is_informative() {
+        use crate::scripting::ScriptEngine;
+
+        let mut engine = RhaiEngine::new().unwrap();
+        let dummy_fn = Box::new(|| 42);
+
+        let result = engine.register_function("my_function", dummy_fn);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+
+        // Verify error message is helpful
+        assert!(
+            err_msg.contains("with_hardware"),
+            "Error should mention with_hardware() constructor"
+        );
+        assert!(
+            err_msg.contains("register_fn"),
+            "Error should mention Engine::register_fn()"
+        );
+        assert!(
+            err_msg.contains("compile-time"),
+            "Error should explain compile-time limitation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_with_hardware_constructor() {
+        use crate::hardware::mock::MockStage;
+        use crate::scripting::{ScriptEngine, ScriptValue, StageHandle};
+
+        let mut engine = RhaiEngine::with_hardware().unwrap();
+
+        // Register hardware
+        engine
+            .set_global(
+                "stage",
+                ScriptValue::new(StageHandle {
+                    driver: Arc::new(MockStage::new()),
+                }),
+            )
+            .unwrap();
+
+        // Test that hardware methods are available
+        let script = r#"
+            stage.move_abs(5.0);
+            let pos = stage.position();
+            pos
+        "#;
+
+        let result = engine.execute_script(script).await.unwrap();
+        let value: f64 = result.downcast().unwrap();
+        assert_eq!(value, 5.0);
     }
 }

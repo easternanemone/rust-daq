@@ -7,7 +7,8 @@
 //! # Architecture
 //!
 //! This is the headless-first architecture (v5):
-//! - Scripts control hardware via Rhai bindings
+//! - Scripts control hardware via ScriptEngine trait (backend-agnostic)
+//! - RhaiEngine as default embedded scripting backend
 //! - Mock hardware for testing without physical devices
 //! - Daemon mode for remote control (to be implemented in Phase 3)
 //!
@@ -26,7 +27,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
-use rust_daq::scripting::{CameraHandle, ScriptHost, StageHandle};
+use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -84,31 +85,28 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
     let stage = MockStage::new();
     let camera = MockCamera::new(1920, 1080);
 
-    println!("⚙️  Creating script host...");
-    let mut host = ScriptHost::with_hardware(tokio::runtime::Handle::current());
+    println!("⚙️  Creating script engine (Rhai backend)...");
+    let mut engine = RhaiEngine::with_hardware()?;
 
-    // Register hardware
-    let mut scope = rhai::Scope::new();
-    scope.push(
+    // Set hardware globals accessible to script
+    println!("📌 Registering hardware handles...");
+    engine.set_global(
         "stage",
-        StageHandle {
+        ScriptValue::new(StageHandle {
             driver: Arc::new(stage),
-        },
-    );
-    scope.push(
+        }),
+    )?;
+    engine.set_global(
         "camera",
-        CameraHandle {
+        ScriptValue::new(CameraHandle {
             driver: Arc::new(camera),
-        },
-    );
+        }),
+    )?;
 
     println!("▶️  Executing script...");
     println!();
 
-    match host
-        .engine_mut()
-        .eval_with_scope::<rhai::Dynamic>(&mut scope, &script_content)
-    {
+    match engine.execute_script(&script_content).await {
         Ok(result) => {
             println!();
             println!("✅ Script completed successfully");
