@@ -71,8 +71,9 @@ fn main() -> Result<()> {
     // 4. Concurrent producer-consumer test
     println!("4. Concurrent producer-consumer test");
 
-    let rb_producer = Arc::clone(&ring_buffer);
-    let rb_consumer = Arc::clone(&ring_buffer);
+    // These are intentionally unused to demonstrate the subsequent reset
+    let _rb_producer = Arc::clone(&ring_buffer);
+    let _rb_consumer = Arc::clone(&ring_buffer);
 
     // Reset write head for clean test
     let _ = std::fs::remove_file(buffer_path);
