@@ -177,6 +177,10 @@ name = "quick_test"
 path = "tools/discovery/quick_test.rs"
 required-features = ["instrument_serial"]
 
+[[bin]]
+name = "script_runner"
+path = "tools/script_runner/main.rs"
+
 # Tests removed - files do not exist
 # [[test]]
 # name = "storage_shutdown_test"
@@ -185,3 +189,4 @@ required-features = ["instrument_serial"]
 # [[test]]
 # name = "v2_instrument_test"
 # path = "tests/v2_instrument_test.rs"
+>>>>>>> 6f17e59e (docs(bd-dxqi): Add completion summary for PyO3 V3 bindings)
