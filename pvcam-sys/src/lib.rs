@@ -9,6 +9,22 @@
 #[cfg(feature = "pvcam-sdk")]
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+// Manual constant definitions for enums that bindgen didn't export as consts
+#[cfg(feature = "pvcam-sdk")]
+pub const ATTR_CURRENT: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const TIMED_MODE: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const READOUT_NOT_ACTIVE: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const EXPOSURE_IN_PROGRESS: i16 = 1;
+#[cfg(feature = "pvcam-sdk")]
+pub const READOUT_IN_PROGRESS: i16 = 2;
+#[cfg(feature = "pvcam-sdk")]
+pub const READOUT_COMPLETE: i16 = 3;
+#[cfg(feature = "pvcam-sdk")]
+pub const READOUT_FAILED: i16 = 4;
+
 #[cfg(not(feature = "pvcam-sdk"))]
 /// Placeholder module when the `pvcam-sdk` feature is not enabled.
 /// No actual PVCAM functions or types are available in this configuration.
@@ -16,6 +32,3 @@ pub mod pvcam_bindings {
     // Define minimal types or functions if needed for API compatibility
     // but for a -sys crate, an empty module is often sufficient.
 }
-
-#[cfg(feature = "pvcam-sdk")]
-pub use self::*;

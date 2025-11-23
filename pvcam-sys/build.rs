@@ -14,7 +14,13 @@ fn main() {
         );
 
         let sdk_include_path = PathBuf::from(&sdk_dir).join("include");
-        let sdk_lib_path = PathBuf::from(&sdk_dir).join("lib");
+
+        // Allow PVCAM_LIB_DIR to override the default lib path
+        let sdk_lib_path = if let Ok(lib_dir) = env::var("PVCAM_LIB_DIR") {
+            PathBuf::from(lib_dir)
+        } else {
+            PathBuf::from(&sdk_dir).join("lib")
+        };
 
         if !sdk_include_path.exists() {
             panic!(
@@ -58,8 +64,12 @@ fn main() {
             .default_enum_style(bindgen::EnumVariation::Rust {
                 non_exhaustive: false,
             })
-            // Map `rs_bool` to Rust's `bool`. This assumes rs_bool is 0 for false, non-zero for true.
-            .type_alias("rs_bool", "bool")
+            // Allowlist additional types and variables
+            .allowlist_type("rgn_type")
+            .allowlist_var("PARAM_.*")
+            .allowlist_var("ATTR_.*")
+            .allowlist_var("TIMED_MODE")
+            .allowlist_var("READOUT_.*")
             // Finish the builder and generate the bindings.
             .generate()
             .expect("Unable to generate bindings");

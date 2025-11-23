@@ -99,8 +99,7 @@ impl PvcamDriver {
     fn new_with_hardware(camera_name: &str) -> Result<Self> {
         // Initialize PVCAM SDK
         unsafe {
-            let mut init_result: rs_bool = 0;
-            if pl_pvcam_init(&mut init_result) == 0 {
+            if pl_pvcam_init() == 0 {
                 return Err(anyhow!("Failed to initialize PVCAM SDK"));
             }
         }
@@ -230,13 +229,13 @@ impl PvcamDriver {
             if let Some(h) = handle {
                 unsafe {
                     // Set binning via PVCAM parameters
-                    let x_bin_param = x_bin as uns16;
-                    let y_bin_param = y_bin as uns16;
+                    let mut x_bin_param = x_bin as uns16;
+                    let mut y_bin_param = y_bin as uns16;
 
-                    if pl_set_param(h, PARAM_BINNING_SER, &x_bin_param as *const _ as *const _) == 0 {
+                    if pl_set_param(h, PARAM_BINNING_SER, &mut x_bin_param as *mut _ as *mut _) == 0 {
                         return Err(anyhow!("Failed to set horizontal binning"));
                     }
-                    if pl_set_param(h, PARAM_BINNING_PAR, &y_bin_param as *const _ as *const _) == 0 {
+                    if pl_set_param(h, PARAM_BINNING_PAR, &mut y_bin_param as *mut _ as *mut _) == 0 {
                         return Err(anyhow!("Failed to set vertical binning"));
                     }
                 }
