@@ -33,10 +33,10 @@
 use crate::hardware::capabilities::Movable;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use serial2_tokio::SerialPort;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
+use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 /// Driver for Thorlabs Elliptec ELL14 Rotation Mount
 ///
@@ -45,7 +45,7 @@ use tokio::sync::Mutex;
 /// to/from degrees based on device calibration.
 pub struct Ell14Driver {
     /// Serial port protected by Mutex for exclusive access during transactions
-    port: Mutex<SerialPort>,
+    port: Mutex<SerialStream>,
     /// Device address (usually "0")
     address: String,
     /// Calibration factor: Pulses per Degree
@@ -64,12 +64,13 @@ impl Ell14Driver {
     /// Returns error if serial port cannot be opened
     pub fn new(port_path: &str, address: &str) -> Result<Self> {
         // Configure serial settings with no flow control (per Thorlabs ELL14 spec)
-        let port = SerialPort::open(port_path, |mut settings: serial2::Settings| {
-            settings.set_raw();
-            settings.set_baud_rate(9600)?;
-            settings.set_flow_control(serial2::FlowControl::None);
-            Ok(settings)
-        }).context("Failed to open ELL14 serial port")?;
+        let port = tokio_serial::new(port_path, 9600)
+            .data_bits(tokio_serial::DataBits::Eight)
+            .parity(tokio_serial::Parity::None)
+            .stop_bits(tokio_serial::StopBits::One)
+            .flow_control(tokio_serial::FlowControl::None)
+            .open_native_async()
+            .context(format!("Failed to open ELL14 serial port: {}", port_path))?;
 
         Ok(Self {
             port: Mutex::new(port),
@@ -249,12 +250,9 @@ mod tests {
     #[test]
     fn test_parse_position_response() {
         // Create a mock driver for testing parse logic
-        let port = SerialPort::open("/dev/null", |mut settings: serial2::Settings| {
-            settings.set_raw();
-            settings.set_baud_rate(9600).unwrap();
-            settings.set_flow_control(serial2::FlowControl::None);
-            Ok(settings)
-        }).unwrap();
+        let port = tokio_serial::new("/dev/null", 9600)
+            .open_native_async()
+            .unwrap();
         let driver = Ell14Driver {
             port: Mutex::new(port),
             address: "0".to_string(),
@@ -272,12 +270,9 @@ mod tests {
     #[test]
     fn test_position_conversion() {
         // Create a mock driver for testing conversion logic
-        let port = SerialPort::open("/dev/null", |mut settings: serial2::Settings| {
-            settings.set_raw();
-            settings.set_baud_rate(9600).unwrap();
-            settings.set_flow_control(serial2::FlowControl::None);
-            Ok(settings)
-        }).unwrap();
+        let port = tokio_serial::new("/dev/null", 9600)
+            .open_native_async()
+            .unwrap();
         let driver = Ell14Driver {
             port: Mutex::new(port),
             address: "0".to_string(),
