@@ -30,62 +30,172 @@
 
 use crate::hardware::capabilities::{ExposureControl, FrameProducer, Triggerable};
 use crate::hardware::Roi;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+#[cfg(feature = "pvcam_hardware")]
+use pvcam_sys::*;
+
 /// Driver for Photometrics PVCAM cameras
 ///
 /// Implements FrameProducer, ExposureControl, and Triggerable capability traits.
-/// Uses PVCAM SDK for hardware communication.
+/// Uses PVCAM SDK for hardware communication when `pvcam_hardware` feature is enabled.
 pub struct PvcamDriver {
     /// Camera name (e.g., "PrimeBSI", "Prime95B")
-    #[allow(dead_code)]
     camera_name: String,
+    /// Camera handle from PVCAM SDK (only with hardware feature)
+    #[cfg(feature = "pvcam_hardware")]
+    camera_handle: Arc<Mutex<Option<i16>>>,
     /// Current exposure time in milliseconds
     exposure_ms: Arc<Mutex<f64>>,
     /// Current ROI setting
     roi: Arc<Mutex<Roi>>,
     /// Binning factors (x, y)
     binning: Arc<Mutex<(u16, u16)>>,
-    /// Frame buffer (simulated for now, real impl would use PVCAM SDK)
-    #[allow(dead_code)]
+    /// Frame buffer (for mock mode or temporary storage)
     frame_buffer: Arc<Mutex<Vec<u16>>>,
     /// Sensor dimensions
     sensor_width: u32,
     sensor_height: u32,
     /// Whether the camera is armed for triggering
     armed: Arc<Mutex<bool>>,
+    /// Whether PVCAM SDK is initialized
+    #[cfg(feature = "pvcam_hardware")]
+    sdk_initialized: Arc<Mutex<bool>>,
 }
 
 impl PvcamDriver {
     /// Create a new PVCAM driver instance
     ///
     /// # Arguments
-    /// * `camera_name` - Name of camera (e.g., "PrimeBSI")
+    /// * `camera_name` - Name of camera (e.g., "PrimeBSI", "PMCam")
     ///
     /// # Errors
     /// Returns error if camera cannot be opened
     ///
-    /// # Note
-    /// This is currently a mock implementation. Real implementation would:
-    /// - Call pl_cam_open() from PVCAM SDK
-    /// - Query camera capabilities
-    /// - Initialize circular buffer
+    /// # Hardware Feature
+    /// With `pvcam_hardware` feature enabled, this will:
+    /// - Call pl_pvcam_init() to initialize PVCAM SDK
+    /// - Call pl_cam_open() to open the camera
+    /// - Query actual sensor size from hardware
+    ///
+    /// Without feature, uses mock data with known dimensions.
     pub fn new(camera_name: &str) -> Result<Self> {
-        // TODO: Real PVCAM SDK initialization
-        // - pl_pvcam_init()
-        // - pl_cam_open()
-        // - Query sensor size
-        //
-        // For now, use known Prime BSI dimensions
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            Self::new_with_hardware(camera_name)
+        }
+
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            Self::new_mock(camera_name)
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    fn new_with_hardware(camera_name: &str) -> Result<Self> {
+        // Initialize PVCAM SDK
+        unsafe {
+            let mut init_result: rs_bool = 0;
+            if pl_pvcam_init(&mut init_result) == 0 {
+                return Err(anyhow!("Failed to initialize PVCAM SDK"));
+            }
+        }
+
+        // Get list of cameras
+        let mut total_cameras: i16 = 0;
+        unsafe {
+            if pl_cam_get_total(&mut total_cameras) == 0 {
+                pl_pvcam_uninit();
+                return Err(anyhow!("Failed to get camera count"));
+            }
+        }
+
+        if total_cameras == 0 {
+            unsafe { pl_pvcam_uninit(); }
+            return Err(anyhow!("No PVCAM cameras detected"));
+        }
+
+        // Find camera by name or use first camera
+        let mut camera_handle: i16 = 0;
+        let camera_name_cstr = std::ffi::CString::new(camera_name)
+            .context("Invalid camera name")?;
+
+        unsafe {
+            if pl_cam_open(camera_name_cstr.as_ptr() as *mut i8, &mut camera_handle, 0) == 0 {
+                // If named camera not found, try first camera
+                let mut name_buffer = vec![0i8; 256];
+                if pl_cam_get_name(0, name_buffer.as_mut_ptr()) != 0 {
+                    if pl_cam_open(name_buffer.as_mut_ptr(), &mut camera_handle, 0) == 0 {
+                        pl_pvcam_uninit();
+                        return Err(anyhow!("Failed to open any camera"));
+                    }
+                } else {
+                    pl_pvcam_uninit();
+                    return Err(anyhow!("Failed to open camera: {}", camera_name));
+                }
+            }
+        }
+
+        // Query sensor size
+        let mut width: uns32 = 0;
+        let mut height: uns32 = 0;
+
+        unsafe {
+            let mut par_width: uns16 = 0;
+            let mut par_height: uns16 = 0;
+
+            // Get sensor dimensions via PARAM_SER_SIZE
+            if pl_get_param(camera_handle, PARAM_SER_SIZE, ATTR_CURRENT, &mut par_width as *mut _ as *mut _) != 0 {
+                width = par_width as uns32;
+            }
+            if pl_get_param(camera_handle, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par_height as *mut _ as *mut _) != 0 {
+                height = par_height as uns32;
+            }
+        }
+
+        if width == 0 || height == 0 {
+            // Fallback to known dimensions
+            (width, height) = match camera_name {
+                "PrimeBSI" => (2048, 2048),
+                "Prime95B" => (1200, 1200),
+                _ => (2048, 2048),
+            };
+        }
+
+        Ok(Self {
+            camera_name: camera_name.to_string(),
+            camera_handle: Arc::new(Mutex::new(Some(camera_handle))),
+            exposure_ms: Arc::new(Mutex::new(100.0)),
+            roi: Arc::new(Mutex::new(Roi {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            })),
+            binning: Arc::new(Mutex::new((1, 1))),
+            frame_buffer: Arc::new(Mutex::new(vec![0u16; (width * height) as usize])),
+            sensor_width: width,
+            sensor_height: height,
+            armed: Arc::new(Mutex::new(false)),
+            sdk_initialized: Arc::new(Mutex::new(true)),
+        })
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    fn new_mock(camera_name: &str) -> Result<Self> {
+        // Mock implementation with known camera dimensions
         let (width, height) = match camera_name {
             "PrimeBSI" => (2048, 2048),
             "Prime95B" => (1200, 1200),
             _ => (2048, 2048), // Default
         };
+
+        eprintln!("⚠️  PVCAM hardware feature not enabled - using mock camera");
+        eprintln!("    To use real hardware: cargo build --features pvcam_hardware");
 
         Ok(Self {
             camera_name: camera_name.to_string(),
@@ -114,6 +224,25 @@ impl PvcamDriver {
             return Err(anyhow!("Binning must be 1, 2, 4, or 8"));
         }
 
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if let Some(h) = handle {
+                unsafe {
+                    // Set binning via PVCAM parameters
+                    let x_bin_param = x_bin as uns16;
+                    let y_bin_param = y_bin as uns16;
+
+                    if pl_set_param(h, PARAM_BINNING_SER, &x_bin_param as *const _ as *const _) == 0 {
+                        return Err(anyhow!("Failed to set horizontal binning"));
+                    }
+                    if pl_set_param(h, PARAM_BINNING_PAR, &y_bin_param as *const _ as *const _) == 0 {
+                        return Err(anyhow!("Failed to set vertical binning"));
+                    }
+                }
+            }
+        }
+
         *self.binning.lock().await = (x_bin, y_bin);
         Ok(())
     }
@@ -129,6 +258,17 @@ impl PvcamDriver {
             return Err(anyhow!("ROI exceeds sensor dimensions"));
         }
 
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if let Some(h) = handle {
+                unsafe {
+                    // ROI in PVCAM is set during pl_exp_setup_seq, not via parameters
+                    // Store for use during acquisition setup
+                }
+            }
+        }
+
         *self.roi.lock().await = roi;
         Ok(())
     }
@@ -138,15 +278,105 @@ impl PvcamDriver {
         *self.roi.lock().await
     }
 
-    /// Simulate frame acquisition (replace with real PVCAM SDK calls)
+    /// Acquire a single frame (internal implementation)
     ///
-    /// Real implementation would:
-    /// - pl_exp_setup_seq() to configure acquisition
-    /// - pl_exp_start_seq() to start capture
-    /// - pl_exp_check_status() to poll completion
-    /// - pl_exp_get_latest_frame() to retrieve data
-    #[allow(dead_code)]
+    /// With hardware: Uses pl_exp_setup_seq/start_seq/get_latest_frame
+    /// Without hardware: Generates synthetic test pattern
     async fn acquire_frame_internal(&self) -> Result<Vec<u16>> {
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            self.acquire_frame_hardware().await
+        }
+
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            self.acquire_frame_mock().await
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    async fn acquire_frame_hardware(&self) -> Result<Vec<u16>> {
+        let handle = *self.camera_handle.lock().await;
+        if handle.is_none() {
+            return Err(anyhow!("Camera not opened"));
+        }
+        let h = handle.unwrap();
+
+        let exposure = *self.exposure_ms.lock().await;
+        let roi = *self.roi.lock().await;
+        let (x_bin, y_bin) = *self.binning.lock().await;
+
+        // Setup region for acquisition
+        let region = unsafe {
+            let mut rgn: rgn_type = std::mem::zeroed();
+            rgn.s1 = roi.x as uns16;
+            rgn.s2 = (roi.x + roi.width - 1) as uns16;
+            rgn.sbin = x_bin;
+            rgn.p1 = roi.y as uns16;
+            rgn.p2 = (roi.y + roi.height - 1) as uns16;
+            rgn.pbin = y_bin;
+            rgn
+        };
+
+        // Calculate frame size
+        let frame_size: uns32 = (roi.width * roi.height / (x_bin as u32 * y_bin as u32)) as uns32;
+        let mut frame = vec![0u16; frame_size as usize];
+
+        unsafe {
+            // Setup exposure sequence
+            let exp_time_ms = (exposure * 1000.0) as uns32; // Convert to microseconds
+            let mut total_bytes: uns32 = 0;
+
+            if pl_exp_setup_seq(h, 1, 1, &region as *const _ as *const _, TIMED_MODE, exp_time_ms, &mut total_bytes) == 0 {
+                return Err(anyhow!("Failed to setup acquisition sequence"));
+            }
+
+            // Start acquisition
+            if pl_exp_start_seq(h, frame.as_mut_ptr() as *mut _) == 0 {
+                return Err(anyhow!("Failed to start acquisition"));
+            }
+
+            // Wait for completion
+            let mut status: i16 = 0;
+            let mut bytes_arrived: uns32 = 0;
+
+            let timeout = Duration::from_millis((exposure + 1000.0) as u64);
+            let start = std::time::Instant::now();
+
+            loop {
+                if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
+                    pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
+                    return Err(anyhow!("Failed to check acquisition status"));
+                }
+
+                if status == READOUT_COMPLETE || status == READOUT_FAILED {
+                    break;
+                }
+
+                if start.elapsed() > timeout {
+                    pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
+                    return Err(anyhow!("Acquisition timeout"));
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+
+            if status == READOUT_FAILED {
+                pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
+                return Err(anyhow!("Acquisition failed"));
+            }
+
+            // Finish sequence
+            if pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0) == 0 {
+                return Err(anyhow!("Failed to finish acquisition sequence"));
+            }
+        }
+
+        Ok(frame)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    async fn acquire_frame_mock(&self) -> Result<Vec<u16>> {
         let exposure = *self.exposure_ms.lock().await;
         let roi = *self.roi.lock().await;
 
@@ -172,18 +402,59 @@ impl PvcamDriver {
     }
 }
 
+impl Drop for PvcamDriver {
+    fn drop(&mut self) {
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            // Cleanup PVCAM SDK resources
+            if let Ok(handle) = self.camera_handle.try_lock() {
+                if let Some(h) = *handle {
+                    unsafe {
+                        pl_cam_close(h);
+                    }
+                }
+            }
+
+            if let Ok(initialized) = self.sdk_initialized.try_lock() {
+                if *initialized {
+                    unsafe {
+                        pl_pvcam_uninit();
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl FrameProducer for PvcamDriver {
     async fn start_stream(&self) -> Result<()> {
-        // TODO: Start circular buffer acquisition
-        // pl_exp_setup_cont()
-        // pl_exp_start_cont()
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if handle.is_none() {
+                return Err(anyhow!("Camera not opened"));
+            }
+            // TODO: Implement continuous circular buffer acquisition
+            // - pl_exp_setup_cont()
+            // - pl_exp_start_cont()
+        }
+
         Ok(())
     }
 
     async fn stop_stream(&self) -> Result<()> {
-        // TODO: Stop circular buffer
-        // pl_exp_stop_cont()
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if handle.is_none() {
+                return Err(anyhow!("Camera not opened"));
+            }
+            // TODO: Stop circular buffer
+            // - pl_exp_stop_cont()
+            // - pl_exp_finish_seq()
+        }
+
         Ok(())
     }
 
@@ -201,6 +472,12 @@ impl ExposureControl for PvcamDriver {
             return Err(anyhow!("Exposure must be between 0 and 60000 ms"));
         }
 
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            // Exposure is set during pl_exp_setup_seq, not via parameters
+            // Store for use during acquisition
+        }
+
         *self.exposure_ms.lock().await = exposure_ms;
         Ok(())
     }
@@ -213,9 +490,16 @@ impl ExposureControl for PvcamDriver {
 #[async_trait]
 impl Triggerable for PvcamDriver {
     async fn arm(&self) -> Result<()> {
-        // TODO: Real PVCAM SDK call
-        // - pl_exp_setup_seq() to configure acquisition
-        // - Initialize trigger waiting mode
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if handle.is_none() {
+                return Err(anyhow!("Camera not opened"));
+            }
+            // TODO: Setup for triggered acquisition
+            // - pl_exp_setup_seq() with TRIGGER_FIRST_MODE
+        }
+
         *self.armed.lock().await = true;
         Ok(())
     }
@@ -226,14 +510,8 @@ impl Triggerable for PvcamDriver {
             return Err(anyhow!("Camera must be armed before triggering"));
         }
 
-        // TODO: Real PVCAM SDK call
-        // - pl_exp_start_seq() to start capture
-        // - pl_exp_check_status() to poll completion
-        // - pl_exp_get_latest_frame() to retrieve data
-
-        // Simulate exposure delay
-        let exposure = *self.exposure_ms.lock().await;
-        tokio::time::sleep(Duration::from_millis(exposure as u64)).await;
+        // Acquire a frame
+        self.acquire_frame_internal().await?;
 
         Ok(())
     }
@@ -340,5 +618,19 @@ mod tests {
         // Stream control
         camera.start_stream().await.unwrap();
         camera.stop_stream().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "pvcam_hardware"))]
+    async fn test_mock_frame_acquisition() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
+
+        let frame = camera.acquire_frame_mock().await.unwrap();
+        assert_eq!(frame.len(), 2048 * 2048);
+
+        // Verify test pattern
+        assert_eq!(frame[0], 0);
+        assert_eq!(frame[1], 1);
     }
 }
