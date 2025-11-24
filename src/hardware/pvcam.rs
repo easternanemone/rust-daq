@@ -314,7 +314,8 @@ impl PvcamDriver {
 
         unsafe {
             // Setup exposure sequence
-            let exp_time_ms = (exposure * 1000.0) as uns32; // Convert to microseconds
+            // PVCAM expects exposure time in milliseconds for TIMED_MODE
+            let exp_time_ms = exposure as uns32;
             let mut total_bytes: uns32 = 0;
 
             if pl_exp_setup_seq(h, 1, 1, &region as *const _ as *const _, TIMED_MODE, exp_time_ms, &mut total_bytes) == 0 {
