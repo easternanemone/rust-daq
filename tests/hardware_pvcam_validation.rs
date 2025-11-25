@@ -130,7 +130,10 @@ fn test_prime_bsi_dimensions() {
     // Prime BSI: 2048 x 2048 pixel sensor
     let roi = tokio_test::block_on(camera.roi());
     assert_eq!(roi.width, PRIME_BSI_WIDTH, "Prime BSI width should be 2048");
-    assert_eq!(roi.height, PRIME_BSI_HEIGHT, "Prime BSI height should be 2048");
+    assert_eq!(
+        roi.height, PRIME_BSI_HEIGHT,
+        "Prime BSI height should be 2048"
+    );
 }
 
 /// Test 2: Validate Prime 95B camera dimensions (only when prime_95b_tests enabled)
@@ -142,7 +145,10 @@ fn test_prime_95b_dimensions() {
     // Prime 95B: 1200 x 1200 pixel sensor
     let roi = tokio_test::block_on(camera.roi());
     assert_eq!(roi.width, PRIME_95B_WIDTH, "Prime 95B width should be 1200");
-    assert_eq!(roi.height, PRIME_95B_HEIGHT, "Prime 95B height should be 1200");
+    assert_eq!(
+        roi.height, PRIME_95B_HEIGHT,
+        "Prime 95B height should be 1200"
+    );
 }
 
 /// Test 3: Validate binning factors
@@ -190,7 +196,10 @@ fn test_roi_bounds_validation() {
         height,
     };
     let result = tokio_test::block_on(camera.set_roi(invalid_roi));
-    assert!(result.is_err(), "ROI exceeding sensor width should be invalid");
+    assert!(
+        result.is_err(),
+        "ROI exceeding sensor width should be invalid"
+    );
 
     // Invalid ROI: Exceeds sensor height
     let invalid_roi = Roi {
@@ -200,7 +209,10 @@ fn test_roi_bounds_validation() {
         height: height + 1,
     };
     let result = tokio_test::block_on(camera.set_roi(invalid_roi));
-    assert!(result.is_err(), "ROI exceeding sensor height should be invalid");
+    assert!(
+        result.is_err(),
+        "ROI exceeding sensor height should be invalid"
+    );
 }
 
 /// Test 5: Frame size calculation with binning
@@ -257,13 +269,25 @@ async fn test_exposure_control() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
     // Set exposure to 50ms
-    camera.set_exposure_ms(50.0).await.expect("Failed to set exposure");
-    let exposure = camera.get_exposure_ms().await.expect("Failed to get exposure");
+    camera
+        .set_exposure_ms(50.0)
+        .await
+        .expect("Failed to set exposure");
+    let exposure = camera
+        .get_exposure_ms()
+        .await
+        .expect("Failed to get exposure");
     assert_eq!(exposure, 50.0, "Exposure should be 50ms");
 
     // Change to 100ms
-    camera.set_exposure_ms(100.0).await.expect("Failed to set exposure");
-    let exposure = camera.get_exposure_ms().await.expect("Failed to get exposure");
+    camera
+        .set_exposure_ms(100.0)
+        .await
+        .expect("Failed to set exposure");
+    let exposure = camera
+        .get_exposure_ms()
+        .await
+        .expect("Failed to get exposure");
     assert_eq!(exposure, 100.0, "Exposure should be 100ms");
 }
 
@@ -318,7 +342,10 @@ async fn test_roi_quarter_sensor() {
 async fn test_binning_1x1() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    camera.set_binning(1, 1).await.expect("Failed to set binning");
+    camera
+        .set_binning(1, 1)
+        .await
+        .expect("Failed to set binning");
     let binning = camera.binning().await;
     assert_eq!(binning, (1, 1), "Binning should be 1x1");
 }
@@ -328,7 +355,10 @@ async fn test_binning_1x1() {
 async fn test_binning_2x2() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    camera.set_binning(2, 2).await.expect("Failed to set binning");
+    camera
+        .set_binning(2, 2)
+        .await
+        .expect("Failed to set binning");
     let binning = camera.binning().await;
     assert_eq!(binning, (2, 2), "Binning should be 2x2");
 }
@@ -338,7 +368,10 @@ async fn test_binning_2x2() {
 async fn test_binning_4x4() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    camera.set_binning(4, 4).await.expect("Failed to set binning");
+    camera
+        .set_binning(4, 4)
+        .await
+        .expect("Failed to set binning");
     let binning = camera.binning().await;
     assert_eq!(binning, (4, 4), "Binning should be 4x4");
 }
@@ -375,12 +408,26 @@ async fn test_invalid_roi_exceeds_sensor() {
 async fn test_acquire_single_frame() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    camera.set_exposure_ms(10.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(10.0)
+        .await
+        .expect("Failed to set exposure");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
-    assert_eq!(frame.width, expected_width(), "Frame width should match sensor");
-    assert_eq!(frame.height, expected_height(), "Frame height should match sensor");
+    assert_eq!(
+        frame.width,
+        expected_width(),
+        "Frame width should match sensor"
+    );
+    assert_eq!(
+        frame.height,
+        expected_height(),
+        "Frame height should match sensor"
+    );
     assert_eq!(
         frame.buffer.len(),
         (expected_width() * expected_height()) as usize,
@@ -393,11 +440,17 @@ async fn test_acquire_single_frame() {
 async fn test_frame_data_pattern() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // In mock mode, frame should contain non-zero data (test pattern)
     let non_zero_pixels = frame.buffer.iter().filter(|&&p| p != 0).count();
-    assert!(non_zero_pixels > 0, "Mock frame should contain non-zero pixel data");
+    assert!(
+        non_zero_pixels > 0,
+        "Mock frame should contain non-zero pixel data"
+    );
 }
 
 /// Test 19: Arm and disarm triggering
@@ -417,11 +470,17 @@ async fn test_arm_disarm_trigger() {
 async fn test_multiple_frames() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
-    camera.set_exposure_ms(5.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(5.0)
+        .await
+        .expect("Failed to set exposure");
 
     // Acquire 5 frames
     for i in 0..5 {
-        let frame = camera.acquire_frame().await.expect(&format!("Failed to acquire frame {}", i));
+        let frame = camera
+            .acquire_frame()
+            .await
+            .expect(&format!("Failed to acquire frame {}", i));
         assert_eq!(frame.width, expected_width());
         assert_eq!(frame.height, expected_height());
     }
@@ -433,13 +492,19 @@ async fn test_rapid_acquisition() {
     let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
 
     // Short exposure for high frame rate
-    camera.set_exposure_ms(1.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(1.0)
+        .await
+        .expect("Failed to set exposure");
 
     let start = Instant::now();
     let frame_count = 10;
 
     for _ in 0..frame_count {
-        camera.acquire_frame().await.expect("Failed to acquire frame");
+        camera
+            .acquire_frame()
+            .await
+            .expect("Failed to acquire frame");
     }
 
     let duration = start.elapsed();
@@ -450,7 +515,11 @@ async fn test_rapid_acquisition() {
     #[cfg(feature = "hardware_tests")]
     assert!(fps > 5.0, "Frame rate should be >5 fps, got {:.1} fps", fps);
     #[cfg(not(feature = "hardware_tests"))]
-    assert!(fps > 10.0, "Frame rate should be >10 fps, got {:.1} fps", fps);
+    assert!(
+        fps > 10.0,
+        "Frame rate should be >10 fps, got {:.1} fps",
+        fps
+    );
 }
 
 // ============================================================================
@@ -467,7 +536,10 @@ async fn test_hardware_initialization() {
     // Verify camera properties
     let roi = camera.roi().await;
     assert!(roi.width > 0, "Hardware camera should have non-zero width");
-    assert!(roi.height > 0, "Hardware camera should have non-zero height");
+    assert!(
+        roi.height > 0,
+        "Hardware camera should have non-zero height"
+    );
 
     println!(
         "Hardware camera detected: {}x{} pixels",
@@ -481,9 +553,15 @@ async fn test_hardware_initialization() {
 async fn test_hardware_frame_acquisition() {
     let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
 
-    camera.set_exposure_ms(100.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(100.0)
+        .await
+        .expect("Failed to set exposure");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // Verify frame properties
     assert!(frame.width > 0);
@@ -515,7 +593,10 @@ async fn test_hardware_roi() {
 
     camera.set_roi(roi).await.expect("Failed to set ROI");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // Frame size should match ROI
     assert_eq!(frame.width, roi.width);
@@ -529,10 +610,16 @@ async fn test_hardware_binning() {
     let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
 
     // Set 2x2 binning
-    camera.set_binning(2, 2).await.expect("Failed to set binning");
+    camera
+        .set_binning(2, 2)
+        .await
+        .expect("Failed to set binning");
 
     let full_roi = camera.roi().await;
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // Frame dimensions should be half of ROI due to 2x2 binning
     assert_eq!(frame.width, full_roi.width / 2);
@@ -554,7 +641,10 @@ async fn test_hardware_exposure_accuracy() {
             .expect("Failed to set exposure");
 
         let start = Instant::now();
-        camera.acquire_frame().await.expect("Failed to acquire frame");
+        camera
+            .acquire_frame()
+            .await
+            .expect("Failed to acquire frame");
         let actual_ms = start.elapsed().as_millis() as f64;
 
         // Single-frame acquisition has significant overhead (buffer setup, readout)
@@ -578,13 +668,18 @@ async fn test_hardware_pixel_uniformity() {
     let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
 
     // Uniform illumination test: standard deviation should be low
-    camera.set_exposure_ms(100.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(100.0)
+        .await
+        .expect("Failed to set exposure");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // Calculate statistics
-    let mean: f64 =
-        frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
+    let mean: f64 = frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
     let variance: f64 = frame
         .buffer
         .iter()
@@ -619,13 +714,18 @@ async fn test_hardware_dark_noise() {
     let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
 
     // Dark frame test: mean should be near zero, low variance
-    camera.set_exposure_ms(100.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(100.0)
+        .await
+        .expect("Failed to set exposure");
 
-    let frame = camera.acquire_frame().await.expect("Failed to acquire frame");
+    let frame = camera
+        .acquire_frame()
+        .await
+        .expect("Failed to acquire frame");
 
     // Calculate dark current statistics
-    let mean: f64 =
-        frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
+    let mean: f64 = frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
 
     println!("Dark frame mean: {:.1} ADU", mean);
 
@@ -646,7 +746,10 @@ async fn test_hardware_triggered_acquisition() {
 
     let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
 
-    camera.set_exposure_ms(50.0).await.expect("Failed to set exposure");
+    camera
+        .set_exposure_ms(50.0)
+        .await
+        .expect("Failed to set exposure");
 
     // Arm for external trigger
     camera.arm().await.expect("Failed to arm camera");

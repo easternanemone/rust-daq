@@ -116,7 +116,7 @@ async fn test_mock_camera_frame_count() {
     // Capture 5 frames
     for i in 1..=5 {
         camera.trigger().await.unwrap();
-        assert_eq!(camera.frame_count().await, i);
+        assert_eq!(camera.frame_count(), i);
     }
 }
 
@@ -195,7 +195,7 @@ async fn test_synchronized_stage_camera() {
 
         // Verify state
         assert_eq!(stage.position().await.unwrap(), pos);
-        assert_eq!(camera.frame_count().await, (i + 1) as u32);
+        assert_eq!(camera.frame_count(), (i + 1) as u64);
     }
 
     println!("Scan complete: {} positions acquired", positions.len());
@@ -223,7 +223,7 @@ async fn test_parallel_hardware_operations() {
         for _ in 0..3 {
             camera.trigger().await.unwrap();
         }
-        camera.frame_count().await
+        camera.frame_count()
     });
 
     // Wait for all tasks

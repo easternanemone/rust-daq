@@ -143,7 +143,7 @@ impl Movable for MockStage {
 /// ```
 pub struct MockCamera {
     resolution: (u32, u32),
-    frame_count: Arc<RwLock<u32>>,
+    frame_count: std::sync::atomic::AtomicU64,
     armed: Arc<RwLock<bool>>,
     streaming: Arc<RwLock<bool>>,
     exposure_s: Arc<RwLock<f64>>,
@@ -158,7 +158,7 @@ impl MockCamera {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             resolution: (width, height),
-            frame_count: Arc::new(RwLock::new(0)),
+            frame_count: std::sync::atomic::AtomicU64::new(0),
             armed: Arc::new(RwLock::new(false)),
             streaming: Arc::new(RwLock::new(false)),
             exposure_s: Arc::new(RwLock::new(0.033)),
@@ -166,8 +166,8 @@ impl MockCamera {
     }
 
     /// Get total number of frames captured
-    pub async fn frame_count(&self) -> u32 {
-        *self.frame_count.read().await
+    pub fn get_frame_count(&self) -> u64 {
+        self.frame_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Check if camera is currently armed
@@ -206,14 +206,13 @@ impl Triggerable for MockCamera {
             anyhow::bail!("MockCamera: Cannot trigger - not armed");
         }
 
-        let mut count = self.frame_count.write().await;
-        *count += 1;
-        println!("MockCamera: Triggered frame #{}", *count);
+        let count = self.frame_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        println!("MockCamera: Triggered frame #{}", count);
 
         // Simulate 30fps frame readout time
         sleep(Duration::from_millis(33)).await;
 
-        println!("MockCamera: Frame #{} readout complete", *count);
+        println!("MockCamera: Frame #{} readout complete", count);
         Ok(())
     }
 
@@ -268,6 +267,10 @@ impl FrameProducer for MockCamera {
 
     async fn is_streaming(&self) -> Result<bool> {
         Ok(*self.streaming.read().await)
+    }
+
+    fn frame_count(&self) -> u64 {
+        self.frame_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -413,11 +416,11 @@ mod tests {
         assert!(camera.is_armed().await);
 
         camera.trigger().await.unwrap();
-        assert_eq!(camera.frame_count().await, 1);
+        assert_eq!(camera.get_frame_count(), 1);
 
         // Trigger again (should still work, camera stays armed)
         camera.trigger().await.unwrap();
-        assert_eq!(camera.frame_count().await, 2);
+        assert_eq!(camera.get_frame_count(), 2);
     }
 
     #[tokio::test]

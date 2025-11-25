@@ -283,6 +283,17 @@ pub trait FrameProducer: Send + Sync {
     async fn is_streaming(&self) -> Result<bool> {
         anyhow::bail!("Streaming state query not supported by this device")
     }
+
+    /// Get the number of frames captured since streaming started
+    ///
+    /// # Returns
+    /// - Count of frames captured during the current or last stream
+    ///
+    /// # Default Implementation
+    /// Returns 0 (no frame count tracking)
+    fn frame_count(&self) -> u64 {
+        0
+    }
 }
 
 /// Capability: Scalar Readout

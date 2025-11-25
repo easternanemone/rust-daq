@@ -4,7 +4,7 @@
 //! Validates that async hardware operations can be safely called from
 //! synchronous scripts using the async→sync bridge.
 
-use rust_daq::hardware::capabilities::Movable; // Needed for .position().await
+use rust_daq::hardware::capabilities::{FrameProducer, Movable};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
 use rust_daq::scripting::{CameraHandle, ScriptHost, StageHandle};
 use std::sync::Arc;
@@ -120,7 +120,7 @@ async fn test_camera_trigger_from_script() {
     assert_eq!(result, 1920);
 
     // Verify frame was captured
-    assert_eq!(camera.frame_count().await, 1);
+    assert_eq!(camera.frame_count(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -233,7 +233,7 @@ async fn test_scan_with_settle_and_trigger() {
     assert_eq!(result, 10.0);
 
     // Should have captured 11 frames (0-10 inclusive)
-    assert_eq!(camera.frame_count().await, 11);
+    assert_eq!(camera.frame_count(), 11);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -305,7 +305,7 @@ async fn test_complex_workflow() {
     assert_eq!(result, 0.0);
 
     // Verify 3 frames captured during scan
-    assert_eq!(camera.frame_count().await, 3);
+    assert_eq!(camera.frame_count(), 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -359,7 +359,7 @@ async fn test_multiple_triggers_same_arm() {
     assert_eq!(result, "success");
 
     // MockCamera stays armed, should have 3 frames
-    assert_eq!(camera.frame_count().await, 3);
+    assert_eq!(camera.frame_count(), 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]

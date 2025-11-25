@@ -6,7 +6,7 @@
 //!
 //! Run with: cargo run --example scripting_hardware_demo
 
-use rust_daq::hardware::capabilities::Movable;
+use rust_daq::hardware::capabilities::{FrameProducer, Movable};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
 use rust_daq::scripting::{CameraHandle, ScriptHost, StageHandle};
 use std::sync::Arc;
@@ -59,6 +59,6 @@ async fn main() {
     // Verify hardware state
     println!("\n=== Hardware State Verification ===");
     println!("Stage position: {:.2}mm", stage.position().await.unwrap());
-    println!("Camera frames captured: {}", camera.frame_count().await);
+    println!("Camera frames captured: {}", camera.frame_count());
     println!("Camera is armed: {}", camera.is_armed().await);
 }

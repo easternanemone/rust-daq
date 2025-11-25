@@ -508,15 +508,48 @@ impl PvcamDriver {
     }
 
     /// Disarm the camera after triggering
+    ///
+    /// # Hardware Implementation
+    /// Stops any ongoing acquisition and cleans up resources.
+    ///
+    /// # Mock Implementation
+    /// Simply marks the camera as unarmed.
     pub async fn disarm(&self) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            let handle = *self.camera_handle.lock().await;
+            if let Some(h) = handle {
+                unsafe {
+                    // Stop any ongoing acquisition
+                    pl_exp_stop_cont(h, CCS_HALT);
+                }
+            }
+        }
+
         *self.armed.lock().await = false;
         Ok(())
     }
 
     /// Wait for external trigger (for testing triggered mode)
     ///
-    /// In mock mode, this just waits briefly. In hardware mode,
-    /// this would wait for actual trigger signal.
+    /// # Hardware Implementation
+    /// Checks the camera status repeatedly until a trigger is received or timeout occurs.
+    /// This is a polling-based approach that works with the current single-frame
+    /// acquisition model.
+    ///
+    /// Note: Full external hardware trigger support (e.g., TTL input) requires
+    /// trigger mode constants (TRIGGER_FIRST_MODE) that are not yet exposed in the
+    /// PVCAM bindings. This method provides status-based trigger detection as a workaround.
+    ///
+    /// # Mock Implementation
+    /// Simulates a brief wait period for testing without hardware.
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Camera is not opened
+    /// - Camera is not armed
+    /// - Acquisition fails
+    /// - Timeout (30 seconds) is exceeded
     pub async fn wait_for_trigger(&self) -> Result<()> {
         #[cfg(not(feature = "pvcam_hardware"))]
         {
@@ -526,9 +559,45 @@ impl PvcamDriver {
 
         #[cfg(feature = "pvcam_hardware")]
         {
-            // TODO: Implement actual trigger waiting logic
-            // This would involve checking camera status and waiting for trigger
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            let handle = *self.camera_handle.lock().await;
+            if handle.is_none() {
+                return Err(anyhow!("Camera not opened"));
+            }
+            let h = handle.unwrap();
+
+            let is_armed = *self.armed.lock().await;
+            if !is_armed {
+                return Err(anyhow!("Camera must be armed before waiting for trigger"));
+            }
+
+            // Wait for trigger/frame with timeout
+            let timeout = Duration::from_secs(30);
+            let start = std::time::Instant::now();
+            let mut status: i16 = 0;
+            let mut bytes_arrived: uns32 = 0;
+
+            loop {
+                unsafe {
+                    if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
+                        return Err(anyhow!("Failed to check acquisition status"));
+                    }
+                }
+
+                // Frame ready or readout complete
+                if status == READOUT_COMPLETE || bytes_arrived > 0 {
+                    return Ok(());
+                }
+
+                if status == READOUT_FAILED {
+                    return Err(anyhow!("Acquisition failed"));
+                }
+
+                if start.elapsed() > timeout {
+                    return Err(anyhow!("Trigger wait timeout after 30 seconds"));
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
 
         Ok(())
@@ -791,8 +860,14 @@ impl FrameProducer for PvcamDriver {
             let frame_count = self.frame_count.clone();
             let roi = *self.roi.lock().await;
             let exposure_ms = *self.exposure_ms.lock().await;
+            let (x_bin, y_bin) = *self.binning.lock().await;
 
             tokio::spawn(async move {
+                // Calculate binned dimensions (same as acquire_frame)
+                let binned_width = roi.width / x_bin as u32;
+                let binned_height = roi.height / y_bin as u32;
+                let frame_size = (binned_width * binned_height) as usize;
+
                 while streaming.load(Ordering::SeqCst) {
                     // Simulate exposure time
                     tokio::time::sleep(Duration::from_millis(exposure_ms as u64)).await;
@@ -801,21 +876,20 @@ impl FrameProducer for PvcamDriver {
                         break;
                     }
 
-                    // Generate synthetic frame
-                    let frame_size = (roi.width * roi.height) as usize;
+                    // Generate synthetic frame with binned dimensions
                     let frame_num = frame_count.fetch_add(1, Ordering::SeqCst);
                     let mut pixels = vec![0u16; frame_size];
 
-                    // Create test pattern (gradient + frame number)
-                    for y in 0..roi.height {
-                        for x in 0..roi.width {
+                    // Create test pattern (gradient + frame number) in binned coordinates
+                    for y in 0..binned_height {
+                        for x in 0..binned_width {
                             let value =
                                 (((x + y + frame_num as u32) % 4096) as u16).saturating_add(100);
-                            pixels[(y * roi.width + x) as usize] = value;
+                            pixels[(y * binned_width + x) as usize] = value;
                         }
                     }
 
-                    let frame = Frame::new(roi.width, roi.height, pixels);
+                    let frame = Frame::new(binned_width, binned_height, pixels);
 
                     // Send frame (non-blocking, drop if channel full)
                     let _ = frame_tx.try_send(frame);
@@ -866,6 +940,10 @@ impl FrameProducer for PvcamDriver {
     async fn is_streaming(&self) -> Result<bool> {
         Ok(self.streaming.load(Ordering::SeqCst))
     }
+
+    fn frame_count(&self) -> u64 {
+        self.frame_count.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -894,6 +972,28 @@ impl ExposureControl for PvcamDriver {
 
 #[async_trait]
 impl Triggerable for PvcamDriver {
+    /// Arm the camera for triggered acquisition
+    ///
+    /// # Hardware Implementation
+    /// Prepares the camera for triggered frame capture. Currently implements software-based
+    /// triggering via the arm/trigger pattern. Full hardware external trigger support
+    /// (e.g., TTL pulse input) requires trigger mode constants not yet exposed in PVCAM bindings.
+    ///
+    /// # Software Trigger Workflow
+    /// 1. `arm()` - prepares camera (sets armed flag)
+    /// 2. `wait_for_trigger()` or `trigger()` - initiates frame capture
+    /// 3. Frame is acquired and can be read via `acquire_frame()`
+    /// 4. `disarm()` - cleanup
+    ///
+    /// # Returns
+    /// - Ok(()) if armed successfully
+    /// - Err if camera is not opened
+    ///
+    /// # Future Enhancement
+    /// To implement external hardware triggers (TRIGGER_FIRST_MODE):
+    /// 1. Add trigger mode constants to pvcam-sys (build.rs allowlist)
+    /// 2. Call pl_exp_setup_seq() with trigger mode in this method
+    /// 3. Use wait_for_trigger() to poll for external trigger signal
     async fn arm(&self) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         {
@@ -901,8 +1001,12 @@ impl Triggerable for PvcamDriver {
             if handle.is_none() {
                 return Err(anyhow!("Camera not opened"));
             }
-            // TODO: Setup for triggered acquisition
-            // - pl_exp_setup_seq() with TRIGGER_FIRST_MODE
+
+            // Currently supports software triggering only.
+            // Hardware trigger mode constants are not yet available in PVCAM bindings.
+            // The camera is now armed and ready for:
+            // - trigger() to capture a single frame
+            // - wait_for_trigger() to poll for trigger condition
         }
 
         *self.armed.lock().await = true;
@@ -1104,5 +1208,50 @@ mod tests {
 
         // Stop without start should be OK (no-op)
         assert!(camera.stop_stream().await.is_ok());
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "pvcam_hardware"))]
+    async fn test_mock_streaming_with_binning() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
+
+        // Set binning to 2x2
+        camera.set_binning(2, 2).await.unwrap();
+
+        // Take the receiver before starting stream
+        let mut rx = camera
+            .take_frame_receiver()
+            .await
+            .expect("Should get receiver");
+
+        // Start streaming with binning
+        camera.start_stream().await.unwrap();
+
+        // Wait for a frame
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Receive frame and verify binned dimensions
+        let frame = rx.recv().await.expect("Should receive frame");
+
+        // Full sensor is 2048x2048, with 2x2 binning should be 1024x1024
+        assert_eq!(
+            frame.width, 1024,
+            "Frame width should be binned (2048 / 2 = 1024)"
+        );
+        assert_eq!(
+            frame.height, 1024,
+            "Frame height should be binned (2048 / 2 = 1024)"
+        );
+
+        // Verify pixel data is generated in binned coordinates
+        assert_eq!(
+            frame.buffer.len(),
+            1024 * 1024,
+            "Pixel count should match binned dimensions"
+        );
+
+        // Stop streaming
+        camera.stop_stream().await.unwrap();
     }
 }
