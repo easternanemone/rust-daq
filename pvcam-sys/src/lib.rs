@@ -25,6 +25,28 @@ pub const READOUT_COMPLETE: i16 = 3;
 #[cfg(feature = "pvcam-sdk")]
 pub const READOUT_FAILED: i16 = 4;
 
+// Circular buffer modes for pl_exp_setup_cont
+#[cfg(feature = "pvcam-sdk")]
+pub const CIRC_OVERWRITE: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const CIRC_NO_OVERWRITE: i16 = 1;
+
+// Camera Control Subsystem abort modes for pl_exp_stop_cont/pl_exp_abort
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_NO_CHANGE: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_HALT: i16 = 1;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_HALT_CLOSE_SHTR: i16 = 2;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_CLEAR: i16 = 3;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_CLEAR_CLOSE_SHTR: i16 = 4;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_OPEN_SHTR: i16 = 5;
+#[cfg(feature = "pvcam-sdk")]
+pub const CCS_CLEAR_OPEN_SHTR: i16 = 6;
+
 #[cfg(not(feature = "pvcam-sdk"))]
 /// Placeholder module when the `pvcam-sdk` feature is not enabled.
 /// No actual PVCAM functions or types are available in this configuration.

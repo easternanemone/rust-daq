@@ -1,3 +1,4 @@
+#![cfg(feature = "instrument_photometrics")]
 //! PVCAM Camera Hardware Validation Test Suite
 //!
 //! Comprehensive validation tests for Photometrics PVCAM camera driver.

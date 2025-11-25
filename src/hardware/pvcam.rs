@@ -30,8 +30,9 @@
 
 use crate::hardware::capabilities::{ExposureControl, FrameProducer, Triggerable};
 use crate::hardware::{Frame, Roi};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -65,6 +66,20 @@ pub struct PvcamDriver {
     /// Whether PVCAM SDK is initialized
     #[cfg(feature = "pvcam_hardware")]
     sdk_initialized: Arc<Mutex<bool>>,
+    /// Whether continuous streaming is active
+    streaming: Arc<AtomicBool>,
+    /// Frame counter for streaming
+    frame_count: Arc<AtomicU64>,
+    /// Channel sender for streaming frames
+    frame_tx: tokio::sync::mpsc::Sender<Frame>,
+    /// Channel receiver for streaming frames (stored for consumer access)
+    frame_rx: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<Frame>>>>,
+    /// Handle to the streaming poll task
+    #[cfg(feature = "pvcam_hardware")]
+    poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// Circular buffer for continuous acquisition (hardware only)
+    #[cfg(feature = "pvcam_hardware")]
+    circ_buffer: Arc<Mutex<Option<Vec<u16>>>>,
 }
 
 impl PvcamDriver {
@@ -165,6 +180,9 @@ impl PvcamDriver {
             };
         }
 
+        // Create channel for streaming frames (buffer 16 frames)
+        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(16);
+
         Ok(Self {
             camera_name: camera_name.to_string(),
             camera_handle: Arc::new(Mutex::new(Some(camera_handle))),
@@ -181,6 +199,12 @@ impl PvcamDriver {
             sensor_height: height,
             armed: Arc::new(Mutex::new(false)),
             sdk_initialized: Arc::new(Mutex::new(true)),
+            streaming: Arc::new(AtomicBool::new(false)),
+            frame_count: Arc::new(AtomicU64::new(0)),
+            frame_tx,
+            frame_rx: Arc::new(Mutex::new(Some(frame_rx))),
+            poll_handle: Arc::new(Mutex::new(None)),
+            circ_buffer: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -193,8 +217,11 @@ impl PvcamDriver {
             _ => (2048, 2048), // Default
         };
 
-        eprintln!("⚠️  PVCAM hardware feature not enabled - using mock camera");
+        eprintln!("PVCAM hardware feature not enabled - using mock camera");
         eprintln!("    To use real hardware: cargo build --features pvcam_hardware");
+
+        // Create channel for streaming frames (buffer 16 frames)
+        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(16);
 
         Ok(Self {
             camera_name: camera_name.to_string(),
@@ -210,6 +237,10 @@ impl PvcamDriver {
             sensor_width: width,
             sensor_height: height,
             armed: Arc::new(Mutex::new(false)),
+            streaming: Arc::new(AtomicBool::new(false)),
+            frame_count: Arc::new(AtomicU64::new(0)),
+            frame_tx,
+            frame_rx: Arc::new(Mutex::new(Some(frame_rx))),
         })
     }
 
@@ -463,10 +494,97 @@ impl PvcamDriver {
 
         Ok(())
     }
+
+    /// Get the frame receiver for consuming streamed frames
+    ///
+    /// Returns the receiver, which can only be taken once. Subsequent calls return None.
+    pub async fn take_frame_receiver(&self) -> Option<tokio::sync::mpsc::Receiver<Frame>> {
+        self.frame_rx.lock().await.take()
+    }
+
+    /// Check if streaming is active
+    pub fn is_streaming(&self) -> bool {
+        self.streaming.load(Ordering::SeqCst)
+    }
+
+    /// Get current frame count
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count.load(Ordering::SeqCst)
+    }
+
+    /// Hardware polling loop for continuous acquisition
+    ///
+    /// This runs in a blocking thread and polls the PVCAM SDK for new frames.
+    #[cfg(feature = "pvcam_hardware")]
+    fn poll_loop_hardware(
+        hcam: i16,
+        streaming: Arc<AtomicBool>,
+        frame_tx: tokio::sync::mpsc::Sender<Frame>,
+        frame_count: Arc<AtomicU64>,
+        frame_pixels: usize,
+        width: u32,
+        height: u32,
+    ) {
+        let mut status: i16 = 0;
+        let mut bytes_arrived: uns32 = 0;
+        let mut buffer_cnt: uns32 = 0;
+
+        while streaming.load(Ordering::SeqCst) {
+            unsafe {
+                // Check continuous acquisition status
+                if pl_exp_check_cont_status(
+                    hcam,
+                    &mut status,
+                    &mut bytes_arrived,
+                    &mut buffer_cnt,
+                ) == 0
+                {
+                    eprintln!("PVCAM: Failed to check continuous status");
+                    break;
+                }
+
+                match status {
+                    s if s == READOUT_COMPLETE || s == EXPOSURE_IN_PROGRESS => {
+                        // Try to get the latest frame
+                        let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+
+                        if pl_exp_get_latest_frame(hcam, &mut frame_ptr) != 0 && !frame_ptr.is_null()
+                        {
+                            // Copy frame data
+                            let src = std::slice::from_raw_parts(frame_ptr as *const u16, frame_pixels);
+                            let pixels = src.to_vec();
+
+                            let frame = Frame::new(width, height, pixels);
+                            frame_count.fetch_add(1, Ordering::SeqCst);
+
+                            // Send frame (non-blocking)
+                            let _ = frame_tx.try_send(frame);
+                        }
+                    }
+                    s if s == READOUT_FAILED => {
+                        eprintln!("PVCAM: Readout failed");
+                        break;
+                    }
+                    _ => {
+                        // READOUT_NOT_ACTIVE or READOUT_IN_PROGRESS - wait a bit
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            }
+        }
+
+        // Cleanup: stop acquisition
+        unsafe {
+            pl_exp_stop_cont(hcam, CCS_HALT);
+        }
+    }
 }
 
 impl Drop for PvcamDriver {
     fn drop(&mut self) {
+        // Stop streaming if active
+        self.streaming.store(false, Ordering::SeqCst);
+
         #[cfg(feature = "pvcam_hardware")]
         {
             // Cleanup PVCAM SDK resources
@@ -492,30 +610,155 @@ impl Drop for PvcamDriver {
 #[async_trait]
 impl FrameProducer for PvcamDriver {
     async fn start_stream(&self) -> Result<()> {
+        // Check if already streaming
+        if self.streaming.swap(true, Ordering::SeqCst) {
+            bail!("Already streaming");
+        }
+
+        // Reset frame counter
+        self.frame_count.store(0, Ordering::SeqCst);
+
         #[cfg(feature = "pvcam_hardware")]
         {
-            let handle = *self.camera_handle.lock().await;
-            if handle.is_none() {
-                return Err(anyhow!("Camera not opened"));
+            let handle_guard = self.camera_handle.lock().await;
+            let h = handle_guard.ok_or_else(|| anyhow!("Camera not opened"))?;
+
+            // Get current settings
+            let roi = *self.roi.lock().await;
+            let (x_bin, y_bin) = *self.binning.lock().await;
+            let exp_ms = *self.exposure_ms.lock().await as uns32;
+
+            // Setup region
+            let region = unsafe {
+                let mut rgn: rgn_type = std::mem::zeroed();
+                rgn.s1 = roi.x as uns16;
+                rgn.s2 = (roi.x + roi.width - 1) as uns16;
+                rgn.sbin = x_bin;
+                rgn.p1 = roi.y as uns16;
+                rgn.p2 = (roi.y + roi.height - 1) as uns16;
+                rgn.pbin = y_bin;
+                rgn
+            };
+
+            // Calculate frame size and setup continuous acquisition
+            let mut frame_bytes: uns32 = 0;
+            unsafe {
+                if pl_exp_setup_cont(
+                    h,
+                    1,
+                    &region as *const _,
+                    TIMED_MODE,
+                    exp_ms,
+                    &mut frame_bytes,
+                    CIRC_NO_OVERWRITE,
+                ) == 0
+                {
+                    self.streaming.store(false, Ordering::SeqCst);
+                    return Err(anyhow!("Failed to setup continuous acquisition"));
+                }
             }
-            // TODO: Implement continuous circular buffer acquisition
-            // - pl_exp_setup_cont()
-            // - pl_exp_start_cont()
+
+            // Calculate frame dimensions and allocate circular buffer
+            let binned_width = roi.width / x_bin as u32;
+            let binned_height = roi.height / y_bin as u32;
+            let frame_pixels = (binned_width * binned_height) as usize;
+            let buffer_count = 8; // Use 8 frame buffers
+            let mut circ_buf = vec![0u16; frame_pixels * buffer_count];
+
+            // Start continuous acquisition
+            let circ_ptr = circ_buf.as_mut_ptr();
+            let circ_size_bytes = (circ_buf.len() * 2) as uns32;
+
+            unsafe {
+                if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
+                    self.streaming.store(false, Ordering::SeqCst);
+                    return Err(anyhow!("Failed to start continuous acquisition"));
+                }
+            }
+
+            // Store circular buffer to keep it alive
+            *self.circ_buffer.lock().await = Some(circ_buf);
+
+            // Spawn polling task
+            let streaming = self.streaming.clone();
+            let frame_tx = self.frame_tx.clone();
+            let frame_count = self.frame_count.clone();
+            let width = binned_width;
+            let height = binned_height;
+
+            let poll_handle = tokio::task::spawn_blocking(move || {
+                Self::poll_loop_hardware(h, streaming, frame_tx, frame_count, frame_pixels, width, height);
+            });
+
+            *self.poll_handle.lock().await = Some(poll_handle);
+        }
+
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            // Mock streaming - spawn a task that generates synthetic frames
+            let streaming = self.streaming.clone();
+            let frame_tx = self.frame_tx.clone();
+            let frame_count = self.frame_count.clone();
+            let roi = *self.roi.lock().await;
+            let exposure_ms = *self.exposure_ms.lock().await;
+
+            tokio::spawn(async move {
+                while streaming.load(Ordering::SeqCst) {
+                    // Simulate exposure time
+                    tokio::time::sleep(Duration::from_millis(exposure_ms as u64)).await;
+
+                    if !streaming.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    // Generate synthetic frame
+                    let frame_size = (roi.width * roi.height) as usize;
+                    let frame_num = frame_count.fetch_add(1, Ordering::SeqCst);
+                    let mut pixels = vec![0u16; frame_size];
+
+                    // Create test pattern (gradient + frame number)
+                    for y in 0..roi.height {
+                        for x in 0..roi.width {
+                            let value = (((x + y + frame_num as u32) % 4096) as u16).saturating_add(100);
+                            pixels[(y * roi.width + x) as usize] = value;
+                        }
+                    }
+
+                    let frame = Frame::new(roi.width, roi.height, pixels);
+
+                    // Send frame (non-blocking, drop if channel full)
+                    let _ = frame_tx.try_send(frame);
+                }
+            });
         }
 
         Ok(())
     }
 
     async fn stop_stream(&self) -> Result<()> {
+        // Signal streaming to stop
+        if !self.streaming.swap(false, Ordering::SeqCst) {
+            // Wasn't streaming
+            return Ok(());
+        }
+
         #[cfg(feature = "pvcam_hardware")]
         {
-            let handle = *self.camera_handle.lock().await;
-            if handle.is_none() {
-                return Err(anyhow!("Camera not opened"));
+            // Wait for poll task to finish
+            if let Some(handle) = self.poll_handle.lock().await.take() {
+                let _ = handle.await;
             }
-            // TODO: Stop circular buffer
-            // - pl_exp_stop_cont()
-            // - pl_exp_finish_seq()
+
+            // Stop continuous acquisition
+            let handle_guard = self.camera_handle.lock().await;
+            if let Some(h) = *handle_guard {
+                unsafe {
+                    pl_exp_stop_cont(h, CCS_HALT);
+                }
+            }
+
+            // Release circular buffer
+            *self.circ_buffer.lock().await = None;
         }
 
         Ok(())
@@ -695,5 +938,65 @@ mod tests {
         // Verify test pattern
         assert_eq!(frame[0], 0);
         assert_eq!(frame[1], 1);
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "pvcam_hardware"))]
+    async fn test_mock_streaming() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
+
+        // Take the receiver before starting stream
+        let mut rx = camera.take_frame_receiver().await.expect("Should get receiver");
+
+        // Verify not streaming initially
+        assert!(!camera.is_streaming());
+
+        // Start streaming
+        camera.start_stream().await.unwrap();
+        assert!(camera.is_streaming());
+
+        // Wait for a few frames
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Should have received some frames
+        let mut frame_count = 0;
+        while let Ok(frame) = rx.try_recv() {
+            frame_count += 1;
+            assert_eq!(frame.width, 2048);
+            assert_eq!(frame.height, 2048);
+            if frame_count >= 3 {
+                break;
+            }
+        }
+
+        // Stop streaming
+        camera.stop_stream().await.unwrap();
+        assert!(!camera.is_streaming());
+
+        // Verify we got frames
+        assert!(frame_count > 0, "Should have received at least one frame");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_double_start() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+
+        // Start streaming
+        camera.start_stream().await.unwrap();
+
+        // Second start should fail
+        assert!(camera.start_stream().await.is_err());
+
+        // Stop streaming
+        camera.stop_stream().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_streaming_stop_without_start() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+
+        // Stop without start should be OK (no-op)
+        assert!(camera.stop_stream().await.is_ok());
     }
 }
