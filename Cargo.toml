@@ -153,7 +153,7 @@ networking = []
 modules = []
 
 # PVCAM SDK integration (requires PVCAM SDK installed)
-pvcam_hardware = ["dep:pvcam-sys"]
+pvcam_hardware = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
 hardware_tests = []
 
 # Python scripting backend

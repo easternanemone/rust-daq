@@ -30,7 +30,7 @@
 
 use crate::hardware::capabilities::{ExposureControl, FrameProducer, Triggerable};
 use crate::hardware::{Frame, Roi};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -39,6 +39,8 @@ use tokio::sync::Mutex;
 
 #[cfg(feature = "pvcam_hardware")]
 use pvcam_sys::*;
+#[cfg(feature = "pvcam_hardware")]
+use tokio::task::JoinHandle;
 
 /// Driver for Photometrics PVCAM cameras
 ///
