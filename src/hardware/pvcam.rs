@@ -42,6 +42,109 @@ use pvcam_sys::*;
 #[cfg(feature = "pvcam_hardware")]
 use tokio::task::JoinHandle;
 
+// =============================================================================
+// Data Structures for Camera Information
+// =============================================================================
+
+/// Comprehensive camera information
+#[derive(Debug, Clone)]
+pub struct CameraInfo {
+    /// Chip/sensor name (e.g., "sCMOS", "EMCCD")
+    pub chip_name: String,
+    /// Current sensor temperature in degrees Celsius
+    pub temperature_c: f64,
+    /// ADC bit depth (e.g., 12, 16)
+    pub bit_depth: u16,
+    /// Frame readout time in microseconds
+    pub readout_time_us: f64,
+    /// Pixel size in nanometers (width, height)
+    pub pixel_size_nm: (u32, u32),
+    /// Sensor dimensions in pixels (width, height)
+    pub sensor_size: (u32, u32),
+    /// Current gain mode name
+    pub gain_name: String,
+    /// Current speed mode name
+    pub speed_name: String,
+}
+
+/// Gain mode information
+#[derive(Debug, Clone)]
+pub struct GainMode {
+    /// Index for setting this gain mode
+    pub index: u16,
+    /// Human-readable name
+    pub name: String,
+}
+
+/// Speed/readout mode information
+#[derive(Debug, Clone)]
+pub struct SpeedMode {
+    /// Index for setting this speed mode
+    pub index: u16,
+    /// Human-readable name (e.g., "100 MHz", "200 MHz")
+    pub name: String,
+}
+
+/// Fan speed setting
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanSpeed {
+    Off,
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+impl FanSpeed {
+    /// Convert from PVCAM enum value
+    #[cfg(feature = "pvcam_hardware")]
+    fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => FanSpeed::Off,
+            1 => FanSpeed::Low,
+            2 => FanSpeed::Medium,
+            3 => FanSpeed::High,
+            _ => FanSpeed::Max,
+        }
+    }
+
+    /// Convert to PVCAM enum value
+    #[cfg(feature = "pvcam_hardware")]
+    fn to_pvcam(self) -> i32 {
+        match self {
+            FanSpeed::Off => 0,
+            FanSpeed::Low => 1,
+            FanSpeed::Medium => 2,
+            FanSpeed::High => 3,
+            FanSpeed::Max => 4,
+        }
+    }
+}
+
+/// Post-processing feature information
+#[derive(Debug, Clone)]
+pub struct PPFeature {
+    /// Feature index
+    pub index: u16,
+    /// Feature ID (for setting parameters)
+    pub id: u16,
+    /// Human-readable feature name
+    pub name: String,
+}
+
+/// Post-processing parameter information
+#[derive(Debug, Clone)]
+pub struct PPParam {
+    /// Parameter index within feature
+    pub index: u16,
+    /// Parameter ID (for get/set)
+    pub id: u16,
+    /// Human-readable parameter name
+    pub name: String,
+    /// Current value
+    pub value: u32,
+}
+
 /// Driver for Photometrics PVCAM cameras
 ///
 /// Implements FrameProducer, ExposureControl, and Triggerable capability traits.
@@ -85,6 +188,22 @@ pub struct PvcamDriver {
     /// Trigger frame buffer - holds the frame during triggered acquisition
     #[cfg(feature = "pvcam_hardware")]
     trigger_frame: Arc<Mutex<Option<Vec<u16>>>>,
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Get the last PVCAM error as a formatted string
+#[cfg(feature = "pvcam_hardware")]
+fn get_pvcam_error() -> String {
+    unsafe {
+        let err_code = pl_error_code();
+        let mut err_msg = vec![0i8; 256];
+        pl_error_message(err_code, err_msg.as_mut_ptr());
+        let err_str = std::ffi::CStr::from_ptr(err_msg.as_ptr()).to_string_lossy();
+        format!("error {} - {}", err_code, err_str)
+    }
 }
 
 impl PvcamDriver {
@@ -642,6 +761,414 @@ impl PvcamDriver {
     /// Get current frame count
     pub fn frame_count(&self) -> u64 {
         self.frame_count.load(Ordering::SeqCst)
+    }
+
+    // =========================================================================
+    // Camera Information Query Methods
+    // =========================================================================
+
+    /// Get current sensor temperature in degrees Celsius
+    ///
+    /// Returns the measured sensor temperature. PVCAM reports this as
+    /// hundredths of degrees Celsius internally.
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_temperature(&self) -> Result<f64> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut temp_raw: i16 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_TEMP, ATTR_CURRENT, &mut temp_raw as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get temperature: {}", get_pvcam_error()));
+            }
+        }
+        // PVCAM returns temperature in hundredths of degrees C
+        Ok(temp_raw as f64 / 100.0)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_temperature(&self) -> Result<f64> {
+        Ok(-40.0) // Mock: typical cooled sensor temperature
+    }
+
+    /// Get the camera chip/sensor name
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_chip_name(&self) -> Result<String> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut buf = vec![0i8; 256];
+        unsafe {
+            if pl_get_param(h, PARAM_CHIP_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
+                return Err(anyhow!("Failed to get chip name: {}", get_pvcam_error()));
+            }
+            let name = std::ffi::CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned();
+            Ok(name)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_chip_name(&self) -> Result<String> {
+        Ok("MockSensor".to_string())
+    }
+
+    /// Get the ADC bit depth (e.g., 12, 16)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_bit_depth(&self) -> Result<u16> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut depth: i16 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut depth as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get bit depth: {}", get_pvcam_error()));
+            }
+        }
+        Ok(depth as u16)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_bit_depth(&self) -> Result<u16> {
+        Ok(16) // Mock: typical 16-bit depth
+    }
+
+    /// Get frame readout time in microseconds
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_readout_time_us(&self) -> Result<f64> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut time_us: f64 = 0.0;
+        unsafe {
+            if pl_get_param(h, PARAM_READOUT_TIME, ATTR_CURRENT, &mut time_us as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get readout time: {}", get_pvcam_error()));
+            }
+        }
+        Ok(time_us)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_readout_time_us(&self) -> Result<f64> {
+        Ok(10000.0) // Mock: 10ms readout
+    }
+
+    /// Get pixel size in nanometers (width, height)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_pixel_size_nm(&self) -> Result<(u32, u32)> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut pix_ser: uns16 = 0;
+        let mut pix_par: uns16 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_PIX_SER_SIZE, ATTR_CURRENT, &mut pix_ser as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get serial pixel size: {}", get_pvcam_error()));
+            }
+            if pl_get_param(h, PARAM_PIX_PAR_SIZE, ATTR_CURRENT, &mut pix_par as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get parallel pixel size: {}", get_pvcam_error()));
+            }
+        }
+        Ok((pix_ser as u32, pix_par as u32))
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_pixel_size_nm(&self) -> Result<(u32, u32)> {
+        Ok((6500, 6500)) // Mock: 6.5um pixels
+    }
+
+    /// Get the current gain mode name
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_gain_name(&self) -> Result<String> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut buf = vec![0i8; 256];
+        unsafe {
+            if pl_get_param(h, PARAM_GAIN_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
+                return Err(anyhow!("Failed to get gain name: {}", get_pvcam_error()));
+            }
+            let name = std::ffi::CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned();
+            Ok(name)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_gain_name(&self) -> Result<String> {
+        Ok("HDR".to_string())
+    }
+
+    /// Get the current speed table name
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_speed_name(&self) -> Result<String> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut buf = vec![0i8; 256];
+        unsafe {
+            if pl_get_param(h, PARAM_SPDTAB_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
+                return Err(anyhow!("Failed to get speed table name: {}", get_pvcam_error()));
+            }
+            let name = std::ffi::CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned();
+            Ok(name)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_speed_name(&self) -> Result<String> {
+        Ok("100 MHz".to_string())
+    }
+
+    /// Get the current gain index
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_gain_index(&self) -> Result<u16> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut idx: i16 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut idx as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get gain index: {}", get_pvcam_error()));
+            }
+        }
+        Ok(idx as u16)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_gain_index(&self) -> Result<u16> {
+        Ok(0)
+    }
+
+    /// Get the current speed table index
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_speed_index(&self) -> Result<u16> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+        let mut idx: i16 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut idx as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get speed table index: {}", get_pvcam_error()));
+            }
+        }
+        Ok(idx as u16)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_speed_index(&self) -> Result<u16> {
+        Ok(0)
+    }
+
+    /// Get comprehensive camera information
+    ///
+    /// Returns a struct with all available camera status information including
+    /// sensor name, temperature, bit depth, readout time, pixel size, and
+    /// current gain/speed mode names.
+    pub async fn get_camera_info(&self) -> Result<CameraInfo> {
+        Ok(CameraInfo {
+            chip_name: self.get_chip_name().await.unwrap_or_else(|_| "Unknown".to_string()),
+            temperature_c: self.get_temperature().await.unwrap_or(f64::NAN),
+            bit_depth: self.get_bit_depth().await.unwrap_or(0),
+            readout_time_us: self.get_readout_time_us().await.unwrap_or(0.0),
+            pixel_size_nm: self.get_pixel_size_nm().await.unwrap_or((0, 0)),
+            sensor_size: (self.sensor_width, self.sensor_height),
+            gain_name: self.get_gain_name().await.unwrap_or_else(|_| "Unknown".to_string()),
+            speed_name: self.get_speed_name().await.unwrap_or_else(|_| "Unknown".to_string()),
+        })
+    }
+
+    // =========================================================================
+    // Gain and Speed Table Selection Methods
+    // =========================================================================
+
+    /// List all available gain modes for this camera
+    ///
+    /// Returns a vector of GainMode structs, each containing the index and name
+    /// of an available gain setting. The index can be passed to `set_gain_index()`
+    /// to select that gain mode.
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn list_gain_modes(&self) -> Result<Vec<GainMode>> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        // Get max gain index
+        let mut max_idx: i32 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_GAIN_INDEX, ATTR_MAX, &mut max_idx as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get max gain index: {}", get_pvcam_error()));
+            }
+        }
+
+        // Save current gain index so we can restore it
+        let mut current_idx: i16 = 0;
+        unsafe {
+            pl_get_param(h, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut current_idx as *mut _ as *mut _);
+        }
+
+        let mut modes = Vec::new();
+        for idx in 0..=max_idx {
+            // Set gain index temporarily to read its name
+            unsafe {
+                let idx_i16 = idx as i16;
+                if pl_set_param(h, PARAM_GAIN_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
+                    continue; // Skip if setting fails
+                }
+
+                // Read the gain name for this index
+                let mut buf = vec![0i8; 256];
+                if pl_get_param(h, PARAM_GAIN_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) != 0 {
+                    let name = std::ffi::CStr::from_ptr(buf.as_ptr())
+                        .to_string_lossy()
+                        .into_owned();
+                    modes.push(GainMode {
+                        index: idx as u16,
+                        name,
+                    });
+                }
+            }
+        }
+
+        // Restore original gain index
+        unsafe {
+            pl_set_param(h, PARAM_GAIN_INDEX, &current_idx as *const _ as *mut _);
+        }
+
+        Ok(modes)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn list_gain_modes(&self) -> Result<Vec<GainMode>> {
+        Ok(vec![
+            GainMode { index: 0, name: "HDR".to_string() },
+            GainMode { index: 1, name: "High Sensitivity".to_string() },
+            GainMode { index: 2, name: "Full Well".to_string() },
+        ])
+    }
+
+    /// Set the gain mode by index
+    ///
+    /// Use `list_gain_modes()` to get available indices and their names.
+    /// Changes take effect on the next acquisition.
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn set_gain_index(&self, index: u16) -> Result<()> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        let idx_i16 = index as i16;
+        unsafe {
+            if pl_set_param(h, PARAM_GAIN_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to set gain index: {}", get_pvcam_error()));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn set_gain_index(&self, _index: u16) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get current gain mode information
+    ///
+    /// Returns a GainMode struct with the current gain index and name.
+    pub async fn get_gain(&self) -> Result<GainMode> {
+        let index = self.get_gain_index().await?;
+        let name = self.get_gain_name().await.unwrap_or_else(|_| "Unknown".to_string());
+        Ok(GainMode { index, name })
+    }
+
+    /// List all available speed/readout modes for this camera
+    ///
+    /// Returns a vector of SpeedMode structs, each containing the index and name
+    /// of an available speed setting. The index can be passed to `set_speed_index()`
+    /// to select that speed mode.
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn list_speed_modes(&self) -> Result<Vec<SpeedMode>> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        // Get max speed index
+        let mut max_idx: i32 = 0;
+        unsafe {
+            if pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_MAX, &mut max_idx as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get max speed index: {}", get_pvcam_error()));
+            }
+        }
+
+        // Save current speed index so we can restore it
+        let mut current_idx: i16 = 0;
+        unsafe {
+            pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut current_idx as *mut _ as *mut _);
+        }
+
+        let mut modes = Vec::new();
+        for idx in 0..=max_idx {
+            // Set speed index temporarily to read its name
+            unsafe {
+                let idx_i16 = idx as i16;
+                if pl_set_param(h, PARAM_SPDTAB_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
+                    continue; // Skip if setting fails
+                }
+
+                // Try to read speed name (may not be available on all cameras)
+                let mut buf = vec![0i8; 256];
+                let name = if pl_get_param(h, PARAM_SPDTAB_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) != 0 {
+                    std::ffi::CStr::from_ptr(buf.as_ptr())
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    // Speed name not available, try to get pixel time instead
+                    let mut pix_time: uns16 = 0;
+                    if pl_get_param(h, PARAM_PIX_TIME, ATTR_CURRENT, &mut pix_time as *mut _ as *mut _) != 0 {
+                        format!("{} ns/pixel", pix_time)
+                    } else {
+                        format!("Speed {}", idx)
+                    }
+                };
+
+                modes.push(SpeedMode {
+                    index: idx as u16,
+                    name,
+                });
+            }
+        }
+
+        // Restore original speed index
+        unsafe {
+            pl_set_param(h, PARAM_SPDTAB_INDEX, &current_idx as *const _ as *mut _);
+        }
+
+        Ok(modes)
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn list_speed_modes(&self) -> Result<Vec<SpeedMode>> {
+        Ok(vec![
+            SpeedMode { index: 0, name: "100 MHz".to_string() },
+            SpeedMode { index: 1, name: "200 MHz".to_string() },
+        ])
+    }
+
+    /// Set the speed/readout mode by index
+    ///
+    /// Use `list_speed_modes()` to get available indices and their names.
+    /// Changes take effect on the next acquisition.
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn set_speed_index(&self, index: u16) -> Result<()> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        let idx_i16 = index as i16;
+        unsafe {
+            if pl_set_param(h, PARAM_SPDTAB_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to set speed index: {}", get_pvcam_error()));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn set_speed_index(&self, _index: u16) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get current speed/readout mode information
+    ///
+    /// Returns a SpeedMode struct with the current speed index and name.
+    pub async fn get_speed(&self) -> Result<SpeedMode> {
+        let index = self.get_speed_index().await?;
+        let name = self.get_speed_name().await.unwrap_or_else(|_| "Unknown".to_string());
+        Ok(SpeedMode { index, name })
     }
 
     /// Hardware polling loop for continuous acquisition

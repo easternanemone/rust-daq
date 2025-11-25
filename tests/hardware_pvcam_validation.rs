@@ -64,7 +64,7 @@
 //! ```
 
 use rust_daq::hardware::capabilities::{ExposureControl, Triggerable};
-use rust_daq::hardware::pvcam::PvcamDriver;
+use rust_daq::hardware::pvcam::{CameraInfo, GainMode, PvcamDriver, SpeedMode};
 use rust_daq::hardware::Roi;
 use std::time::Instant;
 
@@ -767,4 +767,385 @@ async fn test_hardware_triggered_acquisition() {
         Ok(Err(e)) => panic!("Trigger wait failed: {}", e),
         Err(_) => println!("Trigger timeout (expected without trigger source)"),
     }
+}
+
+// ============================================================================
+// Section 8: Camera Information Tests
+// ============================================================================
+
+/// Test 30: Get sensor temperature
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_temperature() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let temp = camera
+        .get_temperature()
+        .await
+        .expect("Failed to get temperature");
+
+    println!("Sensor temperature: {:.2}°C", temp);
+
+    // Prime BSI typically cooled between -40°C and +30°C
+    assert!(
+        temp >= -50.0 && temp <= 50.0,
+        "Temperature {} is out of expected range",
+        temp
+    );
+}
+
+/// Test 31: Get chip/sensor name
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_chip_name() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let name = camera
+        .get_chip_name()
+        .await
+        .expect("Failed to get chip name");
+
+    println!("Chip name: {}", name);
+
+    // Should be non-empty
+    assert!(!name.is_empty(), "Chip name should not be empty");
+}
+
+/// Test 32: Get bit depth
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_bit_depth() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let depth = camera
+        .get_bit_depth()
+        .await
+        .expect("Failed to get bit depth");
+
+    println!("ADC bit depth: {}", depth);
+
+    // Prime BSI has 11-bit ADC native, can also be 12, 14, or 16 bit
+    assert!(
+        depth >= 8 && depth <= 16,
+        "Unexpected bit depth: {}",
+        depth
+    );
+}
+
+/// Test 33: Get readout time
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_readout_time() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let time_us = camera
+        .get_readout_time_us()
+        .await
+        .expect("Failed to get readout time");
+
+    println!("Readout time: {:.2} us ({:.2} ms)", time_us, time_us / 1000.0);
+
+    // Should be positive and reasonable (< 1 second)
+    assert!(
+        time_us > 0.0 && time_us < 1_000_000.0,
+        "Readout time {} us is out of expected range",
+        time_us
+    );
+}
+
+/// Test 34: Get pixel size
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_pixel_size() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let (pix_w, pix_h) = camera
+        .get_pixel_size_nm()
+        .await
+        .expect("Failed to get pixel size");
+
+    println!("Pixel size: {} x {} nm ({:.2} x {:.2} um)",
+             pix_w, pix_h, pix_w as f64 / 1000.0, pix_h as f64 / 1000.0);
+
+    // Prime BSI has 6.5um pixels
+    // Reasonable range: 1um - 100um (1000nm - 100000nm)
+    assert!(
+        pix_w >= 1000 && pix_w <= 100000,
+        "Pixel width {} nm is out of expected range",
+        pix_w
+    );
+    assert!(
+        pix_h >= 1000 && pix_h <= 100000,
+        "Pixel height {} nm is out of expected range",
+        pix_h
+    );
+}
+
+/// Test 35: Get gain name
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_gain_name() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let name = camera
+        .get_gain_name()
+        .await
+        .expect("Failed to get gain name");
+
+    println!("Current gain mode: {}", name);
+
+    // Should be non-empty
+    assert!(!name.is_empty(), "Gain name should not be empty");
+}
+
+/// Test 36: Get speed table name
+/// Note: PARAM_SPDTAB_NAME may not be available on all cameras
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_speed_name() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    match camera.get_speed_name().await {
+        Ok(name) => {
+            println!("Current speed mode: {}", name);
+            // Should be non-empty if available
+            assert!(!name.is_empty(), "Speed name should not be empty");
+        }
+        Err(e) => {
+            // PARAM_SPDTAB_NAME not available on this camera - that's OK
+            println!("Speed name not available: {} (this is OK for some cameras)", e);
+        }
+    }
+}
+
+/// Test 37: Get gain index
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_gain_index() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let idx = camera
+        .get_gain_index()
+        .await
+        .expect("Failed to get gain index");
+
+    println!("Current gain index: {}", idx);
+
+    // Index should be reasonable (typically 0-10)
+    assert!(idx < 100, "Gain index {} seems too high", idx);
+}
+
+/// Test 38: Get speed table index
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_speed_index() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let idx = camera
+        .get_speed_index()
+        .await
+        .expect("Failed to get speed index");
+
+    println!("Current speed table index: {}", idx);
+
+    // Index should be reasonable (typically 0-10)
+    assert!(idx < 100, "Speed index {} seems too high", idx);
+}
+
+/// Test 39: Get comprehensive camera info
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_camera_info() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let info = camera
+        .get_camera_info()
+        .await
+        .expect("Failed to get camera info");
+
+    println!("=== Camera Information ===");
+    println!("Chip name:      {}", info.chip_name);
+    println!("Temperature:    {:.2}°C", info.temperature_c);
+    println!("Bit depth:      {}", info.bit_depth);
+    println!("Readout time:   {:.2} us", info.readout_time_us);
+    println!("Pixel size:     {} x {} nm", info.pixel_size_nm.0, info.pixel_size_nm.1);
+    println!("Sensor size:    {} x {} pixels", info.sensor_size.0, info.sensor_size.1);
+    println!("Gain mode:      {}", info.gain_name);
+    println!("Speed mode:     {}", info.speed_name);
+
+    // Verify sensor size matches expected (Prime BSI = 2048x2048)
+    assert_eq!(info.sensor_size.0, expected_width(), "Unexpected sensor width");
+    assert_eq!(info.sensor_size.1, expected_height(), "Unexpected sensor height");
+}
+
+// =============================================================================
+// Tests 40-45: Gain and Speed Table Selection
+// =============================================================================
+
+/// Test 40: List available gain modes
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_list_gain_modes() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let modes = camera
+        .list_gain_modes()
+        .await
+        .expect("Failed to list gain modes");
+
+    println!("=== Available Gain Modes ===");
+    for mode in &modes {
+        println!("  Index {}: {}", mode.index, mode.name);
+    }
+
+    // Verify we have at least one gain mode
+    assert!(!modes.is_empty(), "Camera should have at least one gain mode");
+
+    // Verify indices are sequential starting from 0
+    for (i, mode) in modes.iter().enumerate() {
+        assert_eq!(
+            mode.index as usize, i,
+            "Gain mode indices should be sequential"
+        );
+    }
+}
+
+/// Test 41: List available speed modes
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_list_speed_modes() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let modes = camera
+        .list_speed_modes()
+        .await
+        .expect("Failed to list speed modes");
+
+    println!("=== Available Speed Modes ===");
+    for mode in &modes {
+        println!("  Index {}: {}", mode.index, mode.name);
+    }
+
+    // Verify we have at least one speed mode
+    assert!(!modes.is_empty(), "Camera should have at least one speed mode");
+
+    // Verify indices are sequential starting from 0
+    for (i, mode) in modes.iter().enumerate() {
+        assert_eq!(
+            mode.index as usize, i,
+            "Speed mode indices should be sequential"
+        );
+    }
+}
+
+/// Test 42: Get current gain mode
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_gain() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let gain = camera.get_gain().await.expect("Failed to get gain mode");
+
+    println!("Current gain: Index {} - {}", gain.index, gain.name);
+
+    // Verify gain index is within valid range
+    let modes = camera.list_gain_modes().await.expect("Failed to list gain modes");
+    assert!(
+        (gain.index as usize) < modes.len(),
+        "Current gain index should be within available modes"
+    );
+}
+
+/// Test 43: Get current speed mode
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_get_speed() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    let speed = camera.get_speed().await.expect("Failed to get speed mode");
+
+    println!("Current speed: Index {} - {}", speed.index, speed.name);
+
+    // Verify speed index is within valid range
+    let modes = camera.list_speed_modes().await.expect("Failed to list speed modes");
+    assert!(
+        (speed.index as usize) < modes.len(),
+        "Current speed index should be within available modes"
+    );
+}
+
+/// Test 44: Set gain mode and verify
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_set_gain_index() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    // Get available gain modes
+    let modes = camera.list_gain_modes().await.expect("Failed to list gain modes");
+    assert!(!modes.is_empty(), "Need at least one gain mode to test");
+
+    // Save original gain
+    let original_gain = camera.get_gain_index().await.expect("Failed to get original gain");
+
+    println!("Original gain index: {}", original_gain);
+
+    // Test setting each available gain mode
+    for mode in &modes {
+        camera
+            .set_gain_index(mode.index)
+            .await
+            .expect(&format!("Failed to set gain index {}", mode.index));
+
+        let current = camera.get_gain_index().await.expect("Failed to read back gain");
+        assert_eq!(
+            current, mode.index,
+            "Gain index should match after setting"
+        );
+        println!("  Set gain {}: {} - OK", mode.index, mode.name);
+    }
+
+    // Restore original gain
+    camera
+        .set_gain_index(original_gain)
+        .await
+        .expect("Failed to restore original gain");
+    println!("Restored original gain index: {}", original_gain);
+}
+
+/// Test 45: Set speed mode and verify
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_set_speed_index() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    // Get available speed modes
+    let modes = camera.list_speed_modes().await.expect("Failed to list speed modes");
+    assert!(!modes.is_empty(), "Need at least one speed mode to test");
+
+    // Save original speed
+    let original_speed = camera.get_speed_index().await.expect("Failed to get original speed");
+
+    println!("Original speed index: {}", original_speed);
+
+    // Test setting each available speed mode
+    for mode in &modes {
+        camera
+            .set_speed_index(mode.index)
+            .await
+            .expect(&format!("Failed to set speed index {}", mode.index));
+
+        let current = camera.get_speed_index().await.expect("Failed to read back speed");
+        assert_eq!(
+            current, mode.index,
+            "Speed index should match after setting"
+        );
+        println!("  Set speed {}: {} - OK", mode.index, mode.name);
+    }
+
+    // Restore original speed
+    camera
+        .set_speed_index(original_speed)
+        .await
+        .expect("Failed to restore original speed");
+    println!("Restored original speed index: {}", original_speed);
 }

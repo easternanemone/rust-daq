@@ -10,8 +10,17 @@
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 // Manual constant definitions for enums that bindgen didn't export as consts
+// Parameter attribute constants (from PL_PARAM_ATTRIBUTES enum)
 #[cfg(feature = "pvcam-sdk")]
 pub const ATTR_CURRENT: i16 = 0;
+#[cfg(feature = "pvcam-sdk")]
+pub const ATTR_COUNT: i16 = 1;
+#[cfg(feature = "pvcam-sdk")]
+pub const ATTR_TYPE: i16 = 2;
+#[cfg(feature = "pvcam-sdk")]
+pub const ATTR_MIN: i16 = 3;
+#[cfg(feature = "pvcam-sdk")]
+pub const ATTR_MAX: i16 = 4;
 #[cfg(feature = "pvcam-sdk")]
 pub const TIMED_MODE: i16 = 0;
 #[cfg(feature = "pvcam-sdk")]
