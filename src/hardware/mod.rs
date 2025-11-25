@@ -55,6 +55,7 @@
 pub mod adapter;
 pub mod capabilities;
 pub mod mock;
+pub mod registry;
 
 // Mock serial port for testing (always available)
 pub mod mock_serial;

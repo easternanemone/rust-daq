@@ -151,3 +151,468 @@ message DaemonInfoResponse {
   repeated string available_hardware = 3; // e.g., ["Stage", "Camera"]
   uint64 uptime_seconds = 4;
 }
+
+// =============================================================================
+// HardwareService - Direct device control (bd-4x6q)
+// =============================================================================
+
+service HardwareService {
+  // Discovery and introspection
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDeviceState(DeviceStateRequest) returns (DeviceStateResponse);
+
+  // Motion Control (for Movable devices)
+  rpc MoveAbsolute(MoveRequest) returns (MoveResponse);
+  rpc MoveRelative(MoveRequest) returns (MoveResponse);
+  rpc StopMotion(StopMotionRequest) returns (StopMotionResponse);
+  rpc WaitSettled(WaitSettledRequest) returns (WaitSettledResponse);
+  rpc StreamPosition(StreamPositionRequest) returns (stream PositionUpdate);
+
+  // Scalar Readout (for Readable devices)
+  rpc ReadValue(ReadValueRequest) returns (ReadValueResponse);
+  rpc StreamValues(StreamValuesRequest) returns (stream ValueUpdate);
+
+  // Trigger Control (for Triggerable devices)
+  rpc Arm(ArmRequest) returns (ArmResponse);
+  rpc Trigger(TriggerRequest) returns (TriggerResponse);
+
+  // Camera/Exposure Control (for ExposureControl devices)
+  rpc SetExposure(SetExposureRequest) returns (SetExposureResponse);
+  rpc GetExposure(GetExposureRequest) returns (GetExposureResponse);
+
+  // Frame Streaming (for FrameProducer devices)
+  rpc StartStream(StartStreamRequest) returns (StartStreamResponse);
+  rpc StopStream(StopStreamRequest) returns (StopStreamResponse);
+  rpc StreamFrames(StreamFramesRequest) returns (stream FrameData);
+}
+
+// --------------------------------------------------------------------------
+// Device Discovery Messages
+// --------------------------------------------------------------------------
+
+message ListDevicesRequest {
+  // Optional filter by capability
+  optional string capability_filter = 1; // "movable", "readable", "triggerable", etc.
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+// Complete device information including capabilities
+message DeviceInfo {
+  string id = 1;
+  string name = 2;
+  string driver_type = 3;  // "ell14", "esp300", "pvcam", "mock_stage", etc.
+
+  // Capabilities as flags
+  bool is_movable = 10;
+  bool is_readable = 11;
+  bool is_triggerable = 12;
+  bool is_frame_producer = 13;
+  bool is_exposure_controllable = 14;
+
+  // Device-specific metadata
+  DeviceMetadata metadata = 20;
+}
+
+message DeviceMetadata {
+  // Position units and limits (for Movable devices)
+  optional string position_units = 1;
+  optional double min_position = 2;
+  optional double max_position = 3;
+
+  // Reading units (for Readable devices)
+  optional string reading_units = 4;
+
+  // Frame info (for FrameProducer devices)
+  optional uint32 frame_width = 10;
+  optional uint32 frame_height = 11;
+  optional uint32 bits_per_pixel = 12;
+
+  // Exposure limits (for ExposureControl devices)
+  optional double min_exposure_ms = 20;
+  optional double max_exposure_ms = 21;
+}
+
+message DeviceStateRequest {
+  string device_id = 1;
+}
+
+message DeviceStateResponse {
+  string device_id = 1;
+  bool online = 2;
+
+  // Current values (populated based on capabilities)
+  optional double position = 10;        // For Movable
+  optional double last_reading = 11;    // For Readable
+  optional bool armed = 12;             // For Triggerable
+  optional bool streaming = 13;         // For FrameProducer
+  optional double exposure_ms = 14;     // For ExposureControl
+}
+
+// --------------------------------------------------------------------------
+// Motion Control Messages
+// --------------------------------------------------------------------------
+
+message MoveRequest {
+  string device_id = 1;
+  double value = 2;  // Target position (absolute) or distance (relative)
+}
+
+message MoveResponse {
+  bool success = 1;
+  string error_message = 2;
+  double final_position = 3;  // Actual position after move
+}
+
+message StopMotionRequest {
+  string device_id = 1;
+}
+
+message StopMotionResponse {
+  bool success = 1;
+  double stopped_position = 2;
+}
+
+message WaitSettledRequest {
+  string device_id = 1;
+  optional uint32 timeout_ms = 2;  // Optional timeout
+}
+
+message WaitSettledResponse {
+  bool success = 1;
+  bool settled = 2;
+  double position = 3;
+}
+
+message StreamPositionRequest {
+  string device_id = 1;
+  uint32 rate_hz = 2;  // Desired update rate
+}
+
+message PositionUpdate {
+  string device_id = 1;
+  double position = 2;
+  uint64 timestamp_ns = 3;
+  bool is_moving = 4;
+}
+
+// --------------------------------------------------------------------------
+// Scalar Readout Messages
+// --------------------------------------------------------------------------
+
+message ReadValueRequest {
+  string device_id = 1;
+}
+
+message ReadValueResponse {
+  bool success = 1;
+  string error_message = 2;
+  double value = 3;
+  string units = 4;
+  uint64 timestamp_ns = 5;
+}
+
+message StreamValuesRequest {
+  string device_id = 1;
+  uint32 rate_hz = 2;  // Desired sample rate
+}
+
+message ValueUpdate {
+  string device_id = 1;
+  double value = 2;
+  string units = 3;
+  uint64 timestamp_ns = 4;
+}
+
+// --------------------------------------------------------------------------
+// Trigger Control Messages
+// --------------------------------------------------------------------------
+
+message ArmRequest {
+  string device_id = 1;
+}
+
+message ArmResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool armed = 3;
+}
+
+message TriggerRequest {
+  string device_id = 1;
+}
+
+message TriggerResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 trigger_timestamp_ns = 3;
+}
+
+// --------------------------------------------------------------------------
+// Exposure Control Messages
+// --------------------------------------------------------------------------
+
+message SetExposureRequest {
+  string device_id = 1;
+  double exposure_ms = 2;
+}
+
+message SetExposureResponse {
+  bool success = 1;
+  string error_message = 2;
+  double actual_exposure_ms = 3;  // May differ from requested
+}
+
+message GetExposureRequest {
+  string device_id = 1;
+}
+
+message GetExposureResponse {
+  double exposure_ms = 1;
+}
+
+// --------------------------------------------------------------------------
+// Frame Streaming Messages
+// --------------------------------------------------------------------------
+
+message StartStreamRequest {
+  string device_id = 1;
+  optional uint32 frame_count = 2;  // 0 or omitted = continuous
+}
+
+message StartStreamResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message StopStreamRequest {
+  string device_id = 1;
+}
+
+message StopStreamResponse {
+  bool success = 1;
+  uint32 frames_captured = 2;
+}
+
+message StreamFramesRequest {
+  string device_id = 1;
+  optional bool include_pixel_data = 2;  // If false, only metadata
+}
+
+message FrameData {
+  string device_id = 1;
+  uint32 frame_number = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  uint64 timestamp_ns = 5;
+
+  // Pixel data (optional, can be large)
+  bytes pixel_data = 10;
+  string pixel_format = 11;  // "u16_le", "u8", etc.
+}
+
+// =============================================================================
+// ScanService - Coordinated multi-axis scans (bd-4le6)
+// =============================================================================
+
+service ScanService {
+  // Create a new scan configuration (returns scan_id)
+  rpc CreateScan(CreateScanRequest) returns (CreateScanResponse);
+
+  // Start executing a created scan
+  rpc StartScan(StartScanRequest) returns (StartScanResponse);
+
+  // Pause scan at next safe point
+  rpc PauseScan(PauseScanRequest) returns (PauseScanResponse);
+
+  // Resume a paused scan
+  rpc ResumeScan(ResumeScanRequest) returns (ResumeScanResponse);
+
+  // Stop/abort a scan
+  rpc StopScan(StopScanRequest) returns (StopScanResponse);
+
+  // Get current scan status
+  rpc GetScanStatus(GetScanStatusRequest) returns (ScanStatus);
+
+  // List all scans
+  rpc ListScans(ListScansRequest) returns (ListScansResponse);
+
+  // Stream scan progress updates
+  rpc StreamScanProgress(StreamScanProgressRequest) returns (stream ScanProgress);
+}
+
+// --------------------------------------------------------------------------
+// Scan Configuration Messages
+// --------------------------------------------------------------------------
+
+// Scan type determines how axes are traversed
+enum ScanType {
+  SCAN_TYPE_UNSPECIFIED = 0;
+  LINE_SCAN = 1;      // Single axis scan
+  GRID_SCAN = 2;      // 2D raster scan (snake pattern)
+  SNAKE_SCAN = 3;     // Bidirectional raster (more efficient)
+  CUSTOM_SCAN = 4;    // User-defined point list
+}
+
+// Single axis configuration for scanning
+message AxisConfig {
+  string device_id = 1;         // Movable device ID
+  double start_position = 2;     // Start of scan range
+  double end_position = 3;       // End of scan range
+  uint32 num_points = 4;         // Number of points (including start and end)
+}
+
+// Complete scan configuration
+message ScanConfig {
+  // Scan axes (first axis is fastest, last is slowest)
+  repeated AxisConfig axes = 1;
+
+  // Scan pattern
+  ScanType scan_type = 2;
+
+  // Data acquisition settings
+  repeated string acquire_device_ids = 3;  // Devices to read at each point
+  uint32 triggers_per_point = 4;           // Number of triggers/readings per point
+  double dwell_time_ms = 5;                // Settle time before acquisition
+
+  // Camera settings (optional)
+  optional string camera_device_id = 10;   // Camera for triggered acquisition
+  optional bool arm_camera = 11;           // Auto-arm camera at scan start
+
+  // Optional metadata
+  string name = 20;                        // User-friendly scan name
+  map<string, string> metadata = 21;       // Custom key-value metadata
+}
+
+// Request to create a new scan
+message CreateScanRequest {
+  ScanConfig config = 1;
+}
+
+// Response with created scan ID
+message CreateScanResponse {
+  bool success = 1;
+  string scan_id = 2;
+  string error_message = 3;
+  uint32 total_points = 4;  // Calculated total scan points
+}
+
+// --------------------------------------------------------------------------
+// Scan Control Messages
+// --------------------------------------------------------------------------
+
+message StartScanRequest {
+  string scan_id = 1;
+}
+
+message StartScanResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 start_time_ns = 3;
+}
+
+message PauseScanRequest {
+  string scan_id = 1;
+}
+
+message PauseScanResponse {
+  bool success = 1;
+  uint32 paused_at_point = 2;
+}
+
+message ResumeScanRequest {
+  string scan_id = 1;
+}
+
+message ResumeScanResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message StopScanRequest {
+  string scan_id = 1;
+  bool emergency_stop = 2;  // If true, stop motion immediately
+}
+
+message StopScanResponse {
+  bool success = 1;
+  uint32 points_completed = 2;
+  string error_message = 3;
+}
+
+// --------------------------------------------------------------------------
+// Scan Status Messages
+// --------------------------------------------------------------------------
+
+// Scan execution state
+enum ScanState {
+  SCAN_STATE_UNSPECIFIED = 0;
+  SCAN_CREATED = 1;      // Config validated, ready to start
+  SCAN_RUNNING = 2;      // Actively executing
+  SCAN_PAUSED = 3;       // Paused at safe point
+  SCAN_COMPLETED = 4;    // All points acquired
+  SCAN_STOPPED = 5;      // Stopped by user
+  SCAN_ERROR = 6;        // Error during execution
+}
+
+message GetScanStatusRequest {
+  string scan_id = 1;
+}
+
+message ScanStatus {
+  string scan_id = 1;
+  ScanState state = 2;
+  uint32 current_point = 3;
+  uint32 total_points = 4;
+  double progress_percent = 5;
+
+  // Timing
+  uint64 start_time_ns = 10;
+  uint64 elapsed_time_ns = 11;
+  optional uint64 estimated_remaining_ns = 12;
+
+  // Error info (if state == SCAN_ERROR)
+  string error_message = 20;
+}
+
+message ListScansRequest {
+  optional ScanState state_filter = 1;  // Filter by state
+}
+
+message ListScansResponse {
+  repeated ScanStatus scans = 1;
+}
+
+// --------------------------------------------------------------------------
+// Scan Progress Streaming
+// --------------------------------------------------------------------------
+
+message StreamScanProgressRequest {
+  string scan_id = 1;
+  bool include_data = 2;  // If true, include acquired data in updates
+}
+
+// Progress update sent during scan execution
+message ScanProgress {
+  string scan_id = 1;
+  ScanState state = 2;
+  uint32 point_index = 3;
+  uint32 total_points = 4;
+  uint64 timestamp_ns = 5;
+
+  // Current axis positions
+  map<string, double> axis_positions = 10;
+
+  // Acquired data at this point (if include_data=true)
+  repeated ScanDataPoint data_points = 11;
+}
+
+// Data acquired at a single scan point
+message ScanDataPoint {
+  string device_id = 1;
+  double value = 2;
+  uint64 timestamp_ns = 3;
+  uint32 trigger_index = 4;  // Which trigger within the point (0 to triggers_per_point-1)
+}

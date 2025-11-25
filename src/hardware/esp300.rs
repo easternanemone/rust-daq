@@ -217,6 +217,11 @@ impl Movable for Esp300Driver {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+
+    async fn stop(&self) -> Result<()> {
+        // ST command: Stop motion on this axis
+        self.send_command(&format!("{}ST", self.axis)).await
+    }
 }
 
 #[cfg(test)]

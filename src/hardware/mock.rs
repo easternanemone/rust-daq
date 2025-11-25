@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
-use crate::hardware::capabilities::{FrameProducer, Movable, Triggerable};
+use crate::hardware::capabilities::{FrameProducer, Movable, Readable, Triggerable};
 
 // =============================================================================
 // MockStage - Simulated Motion Stage
@@ -49,6 +49,17 @@ impl MockStage {
     pub fn new() -> Self {
         Self {
             position: Arc::new(RwLock::new(0.0)),
+            speed_mm_per_sec: 10.0, // 10mm/sec
+        }
+    }
+
+    /// Create new mock stage at specified initial position
+    ///
+    /// # Arguments
+    /// * `initial_position` - Starting position in mm
+    pub fn with_position(initial_position: f64) -> Self {
+        Self {
+            position: Arc::new(RwLock::new(initial_position)),
             speed_mm_per_sec: 10.0, // 10mm/sec
         }
     }
@@ -201,6 +212,10 @@ impl Triggerable for MockCamera {
         println!("MockCamera: Frame #{} readout complete", *count);
         Ok(())
     }
+
+    async fn is_armed(&self) -> Result<bool> {
+        Ok(*self.armed.read().await)
+    }
 }
 
 #[async_trait]
@@ -230,6 +245,78 @@ impl FrameProducer for MockCamera {
 
     fn resolution(&self) -> (u32, u32) {
         self.resolution
+    }
+
+    async fn is_streaming(&self) -> Result<bool> {
+        Ok(*self.streaming.read().await)
+    }
+}
+
+// =============================================================================
+// MockPowerMeter - Simulated Power Meter
+// =============================================================================
+
+/// Mock power meter with simulated readings
+///
+/// Simulates a power meter with:
+/// - Configurable base power value
+/// - Small random noise simulation
+/// - Units in Watts
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let meter = MockPowerMeter::new(2.5);
+/// let reading = meter.read().await?;
+/// assert!((reading - 2.5).abs() < 0.1);
+/// ```
+pub struct MockPowerMeter {
+    base_power: Arc<RwLock<f64>>,
+}
+
+impl MockPowerMeter {
+    /// Create new mock power meter with specified base power (Watts)
+    ///
+    /// # Arguments
+    /// * `base_power` - Base power reading in Watts
+    pub fn new(base_power: f64) -> Self {
+        Self {
+            base_power: Arc::new(RwLock::new(base_power)),
+        }
+    }
+
+    /// Set the base power reading
+    pub async fn set_base_power(&self, power: f64) {
+        *self.base_power.write().await = power;
+    }
+
+    /// Get the current base power setting
+    pub async fn get_base_power(&self) -> f64 {
+        *self.base_power.read().await
+    }
+}
+
+impl Default for MockPowerMeter {
+    fn default() -> Self {
+        Self::new(1.0)
+    }
+}
+
+#[async_trait]
+impl Readable for MockPowerMeter {
+    async fn read(&self) -> Result<f64> {
+        let base = *self.base_power.read().await;
+
+        // Add small noise (~1% variation) for realism
+        // Use simple deterministic noise based on time
+        let noise_factor = 1.0 + (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() % 200) as f64 / 10000.0 - 0.01;
+
+        let reading = base * noise_factor;
+        println!("MockPowerMeter: Read {:.6}W", reading);
+        Ok(reading)
     }
 }
 
@@ -349,5 +436,37 @@ mod tests {
         camera.arm().await.unwrap();
 
         assert!(camera.is_armed().await);
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_read() {
+        let meter = MockPowerMeter::new(2.5);
+
+        // Read should return approximately the base value
+        let reading = meter.read().await.unwrap();
+        assert!(reading > 2.4 && reading < 2.6, "Reading {} not in expected range", reading);
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_set_power() {
+        let meter = MockPowerMeter::new(1.0);
+
+        // Initial reading around 1.0
+        let reading1 = meter.read().await.unwrap();
+        assert!(reading1 > 0.9 && reading1 < 1.1);
+
+        // Change base power
+        meter.set_base_power(5.0).await;
+        assert_eq!(meter.get_base_power().await, 5.0);
+
+        // Reading should now be around 5.0
+        let reading2 = meter.read().await.unwrap();
+        assert!(reading2 > 4.9 && reading2 < 5.1, "Reading {} not in expected range", reading2);
+    }
+
+    #[tokio::test]
+    async fn test_mock_power_meter_default() {
+        let meter = MockPowerMeter::default();
+        assert_eq!(meter.get_base_power().await, 1.0);
     }
 }

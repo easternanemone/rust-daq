@@ -133,6 +133,21 @@ pub trait Movable: Send + Sync {
     /// - Ok(()) when settled
     /// - Err on timeout or hardware error
     async fn wait_settled(&self) -> Result<()>;
+
+    /// Stop motion immediately
+    ///
+    /// Issues an emergency stop command to halt motion in progress.
+    /// Not all devices support this - check capability before calling.
+    ///
+    /// # Returns
+    /// - Ok(()) if stop command issued successfully
+    /// - Err if device doesn't support stop or hardware error
+    ///
+    /// # Default Implementation
+    /// Returns an error indicating stop is not supported.
+    async fn stop(&self) -> Result<()> {
+        anyhow::bail!("Stop not supported by this device")
+    }
 }
 
 /// Capability: External Triggering
@@ -164,6 +179,19 @@ pub trait Triggerable: Send + Sync {
     /// - Ok(()) if trigger accepted
     /// - Err if not armed or hardware error
     async fn trigger(&self) -> Result<()>;
+
+    /// Check if device is currently armed
+    ///
+    /// # Returns
+    /// - Ok(true) if device is armed and ready for trigger
+    /// - Ok(false) if device is not armed
+    /// - Err if state cannot be determined or not supported
+    ///
+    /// # Default Implementation
+    /// Returns an error indicating state query is not supported.
+    async fn is_armed(&self) -> Result<bool> {
+        anyhow::bail!("Armed state query not supported by this device")
+    }
 }
 
 /// Capability: Exposure Time Control
@@ -200,12 +228,12 @@ pub trait ExposureControl: Send + Sync {
 /// # Contract
 /// - `start_stream()` begins continuous acquisition
 /// - `stop_stream()` halts acquisition
-/// - Frames are delivered via separate channel (not returned from these methods)
+/// - Frames are delivered via `take_frame_receiver()` channel
 /// - `resolution()` is immutable (cannot be changed via this trait)
 ///
-/// # Design Note
-/// Frame data is NOT returned from these methods. Instead, devices should
-/// broadcast frames via tokio channels. This trait only controls the stream.
+/// # Frame Delivery
+/// Call `take_frame_receiver()` BEFORE `start_stream()` to get the channel
+/// that will receive Frame objects during streaming.
 #[async_trait]
 pub trait FrameProducer: Send + Sync {
     /// Start continuous frame acquisition
@@ -227,6 +255,34 @@ pub trait FrameProducer: Send + Sync {
     /// Returns sensor resolution in pixels.
     /// This is immutable - use separate ROI trait for cropping.
     fn resolution(&self) -> (u32, u32);
+
+    /// Take the frame receiver for consuming streamed frames
+    ///
+    /// This can only be called once - subsequent calls return None.
+    /// Call this BEFORE `start_stream()` to receive frames.
+    ///
+    /// # Returns
+    /// - Some(receiver) if receiver is available
+    /// - None if receiver was already taken or not supported by this device
+    async fn take_frame_receiver(
+        &self,
+    ) -> Option<tokio::sync::mpsc::Receiver<crate::hardware::Frame>> {
+        // Default: no frame receiver support
+        None
+    }
+
+    /// Check if device is currently streaming frames
+    ///
+    /// # Returns
+    /// - Ok(true) if actively streaming
+    /// - Ok(false) if not streaming
+    /// - Err if state cannot be determined or not supported
+    ///
+    /// # Default Implementation
+    /// Returns an error indicating state query is not supported.
+    async fn is_streaming(&self) -> Result<bool> {
+        anyhow::bail!("Streaming state query not supported by this device")
+    }
 }
 
 /// Capability: Scalar Readout

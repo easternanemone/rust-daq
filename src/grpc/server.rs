@@ -7,7 +7,6 @@ use crate::grpc::proto::{
 };
 use crate::core::Measurement;
 use crate::scripting::ScriptHost;
-use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -565,11 +564,11 @@ impl ControlService for DaqServer {
     }
 }
 
-/// Start the DAQ gRPC server
+/// Start the DAQ gRPC server (script control only)
 pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let server = DaqServer::new();
 
-    println!("🌐 DAQ gRPC server listening on {}", addr);
+    println!("DAQ gRPC server listening on {}", addr);
 
     Server::builder()
         .add_service(ControlServiceServer::new(server))
@@ -579,9 +578,58 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Start the DAQ gRPC server with hardware control (bd-4x6q)
+///
+/// This version includes both the ControlService for script management
+/// and the HardwareService for direct device control.
+///
+/// # Arguments
+/// * `addr` - Socket address to listen on
+/// * `registry` - Device registry for hardware access
+///
+/// # Example
+/// ```ignore
+/// use rust_daq::grpc::start_server_with_hardware;
+/// use rust_daq::hardware::registry::create_mock_registry;
+/// use std::sync::Arc;
+/// use tokio::sync::RwLock;
+///
+/// let registry = create_mock_registry().await?;
+/// let addr = "127.0.0.1:50051".parse()?;
+/// start_server_with_hardware(addr, Arc::new(RwLock::new(registry))).await?;
+/// ```
+pub async fn start_server_with_hardware(
+    addr: std::net::SocketAddr,
+    registry: std::sync::Arc<tokio::sync::RwLock<crate::hardware::registry::DeviceRegistry>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::grpc::hardware_service::HardwareServiceImpl;
+    use crate::grpc::proto::hardware_service_server::HardwareServiceServer;
+    use crate::grpc::proto::scan_service_server::ScanServiceServer;
+    use crate::grpc::scan_service::ScanServiceImpl;
+
+    let control_server = DaqServer::new();
+    let hardware_server = HardwareServiceImpl::new(registry.clone());
+    let scan_server = ScanServiceImpl::new(registry);
+
+    println!("DAQ gRPC server (with hardware) listening on {}", addr);
+    println!("  - ControlService: script management");
+    println!("  - HardwareService: direct device control");
+    println!("  - ScanService: coordinated multi-axis scans");
+
+    Server::builder()
+        .add_service(ControlServiceServer::new(control_server))
+        .add_service(HardwareServiceServer::new(hardware_server))
+        .add_service(ScanServiceServer::new(scan_server))
+        .serve(addr)
+        .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn test_upload_valid_script() {

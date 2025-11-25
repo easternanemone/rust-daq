@@ -4,8 +4,10 @@
 
 #[cfg(feature = "networking")]
 mod streaming_tests {
-    use rust_daq::grpc::proto::{DataPoint, MeasurementRequest};
-    use rust_daq::grpc::DaqServer;
+    use chrono::Utc;
+    use rust_daq::core::Measurement;
+    use rust_daq::grpc::proto::MeasurementRequest;
+    use rust_daq::grpc::{ControlService, DaqServer};
     use tokio_stream::StreamExt;
     use tonic::Request;
 
@@ -29,10 +31,11 @@ mod streaming_tests {
         // Simulate hardware sending data
         tokio::spawn(async move {
             for i in 0..3 {
-                let _ = data_sender.send(rust_daq::grpc::server::DataPoint {
-                    channel: "test_channel".to_string(),
+                let _ = data_sender.send(Measurement::Scalar {
+                    name: "test_channel".to_string(),
                     value: i as f64 * 10.0,
-                    timestamp_ns: i * 1_000_000,
+                    unit: "V".to_string(),
+                    timestamp: Utc::now(),
                 });
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -73,10 +76,11 @@ mod streaming_tests {
         tokio::spawn(async move {
             let channels = vec!["temperature", "pressure", "temperature", "voltage"];
             for (i, &channel) in channels.iter().enumerate() {
-                let _ = data_sender.send(rust_daq::grpc::server::DataPoint {
-                    channel: channel.to_string(),
+                let _ = data_sender.send(Measurement::Scalar {
+                    name: channel.to_string(),
                     value: i as f64,
-                    timestamp_ns: i as u64 * 1000,
+                    unit: "V".to_string(),
+                    timestamp: Utc::now(),
                 });
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
@@ -124,10 +128,11 @@ mod streaming_tests {
         // Send test data
         tokio::spawn(async move {
             for i in 0..3 {
-                let _ = data_sender.send(rust_daq::grpc::server::DataPoint {
-                    channel: "shared".to_string(),
+                let _ = data_sender.send(Measurement::Scalar {
+                    name: "shared".to_string(),
                     value: i as f64 * 100.0,
-                    timestamp_ns: i * 1000,
+                    unit: "V".to_string(),
+                    timestamp: Utc::now(),
                 });
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }

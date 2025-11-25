@@ -45,30 +45,35 @@ async fn test_grpc_start_script_not_found() {
     let server = DaqServer::new();
     let request = Request::new(StartRequest {
         script_id: "nonexistent_id".to_string(),
+        parameters: HashMap::new(),
     });
 
-    let response = server.start_script(request).await.unwrap();
-    let resp = response.into_inner();
+    let response = server.start_script(request).await;
 
-    assert!(!resp.success, "Starting nonexistent script should fail");
+    // Server returns NotFound status for nonexistent scripts
+    assert!(response.is_err(), "Starting nonexistent script should fail");
+    let err = response.unwrap_err();
+    assert_eq!(err.code(), tonic::Code::NotFound);
     assert!(
-        resp.error_message.contains("not found")
-            || resp.error_message.contains("Script not found"),
-        "Error message should mention script not found: {}",
-        resp.error_message
+        err.message().contains("not found") || err.message().contains("Not found"),
+        "Error message should mention not found: {}",
+        err.message()
     );
 }
 
 #[tokio::test]
-async fn test_grpc_status_no_script() {
+async fn test_grpc_status_no_execution() {
     let server = DaqServer::new();
-    let request = Request::new(StatusRequest {});
+    let request = Request::new(StatusRequest {
+        execution_id: "nonexistent_execution".to_string(),
+    });
 
-    let response = server.get_status(request).await.unwrap();
-    let status = response.into_inner();
+    let response = server.get_script_status(request).await;
 
-    assert!(!status.is_running, "Should not be running initially");
-    assert!(status.current_script.is_none(), "Should have no script");
+    // Server returns NotFound status for nonexistent executions
+    assert!(response.is_err(), "Status for nonexistent execution should fail");
+    let err = response.unwrap_err();
+    assert_eq!(err.code(), tonic::Code::NotFound);
 }
 
 #[tokio::test]
@@ -90,18 +95,27 @@ async fn test_grpc_full_workflow() {
     // Start script
     let start_request = Request::new(StartRequest {
         script_id: script_id.clone(),
+        parameters: HashMap::new(),
     });
 
     let start_response = server.start_script(start_request).await.unwrap();
-    assert!(start_response.into_inner().success);
+    let start_resp = start_response.into_inner();
+    assert!(start_resp.started, "Script should start successfully");
+    let execution_id = start_resp.execution_id;
 
     // Check status
-    let status_request = Request::new(StatusRequest {});
-    let status_response = server.get_status(status_request).await.unwrap();
+    let status_request = Request::new(StatusRequest {
+        execution_id: execution_id.clone(),
+    });
+    let status_response = server.get_script_status(status_request).await.unwrap();
     let status = status_response.into_inner();
 
-    assert!(status.is_running || !status.is_running); // Script may have already finished
-    if let Some(current) = status.current_script {
-        assert_eq!(current, script_id);
-    }
+    // Script may be running or completed
+    assert!(
+        status.state == "RUNNING" || status.state == "COMPLETED" || status.state == "PENDING",
+        "Script state should be valid: {}",
+        status.state
+    );
+    assert_eq!(status.execution_id, execution_id, "Execution ID should match");
+    assert_eq!(status.script_id, script_id, "Script ID should match");
 }
