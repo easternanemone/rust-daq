@@ -397,7 +397,9 @@ impl ScanServiceImpl {
                 }
             }
 
-            // Send progress update
+            // Send progress update with backpressure handling (bd-6qaj)
+            // Use try_send to avoid blocking if client is slow; drop updates rather than
+            // accumulating spawned tasks or erroring the scan.
             let progress = ScanProgress {
                 scan_id: scan_id.clone(),
                 state: ScanState::ScanRunning.into(),
@@ -410,23 +412,26 @@ impl ScanServiceImpl {
                 axis_positions: axis_positions_map,
                 data_points,
             };
-            let scans_clone = scans.clone();
-            let scan_id_clone = scan_id.clone();
-            let progress_tx = progress_tx.clone();
 
-            // Send progress without blocking the scan loop; handle channel closure explicitly.
-            tokio::spawn(async move {
-                if let Err(e) = progress_tx.send(progress).await {
-                    warn!("Progress channel closed for {}: {}", scan_id_clone, e);
-                    // Transition scan to error to surface failure to clients.
-                    Self::set_scan_error(
-                        &scans_clone,
-                        &scan_id_clone,
-                        "Progress channel closed".to_string(),
-                    )
-                    .await;
+            match progress_tx.try_send(progress) {
+                Ok(()) => {} // Progress sent successfully
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Channel full - client is slow, drop this update
+                    // Client can use GetScanStatus to poll current state
+                    warn!(
+                        "Progress channel full for {} at point {}/{}, dropping update",
+                        scan_id, point_idx, total_points
+                    );
                 }
-            });
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Channel closed - client disconnected, but don't fail the scan
+                    // The scan should continue to completion even without a listener
+                    warn!(
+                        "Progress channel closed for {} at point {}/{}, continuing scan",
+                        scan_id, point_idx, total_points
+                    );
+                }
+            }
 
             // Update current point
             {
@@ -791,5 +796,75 @@ mod tests {
         assert_eq!(points[0], vec![0.0]);
         assert_eq!(points[1], vec![1.0]);
         assert_eq!(points[2], vec![2.0]);
+    }
+
+    /// Test backpressure handling for progress channel (bd-6qaj)
+    ///
+    /// Verifies that try_send correctly handles:
+    /// 1. Channel full - returns TrySendError::Full
+    /// 2. Channel closed - returns TrySendError::Closed
+    #[tokio::test]
+    async fn test_progress_channel_backpressure() {
+        // Create a tiny channel to easily trigger backpressure
+        let (tx, mut rx) = mpsc::channel::<ScanProgress>(2);
+
+        // Fill the channel
+        let progress1 = ScanProgress {
+            scan_id: "test-1".to_string(),
+            point_index: 0,
+            total_points: 10,
+            ..Default::default()
+        };
+        let progress2 = ScanProgress {
+            scan_id: "test-1".to_string(),
+            point_index: 1,
+            total_points: 10,
+            ..Default::default()
+        };
+        let progress3 = ScanProgress {
+            scan_id: "test-1".to_string(),
+            point_index: 2,
+            total_points: 10,
+            ..Default::default()
+        };
+
+        // First two sends should succeed
+        assert!(tx.try_send(progress1).is_ok());
+        assert!(tx.try_send(progress2).is_ok());
+
+        // Third send should fail with Full (channel capacity is 2)
+        match tx.try_send(progress3) {
+            Err(mpsc::error::TrySendError::Full(_)) => {} // Expected
+            Ok(_) => panic!("Expected channel to be full"),
+            Err(e) => panic!("Expected Full error, got {:?}", e),
+        }
+
+        // Drain one message
+        let _ = rx.recv().await;
+
+        // Now send should succeed again
+        let progress4 = ScanProgress {
+            scan_id: "test-1".to_string(),
+            point_index: 3,
+            total_points: 10,
+            ..Default::default()
+        };
+        assert!(tx.try_send(progress4).is_ok());
+
+        // Close the receiver
+        drop(rx);
+
+        // Send should fail with Closed
+        let progress5 = ScanProgress {
+            scan_id: "test-1".to_string(),
+            point_index: 4,
+            total_points: 10,
+            ..Default::default()
+        };
+        match tx.try_send(progress5) {
+            Err(mpsc::error::TrySendError::Closed(_)) => {} // Expected
+            Ok(_) => panic!("Expected channel to be closed"),
+            Err(e) => panic!("Expected Closed error, got {:?}", e),
+        }
     }
 }
