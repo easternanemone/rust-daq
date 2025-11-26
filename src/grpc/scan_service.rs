@@ -548,6 +548,9 @@ impl ScanService for ScanServiceImpl {
         let stop_requested = scan.stop_requested.clone();
         let progress_tx = scan.progress_tx.clone();
 
+        // Release first lock before spawning to avoid deadlock
+        drop(scans_guard);
+
         // Spawn background task
         let handle = tokio::spawn(Self::run_scan(
             registry,
@@ -559,7 +562,7 @@ impl ScanService for ScanServiceImpl {
             progress_tx,
         ));
 
-        // Store handle
+        // Store handle (safe to lock now since we dropped the first guard)
         let mut scans_guard2 = self.scans.lock().await;
         if let Some(scan) = scans_guard2.get_mut(&req.scan_id) {
             scan.task_handle = Some(handle);
