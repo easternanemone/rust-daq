@@ -1711,3 +1711,118 @@ async fn test_hardware_centroids_config() {
         Err(e) => println!("Failed to set bulk config: {}", e),
     }
 }
+
+// ============================================================================
+// PrimeEnhance (Denoising) Tests
+// ============================================================================
+
+/// Test 62: Check PrimeEnhance availability and enable/disable
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_prime_enhance() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    // Check availability
+    let available = camera
+        .is_prime_enhance_available()
+        .await
+        .expect("Failed to check PrimeEnhance availability");
+    println!("PrimeEnhance available: {}", available);
+
+    if !available {
+        println!("PrimeEnhance not available on this camera");
+        return;
+    }
+
+    // Check initial state
+    let initial = camera
+        .is_prime_enhance_enabled()
+        .await
+        .expect("Failed to get initial state");
+    println!("Initial PrimeEnhance enabled: {}", initial);
+
+    // Get current parameters
+    let iterations = camera.get_prime_enhance_iterations().await.expect("Failed to get iterations");
+    let gain = camera.get_prime_enhance_gain().await.expect("Failed to get gain");
+    let offset = camera.get_prime_enhance_offset().await.expect("Failed to get offset");
+    let lambda = camera.get_prime_enhance_lambda().await.expect("Failed to get lambda");
+    println!("Current params: iterations={}, gain={}, offset={}, lambda={}", iterations, gain, offset, lambda);
+
+    // Enable PrimeEnhance
+    camera.enable_prime_enhance().await.expect("Failed to enable");
+    assert!(camera.is_prime_enhance_enabled().await.expect("Failed to check"), "Should be enabled");
+    println!("Enabled PrimeEnhance");
+
+    // Modify parameters
+    camera.set_prime_enhance_iterations(3).await.expect("Failed to set iterations");
+    let new_iterations = camera.get_prime_enhance_iterations().await.expect("Failed to get");
+    println!("Set iterations to 3, got {}", new_iterations);
+
+    // Disable PrimeEnhance
+    camera.disable_prime_enhance().await.expect("Failed to disable");
+    assert!(!camera.is_prime_enhance_enabled().await.expect("Failed to check"), "Should be disabled");
+    println!("Disabled PrimeEnhance");
+}
+
+// ============================================================================
+// Frame Rotation and Flip Tests
+// ============================================================================
+
+/// Test 63: Frame rotation and flip
+#[tokio::test]
+#[cfg_attr(not(feature = "hardware_tests"), ignore)]
+async fn test_hardware_frame_processing() {
+    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+
+    // Check rotation availability
+    let rot_available = camera
+        .is_frame_rotation_available()
+        .await
+        .expect("Failed to check rotation availability");
+    println!("Frame rotation available: {}", rot_available);
+
+    if rot_available {
+        let current_rot = camera.get_frame_rotation().await.expect("Failed to get rotation");
+        println!("Current rotation: {} degrees", current_rot);
+
+        // Test setting rotation
+        for degrees in [0u16, 90, 180, 270] {
+            match camera.set_frame_rotation(degrees).await {
+                Ok(()) => {
+                    let actual = camera.get_frame_rotation().await.expect("Failed to get");
+                    println!("Set rotation to {}, got {} degrees", degrees, actual);
+                }
+                Err(e) => println!("Failed to set rotation {}: {}", degrees, e),
+            }
+        }
+
+        // Restore original
+        let _ = camera.set_frame_rotation(current_rot).await;
+    }
+
+    // Check flip availability
+    let flip_available = camera
+        .is_frame_flip_available()
+        .await
+        .expect("Failed to check flip availability");
+    println!("Frame flip available: {}", flip_available);
+
+    if flip_available {
+        let current_flip = camera.get_frame_flip().await.expect("Failed to get flip");
+        println!("Current flip mode: {} (0=none, 1=horiz, 2=vert, 3=both)", current_flip);
+
+        // Test flip modes
+        for mode in [0u16, 1, 2, 3] {
+            match camera.set_frame_flip(mode).await {
+                Ok(()) => {
+                    let actual = camera.get_frame_flip().await.expect("Failed to get");
+                    println!("Set flip mode {}, got {}", mode, actual);
+                }
+                Err(e) => println!("Failed to set flip {}: {}", mode, e),
+            }
+        }
+
+        // Restore original
+        let _ = camera.set_frame_flip(current_flip).await;
+    }
+}

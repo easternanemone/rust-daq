@@ -2010,6 +2010,262 @@ impl PvcamDriver {
         Ok(())
     }
 
+    // =========================================================================
+    // PrimeEnhance Convenience API (wraps DENOISING PP feature)
+    // =========================================================================
+
+    /// Find the index of the DENOISING (PrimeEnhance) PP feature
+    async fn find_prime_enhance_index(&self) -> Result<Option<u16>> {
+        let features = self.list_pp_features().await?;
+        for (idx, feature) in features.iter().enumerate() {
+            // DENOISING feature ID is 14
+            if feature.id == 14 {
+                return Ok(Some(idx as u16));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Check if PrimeEnhance is available on this camera
+    pub async fn is_prime_enhance_available(&self) -> Result<bool> {
+        Ok(self.find_prime_enhance_index().await?.is_some())
+    }
+
+    /// Check if PrimeEnhance is currently enabled
+    pub async fn is_prime_enhance_enabled(&self) -> Result<bool> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        // Parameter 0 is always ENABLED
+        let value = self.get_pp_param(idx, 0).await?;
+        Ok(value != 0)
+    }
+
+    /// Enable PrimeEnhance noise reduction
+    pub async fn enable_prime_enhance(&self) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 0, 1).await
+    }
+
+    /// Disable PrimeEnhance noise reduction
+    pub async fn disable_prime_enhance(&self) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 0, 0).await
+    }
+
+    /// Get PrimeEnhance number of iterations
+    pub async fn get_prime_enhance_iterations(&self) -> Result<u32> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        // Parameter 1 is NO OF ITERATIONS
+        self.get_pp_param(idx, 1).await
+    }
+
+    /// Set PrimeEnhance number of iterations
+    pub async fn set_prime_enhance_iterations(&self, iterations: u32) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 1, iterations).await
+    }
+
+    /// Get PrimeEnhance gain parameter
+    pub async fn get_prime_enhance_gain(&self) -> Result<u32> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        // Parameter 2 is GAIN
+        self.get_pp_param(idx, 2).await
+    }
+
+    /// Set PrimeEnhance gain parameter
+    pub async fn set_prime_enhance_gain(&self, gain: u32) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 2, gain).await
+    }
+
+    /// Get PrimeEnhance offset parameter
+    pub async fn get_prime_enhance_offset(&self) -> Result<u32> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        // Parameter 3 is OFFSET
+        self.get_pp_param(idx, 3).await
+    }
+
+    /// Set PrimeEnhance offset parameter
+    pub async fn set_prime_enhance_offset(&self, offset: u32) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 3, offset).await
+    }
+
+    /// Get PrimeEnhance lambda parameter (noise reduction strength)
+    pub async fn get_prime_enhance_lambda(&self) -> Result<u32> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        // Parameter 4 is LAMBDA
+        self.get_pp_param(idx, 4).await
+    }
+
+    /// Set PrimeEnhance lambda parameter (noise reduction strength)
+    pub async fn set_prime_enhance_lambda(&self, lambda: u32) -> Result<()> {
+        let idx = self.find_prime_enhance_index().await?
+            .ok_or_else(|| anyhow!("PrimeEnhance not available on this camera"))?;
+        self.set_pp_param(idx, 4, lambda).await
+    }
+
+    // =========================================================================
+    // Frame Rotation and Flip
+    // =========================================================================
+
+    /// Check if frame rotation is available
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn is_frame_rotation_available(&self) -> Result<bool> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        unsafe {
+            let mut avail: rs_bool = 0;
+            if pl_get_param(h, PARAM_FRAME_ROTATE, ATTR_AVAIL, &mut avail as *mut _ as *mut _) == 0 {
+                return Ok(false);
+            }
+            Ok(avail != 0)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn is_frame_rotation_available(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Get current frame rotation (0, 90, 180, or 270 degrees)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_frame_rotation(&self) -> Result<u16> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        unsafe {
+            let mut rotation: i32 = 0;
+            if pl_get_param(h, PARAM_FRAME_ROTATE, ATTR_CURRENT, &mut rotation as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get frame rotation: {}", get_pvcam_error()));
+            }
+            // Convert enum value to degrees: 0=0, 1=90, 2=180, 3=270
+            Ok((rotation * 90) as u16)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_frame_rotation(&self) -> Result<u16> {
+        Ok(0)
+    }
+
+    /// Set frame rotation (0, 90, 180, or 270 degrees)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn set_frame_rotation(&self, degrees: u16) -> Result<()> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        // Convert degrees to enum: 0=0, 90=1, 180=2, 270=3
+        let rotation = match degrees {
+            0 => 0i32,
+            90 => 1i32,
+            180 => 2i32,
+            270 => 3i32,
+            _ => return Err(anyhow!("Invalid rotation: must be 0, 90, 180, or 270")),
+        };
+
+        unsafe {
+            let mut r = rotation;
+            if pl_set_param(h, PARAM_FRAME_ROTATE, &mut r as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to set frame rotation: {}", get_pvcam_error()));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn set_frame_rotation(&self, _degrees: u16) -> Result<()> {
+        Ok(())
+    }
+
+    /// Check if frame flip is available
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn is_frame_flip_available(&self) -> Result<bool> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        unsafe {
+            let mut avail: rs_bool = 0;
+            if pl_get_param(h, PARAM_FRAME_FLIP, ATTR_AVAIL, &mut avail as *mut _ as *mut _) == 0 {
+                return Ok(false);
+            }
+            Ok(avail != 0)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn is_frame_flip_available(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Get current frame flip mode (0=none, 1=horizontal, 2=vertical, 3=both)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn get_frame_flip(&self) -> Result<u16> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        unsafe {
+            let mut flip: i32 = 0;
+            if pl_get_param(h, PARAM_FRAME_FLIP, ATTR_CURRENT, &mut flip as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to get frame flip: {}", get_pvcam_error()));
+            }
+            Ok(flip as u16)
+        }
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn get_frame_flip(&self) -> Result<u16> {
+        Ok(0)
+    }
+
+    /// Set frame flip mode (0=none, 1=horizontal, 2=vertical, 3=both)
+    #[cfg(feature = "pvcam_hardware")]
+    pub async fn set_frame_flip(&self, mode: u16) -> Result<()> {
+        let guard = self.camera_handle.lock().await;
+        let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
+
+        if mode > 3 {
+            return Err(anyhow!("Invalid flip mode: must be 0-3"));
+        }
+
+        unsafe {
+            let mut m = mode as i32;
+            if pl_set_param(h, PARAM_FRAME_FLIP, &mut m as *mut _ as *mut _) == 0 {
+                return Err(anyhow!("Failed to set frame flip: {}", get_pvcam_error()));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub async fn set_frame_flip(&self, _mode: u16) -> Result<()> {
+        Ok(())
+    }
+
+    /// Convenience method: flip frame horizontally
+    pub async fn flip_horizontal(&self) -> Result<()> {
+        let current = self.get_frame_flip().await?;
+        // Toggle bit 0 (horizontal)
+        self.set_frame_flip(current ^ 1).await
+    }
+
+    /// Convenience method: flip frame vertically
+    pub async fn flip_vertical(&self) -> Result<()> {
+        let current = self.get_frame_flip().await?;
+        // Toggle bit 1 (vertical)
+        self.set_frame_flip(current ^ 2).await
+    }
+
     /// Hardware polling loop for continuous acquisition
     ///
     /// This runs in a blocking thread and polls the PVCAM SDK for new frames.
