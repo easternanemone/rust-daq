@@ -189,11 +189,11 @@ impl HardwareService for HardwareServiceImpl {
                     final_position,
                 }))
             }
-            Err(e) => Ok(Response::new(MoveResponse {
-                success: false,
-                error_message: e.to_string(),
-                final_position: 0.0,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
         }
     }
 
@@ -225,11 +225,11 @@ impl HardwareService for HardwareServiceImpl {
                     final_position,
                 }))
             }
-            Err(e) => Ok(Response::new(MoveResponse {
-                success: false,
-                error_message: e.to_string(),
-                final_position: 0.0,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
         }
     }
 
@@ -262,13 +262,11 @@ impl HardwareService for HardwareServiceImpl {
                     stopped_position: position,
                 }))
             }
-            Err(_) => {
+            Err(e) => {
                 // Stop not supported or hardware error
-                // Return success=false
-                Ok(Response::new(StopMotionResponse {
-                    success: false,
-                    stopped_position: movable.position().await.unwrap_or(0.0),
-                }))
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
             }
         }
     }
@@ -313,16 +311,18 @@ impl HardwareService for HardwareServiceImpl {
                     position,
                 }))
             }
-            Ok(Err(_e)) => Ok(Response::new(WaitSettledResponse {
-                success: false,
-                settled: false,
-                position: 0.0,
-            })),
-            Err(_) => Ok(Response::new(WaitSettledResponse {
-                success: false,
-                settled: false,
-                position: movable.position().await.unwrap_or(0.0),
-            })),
+            Ok(Err(e)) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
+            Err(_) => {
+                // Timeout occurred
+                Err(Status::deadline_exceeded(format!(
+                    "Wait settled operation timed out for device '{}'",
+                    req.device_id
+                )))
+            }
         }
     }
 
@@ -433,13 +433,11 @@ impl HardwareService for HardwareServiceImpl {
                     .unwrap()
                     .as_nanos() as u64,
             })),
-            Err(e) => Ok(Response::new(ReadValueResponse {
-                success: false,
-                error_message: e.to_string(),
-                value: 0.0,
-                units: String::new(),
-                timestamp_ns: 0,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
         }
     }
 
@@ -538,11 +536,11 @@ impl HardwareService for HardwareServiceImpl {
                 error_message: String::new(),
                 armed: true,
             })),
-            Err(e) => Ok(Response::new(ArmResponse {
-                success: false,
-                error_message: e.to_string(),
-                armed: false,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
         }
     }
 
@@ -576,11 +574,11 @@ impl HardwareService for HardwareServiceImpl {
                 error_message: String::new(),
                 trigger_timestamp_ns: timestamp_ns,
             })),
-            Err(e) => Ok(Response::new(TriggerResponse {
-                success: false,
-                error_message: e.to_string(),
-                trigger_timestamp_ns: 0,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                let status = map_hardware_error_to_status(&err_msg);
+                Err(status)
+            }
         }
     }
 
@@ -623,11 +621,19 @@ impl HardwareService for HardwareServiceImpl {
                     actual_exposure_ms: actual_seconds * 1000.0,
                 }))
             }
-            Err(e) => Ok(Response::new(SetExposureResponse {
-                success: false,
-                error_message: e.to_string(),
-                actual_exposure_ms: 0.0,
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                // Check for out-of-range errors
+                if err_msg.contains("out of range") || err_msg.contains("bounds") || err_msg.contains("invalid") {
+                    Err(Status::invalid_argument(format!(
+                        "Invalid exposure value: {}",
+                        req.exposure_ms
+                    )))
+                } else {
+                    let status = map_hardware_error_to_status(&err_msg);
+                    Err(status)
+                }
+            }
         }
     }
 
@@ -690,10 +696,18 @@ impl HardwareService for HardwareServiceImpl {
                 success: true,
                 error_message: String::new(),
             })),
-            Err(e) => Ok(Response::new(StartStreamResponse {
-                success: false,
-                error_message: e.to_string(),
-            })),
+            Err(e) => {
+                let err_msg = e.to_string();
+                // Check for already streaming
+                if err_msg.to_lowercase().contains("already streaming") {
+                    Err(Status::failed_precondition(
+                        "Device is already streaming; stop current stream first"
+                    ))
+                } else {
+                    let status = map_hardware_error_to_status(&err_msg);
+                    Err(status)
+                }
+            }
         }
     }
 
@@ -921,6 +935,36 @@ impl HardwareService for HardwareServiceImpl {
             "StreamParameterChanges not yet implemented for '{}'",
             device_filter
         )))
+    }
+}
+
+/// Map hardware errors to canonical gRPC Status codes
+///
+/// This function provides consistent error semantics across all hardware RPCs.
+/// Maps error messages to appropriate Status codes:
+/// - Device not found → NOT_FOUND
+/// - Device busy/armed/streaming state → FAILED_PRECONDITION
+/// - Communication error → UNAVAILABLE
+/// - Invalid parameter → INVALID_ARGUMENT
+/// - Operation not supported → UNIMPLEMENTED
+fn map_hardware_error_to_status(error_msg: &str) -> Status {
+    let err_lower = error_msg.to_lowercase();
+
+    if err_lower.contains("not found") || err_lower.contains("no such device") {
+        Status::not_found(error_msg.to_string())
+    } else if err_lower.contains("busy") || err_lower.contains("in use") || err_lower.contains("already")
+        || err_lower.contains("not armed") || err_lower.contains("not streaming") || err_lower.contains("streaming")
+        || err_lower.contains("precondition") {
+        Status::failed_precondition(error_msg.to_string())
+    } else if err_lower.contains("timeout") || err_lower.contains("communication") || err_lower.contains("connection") {
+        Status::unavailable(error_msg.to_string())
+    } else if err_lower.contains("invalid") || err_lower.contains("out of range") || err_lower.contains("bounds") {
+        Status::invalid_argument(error_msg.to_string())
+    } else if err_lower.contains("not supported") || err_lower.contains("unsupported") {
+        Status::unimplemented(error_msg.to_string())
+    } else {
+        // Default to INTERNAL for unknown errors
+        Status::internal(error_msg.to_string())
     }
 }
 

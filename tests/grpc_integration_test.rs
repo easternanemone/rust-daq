@@ -164,15 +164,18 @@ mod camera_integration_tests {
         let registry = create_camera_registry().await;
         let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
 
-        // Try to trigger without arming
+        // Try to trigger without arming - should fail with FAILED_PRECONDITION status
         let trigger_request = Request::new(TriggerRequest {
             device_id: "test_camera".to_string(),
         });
-        let trigger_response = service.trigger(trigger_request).await.unwrap();
-        let trigger_result = trigger_response.into_inner();
+        let trigger_result = service.trigger(trigger_request).await;
 
-        assert!(!trigger_result.success);
-        assert!(trigger_result.error_message.contains("not armed"));
+        // With the new consistent error handling, this should return a Status error
+        assert!(trigger_result.is_err());
+        let status = trigger_result.unwrap_err();
+        // "not armed" is a precondition failure
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert!(status.message().to_lowercase().contains("not armed"));
     }
 
     /// Test: Start and stop frame streaming via gRPC
