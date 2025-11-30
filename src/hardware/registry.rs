@@ -73,11 +73,16 @@
 //! ```
 
 use crate::hardware::capabilities::{
-    ExposureControl, FrameProducer, Movable, Readable, Triggerable,
+    ExposureControl, FrameProducer, Movable, Readable, Settable, Triggerable,
 };
+#[cfg(feature = "tokio_serial")]
+use crate::hardware::plugin::driver::GenericDriver;
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(feature = "tokio_serial")]
+use tokio::sync::RwLock;
 
 // =============================================================================
 // Device Identification
@@ -101,6 +106,8 @@ pub enum Capability {
     FrameProducer,
     /// Has exposure/integration time control
     ExposureControl,
+    /// Has settable parameters (QCodes/ScopeFoundry pattern)
+    Settable,
 }
 
 // =============================================================================
@@ -110,7 +117,8 @@ pub enum Capability {
 /// Driver configuration for instantiating hardware
 ///
 /// Each variant corresponds to a hardware driver with its required configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum DriverType {
     /// Newport 1830-C Optical Power Meter
     Newport1830C {
@@ -160,6 +168,15 @@ pub enum DriverType {
         /// Camera name (e.g., "PrimeBSI", "PMCam")
         camera_name: String,
     },
+
+    /// Plugin-based device loaded from YAML configuration
+    #[cfg(feature = "tokio_serial")]
+    Plugin {
+        /// Plugin ID from YAML metadata.id (e.g., "my-sensor-v1")
+        plugin_id: String,
+        /// Connection address (serial port path or TCP "host:port")
+        address: String,
+    },
 }
 
 impl DriverType {
@@ -182,6 +199,13 @@ impl DriverType {
                 Capability::Triggerable,
                 Capability::ExposureControl,
             ],
+            #[cfg(feature = "tokio_serial")]
+            DriverType::Plugin { .. } => {
+                // Note: Plugin capabilities are determined at runtime from YAML
+                // This returns an empty vec, but actual capabilities are introspected
+                // during registration via PluginFactory
+                vec![]
+            }
         }
     }
 
@@ -196,6 +220,11 @@ impl DriverType {
             DriverType::MockPowerMeter { .. } => "mock_power_meter",
             DriverType::MockCamera => "mock_camera",
             DriverType::Pvcam { .. } => "pvcam",
+            #[cfg(feature = "tokio_serial")]
+            DriverType::Plugin { plugin_id, .. } => {
+                // Note: This is a generic name; actual plugin name is stored in plugin_id
+                "plugin"
+            }
         }
     }
 }
@@ -205,7 +234,7 @@ impl DriverType {
 // =============================================================================
 
 /// Configuration for registering a device
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     /// Unique identifier (e.g., "power_meter", "rotator_2")
     pub id: DeviceId,
@@ -275,6 +304,8 @@ struct RegisteredDevice {
     frame_producer: Option<Arc<dyn FrameProducer>>,
     /// ExposureControl implementation (if supported)
     exposure_control: Option<Arc<dyn ExposureControl>>,
+    /// Settable implementation (if supported) - observable parameters
+    settable: Option<Arc<dyn Settable>>,
     /// Capability metadata
     metadata: DeviceMetadata,
 }
@@ -293,6 +324,15 @@ struct RegisteredDevice {
 pub struct DeviceRegistry {
     /// Registered devices by ID
     devices: HashMap<DeviceId, RegisteredDevice>,
+    
+    /// Shared serial ports for ELL14 multidrop bus (interior mutability for async access)
+    /// Key: port path (e.g., "/dev/ttyUSB0"), Value: shared Arc<Mutex<SerialStream>>
+    #[cfg(feature = "instrument_thorlabs")]
+    ell14_shared_ports: RwLock<HashMap<String, std::sync::Arc<tokio::sync::Mutex<tokio_serial::SerialStream>>>>,
+    
+    /// Plugin factory for loading YAML-defined drivers (tokio_serial feature only)
+    #[cfg(feature = "tokio_serial")]
+    plugin_factory: Arc<RwLock<crate::hardware::plugin::registry::PluginFactory>>,
 }
 
 impl DeviceRegistry {
@@ -300,7 +340,43 @@ impl DeviceRegistry {
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
+            #[cfg(feature = "instrument_thorlabs")]
+            ell14_shared_ports: RwLock::new(HashMap::new()),
+            #[cfg(feature = "tokio_serial")]
+            plugin_factory: Arc::new(RwLock::new(crate::hardware::plugin::registry::PluginFactory::new())),
         }
+    }
+
+    /// Create a new device registry with a pre-configured PluginFactory
+    #[cfg(feature = "tokio_serial")]
+    pub fn with_plugin_factory(plugin_factory: Arc<RwLock<crate::hardware::plugin::registry::PluginFactory>>) -> Self {
+        Self {
+            devices: HashMap::new(),
+            #[cfg(feature = "instrument_thorlabs")]
+            ell14_shared_ports: RwLock::new(HashMap::new()),
+            plugin_factory,
+        }
+    }
+
+    /// Get a reference to the plugin factory
+    #[cfg(feature = "tokio_serial")]
+    pub fn plugin_factory(&self) -> Arc<RwLock<crate::hardware::plugin::registry::PluginFactory>> {
+        self.plugin_factory.clone()
+    }
+
+    /// Load plugins from a directory
+    ///
+    /// Scans the directory for YAML plugin files and loads them into the factory.
+    ///
+    /// # Arguments
+    /// * `path` - Path to directory containing .yaml/.yml plugin files
+    ///
+    /// # Errors
+    /// Returns error if path is not a directory or if any plugin fails to load
+    #[cfg(feature = "tokio_serial")]
+    pub async fn load_plugins(&self, path: &std::path::Path) -> Result<()> {
+        let mut factory = self.plugin_factory.write().await;
+        factory.load_plugins(path).await
     }
 
     /// Register a device from configuration
@@ -320,6 +396,33 @@ impl DeviceRegistry {
         }
 
         let registered = self.instantiate_device(config).await?;
+        self.devices
+            .insert(registered.config.id.clone(), registered);
+        Ok(())
+    }
+
+    /// Register a pre-spawned plugin instance
+    ///
+    /// This is used by the PluginService to register drivers that it manages.
+    /// It bypasses the normal driver instantiation process.
+    ///
+    /// # Arguments
+    /// * `config` - Device configuration (must be DriverType::Plugin)
+    /// * `driver` - The pre-spawned GenericDriver instance
+    ///
+    /// # Errors
+    /// Returns error if the device ID is already registered
+    #[cfg(feature = "tokio_serial")]
+    pub async fn register_plugin_instance(
+        &mut self,
+        config: DeviceConfig,
+        driver: Arc<GenericDriver>,
+    ) -> Result<()> {
+        if self.devices.contains_key(&config.id) {
+            return Err(anyhow!("Device '{}' is already registered", config.id));
+        }
+
+        let registered = self.create_registered_plugin(config, driver).await?;
         self.devices
             .insert(registered.config.id.clone(), registered);
         Ok(())
@@ -407,6 +510,29 @@ impl DeviceRegistry {
             .and_then(|d| d.exposure_control.clone())
     }
 
+    /// Get a device as Settable (if it supports this capability)
+    pub fn get_settable(&self, id: &str) -> Option<Arc<dyn Settable>> {
+        self.devices.get(id).and_then(|d| d.settable.clone())
+    }
+
+    /// Get settable parameter descriptors for a device (plugin devices only)
+    ///
+    /// Returns a vector of (name, unit, dtype, min, max, enum_values, has_get_cmd) tuples
+    /// for each settable parameter on the device.
+    #[cfg(feature = "tokio_serial")]
+    pub async fn get_settable_parameters(&self, device_id: &str) -> Option<Vec<crate::hardware::plugin::schema::SettableCapability>> {
+        let device = self.devices.get(device_id)?;
+        
+        // Check if this is a plugin device
+        if let DriverType::Plugin { plugin_id, .. } = &device.config.driver {
+            let factory = self.plugin_factory.read().await;
+            let config = factory.get_config(plugin_id)?;
+            Some(config.capabilities.settable.clone())
+        } else {
+            None
+        }
+    }
+
     /// Get all devices that support a specific capability
     pub fn devices_with_capability(&self, capability: Capability) -> Vec<DeviceId> {
         self.devices
@@ -422,10 +548,13 @@ impl DeviceRegistry {
 
     /// Instantiate a device from configuration
     async fn instantiate_device(&self, config: DeviceConfig) -> Result<RegisteredDevice> {
-        match &config.driver {
+        // Clone driver before matching to avoid borrow issues
+        let driver = config.driver.clone();
+        
+        match driver {
             DriverType::MockStage { initial_position } => {
                 let driver = Arc::new(crate::hardware::mock::MockStage::with_position(
-                    *initial_position,
+                    initial_position,
                 ));
                 Ok(RegisteredDevice {
                     config,
@@ -434,6 +563,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-100.0),
@@ -444,7 +574,7 @@ impl DeviceRegistry {
             }
 
             DriverType::MockPowerMeter { reading } => {
-                let driver = Arc::new(crate::hardware::mock::MockPowerMeter::new(*reading));
+                let driver = Arc::new(crate::hardware::mock::MockPowerMeter::new(reading));
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
@@ -452,6 +582,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -469,6 +600,7 @@ impl DeviceRegistry {
                     triggerable: Some(driver.clone()),
                     frame_producer: Some(driver.clone()),
                     exposure_control: Some(driver.clone()),
+                    settable: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -478,9 +610,14 @@ impl DeviceRegistry {
                 })
             }
 
+            #[cfg(feature = "tokio_serial")]
+            DriverType::Plugin { plugin_id, address } => {
+                self.instantiate_plugin_device(config, &plugin_id, &address).await
+            }
+
             #[cfg(feature = "instrument_photometrics")]
             DriverType::Pvcam { camera_name } => {
-                let driver = Arc::new(crate::hardware::pvcam::PvcamDriver::new(camera_name)?);
+                let driver = Arc::new(crate::hardware::pvcam::PvcamDriver::new(&camera_name)?);
                 let (width, height) = driver.resolution();
                 Ok(RegisteredDevice {
                     config,
@@ -489,6 +626,7 @@ impl DeviceRegistry {
                     triggerable: Some(driver.clone()),
                     frame_producer: Some(driver.clone()),
                     exposure_control: Some(driver.clone()),
+                    settable: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -505,7 +643,27 @@ impl DeviceRegistry {
 
             #[cfg(feature = "instrument_thorlabs")]
             DriverType::Ell14 { port, address } => {
-                let driver = Arc::new(crate::hardware::ell14::Ell14Driver::new(port, address)?);
+                // Use shared port for multidrop bus - multiple ELL14 devices share one serial connection
+                let shared_port = {
+                    // Check if port already exists
+                    let read_guard = self.ell14_shared_ports.read().await;
+                    if let Some(existing) = read_guard.get(&port) {
+                        existing.clone()
+                    } else {
+                        drop(read_guard); // Release read lock before acquiring write lock
+                        let new_port = crate::hardware::ell14::Ell14Driver::open_shared_port(&port)?;
+                        let mut write_guard = self.ell14_shared_ports.write().await;
+                        // Double-check in case another task created it
+                        if let Some(existing) = write_guard.get(&port) {
+                            existing.clone()
+                        } else {
+                            write_guard.insert(port.clone(), new_port.clone());
+                            new_port
+                        }
+                    }
+                };
+                
+                let driver = Arc::new(crate::hardware::ell14::Ell14Driver::with_shared_port(shared_port, &address));
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver),
@@ -513,6 +671,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("degrees".to_string()),
                         min_position: Some(0.0),
@@ -525,7 +684,7 @@ impl DeviceRegistry {
             #[cfg(feature = "instrument_newport_power_meter")]
             DriverType::Newport1830C { port } => {
                 let driver = Arc::new(crate::hardware::newport_1830c::Newport1830CDriver::new(
-                    port,
+                    &port,
                 )?);
                 Ok(RegisteredDevice {
                     config,
@@ -534,6 +693,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -543,7 +703,7 @@ impl DeviceRegistry {
 
             #[cfg(feature = "instrument_spectra_physics")]
             DriverType::MaiTai { port } => {
-                let driver = Arc::new(crate::hardware::maitai::MaiTaiDriver::new(port)?);
+                let driver = Arc::new(crate::hardware::maitai::MaiTaiDriver::new(&port)?);
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
@@ -551,6 +711,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -560,7 +721,7 @@ impl DeviceRegistry {
 
             #[cfg(feature = "instrument_newport")]
             DriverType::Esp300 { port, axis } => {
-                let driver = Arc::new(crate::hardware::esp300::Esp300Driver::new(port, *axis)?);
+                let driver = Arc::new(crate::hardware::esp300::Esp300Driver::new(&port, axis)?);
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver),
@@ -568,6 +729,7 @@ impl DeviceRegistry {
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
+                    settable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-25.0), // Typical ESP300 stage range
@@ -599,12 +761,249 @@ impl DeviceRegistry {
             )),
         }
     }
+
+    /// Instantiate a plugin-based device
+    #[cfg(feature = "tokio_serial")]
+    async fn instantiate_plugin_device(
+        &self, 
+        config: DeviceConfig, 
+        plugin_id: &str, 
+        address: &str
+    ) -> Result<RegisteredDevice> {
+        // Spawn the driver from the plugin factory
+        let factory = self.plugin_factory.read().await;
+        let driver = Arc::new(factory.spawn(plugin_id, address).await?);
+        drop(factory); // Release lock before calling helper
+        
+        // Create the registered device using the common helper
+        self.create_registered_plugin(config, driver).await
+    }
+
+    /// Creates a RegisteredDevice from a pre-spawned plugin driver
+    ///
+    /// This is the shared implementation used by both `instantiate_plugin_device`
+    /// (for config-based registration) and `register_plugin_instance` (for
+    /// PluginService-managed registration).
+    #[cfg(feature = "tokio_serial")]
+    async fn create_registered_plugin(
+        &self,
+        config: DeviceConfig,
+        driver: Arc<GenericDriver>,
+    ) -> Result<RegisteredDevice> {
+        let plugin_id = match &config.driver {
+            DriverType::Plugin { plugin_id, .. } => plugin_id,
+            _ => {
+                return Err(anyhow!(
+                    "Invalid driver type for create_registered_plugin: expected Plugin"
+                ))
+            }
+        };
+
+        // Introspect capabilities from the plugin configuration
+        let factory = self.plugin_factory.read().await;
+        let plugin_config = factory
+            .get_config(plugin_id)
+            .ok_or_else(|| anyhow!("Plugin '{}' not found in factory", plugin_id))?;
+
+        let mut metadata = DeviceMetadata::default();
+
+        // Check for movable capability
+        let movable: Option<Arc<dyn Movable>> = if plugin_config.capabilities.movable.is_some() {
+            // Extract metadata from first axis
+            if let Some(movable_cap) = &plugin_config.capabilities.movable {
+                if let Some(first_axis) = movable_cap.axes.first() {
+                    metadata.position_units = first_axis.unit.clone();
+                    metadata.min_position = first_axis.min;
+                    metadata.max_position = first_axis.max;
+                }
+            }
+
+            // Create axis handle for the first axis (convention)
+            let axis_name = plugin_config
+                .capabilities
+                .movable
+                .as_ref()
+                .and_then(|m| m.axes.first())
+                .map(|a| a.name.as_str())
+                .unwrap_or("axis");
+
+            Some(Arc::new(
+                crate::hardware::plugin::handles::PluginAxisHandle::new(
+                    driver.clone(),
+                    axis_name.to_string(),
+                    false, // not mocking
+                ),
+            ))
+        } else {
+            None
+        };
+
+        // Check for readable capability
+        let readable: Option<Arc<dyn Readable>> =
+            if !plugin_config.capabilities.readable.is_empty() {
+                // Extract metadata from first readable
+                if let Some(first_readable) = plugin_config.capabilities.readable.first() {
+                    metadata.measurement_units = first_readable.unit.clone();
+                }
+
+                // Create readable handle for the first readable capability (convention)
+                let readable_name = plugin_config
+                    .capabilities
+                    .readable
+                    .first()
+                    .map(|r| r.name.as_str())
+                    .unwrap_or("reading");
+
+                Some(Arc::new(
+                    crate::hardware::plugin::handles::PluginSensorHandle::new(
+                        driver.clone(),
+                        readable_name.to_string(),
+                        false, // not mocking
+                    ),
+                ))
+            } else {
+                None
+            };
+
+        // Check for settable capability (observable parameters)
+        let settable: Option<Arc<dyn Settable>> =
+            if !plugin_config.capabilities.settable.is_empty() {
+                Some(Arc::new(
+                    crate::hardware::plugin::handles::PluginSettableHandle::new(
+                        driver.clone(),
+                        false, // not mocking
+                    ),
+                ))
+            } else {
+                None
+            };
+
+        // Note: FrameProducer, Triggerable, and ExposureControl are not yet
+        // supported by the plugin system, so we leave them as None
+
+        Ok(RegisteredDevice {
+            config,
+            movable,
+            readable,
+            triggerable: None,
+            frame_producer: None,
+            exposure_control: None,
+            settable,
+            metadata,
+        })
+    }
 }
 
 impl Default for DeviceRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// =============================================================================
+// Hardware Configuration File Support
+// =============================================================================
+
+/// Hardware configuration loaded from a TOML file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareConfig {
+    /// Plugin search paths (in priority order, first = highest priority)
+    /// Convention: user paths before system paths
+    #[serde(default)]
+    pub plugin_paths: Vec<std::path::PathBuf>,
+    
+    /// List of devices to register
+    pub devices: Vec<DeviceConfig>,
+}
+
+impl HardwareConfig {
+    /// Load hardware configuration from a TOML file
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read hardware config file: {}", e))?;
+        toml::from_str(&content)
+            .map_err(|e| anyhow!("Failed to parse hardware config file: {}", e))
+    }
+}
+
+/// Create a DeviceRegistry from a hardware configuration file
+///
+/// # Example TOML format:
+/// ```toml
+/// # Optional: Plugin search paths (first = highest priority)
+/// plugin_paths = [
+///     "~/.config/rust-daq/plugins",
+///     "/usr/share/rust-daq/plugins"
+/// ]
+///
+/// [[devices]]
+/// id = "rotator_2"
+/// name = "ELL14 Rotation Mount (Addr 2)"
+/// [devices.driver]
+/// type = "ell14"
+/// port = "/dev/ttyUSB0"
+/// address = "2"
+///
+/// [[devices]]
+/// id = "my_sensor"
+/// name = "Custom Sensor (Plugin-Based)"
+/// [devices.driver]
+/// type = "plugin"
+/// plugin_id = "my-sensor-v1"
+/// address = "/dev/ttyUSB2"
+/// ```
+pub async fn create_registry_from_config(config: &HardwareConfig) -> Result<DeviceRegistry> {
+    let mut registry = DeviceRegistry::new();
+
+    // Load plugins from configured search paths
+    #[cfg(feature = "tokio_serial")]
+    {
+        let mut factory = registry.plugin_factory.write().await;
+        for path in &config.plugin_paths {
+            // Expand ~ to home directory
+            let expanded = if path.starts_with("~") {
+                if let Some(home) = dirs::home_dir() {
+                    home.join(path.strip_prefix("~").unwrap_or(path))
+                } else {
+                    path.clone()
+                }
+            } else {
+                path.clone()
+            };
+            factory.add_search_path(expanded);
+        }
+        
+        // Scan all paths and report errors
+        let errors = factory.scan().await;
+        for err in &errors {
+            tracing::warn!("Plugin load warning: {}", err);
+        }
+        
+        // Log loaded plugins
+        let plugins = factory.available_plugins();
+        if !plugins.is_empty() {
+            tracing::info!("Loaded {} plugin(s): {:?}", plugins.len(), plugins);
+        }
+    }
+
+    // Register all configured devices
+    for device_config in &config.devices {
+        if let Err(e) = registry.register(device_config.clone()).await {
+            tracing::warn!(
+                "Failed to register device '{}': {} (continuing with other devices)",
+                device_config.id,
+                e
+            );
+        }
+    }
+
+    Ok(registry)
+}
+
+/// Load hardware configuration from a file and create a DeviceRegistry
+pub async fn create_registry_from_file(path: &std::path::Path) -> Result<DeviceRegistry> {
+    let config = HardwareConfig::from_file(path)?;
+    create_registry_from_config(&config).await
 }
 
 // =============================================================================
@@ -622,7 +1021,7 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
     let mut registry = DeviceRegistry::new();
 
     // Newport 1830-C Power Meter
-    registry
+    if let Err(e) = registry
         .register(DeviceConfig {
             id: "power_meter".into(),
             name: "Newport 1830-C Power Meter".into(),
@@ -630,10 +1029,13 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
                 port: "/dev/ttyS0".into(),
             },
         })
-        .await?;
+        .await
+    {
+        tracing::warn!("Newport 1830-C registration failed: {}", e);
+    }
 
     // MaiTai Laser
-    registry
+    if let Err(e) = registry
         .register(DeviceConfig {
             id: "maitai".into(),
             name: "Spectra-Physics MaiTai Ti:Sapphire Laser".into(),
@@ -641,11 +1043,14 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
                 port: "/dev/ttyUSB5".into(),
             },
         })
-        .await?;
+        .await
+    {
+        tracing::warn!("MaiTai registration failed: {}", e);
+    }
 
     // ELL14 Rotators (3 units on multidrop bus)
     for (addr, serial) in [("2", "005172023"), ("3", "002842021"), ("8", "006092023")] {
-        registry
+        if let Err(e) = registry
             .register(DeviceConfig {
                 id: format!("rotator_{}", addr),
                 name: format!(
@@ -657,7 +1062,10 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
                     address: addr.into(),
                 },
             })
-            .await?;
+            .await
+        {
+            tracing::warn!("ELL14 (addr {}) registration failed: {}", addr, e);
+        }
     }
 
     // ESP300 Motion Controller (may not be powered on)
@@ -829,5 +1237,26 @@ mod tests {
             "Reading {} not close to 1e-6",
             reading
         );
+    }
+
+    #[cfg(feature = "tokio_serial")]
+    #[tokio::test]
+    async fn test_plugin_device_registration() {
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        // Create a plugin factory and registry
+        let factory = Arc::new(RwLock::new(crate::hardware::plugin::registry::PluginFactory::new()));
+        let registry = DeviceRegistry::with_plugin_factory(factory.clone());
+
+        // Note: This test verifies that the plugin infrastructure is wired up correctly.
+        // Actual plugin loading requires YAML files, which would be in integration tests.
+
+        // Verify that we can access the plugin factory
+        let factory_ref = registry.plugin_factory();
+        assert!(Arc::ptr_eq(&factory, &factory_ref));
+
+        // Verify that the registry starts empty
+        assert_eq!(registry.len(), 0);
     }
 }

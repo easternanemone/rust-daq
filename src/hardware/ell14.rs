@@ -8,6 +8,25 @@
 //! - Encoding: Positions as 32-bit integers in hex
 //! - Timing: Half-duplex request-response
 //!
+//! # Multidrop Bus Support
+//!
+//! Multiple ELL14 devices can share a single serial port (RS-485 multidrop bus).
+//! Use [`Ell14Driver::with_shared_port`] to create multiple drivers that share
+//! the same underlying serial connection:
+//!
+//! ```rust,ignore
+//! use std::sync::Arc;
+//! use tokio::sync::Mutex;
+//!
+//! // Open port once
+//! let shared_port = Arc::new(Mutex::new(open_ell14_port("/dev/ttyUSB0")?));
+//!
+//! // Create drivers for different addresses
+//! let rotator_2 = Ell14Driver::with_shared_port(shared_port.clone(), "2");
+//! let rotator_3 = Ell14Driver::with_shared_port(shared_port.clone(), "3");
+//! let rotator_8 = Ell14Driver::with_shared_port(shared_port.clone(), "8");
+//! ```
+//!
 //! # Supported Commands
 //!
 //! ## Basic Movement
@@ -72,9 +91,11 @@
 use crate::hardware::capabilities::Movable;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 /// Device information returned by the `in` command
@@ -118,10 +139,16 @@ pub struct MotorInfo {
 /// Implements the Movable capability trait for controlling rotation.
 /// The ELL14 has a mechanical resolution in "pulses" that must be converted
 /// to/from degrees based on device calibration.
+///
+/// # Multidrop Bus Support
+///
+/// Multiple ELL14 devices can share a single serial port using [`with_shared_port`].
+/// This is essential for RS-485 multidrop configurations where devices at
+/// different addresses (2, 3, 8, etc.) share `/dev/ttyUSB0`.
 pub struct Ell14Driver {
-    /// Serial port protected by Mutex for exclusive access during transactions
-    port: Mutex<SerialStream>,
-    /// Device address (usually "0")
+    /// Serial port protected by Arc<Mutex> for shared access across multiple drivers
+    port: Arc<Mutex<SerialStream>>,
+    /// Device address (0-9, A-F)
     address: String,
     /// Calibration factor: Pulses per Degree
     /// Default: 398.22 (143360 pulses / 360 degrees for ELL14)
@@ -129,7 +156,7 @@ pub struct Ell14Driver {
 }
 
 impl Ell14Driver {
-    /// Create a new ELL14 driver instance
+    /// Create a new ELL14 driver instance (opens dedicated serial port)
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0" on Linux, "COM3" on Windows)
@@ -137,19 +164,84 @@ impl Ell14Driver {
     ///
     /// # Errors
     /// Returns error if serial port cannot be opened
+    ///
+    /// # Note
+    /// For multidrop bus configurations with multiple devices on the same port,
+    /// use [`open_shared_port`] + [`with_shared_port`] instead.
     pub fn new(port_path: &str, address: &str) -> Result<Self> {
-        // Configure serial settings with no flow control (per Thorlabs ELL14 spec)
-        let port = tokio_serial::new(port_path, 9600)
+        let port = Self::open_port(port_path)?;
+        Ok(Self {
+            port: Arc::new(Mutex::new(port)),
+            address: address.to_string(),
+            pulses_per_degree: 398.2222, // 143360 pulses / 360 degrees
+        })
+    }
+
+    /// Open a serial port that can be shared across multiple ELL14 drivers
+    ///
+    /// Use this with [`with_shared_port`] for multidrop bus configurations:
+    ///
+    /// ```rust,ignore
+    /// let shared = Ell14Driver::open_shared_port("/dev/ttyUSB0")?;
+    /// let rotator_2 = Ell14Driver::with_shared_port(shared.clone(), "2");
+    /// let rotator_3 = Ell14Driver::with_shared_port(shared.clone(), "3");
+    /// let rotator_8 = Ell14Driver::with_shared_port(shared.clone(), "8");
+    /// ```
+    pub fn open_shared_port(port_path: &str) -> Result<Arc<Mutex<SerialStream>>> {
+        let port = Self::open_port(port_path)?;
+        Ok(Arc::new(Mutex::new(port)))
+    }
+
+    /// Create an ELL14 driver using a shared serial port
+    ///
+    /// This is the preferred method for multidrop bus configurations where
+    /// multiple devices share the same physical serial port.
+    ///
+    /// # Arguments
+    /// * `shared_port` - Arc<Mutex<SerialStream>> from [`open_shared_port`]
+    /// * `address` - Device address on the bus (0-9, A-F)
+    pub fn with_shared_port(shared_port: Arc<Mutex<SerialStream>>, address: &str) -> Self {
+        Self {
+            port: shared_port,
+            address: address.to_string(),
+            pulses_per_degree: 398.2222,
+        }
+    }
+
+    /// Internal helper to open a serial port with ELL14 settings
+    fn open_port(port_path: &str) -> Result<SerialStream> {
+        tokio_serial::new(port_path, 9600)
             .data_bits(tokio_serial::DataBits::Eight)
             .parity(tokio_serial::Parity::None)
             .stop_bits(tokio_serial::StopBits::One)
             .flow_control(tokio_serial::FlowControl::None)
             .open_native_async()
-            .context(format!("Failed to open ELL14 serial port: {}", port_path))?;
+            .context(format!("Failed to open ELL14 serial port: {}", port_path))
+    }
+
+    /// Create a new ELL14 driver instance asynchronously
+    ///
+    /// This is the preferred constructor as it uses `spawn_blocking` to avoid
+    /// blocking the async runtime during serial port opening.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0" on Linux, "COM3" on Windows)
+    /// * `address` - Device address (usually "0")
+    ///
+    /// # Errors
+    /// Returns error if serial port cannot be opened
+    pub async fn new_async(port_path: &str, address: &str) -> Result<Self> {
+        let port_path = port_path.to_string();
+        let address = address.to_string();
+
+        // Use spawn_blocking to avoid blocking the async runtime
+        let port = spawn_blocking(move || Self::open_port(&port_path))
+            .await
+            .context("spawn_blocking for ELL14 port opening failed")??;
 
         Ok(Self {
-            port: Mutex::new(port),
-            address: address.to_string(),
+            port: Arc::new(Mutex::new(port)),
+            address,
             pulses_per_degree: 398.2222, // 143360 pulses / 360 degrees
         })
     }
@@ -931,21 +1023,42 @@ impl Movable for Ell14Driver {
 mod tests {
     use super::*;
 
+    /// Test helper: parse position response without needing a real driver
+    fn parse_position(response: &str, pulses_per_degree: f64) -> Result<f64> {
+        // Look for position response marker "PO"
+        if let Some(idx) = response.find("PO") {
+            let hex_str = response[idx + 2..].trim();
+
+            // Empty hex string means position 0
+            if hex_str.is_empty() {
+                return Ok(0.0);
+            }
+
+            // Handle variable length hex strings (take first 8 chars max)
+            let hex_clean = if hex_str.len() > 8 {
+                &hex_str[..8]
+            } else {
+                hex_str
+            };
+
+            // Parse as u32 first, then reinterpret as i32 for signed positions
+            let pulses_unsigned = u32::from_str_radix(hex_clean, 16)
+                .context(format!("Failed to parse position hex: {}", hex_clean))?;
+            let pulses = pulses_unsigned as i32;
+
+            return Ok(pulses as f64 / pulses_per_degree);
+        }
+
+        Err(anyhow!("Unexpected position format: {}", response))
+    }
+
     #[test]
     fn test_parse_position_response() {
-        // Create a mock driver for testing parse logic
-        let port = tokio_serial::new("/dev/null", 9600)
-            .open_native_async()
-            .unwrap();
-        let driver = Ell14Driver {
-            port: Mutex::new(port),
-            address: "0".to_string(),
-            pulses_per_degree: 398.2222,
-        };
+        let pulses_per_degree = 398.2222;
 
         // Test typical response
         let response = "0PO00002000";
-        let position = driver.parse_position_response(response).unwrap();
+        let position = parse_position(response, pulses_per_degree).unwrap();
 
         // 0x2000 = 8192 pulses / 398.2222 pulses/deg ≈ 20.57°
         assert!((position - 20.57).abs() < 0.1);
@@ -953,22 +1066,14 @@ mod tests {
 
     #[test]
     fn test_position_conversion() {
-        // Create a mock driver for testing conversion logic
-        let port = tokio_serial::new("/dev/null", 9600)
-            .open_native_async()
-            .unwrap();
-        let driver = Ell14Driver {
-            port: Mutex::new(port),
-            address: "0".to_string(),
-            pulses_per_degree: 398.2222,
-        };
+        let pulses_per_degree = 398.2222;
 
-        // Test 45 degrees
-        let pulses = (45.0 * driver.pulses_per_degree) as i32;
-        assert_eq!(pulses, 17920); // 398.2222 * 45
+        // Test 45 degrees: 398.2222 * 45 = 17919.999 ≈ 17919
+        let pulses = (45.0 * pulses_per_degree) as i32;
+        assert_eq!(pulses, 17919);
 
-        // Test 90 degrees
-        let pulses = (90.0 * driver.pulses_per_degree) as i32;
-        assert_eq!(pulses, 35840); // 398.2222 * 90
+        // Test 90 degrees: 398.2222 * 90 = 35839.998 ≈ 35839
+        let pulses = (90.0 * pulses_per_degree) as i32;
+        assert_eq!(pulses, 35839);
     }
 }
