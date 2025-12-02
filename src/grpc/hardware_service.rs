@@ -6,21 +6,29 @@
 
 use crate::grpc::proto::{
     hardware_service_server::HardwareService, ArmRequest, ArmResponse, DeviceCommandRequest,
-    DeviceCommandResponse, DeviceInfo, DeviceMetadata as ProtoDeviceMetadata, DeviceStateRequest,
-    DeviceStateResponse, GetExposureRequest, GetExposureResponse, GetParameterRequest,
-    ListDevicesRequest, ListDevicesResponse, ListParametersRequest, ListParametersResponse,
-    MoveRequest, MoveResponse, ParameterChange, ParameterValue, PositionUpdate, ReadValueRequest,
+    DeviceCommandResponse, DeviceInfo, DeviceMetadata as ProtoDeviceMetadata,
+    DeviceStateRequest, DeviceStateResponse, DeviceStateSubscribeRequest, DeviceStateUpdate,
+    GetExposureRequest, GetExposureResponse, GetParameterRequest, ListDevicesRequest,
+    ListDevicesResponse, ListParametersRequest, ListParametersResponse, MoveRequest, MoveResponse,
+    ParameterChange, ParameterDescriptor, ParameterValue, PositionUpdate, ReadValueRequest,
     ReadValueResponse, SetExposureRequest, SetExposureResponse, SetParameterRequest,
     SetParameterResponse, StageDeviceRequest, StageDeviceResponse, StartStreamRequest,
     StartStreamResponse, StopMotionRequest, StopMotionResponse, StopStreamRequest,
     StopStreamResponse, StreamFramesRequest, StreamParameterChangesRequest, StreamPositionRequest,
     StreamValuesRequest, TriggerRequest, TriggerResponse, UnstageDeviceRequest,
     UnstageDeviceResponse, ValueUpdate, WaitSettledRequest, WaitSettledResponse,
+    // Laser control types (bd-pwjo)
+    SetShutterRequest, SetShutterResponse, GetShutterRequest, GetShutterResponse,
+    SetWavelengthRequest, SetWavelengthResponse, GetWavelengthRequest, GetWavelengthResponse,
+    SetEmissionRequest, SetEmissionResponse, GetEmissionRequest, GetEmissionResponse,
 };
 use crate::hardware::registry::{Capability, DeviceRegistry};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use tokio::time::{interval, Duration};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 /// Hardware gRPC service implementation
@@ -40,6 +48,9 @@ impl HardwareServiceImpl {
 
 #[tonic::async_trait]
 impl HardwareService for HardwareServiceImpl {
+    type SubscribeDeviceStateStream =
+        tokio_stream::wrappers::ReceiverStream<Result<DeviceStateUpdate, Status>>;
+
     // =========================================================================
     // Discovery and Introspection
     // =========================================================================
@@ -157,6 +168,97 @@ impl HardwareService for HardwareServiceImpl {
         Ok(Response::new(response))
     }
 
+    async fn subscribe_device_state(
+        &self,
+        request: Request<DeviceStateSubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeDeviceStateStream>, Status> {
+        let req = request.into_inner();
+
+        // Determine device list and validate device IDs exist
+        let device_ids: Vec<String> = {
+            let registry = self.registry.read().await;
+            if req.device_ids.is_empty() {
+                registry.list_devices().iter().map(|d| d.id.clone()).collect()
+            } else {
+                // Validate all requested device IDs exist
+                for device_id in &req.device_ids {
+                    if !registry.contains(device_id) {
+                        return Err(Status::not_found(format!(
+                            "Device '{}' not found",
+                            device_id
+                        )));
+                    }
+                }
+                req.device_ids.clone()
+            }
+        };
+
+        if device_ids.is_empty() {
+            return Err(Status::not_found("No devices available to subscribe"));
+        }
+
+        // Rate limiting interval
+        let interval_ms = if req.max_rate_hz > 0 {
+            (1000.0 / (req.max_rate_hz as f64)).max(10.0) as u64
+        } else {
+            200
+        };
+
+        let include_snapshot = req.include_snapshot;
+        let last_seen_version = req.last_seen_version;
+        let registry = Arc::clone(&self.registry);
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut versions: HashMap<String, u64> = HashMap::new();
+            let mut last_payloads: HashMap<String, HashMap<String, String>> = HashMap::new();
+            let mut ticker = interval(Duration::from_millis(interval_ms));
+            let mut first_tick = true;
+
+            loop {
+                ticker.tick().await;
+                for device_id in device_ids.iter() {
+                    let state = match fetch_device_state(&registry, device_id).await {
+                        Ok(s) => s,
+                        Err(status) => {
+                            let _ = tx.send(Err(status)).await;
+                            continue;
+                        }
+                    };
+
+                    let fields = device_state_to_fields_json(&state);
+                    let prev = last_payloads.get(device_id);
+                    let changed = match prev {
+                        None => true,
+                        Some(p) => p != &fields,
+                    };
+
+                    let current_version = versions.get(device_id).cloned().unwrap_or(last_seen_version);
+                    let next_version = current_version.saturating_add(1);
+                    let is_snapshot = (include_snapshot && first_tick) || (current_version < last_seen_version);
+
+                    if is_snapshot || changed {
+                        let update = DeviceStateUpdate {
+                            device_id: device_id.clone(),
+                            timestamp_ns: now_ns(),
+                            version: next_version,
+                            is_snapshot,
+                            fields_json: fields.clone(),
+                        };
+                        if tx.send(Ok(update)).await.is_err() {
+                            return;
+                        }
+                        versions.insert(device_id.clone(), next_version);
+                        last_payloads.insert(device_id.clone(), fields);
+                    }
+                }
+                first_tick = false;
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
     // =========================================================================
     // Motion Control
     // =========================================================================
@@ -180,13 +282,52 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
+        // Send move command
         match movable.move_abs(req.value).await {
             Ok(_) => {
-                let final_position = movable.position().await.unwrap_or(req.value);
+                // Check if we should wait for completion
+                let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
+                    // Wait for motion to complete with optional timeout
+                    let settle_result = if let Some(timeout_ms) = req.timeout_ms {
+                        tokio::time::timeout(
+                            Duration::from_millis(timeout_ms as u64),
+                            movable.wait_settled(),
+                        )
+                        .await
+                    } else {
+                        Ok(movable.wait_settled().await)
+                    };
+
+                    match settle_result {
+                        Ok(Ok(_)) => {
+                            let pos = movable.position().await.unwrap_or(req.value);
+                            (pos, Some(true))
+                        }
+                        Ok(Err(e)) => {
+                            // wait_settled failed
+                            return Err(map_hardware_error_to_status(&e.to_string()));
+                        }
+                        Err(_) => {
+                            // Timeout
+                            let pos = movable.position().await.unwrap_or(req.value);
+                            return Err(Status::deadline_exceeded(format!(
+                                "Motion did not complete within {} ms, current position: {}",
+                                req.timeout_ms.unwrap_or(0),
+                                pos
+                            )));
+                        }
+                    }
+                } else {
+                    // Return immediately without waiting
+                    let pos = movable.position().await.unwrap_or(req.value);
+                    (pos, None)
+                };
+
                 Ok(Response::new(MoveResponse {
                     success: true,
                     error_message: String::new(),
                     final_position,
+                    settled,
                 }))
             }
             Err(e) => {
@@ -216,13 +357,50 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
+        // Send move command
         match movable.move_rel(req.value).await {
             Ok(_) => {
-                let final_position = movable.position().await.unwrap_or(0.0);
+                // Check if we should wait for completion
+                let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
+                    // Wait for motion to complete with optional timeout
+                    let settle_result = if let Some(timeout_ms) = req.timeout_ms {
+                        tokio::time::timeout(
+                            Duration::from_millis(timeout_ms as u64),
+                            movable.wait_settled(),
+                        )
+                        .await
+                    } else {
+                        Ok(movable.wait_settled().await)
+                    };
+
+                    match settle_result {
+                        Ok(Ok(_)) => {
+                            let pos = movable.position().await.unwrap_or(0.0);
+                            (pos, Some(true))
+                        }
+                        Ok(Err(e)) => {
+                            return Err(map_hardware_error_to_status(&e.to_string()));
+                        }
+                        Err(_) => {
+                            let pos = movable.position().await.unwrap_or(0.0);
+                            return Err(Status::deadline_exceeded(format!(
+                                "Motion did not complete within {} ms, current position: {}",
+                                req.timeout_ms.unwrap_or(0),
+                                pos
+                            )));
+                        }
+                    }
+                } else {
+                    // Return immediately without waiting
+                    let pos = movable.position().await.unwrap_or(0.0);
+                    (pos, None)
+                };
+
                 Ok(Response::new(MoveResponse {
                     success: true,
                     error_message: String::new(),
                     final_position,
+                    settled,
                 }))
             }
             Err(e) => {
@@ -666,6 +844,228 @@ impl HardwareService for HardwareServiceImpl {
     }
 
     // =========================================================================
+    // Laser Control (bd-pwjo)
+    // =========================================================================
+
+    async fn set_shutter(
+        &self,
+        request: Request<SetShutterRequest>,
+    ) -> Result<Response<SetShutterResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let shutter_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_shutter_control(&req.device_id)
+            };
+
+            let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no shutter control",
+                    req.device_id
+                ))
+            })?;
+
+            match if req.open {
+                shutter_ctrl.open_shutter().await
+            } else {
+                shutter_ctrl.close_shutter().await
+            } {
+                Ok(()) => Ok(Response::new(SetShutterResponse { success: true })),
+                Err(e) => Err(Status::internal(format!("Failed to set shutter: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Shutter control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    async fn get_shutter(
+        &self,
+        request: Request<GetShutterRequest>,
+    ) -> Result<Response<GetShutterResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let shutter_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_shutter_control(&req.device_id)
+            };
+
+            let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no shutter control",
+                    req.device_id
+                ))
+            })?;
+
+            match shutter_ctrl.is_shutter_open().await {
+                Ok(open) => Ok(Response::new(GetShutterResponse { open })),
+                Err(e) => Err(Status::internal(format!("Failed to get shutter state: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Shutter control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    async fn set_wavelength(
+        &self,
+        request: Request<SetWavelengthRequest>,
+    ) -> Result<Response<SetWavelengthResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let wavelength_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_wavelength_tunable(&req.device_id)
+            };
+
+            let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no wavelength control",
+                    req.device_id
+                ))
+            })?;
+
+            match wavelength_ctrl.set_wavelength(req.wavelength_nm).await {
+                Ok(()) => Ok(Response::new(SetWavelengthResponse { success: true })),
+                Err(e) => Err(Status::internal(format!("Failed to set wavelength: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Wavelength control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    async fn get_wavelength(
+        &self,
+        request: Request<GetWavelengthRequest>,
+    ) -> Result<Response<GetWavelengthResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let wavelength_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_wavelength_tunable(&req.device_id)
+            };
+
+            let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no wavelength control",
+                    req.device_id
+                ))
+            })?;
+
+            match wavelength_ctrl.get_wavelength().await {
+                Ok(nm) => Ok(Response::new(GetWavelengthResponse { wavelength_nm: nm })),
+                Err(e) => Err(Status::internal(format!("Failed to get wavelength: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Wavelength control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    async fn set_emission(
+        &self,
+        request: Request<SetEmissionRequest>,
+    ) -> Result<Response<SetEmissionResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let emission_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_emission_control(&req.device_id)
+            };
+
+            let emission_ctrl = emission_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no emission control",
+                    req.device_id
+                ))
+            })?;
+
+            match if req.enabled {
+                emission_ctrl.enable_emission().await
+            } else {
+                emission_ctrl.disable_emission().await
+            } {
+                Ok(()) => Ok(Response::new(SetEmissionResponse { success: true })),
+                Err(e) => Err(Status::internal(format!("Failed to set emission: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Emission control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    async fn get_emission(
+        &self,
+        request: Request<GetEmissionRequest>,
+    ) -> Result<Response<GetEmissionResponse>, Status> {
+        let req = request.into_inner();
+
+        #[cfg(feature = "instrument_spectra_physics")]
+        {
+            let emission_ctrl = {
+                let registry = self.registry.read().await;
+                registry.get_emission_control(&req.device_id)
+            };
+
+            let emission_ctrl = emission_ctrl.ok_or_else(|| {
+                Status::not_found(format!(
+                    "Device '{}' not found or has no emission control",
+                    req.device_id
+                ))
+            })?;
+
+            match emission_ctrl.is_emission_enabled().await {
+                Ok(enabled) => Ok(Response::new(GetEmissionResponse { enabled })),
+                Err(e) => Err(Status::internal(format!("Failed to get emission state: {}", e))),
+            }
+        }
+
+        #[cfg(not(feature = "instrument_spectra_physics"))]
+        {
+            let _ = req;
+            Err(Status::unimplemented(
+                "Emission control requires instrument_spectra_physics feature",
+            ))
+        }
+    }
+
+    // =========================================================================
     // Frame Streaming
     // =========================================================================
 
@@ -767,10 +1167,15 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        // Take the frame receiver from the producer (can only be done once)
-        let frame_rx = frame_producer.take_frame_receiver().await.ok_or_else(|| {
+        // Start streaming if not already active
+        frame_producer.start_stream().await.map_err(|e| {
+            Status::internal(format!("Failed to start stream for '{}': {}", device_id, e))
+        })?;
+
+        // Subscribe to frame broadcasts (can be called multiple times for multiple subscribers)
+        let mut frame_rx = frame_producer.subscribe_frames().await.ok_or_else(|| {
             Status::failed_precondition(format!(
-                "Frame receiver for '{}' is not available (already taken or not supported)",
+                "Frame streaming for '{}' is not available or not supported",
                 device_id
             ))
         })?;
@@ -781,10 +1186,9 @@ impl HardwareService for HardwareServiceImpl {
 
         // Spawn background task to convert Frame → FrameData and forward to gRPC stream
         tokio::spawn(async move {
-            let mut frame_rx = frame_rx;
             let mut frame_number: u32 = 0;
 
-            while let Some(frame) = frame_rx.recv().await {
+            while let Ok(frame) = frame_rx.recv().await {
                 // Convert Frame to FrameData proto
                 let pixel_data = if include_pixel_data {
                     // Convert Vec<u16> to bytes (little-endian)
@@ -834,30 +1238,71 @@ impl HardwareService for HardwareServiceImpl {
     // Device Lifecycle (Stage/Unstage - Bluesky pattern)
     // =========================================================================
 
+    /// Stage a device for acquisition (Bluesky-style lifecycle).
+    ///
+    /// Staging prepares a device for use in a scan or acquisition sequence.
+    /// This is called once at the start of a scan for each device involved.
+    ///
+    /// Currently implements a no-op that validates the device exists. When a
+    /// Stageable trait is added, this will call device-specific preparation
+    /// (e.g., arm camera, open shutter, check motion limits).
     async fn stage_device(
         &self,
         request: Request<StageDeviceRequest>,
     ) -> Result<Response<StageDeviceResponse>, Status> {
         let req = request.into_inner();
-        // TODO: Implement device staging (prepare device for acquisition)
-        // This should call a Stage trait method on the device when implemented
-        Err(Status::unimplemented(format!(
-            "StageDevice not yet implemented for device '{}'",
-            req.device_id
-        )))
+        let registry = self.registry.read().await;
+
+        // Verify device exists
+        if !registry.contains(&req.device_id) {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found",
+                req.device_id
+            )));
+        }
+
+        // TODO: When Stageable trait is implemented, call device.stage() here
+        // For now, staging is a no-op that validates device existence
+        tracing::debug!("Staged device '{}' (no-op)", req.device_id);
+
+        Ok(Response::new(StageDeviceResponse {
+            success: true,
+            error_message: String::new(),
+            staged: true,
+        }))
     }
 
+    /// Unstage a device after acquisition (Bluesky-style lifecycle).
+    ///
+    /// Unstaging cleans up a device after a scan or acquisition sequence.
+    /// This is called once at the end of a scan for each device involved.
+    ///
+    /// Currently implements a no-op that validates the device exists. When a
+    /// Stageable trait is added, this will call device-specific cleanup
+    /// (e.g., disarm camera, close shutter, return to safe position).
     async fn unstage_device(
         &self,
         request: Request<UnstageDeviceRequest>,
     ) -> Result<Response<UnstageDeviceResponse>, Status> {
         let req = request.into_inner();
-        // TODO: Implement device unstaging (cleanup after acquisition)
-        // This should call an Unstage trait method on the device when implemented
-        Err(Status::unimplemented(format!(
-            "UnstageDevice not yet implemented for device '{}'",
-            req.device_id
-        )))
+        let registry = self.registry.read().await;
+
+        // Verify device exists
+        if !registry.contains(&req.device_id) {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found",
+                req.device_id
+            )));
+        }
+
+        // TODO: When Stageable trait is implemented, call device.unstage() here
+        // For now, unstaging is a no-op that validates device existence
+        tracing::debug!("Unstaged device '{}' (no-op)", req.device_id);
+
+        Ok(Response::new(UnstageDeviceResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
     // =========================================================================
@@ -869,12 +1314,99 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<DeviceCommandRequest>,
     ) -> Result<Response<DeviceCommandResponse>, Status> {
         let req = request.into_inner();
-        // TODO: Implement passthrough command execution
-        // This allows sending device-specific commands that don't fit capability traits
-        Err(Status::unimplemented(format!(
-            "ExecuteDeviceCommand not yet implemented for device '{}', command '{}'",
-            req.device_id, req.command
-        )))
+        let registry = self.registry.read().await;
+
+        // Check if device exists
+        if !registry.contains(&req.device_id) {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found",
+                req.device_id
+            )));
+        }
+
+        // Handle specific commands based on device type and command name
+        match req.command.as_str() {
+            #[cfg(feature = "instrument_spectra_physics")]
+            "open_shutter" => {
+                use crate::hardware::capabilities::ShutterControl;
+                if let Some(device) = registry.get_shutter_control(&req.device_id) {
+                    device.open_shutter().await.map_err(|e| {
+                        Status::internal(format!("Failed to open shutter: {}", e))
+                    })?;
+                    Ok(Response::new(DeviceCommandResponse {
+                        success: true,
+                        error_message: String::new(),
+                        results: HashMap::new(),
+                    }))
+                } else {
+                    Err(Status::unimplemented(format!(
+                        "Device '{}' does not support ShutterControl",
+                        req.device_id
+                    )))
+                }
+            }
+            #[cfg(feature = "instrument_spectra_physics")]
+            "close_shutter" => {
+                use crate::hardware::capabilities::ShutterControl;
+                if let Some(device) = registry.get_shutter_control(&req.device_id) {
+                    device.close_shutter().await.map_err(|e| {
+                        Status::internal(format!("Failed to close shutter: {}", e))
+                    })?;
+                    Ok(Response::new(DeviceCommandResponse {
+                        success: true,
+                        error_message: String::new(),
+                        results: HashMap::new(),
+                    }))
+                } else {
+                    Err(Status::unimplemented(format!(
+                        "Device '{}' does not support ShutterControl",
+                        req.device_id
+                    )))
+                }
+            }
+            #[cfg(feature = "instrument_spectra_physics")]
+            "enable_emission" => {
+                use crate::hardware::capabilities::EmissionControl;
+                if let Some(device) = registry.get_emission_control(&req.device_id) {
+                    device.enable_emission().await.map_err(|e| {
+                        Status::internal(format!("Failed to enable emission: {}", e))
+                    })?;
+                    Ok(Response::new(DeviceCommandResponse {
+                        success: true,
+                        error_message: String::new(),
+                        results: HashMap::new(),
+                    }))
+                } else {
+                    Err(Status::unimplemented(format!(
+                        "Device '{}' does not support EmissionControl",
+                        req.device_id
+                    )))
+                }
+            }
+            #[cfg(feature = "instrument_spectra_physics")]
+            "disable_emission" => {
+                use crate::hardware::capabilities::EmissionControl;
+                if let Some(device) = registry.get_emission_control(&req.device_id) {
+                    device.disable_emission().await.map_err(|e| {
+                        Status::internal(format!("Failed to disable emission: {}", e))
+                    })?;
+                    Ok(Response::new(DeviceCommandResponse {
+                        success: true,
+                        error_message: String::new(),
+                        results: HashMap::new(),
+                    }))
+                } else {
+                    Err(Status::unimplemented(format!(
+                        "Device '{}' does not support EmissionControl",
+                        req.device_id
+                    )))
+                }
+            }
+            _ => Err(Status::unimplemented(format!(
+                "ExecuteDeviceCommand: unknown command '{}' for device '{}'",
+                req.command, req.device_id
+            ))),
+        }
     }
 
     // =========================================================================
@@ -886,12 +1418,53 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<ListParametersRequest>,
     ) -> Result<Response<ListParametersResponse>, Status> {
         let req = request.into_inner();
-        // TODO: Implement parameter listing
-        // This should return all observable parameters for the device
-        Err(Status::unimplemented(format!(
-            "ListParameters not yet implemented for device '{}'",
-            req.device_id
-        )))
+        let registry = self.registry.read().await;
+        
+        // Check if device exists
+        if !registry.contains(&req.device_id) {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found",
+                req.device_id
+            )));
+        }
+        
+        // Get settable parameters for plugin devices
+        #[cfg(feature = "tokio_serial")]
+        let parameters = {
+            if let Some(settables) = registry.get_settable_parameters(&req.device_id).await {
+                settables
+                    .into_iter()
+                    .map(|s| {
+                        let dtype = match s.value_type {
+                            crate::hardware::plugin::schema::ValueType::Float => "float",
+                            crate::hardware::plugin::schema::ValueType::Int => "int",
+                            crate::hardware::plugin::schema::ValueType::String => "string",
+                            crate::hardware::plugin::schema::ValueType::Enum => "enum",
+                            crate::hardware::plugin::schema::ValueType::Bool => "bool",
+                        };
+                        ParameterDescriptor {
+                            device_id: req.device_id.clone(),
+                            name: s.name,
+                            description: String::new(), // Not in schema
+                            dtype: dtype.to_string(),
+                            units: s.unit.unwrap_or_default(),
+                            readable: s.get_cmd.is_some(),
+                            writable: true, // Always has set_cmd
+                            min_value: s.min,
+                            max_value: s.max,
+                            enum_values: s.options,
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+        
+        #[cfg(not(feature = "tokio_serial"))]
+        let parameters: Vec<ParameterDescriptor> = Vec::new();
+        
+        Ok(Response::new(ListParametersResponse { parameters }))
     }
 
     async fn get_parameter(
@@ -899,12 +1472,39 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<GetParameterRequest>,
     ) -> Result<Response<ParameterValue>, Status> {
         let req = request.into_inner();
-        // TODO: Implement parameter reading
-        // This should return the current value of a named parameter
-        Err(Status::unimplemented(format!(
-            "GetParameter '{}' not yet implemented for device '{}'",
-            req.parameter_name, req.device_id
-        )))
+        
+        // Get settable interface from registry
+        let settable = {
+            let registry = self.registry.read().await;
+            registry.get_settable(&req.device_id)
+        };
+        
+        let settable = settable.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' does not support settable parameters",
+                req.device_id
+            ))
+        })?;
+        
+        // Get the parameter value
+        let value = settable
+            .get_value(&req.parameter_name)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get parameter: {}", e)))?;
+        
+        // Get timestamp
+        let timestamp_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        
+        Ok(Response::new(ParameterValue {
+            device_id: req.device_id,
+            name: req.parameter_name,
+            value: value.to_string(),
+            units: String::new(), // Would need parameter metadata
+            timestamp_ns,
+        }))
     }
 
     async fn set_parameter(
@@ -912,12 +1512,46 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<SetParameterRequest>,
     ) -> Result<Response<SetParameterResponse>, Status> {
         let req = request.into_inner();
-        // TODO: Implement parameter writing
-        // This should set a named parameter to a new value
-        Err(Status::unimplemented(format!(
-            "SetParameter '{}' not yet implemented for device '{}'",
-            req.parameter_name, req.device_id
-        )))
+        
+        // Get settable interface from registry
+        let settable = {
+            let registry = self.registry.read().await;
+            registry.get_settable(&req.device_id)
+        };
+        
+        let settable = settable.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' does not support settable parameters",
+                req.device_id
+            ))
+        })?;
+        
+        // Parse the value string to JSON
+        let json_value: serde_json::Value = serde_json::from_str(&req.value)
+            .or_else(|_| {
+                // Try as raw string if JSON parsing fails
+                Ok::<_, serde_json::Error>(serde_json::Value::String(req.value.clone()))
+            })
+            .map_err(|e| Status::invalid_argument(format!("Invalid value format: {}", e)))?;
+        
+        // Set the parameter
+        settable
+            .set_value(&req.parameter_name, json_value)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to set parameter: {}", e)))?;
+        
+        // Read back the actual value
+        let actual_value = settable
+            .get_value(&req.parameter_name)
+            .await
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| req.value.clone());
+        
+        Ok(Response::new(SetParameterResponse {
+            success: true,
+            error_message: String::new(),
+            actual_value,
+        }))
     }
 
     type StreamParameterChangesStream =
@@ -936,6 +1570,94 @@ impl HardwareService for HardwareServiceImpl {
             device_filter
         )))
     }
+}
+
+// Helper: fetch current device state (shared by SubscribeDeviceState)
+async fn fetch_device_state(
+    registry: &Arc<RwLock<DeviceRegistry>>,
+    device_id: &str,
+) -> Result<DeviceStateResponse, Status> {
+    let (movable, readable, triggerable, frame_producer, exposure_control, exists) = {
+        let registry = registry.read().await;
+        (
+            registry.get_movable(device_id),
+            registry.get_readable(device_id),
+            registry.get_triggerable(device_id),
+            registry.get_frame_producer(device_id),
+            registry.get_exposure_control(device_id),
+            registry.contains(device_id),
+        )
+    };
+
+    if !exists {
+        return Err(Status::not_found(format!(
+            "Device not found: {}",
+            device_id
+        )));
+    }
+
+    let mut response = DeviceStateResponse {
+        device_id: device_id.to_string(),
+        online: true,
+        position: None,
+        last_reading: None,
+        armed: None,
+        streaming: None,
+        exposure_ms: None,
+    };
+
+    if let Some(movable) = movable {
+        if let Ok(pos) = movable.position().await {
+            response.position = Some(pos);
+        }
+    }
+    if let Some(readable) = readable {
+        if let Ok(val) = readable.read().await {
+            response.last_reading = Some(val);
+        }
+    }
+    if let Some(triggerable) = triggerable {
+        response.armed = triggerable.is_armed().await.ok();
+    }
+    if let Some(frame_producer) = frame_producer {
+        response.streaming = frame_producer.is_streaming().await.ok();
+    }
+    if let Some(exposure_ctrl) = exposure_control {
+        if let Ok(seconds) = exposure_ctrl.get_exposure().await {
+            response.exposure_ms = Some(seconds * 1000.0);
+        }
+    }
+
+    Ok(response)
+}
+
+// Helper: convert state to sparse field map
+fn device_state_to_fields_json(state: &DeviceStateResponse) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("online".into(), state.online.to_string());
+    if let Some(p) = state.position {
+        map.insert("position".into(), p.to_string());
+    }
+    if let Some(r) = state.last_reading {
+        map.insert("reading".into(), r.to_string());
+    }
+    if let Some(a) = state.armed {
+        map.insert("armed".into(), a.to_string());
+    }
+    if let Some(s) = state.streaming {
+        map.insert("streaming".into(), s.to_string());
+    }
+    if let Some(e) = state.exposure_ms {
+        map.insert("exposure_ms".into(), e.to_string());
+    }
+    map
+}
+
+fn now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
 }
 
 /// Map hardware errors to canonical gRPC Status codes
@@ -979,6 +1701,10 @@ fn device_info_to_proto(info: &crate::hardware::registry::DeviceInfo) -> DeviceI
         is_triggerable: info.capabilities.contains(&Capability::Triggerable),
         is_frame_producer: info.capabilities.contains(&Capability::FrameProducer),
         is_exposure_controllable: info.capabilities.contains(&Capability::ExposureControl),
+        // Laser control capabilities (bd-pwjo)
+        is_shutter_controllable: info.capabilities.contains(&Capability::ShutterControl),
+        is_wavelength_tunable: info.capabilities.contains(&Capability::WavelengthTunable),
+        is_emission_controllable: info.capabilities.contains(&Capability::EmissionControl),
         metadata: Some(ProtoDeviceMetadata {
             position_units: info.metadata.position_units.clone(),
             min_position: info.metadata.min_position,
@@ -989,6 +1715,9 @@ fn device_info_to_proto(info: &crate::hardware::registry::DeviceInfo) -> DeviceI
             bits_per_pixel: info.metadata.bits_per_pixel,
             min_exposure_ms: info.metadata.min_exposure_ms,
             max_exposure_ms: info.metadata.max_exposure_ms,
+            // Wavelength limits for tunable lasers (bd-pwjo)
+            min_wavelength_nm: info.metadata.min_wavelength_nm,
+            max_wavelength_nm: info.metadata.max_wavelength_nm,
         }),
     }
 }
@@ -1036,6 +1765,8 @@ mod tests {
         let request = Request::new(MoveRequest {
             device_id: "mock_stage".to_string(),
             value: 10.0,
+            wait_for_completion: None,
+            timeout_ms: None,
         });
         let response = service.move_absolute(request).await.unwrap();
         let resp = response.into_inner();
@@ -1067,6 +1798,8 @@ mod tests {
         let request = Request::new(MoveRequest {
             device_id: "nonexistent".to_string(),
             value: 10.0,
+            wait_for_completion: None,
+            timeout_ms: None,
         });
         let result = service.move_absolute(request).await;
 
@@ -1083,10 +1816,218 @@ mod tests {
         let request = Request::new(MoveRequest {
             device_id: "mock_power_meter".to_string(),
             value: 10.0,
+            wait_for_completion: None,
+            timeout_ms: None,
         });
         let result = service.move_absolute(request).await;
 
         assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_move_with_wait_for_completion() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(MoveRequest {
+            device_id: "mock_stage".to_string(),
+            value: 25.0,
+            wait_for_completion: Some(true),
+            timeout_ms: Some(5000),
+        });
+        let response = service.move_absolute(request).await.unwrap();
+        let resp = response.into_inner();
+
+        assert!(resp.success);
+        assert!((resp.final_position - 25.0).abs() < 0.001);
+        assert_eq!(resp.settled, Some(true));
+    }
+
+    // =========================================================================
+    // Stage/Unstage Tests (bd-h917)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_stage_device_success() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(StageDeviceRequest {
+            device_id: "mock_stage".to_string(),
+        });
+        let response = service.stage_device(request).await.unwrap();
+        let resp = response.into_inner();
+
+        assert!(resp.success);
+        assert!(resp.staged);
+        assert!(resp.error_message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stage_device_not_found() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(StageDeviceRequest {
+            device_id: "nonexistent".to_string(),
+        });
+        let result = service.stage_device(request).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_unstage_device_success() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(UnstageDeviceRequest {
+            device_id: "mock_power_meter".to_string(),
+        });
+        let response = service.unstage_device(request).await.unwrap();
+        let resp = response.into_inner();
+
+        assert!(resp.success);
+        assert!(resp.error_message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_unstage_device_not_found() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(UnstageDeviceRequest {
+            device_id: "nonexistent".to_string(),
+        });
+        let result = service.unstage_device(request).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    // =========================================================================
+    // Streaming Tests (bd-9pss)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_subscribe_device_state_success() {
+        use tokio_stream::StreamExt;
+
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(DeviceStateSubscribeRequest {
+            device_ids: vec!["mock_stage".to_string()],
+            max_rate_hz: 10,
+            last_seen_version: 0,
+            include_snapshot: true,
+        });
+        let response = service.subscribe_device_state(request).await.unwrap();
+        let mut stream = response.into_inner();
+
+        // Receive at least one state update
+        let update = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.next()
+        ).await.expect("timeout waiting for state update");
+
+        assert!(update.is_some());
+        let state = update.unwrap().expect("stream item should be Ok");
+        assert_eq!(state.device_id, "mock_stage");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_device_state_not_found() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(DeviceStateSubscribeRequest {
+            device_ids: vec!["nonexistent".to_string()],
+            max_rate_hz: 10,
+            last_seen_version: 0,
+            include_snapshot: false,
+        });
+        let result = service.subscribe_device_state(request).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    /// Helper to create a registry with a mock camera for frame streaming tests
+    async fn create_mock_registry_with_camera() -> Result<DeviceRegistry, anyhow::Error> {
+        use crate::hardware::registry::{DeviceConfig, DriverType};
+
+        let mut registry = DeviceRegistry::new();
+
+        // Add mock camera
+        registry
+            .register(DeviceConfig {
+                id: "mock_camera".to_string(),
+                name: "Mock Camera".to_string(),
+                driver: DriverType::MockCamera,
+            })
+            .await?;
+
+        Ok(registry)
+    }
+
+    #[tokio::test]
+    async fn test_stream_frames_success() {
+        use tokio_stream::StreamExt;
+
+        let registry = create_mock_registry_with_camera().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(StreamFramesRequest {
+            device_id: "mock_camera".to_string(),
+            include_pixel_data: Some(true),
+        });
+        let response = service.stream_frames(request).await.unwrap();
+        let mut stream = response.into_inner();
+
+        // Receive at least one frame
+        let frame = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            stream.next()
+        ).await.expect("timeout waiting for frame");
+
+        assert!(frame.is_some());
+        let frame_data = frame.unwrap().expect("stream item should be Ok");
+        assert_eq!(frame_data.device_id, "mock_camera");
+        assert!(!frame_data.pixel_data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stream_frames_not_found() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        let request = Request::new(StreamFramesRequest {
+            device_id: "nonexistent".to_string(),
+            include_pixel_data: None,
+        });
+        let result = service.stream_frames(request).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_stream_frames_wrong_capability() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+
+        // mock_stage doesn't have FrameProducer capability
+        let request = Request::new(StreamFramesRequest {
+            device_id: "mock_stage".to_string(),
+            include_pixel_data: None,
+        });
+        let result = service.stream_frames(request).await;
+
+        assert!(result.is_err());
+        // Should return NotFound since mock_stage doesn't have frame producer capability
         assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     }
 }

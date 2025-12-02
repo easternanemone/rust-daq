@@ -75,6 +75,8 @@
 use crate::hardware::capabilities::{
     ExposureControl, FrameProducer, Movable, Readable, Settable, Triggerable,
 };
+#[cfg(feature = "instrument_spectra_physics")]
+use crate::hardware::capabilities::{EmissionControl, ShutterControl, WavelengthTunable};
 #[cfg(feature = "tokio_serial")]
 use crate::hardware::plugin::driver::GenericDriver;
 use anyhow::{anyhow, Result};
@@ -108,6 +110,12 @@ pub enum Capability {
     ExposureControl,
     /// Has settable parameters (QCodes/ScopeFoundry pattern)
     Settable,
+    /// Has shutter control (lasers) - bd-pwjo
+    ShutterControl,
+    /// Has wavelength tuning (tunable lasers) - bd-pwjo
+    WavelengthTunable,
+    /// Has emission on/off control (lasers) - bd-pwjo
+    EmissionControl,
 }
 
 // =============================================================================
@@ -284,6 +292,10 @@ pub struct DeviceMetadata {
     pub min_exposure_ms: Option<f64>,
     /// For ExposureControl devices: maximum exposure in milliseconds
     pub max_exposure_ms: Option<f64>,
+    /// For WavelengthTunable devices: minimum wavelength in nm (bd-pwjo)
+    pub min_wavelength_nm: Option<f64>,
+    /// For WavelengthTunable devices: maximum wavelength in nm (bd-pwjo)
+    pub max_wavelength_nm: Option<f64>,
 }
 
 // =============================================================================
@@ -306,6 +318,15 @@ struct RegisteredDevice {
     exposure_control: Option<Arc<dyn ExposureControl>>,
     /// Settable implementation (if supported) - observable parameters
     settable: Option<Arc<dyn Settable>>,
+    /// ShutterControl implementation (if supported) - laser shutter
+    #[cfg(feature = "instrument_spectra_physics")]
+    shutter_control: Option<Arc<dyn ShutterControl>>,
+    /// EmissionControl implementation (if supported) - laser on/off
+    #[cfg(feature = "instrument_spectra_physics")]
+    emission_control: Option<Arc<dyn EmissionControl>>,
+    /// WavelengthTunable implementation (if supported) - tunable laser wavelength (bd-pwjo)
+    #[cfg(feature = "instrument_spectra_physics")]
+    wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
     /// Capability metadata
     metadata: DeviceMetadata,
 }
@@ -510,6 +531,28 @@ impl DeviceRegistry {
             .and_then(|d| d.exposure_control.clone())
     }
 
+    /// Get a device as ShutterControl (if it supports this capability)
+    #[cfg(feature = "instrument_spectra_physics")]
+    pub fn get_shutter_control(&self, id: &str) -> Option<Arc<dyn ShutterControl>> {
+        self.devices.get(id).and_then(|d| d.shutter_control.clone())
+    }
+
+    /// Get a device as EmissionControl (if it supports this capability)
+    #[cfg(feature = "instrument_spectra_physics")]
+    pub fn get_emission_control(&self, id: &str) -> Option<Arc<dyn EmissionControl>> {
+        self.devices
+            .get(id)
+            .and_then(|d| d.emission_control.clone())
+    }
+
+    /// Get a device as WavelengthTunable (if it supports this capability) - bd-pwjo
+    #[cfg(feature = "instrument_spectra_physics")]
+    pub fn get_wavelength_tunable(&self, id: &str) -> Option<Arc<dyn WavelengthTunable>> {
+        self.devices
+            .get(id)
+            .and_then(|d| d.wavelength_tunable.clone())
+    }
+
     /// Get a device as Settable (if it supports this capability)
     pub fn get_settable(&self, id: &str) -> Option<Arc<dyn Settable>> {
         self.devices.get(id).and_then(|d| d.settable.clone())
@@ -564,6 +607,10 @@ impl DeviceRegistry {
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-100.0),
@@ -583,6 +630,10 @@ impl DeviceRegistry {
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -601,6 +652,10 @@ impl DeviceRegistry {
                     frame_producer: Some(driver.clone()),
                     exposure_control: Some(driver.clone()),
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -627,6 +682,10 @@ impl DeviceRegistry {
                     frame_producer: Some(driver.clone()),
                     exposure_control: Some(driver.clone()),
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -672,6 +731,10 @@ impl DeviceRegistry {
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         position_units: Some("degrees".to_string()),
                         min_position: Some(0.0),
@@ -694,6 +757,10 @@ impl DeviceRegistry {
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -707,11 +774,15 @@ impl DeviceRegistry {
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
-                    readable: Some(driver),
+                    readable: Some(driver.clone()),
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: Some(driver.clone()),
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: Some(driver),
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -730,6 +801,10 @@ impl DeviceRegistry {
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    shutter_control: None,
+                    #[cfg(feature = "instrument_spectra_physics")]
+                    emission_control: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-25.0), // Typical ESP300 stage range
@@ -865,19 +940,6 @@ impl DeviceRegistry {
                 None
             };
 
-        // Check for settable capability (observable parameters)
-        let settable: Option<Arc<dyn Settable>> =
-            if !plugin_config.capabilities.settable.is_empty() {
-                Some(Arc::new(
-                    crate::hardware::plugin::handles::PluginSettableHandle::new(
-                        driver.clone(),
-                        false, // not mocking
-                    ),
-                ))
-            } else {
-                None
-            };
-
         // Note: FrameProducer, Triggerable, and ExposureControl are not yet
         // supported by the plugin system, so we leave them as None
 
@@ -888,7 +950,11 @@ impl DeviceRegistry {
             triggerable: None,
             frame_producer: None,
             exposure_control: None,
-            settable,
+            settable: None,
+            #[cfg(feature = "instrument_spectra_physics")]
+            shutter_control: None,
+            #[cfg(feature = "instrument_spectra_physics")]
+            emission_control: None,
             metadata,
         })
     }

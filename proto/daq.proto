@@ -160,6 +160,8 @@ service HardwareService {
   // Discovery and introspection
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
   rpc GetDeviceState(DeviceStateRequest) returns (DeviceStateResponse);
+  // Real-time device state streaming (bd-6uba)
+  rpc SubscribeDeviceState(DeviceStateSubscribeRequest) returns (stream DeviceStateUpdate);
 
   // Motion Control (for Movable devices)
   rpc MoveAbsolute(MoveRequest) returns (MoveResponse);
@@ -180,6 +182,17 @@ service HardwareService {
   rpc SetExposure(SetExposureRequest) returns (SetExposureResponse);
   rpc GetExposure(GetExposureRequest) returns (GetExposureResponse);
 
+  // Laser Control (bd-pwjo)
+  // Shutter control for devices implementing ShutterControl trait
+  rpc SetShutter(SetShutterRequest) returns (SetShutterResponse);
+  rpc GetShutter(GetShutterRequest) returns (GetShutterResponse);
+  // Wavelength control for devices implementing WavelengthTunable trait
+  rpc SetWavelength(SetWavelengthRequest) returns (SetWavelengthResponse);
+  rpc GetWavelength(GetWavelengthRequest) returns (GetWavelengthResponse);
+  // Emission control for devices implementing EmissionControl trait
+  rpc SetEmission(SetEmissionRequest) returns (SetEmissionResponse);
+  rpc GetEmission(GetEmissionRequest) returns (GetEmissionResponse);
+
   // Frame Streaming (for FrameProducer devices)
   rpc StartStream(StartStreamRequest) returns (StartStreamResponse);
   rpc StopStream(StopStreamRequest) returns (StopStreamResponse);
@@ -199,6 +212,18 @@ service HardwareService {
   rpc GetParameter(GetParameterRequest) returns (ParameterValue);
   rpc SetParameter(SetParameterRequest) returns (SetParameterResponse);
   rpc StreamParameterChanges(StreamParameterChangesRequest) returns (stream ParameterChange);
+}
+
+// =============================================================================
+// Preset Service (bd-akcm)
+// =============================================================================
+
+service PresetService {
+  rpc ListPresets(ListPresetsRequest) returns (ListPresetsResponse);
+  rpc SavePreset(SavePresetRequest) returns (SavePresetResponse);
+  rpc LoadPreset(LoadPresetRequest) returns (LoadPresetResponse);
+  rpc DeletePreset(DeletePresetRequest) returns (DeletePresetResponse);
+  rpc GetPreset(GetPresetRequest) returns (Preset);
 }
 
 // --------------------------------------------------------------------------
@@ -226,6 +251,10 @@ message DeviceInfo {
   bool is_triggerable = 12;
   bool is_frame_producer = 13;
   bool is_exposure_controllable = 14;
+  // Laser control capabilities (bd-pwjo)
+  bool is_shutter_controllable = 15;
+  bool is_wavelength_tunable = 16;
+  bool is_emission_controllable = 17;
 
   // Device-specific metadata
   DeviceMetadata metadata = 20;
@@ -248,6 +277,10 @@ message DeviceMetadata {
   // Exposure limits (for ExposureControl devices)
   optional double min_exposure_ms = 20;
   optional double max_exposure_ms = 21;
+
+  // Wavelength limits (for WavelengthTunable devices, bd-pwjo)
+  optional double min_wavelength_nm = 30;
+  optional double max_wavelength_nm = 31;
 }
 
 message DeviceStateRequest {
@@ -267,18 +300,56 @@ message DeviceStateResponse {
 }
 
 // --------------------------------------------------------------------------
+// State Synchronization Messages (bd-6uba)
+// --------------------------------------------------------------------------
+
+message DeviceStateSubscribeRequest {
+  // Empty = all devices
+  repeated string device_ids = 1;
+  // Rate limit in Hz (0 = unlimited)
+  uint32 max_rate_hz = 2;
+  // Resume from a prior stream position; if unknown, server sends snapshot
+  uint64 last_seen_version = 3;
+  // If true, include a full snapshot as first message
+  bool include_snapshot = 4;
+}
+
+message DeviceStateUpdate {
+  string device_id = 1;
+  uint64 timestamp_ns = 2;
+  // Monotonic per-device version, increments on every change
+  uint64 version = 3;
+  bool is_snapshot = 4;
+  // Sparse map of changed fields encoded as JSON for flexibility
+  map<string, string> fields_json = 5;
+}
+
+// --------------------------------------------------------------------------
 // Motion Control Messages
 // --------------------------------------------------------------------------
 
 message MoveRequest {
   string device_id = 1;
   double value = 2;  // Target position (absolute) or distance (relative)
+  
+  // Optional: wait for motion to complete before returning
+  // If true, response includes actual settled position
+  // If false (default), returns immediately after command is sent
+  optional bool wait_for_completion = 3;
+  
+  // Optional: timeout in milliseconds for wait_for_completion
+  // Only used when wait_for_completion is true
+  // If not set, uses device default timeout
+  optional uint32 timeout_ms = 4;
 }
 
 message MoveResponse {
   bool success = 1;
   string error_message = 2;
   double final_position = 3;  // Actual position after move
+  
+  // True if position is settled (only meaningful when wait_for_completion was true)
+  optional bool settled = 4;
 }
 
 message StopMotionRequest {
@@ -386,6 +457,70 @@ message GetExposureRequest {
 
 message GetExposureResponse {
   double exposure_ms = 1;
+}
+
+// --------------------------------------------------------------------------
+// Laser Control Messages (bd-pwjo)
+// --------------------------------------------------------------------------
+
+// Shutter control (for ShutterControl devices)
+message SetShutterRequest {
+  string device_id = 1;
+  bool open = 2;  // true = open, false = closed
+}
+
+message SetShutterResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool is_open = 3;  // Actual state after operation
+}
+
+message GetShutterRequest {
+  string device_id = 1;
+}
+
+message GetShutterResponse {
+  bool is_open = 1;
+}
+
+// Wavelength control (for WavelengthTunable devices)
+message SetWavelengthRequest {
+  string device_id = 1;
+  double wavelength_nm = 2;
+}
+
+message SetWavelengthResponse {
+  bool success = 1;
+  string error_message = 2;
+  double actual_wavelength_nm = 3;  // May differ from requested
+}
+
+message GetWavelengthRequest {
+  string device_id = 1;
+}
+
+message GetWavelengthResponse {
+  double wavelength_nm = 1;
+}
+
+// Emission control (for EmissionControl devices - laser on/off)
+message SetEmissionRequest {
+  string device_id = 1;
+  bool enabled = 2;  // true = emission on, false = emission off
+}
+
+message SetEmissionResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool is_enabled = 3;  // Actual state after operation
+}
+
+message GetEmissionRequest {
+  string device_id = 1;
+}
+
+message GetEmissionResponse {
+  bool is_enabled = 1;
 }
 
 // --------------------------------------------------------------------------
@@ -543,6 +678,62 @@ message ParameterChange {
   string units = 5;
   uint64 timestamp_ns = 6;
   string source = 7;            // "user", "hardware", "script"
+}
+
+// =============================================================================
+// Preset Messages (bd-akcm)
+// =============================================================================
+
+message Preset {
+  PresetMetadata meta = 1;
+  // Device configurations keyed by device_id; JSON payload is driver-specific
+  map<string, string> device_configs_json = 2;
+  // Optional scan template serialized as JSON
+  string scan_template_json = 3;
+}
+
+message PresetMetadata {
+  string preset_id = 1;
+  string name = 2;
+  string description = 3;
+  string author = 4;
+  uint64 created_at_ns = 5;
+  uint64 updated_at_ns = 6;
+  uint32 schema_version = 7;
+}
+
+message ListPresetsRequest {}
+message ListPresetsResponse {
+  repeated PresetMetadata presets = 1;
+}
+
+message SavePresetRequest {
+  Preset preset = 1;
+  bool overwrite = 2;
+}
+message SavePresetResponse {
+  bool saved = 1;
+  string message = 2;
+}
+
+message LoadPresetRequest {
+  string preset_id = 1;
+}
+message LoadPresetResponse {
+  bool applied = 1;
+  string message = 2;
+}
+
+message DeletePresetRequest {
+  string preset_id = 1;
+}
+message DeletePresetResponse {
+  bool deleted = 1;
+  string message = 2;
+}
+
+message GetPresetRequest {
+  string preset_id = 1;
 }
 
 // =============================================================================
@@ -1432,4 +1623,601 @@ message StopDocument {
 message StreamDocumentsRequest {
   optional string run_uid = 1;  // Filter by run (empty = all)
   repeated DocumentType doc_types = 2;  // Filter by type (empty = all)
+}
+
+// =============================================================================
+// StorageService - HDF5 Data Storage and Export (bd-p6im)
+// =============================================================================
+//
+// Provides persistent storage for acquired data using HDF5 format.
+// Uses the "Mullet Strategy": Arrow for fast in-memory processing,
+// HDF5 for long-term storage and cross-platform compatibility.
+//
+// Key features:
+//   - Configure output directory and HDF5 settings
+//   - Start/Stop data recording
+//   - List and query stored acquisitions
+//   - Export data from ring buffer to HDF5 files
+//   - Background flushing at configurable intervals
+//
+// Example workflow:
+//   1. ConfigureStorage(output_dir="/data/experiments", compression="gzip")
+//   2. StartRecording(name="my_experiment") - begins capturing ring buffer
+//   3. ... acquire data via ScanService or RunEngineService ...
+//   4. StopRecording() - finalizes HDF5 file
+//   5. ListAcquisitions() - see saved files
+//   6. GetAcquisitionInfo(acquisition_id) - get file metadata
+
+service StorageService {
+  // ==========================================================================
+  // Storage Configuration
+  // ==========================================================================
+
+  // Configure storage settings (output directory, format options)
+  rpc ConfigureStorage(ConfigureStorageRequest) returns (ConfigureStorageResponse);
+
+  // Get current storage configuration
+  rpc GetStorageConfig(GetStorageConfigRequest) returns (StorageConfig);
+
+  // ==========================================================================
+  // Recording Control
+  // ==========================================================================
+
+  // Start recording data to HDF5 file
+  rpc StartRecording(StartRecordingRequest) returns (StartRecordingResponse);
+
+  // Stop recording and finalize HDF5 file
+  rpc StopRecording(StopRecordingRequest) returns (StopRecordingResponse);
+
+  // Get current recording status
+  rpc GetRecordingStatus(GetRecordingStatusRequest) returns (RecordingStatus);
+
+  // ==========================================================================
+  // Acquisition Management
+  // ==========================================================================
+
+  // List all saved acquisitions (HDF5 files)
+  rpc ListAcquisitions(ListAcquisitionsRequest) returns (ListAcquisitionsResponse);
+
+  // Get detailed info about a specific acquisition
+  rpc GetAcquisitionInfo(GetAcquisitionInfoRequest) returns (AcquisitionInfo);
+
+  // Delete an acquisition file
+  rpc DeleteAcquisition(DeleteAcquisitionRequest) returns (DeleteAcquisitionResponse);
+
+  // ==========================================================================
+  // Data Export
+  // ==========================================================================
+
+  // Export ring buffer data to HDF5 (manual flush)
+  rpc FlushToStorage(FlushToStorageRequest) returns (FlushToStorageResponse);
+
+  // Stream recording progress updates
+  rpc StreamRecordingProgress(StreamRecordingProgressRequest) returns (stream RecordingProgress);
+}
+
+// --------------------------------------------------------------------------
+// Storage Configuration Messages
+// --------------------------------------------------------------------------
+
+message ConfigureStorageRequest {
+  // Output directory for HDF5 files
+  string output_directory = 1;
+
+  // HDF5-specific settings
+  HDF5Config hdf5_config = 2;
+
+  // Ring buffer flush settings
+  optional uint32 flush_interval_ms = 3;  // How often to flush (default: 1000ms)
+  optional uint32 max_buffer_mb = 4;      // Max memory before forced flush
+}
+
+message HDF5Config {
+  // Compression settings
+  string compression = 1;                 // "none", "gzip", "lz4", "zstd"
+  optional uint32 compression_level = 2;  // 1-9 for gzip, varies by algorithm
+
+  // Chunking settings
+  optional uint32 chunk_size = 3;         // Chunk size for datasets (default: 4096)
+
+  // File naming pattern
+  optional string filename_pattern = 4;   // e.g., "{name}_{timestamp}.h5"
+
+  // Metadata options
+  bool include_timestamps = 5;            // Store per-sample timestamps
+  bool include_device_metadata = 6;       // Store device configuration
+}
+
+message ConfigureStorageResponse {
+  bool success = 1;
+  string error_message = 2;
+  string resolved_output_directory = 3;   // Absolute path after resolution
+}
+
+message GetStorageConfigRequest {
+  // Empty
+}
+
+message StorageConfig {
+  string output_directory = 1;
+  HDF5Config hdf5_config = 2;
+  uint32 flush_interval_ms = 3;
+  uint32 max_buffer_mb = 4;
+
+  // Status info
+  uint64 disk_space_available_bytes = 10;
+  uint64 disk_space_used_bytes = 11;
+}
+
+// --------------------------------------------------------------------------
+// Recording Control Messages
+// --------------------------------------------------------------------------
+
+message StartRecordingRequest {
+  // Recording name (used in filename)
+  string name = 1;
+
+  // Optional metadata to embed in HDF5 file
+  map<string, string> metadata = 2;
+
+  // Optional: override default config for this recording
+  optional HDF5Config config_override = 3;
+
+  // Optional: associate with a scan or run
+  optional string scan_id = 10;
+  optional string run_uid = 11;
+}
+
+message StartRecordingResponse {
+  bool success = 1;
+  string error_message = 2;
+  string recording_id = 3;           // Unique ID for this recording session
+  string output_path = 4;            // Full path to HDF5 file being written
+}
+
+message StopRecordingRequest {
+  optional string recording_id = 1;  // If omitted, stops current recording
+
+  // Final metadata to add
+  map<string, string> final_metadata = 2;
+}
+
+message StopRecordingResponse {
+  bool success = 1;
+  string error_message = 2;
+  string acquisition_id = 3;         // ID to reference the completed file
+  string output_path = 4;            // Full path to finalized HDF5 file
+  uint64 file_size_bytes = 5;
+  uint64 total_samples = 6;
+  uint64 duration_ns = 7;
+}
+
+message GetRecordingStatusRequest {
+  optional string recording_id = 1;  // If omitted, returns current recording
+}
+
+// Recording state
+enum RecordingState {
+  RECORDING_STATE_UNSPECIFIED = 0;
+  RECORDING_IDLE = 1;                // No active recording
+  RECORDING_ACTIVE = 2;              // Actively recording
+  RECORDING_FLUSHING = 3;            // Flushing buffer to disk
+  RECORDING_FINALIZING = 4;          // Closing HDF5 file
+  RECORDING_ERROR = 5;               // Error during recording
+}
+
+message RecordingStatus {
+  string recording_id = 1;
+  RecordingState state = 2;
+  string output_path = 3;
+
+  // Progress info
+  uint64 samples_recorded = 10;
+  uint64 bytes_written = 11;
+  uint64 start_time_ns = 12;
+  uint64 elapsed_ns = 13;
+
+  // Buffer status
+  uint32 buffer_fill_percent = 20;
+  uint64 pending_samples = 21;
+  uint64 flushes_completed = 22;
+
+  // Error info (if state == RECORDING_ERROR)
+  string error_message = 30;
+}
+
+// --------------------------------------------------------------------------
+// Acquisition Management Messages
+// --------------------------------------------------------------------------
+
+message ListAcquisitionsRequest {
+  // Optional filters
+  optional string name_pattern = 1;       // Glob pattern for name matching
+  optional uint64 after_timestamp_ns = 2; // Only files created after
+  optional uint64 before_timestamp_ns = 3;// Only files created before
+  optional uint32 limit = 4;              // Max results (default: 100)
+  optional uint32 offset = 5;             // For pagination
+}
+
+message ListAcquisitionsResponse {
+  repeated AcquisitionSummary acquisitions = 1;
+  uint32 total_count = 2;                 // Total matching (for pagination)
+}
+
+// Brief summary of an acquisition
+message AcquisitionSummary {
+  string acquisition_id = 1;
+  string name = 2;
+  string file_path = 3;
+  uint64 file_size_bytes = 4;
+  uint64 created_at_ns = 5;
+  uint64 duration_ns = 6;
+  uint64 sample_count = 7;
+}
+
+message GetAcquisitionInfoRequest {
+  string acquisition_id = 1;
+}
+
+// Detailed acquisition information
+message AcquisitionInfo {
+  string acquisition_id = 1;
+  string name = 2;
+  string file_path = 3;
+  uint64 file_size_bytes = 4;
+  uint64 created_at_ns = 5;
+  uint64 duration_ns = 6;
+
+  // Data structure info
+  repeated DatasetInfo datasets = 10;
+
+  // Embedded metadata
+  map<string, string> metadata = 20;
+
+  // Associated scan/run (if any)
+  optional string scan_id = 30;
+  optional string run_uid = 31;
+
+  // HDF5 file structure summary
+  HDF5Structure structure = 40;
+}
+
+// Information about a dataset within the HDF5 file
+message DatasetInfo {
+  string name = 1;                        // Dataset path, e.g., "/data/power"
+  string dtype = 2;                       // Data type, e.g., "float64", "uint16"
+  repeated uint64 shape = 3;              // Dataset shape
+  string units = 4;                       // Physical units
+  string device_id = 5;                   // Source device
+  uint64 sample_count = 6;                // Number of samples
+  optional double min_value = 7;          // Data range (if computed)
+  optional double max_value = 8;
+}
+
+// HDF5 file structure summary
+message HDF5Structure {
+  repeated string groups = 1;             // Group paths
+  uint32 dataset_count = 2;
+  uint64 total_elements = 3;
+  string compression = 4;
+  uint32 chunk_size = 5;
+}
+
+message DeleteAcquisitionRequest {
+  string acquisition_id = 1;
+  bool confirm = 2;                       // Must be true to actually delete
+}
+
+message DeleteAcquisitionResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 bytes_freed = 3;
+}
+
+// --------------------------------------------------------------------------
+// Data Export Messages
+// --------------------------------------------------------------------------
+
+message FlushToStorageRequest {
+  optional string recording_id = 1;       // If omitted, flushes current
+  bool sync = 2;                          // If true, wait for flush to complete
+}
+
+message FlushToStorageResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 samples_flushed = 3;
+  uint64 bytes_written = 4;
+}
+
+message StreamRecordingProgressRequest {
+  string scan_id = 1;
+  uint32 update_interval_ms = 2;          // How often to send updates (default: 500)
+}
+
+message RecordingProgress {
+  string scan_id = 1;
+  ScanState state = 2;
+  uint64 timestamp_ns = 3;
+
+  // Incremental progress
+  uint64 samples_recorded = 10;
+  uint64 bytes_written = 11;
+  double samples_per_second = 12;         // Current throughput
+
+  // Buffer status
+  uint32 buffer_fill_percent = 20;
+  bool flush_in_progress = 21;
+
+  // Estimated time remaining (if deterministic)
+  optional uint64 estimated_remaining_ns = 30;
+}
+
+// =============================================================================
+// PluginService - Data-driven instrument plugin management (bd-22si.6.1)
+// =============================================================================
+//
+// Exposes plugin metadata for dynamic UI rendering and plugin management.
+// Plugins are YAML-defined instrument drivers that can be loaded at runtime.
+//
+// Key features:
+//   - List available plugins and their capabilities
+//   - Get detailed plugin configuration for UI generation
+//   - Spawn plugin instances with custom addresses
+//   - Query plugin instances for current state
+//
+// Example workflow:
+//   1. ListPlugins() - see available plugin types
+//   2. GetPluginInfo("maitai-laser") - get capabilities and UI hints
+//   3. SpawnPlugin("maitai-laser", "/dev/ttyUSB0") - instantiate driver
+//   4. Use HardwareService to control the spawned device
+
+service PluginService {
+  // ==========================================================================
+  // Plugin Discovery
+  // ==========================================================================
+
+  // List all available plugin types
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+
+  // Get detailed info about a specific plugin type
+  rpc GetPluginInfo(GetPluginInfoRequest) returns (PluginInfo);
+
+  // ==========================================================================
+  // Plugin Instance Management
+  // ==========================================================================
+
+  // Spawn a new plugin instance
+  rpc SpawnPlugin(SpawnPluginRequest) returns (SpawnPluginResponse);
+
+  // List all spawned plugin instances
+  rpc ListPluginInstances(ListPluginInstancesRequest) returns (ListPluginInstancesResponse);
+
+  // Get status of a specific plugin instance
+  rpc GetPluginInstanceStatus(GetPluginInstanceStatusRequest) returns (PluginInstanceStatus);
+
+  // Destroy a plugin instance
+  rpc DestroyPluginInstance(DestroyPluginInstanceRequest) returns (DestroyPluginInstanceResponse);
+}
+
+// --------------------------------------------------------------------------
+// Plugin Discovery Messages
+// --------------------------------------------------------------------------
+
+message ListPluginsRequest {
+  // Optional filter by driver type
+  optional string driver_type_filter = 1;  // "serial_scpi", "tcp_scpi", etc.
+}
+
+message ListPluginsResponse {
+  repeated PluginSummary plugins = 1;
+}
+
+// Brief summary of a plugin
+message PluginSummary {
+  string plugin_id = 1;           // Unique plugin ID from YAML metadata.id
+  string name = 2;                // Display name from YAML metadata.name
+  string version = 3;             // Plugin version
+  string driver_type = 4;         // "serial_scpi", "tcp_scpi", "serial_raw", "tcp_raw"
+
+  // Capability flags (quick check without fetching full info)
+  bool has_readable = 10;
+  bool has_movable = 11;
+  bool has_settable = 12;
+  bool has_switchable = 13;
+  bool has_actionable = 14;
+  bool has_loggable = 15;
+  bool has_scriptable = 16;
+}
+
+message GetPluginInfoRequest {
+  string plugin_id = 1;
+}
+
+// Full plugin information for UI generation
+message PluginInfo {
+  // Metadata
+  string plugin_id = 1;
+  string name = 2;
+  string version = 3;
+  string driver_type = 4;
+
+  // Protocol configuration
+  PluginProtocol protocol = 10;
+
+  // Capabilities (detailed)
+  PluginCapabilities capabilities = 20;
+
+  // UI layout hints from YAML
+  repeated PluginUIElement ui_layout = 30;
+}
+
+// Protocol settings from plugin YAML
+message PluginProtocol {
+  uint32 baud_rate = 1;           // For serial connections
+  string termination = 2;         // Line terminator
+  uint32 command_delay_ms = 3;    // Delay after commands
+  uint32 timeout_ms = 4;          // Read timeout
+
+  // TCP settings (for tcp_* driver types)
+  optional string tcp_host = 10;
+  optional uint32 tcp_port = 11;
+}
+
+// All capabilities from plugin YAML
+message PluginCapabilities {
+  repeated PluginReadable readable = 1;
+  optional PluginMovable movable = 2;
+  repeated PluginSettable settable = 3;
+  repeated PluginSwitchable switchable = 4;
+  repeated PluginActionable actionable = 5;
+  repeated PluginLoggable loggable = 6;
+  repeated PluginScriptable scriptable = 7;
+}
+
+// Readable capability (sensor values)
+message PluginReadable {
+  string name = 1;
+  string command = 2;             // Command to send
+  string pattern = 3;             // Response parsing pattern
+  optional string unit = 4;
+}
+
+// Movable capability (motion control)
+message PluginMovable {
+  repeated PluginAxis axes = 1;
+  string set_cmd = 2;             // Move command template
+  string get_cmd = 3;             // Position query template
+  string get_pattern = 4;         // Position response pattern
+}
+
+// Axis configuration
+message PluginAxis {
+  string name = 1;
+  optional string unit = 2;
+  optional double min = 3;
+  optional double max = 4;
+}
+
+// Settable capability (parameters)
+message PluginSettable {
+  string name = 1;
+  string set_cmd = 2;
+  optional string get_cmd = 3;
+  string pattern = 4;
+  optional string unit = 5;
+  optional double min = 6;
+  optional double max = 7;
+  string value_type = 8;          // "float", "int", "string", "enum", "bool"
+  repeated string options = 9;    // For enum types
+}
+
+// Switchable capability (on/off)
+message PluginSwitchable {
+  string name = 1;
+  string on_cmd = 2;
+  string off_cmd = 3;
+  optional string status_cmd = 4;
+  optional string pattern = 5;
+}
+
+// Actionable capability (one-shot commands)
+message PluginActionable {
+  string name = 1;
+  string cmd = 2;
+  uint32 wait_ms = 3;
+}
+
+// Loggable capability (static metadata)
+message PluginLoggable {
+  string name = 1;
+  string cmd = 2;
+  string pattern = 3;
+}
+
+// Scriptable capability (Rhai scripts)
+message PluginScriptable {
+  string name = 1;
+  optional string description = 2;
+  string script = 3;              // Rhai script source
+  uint32 timeout_ms = 4;
+}
+
+// UI layout element from plugin YAML
+message PluginUIElement {
+  string element_type = 1;        // "group", "slider", "readout", "toggle", "button", "dropdown"
+  string label = 2;
+  optional string target = 3;     // Links to capability name
+  optional string source = 4;     // For readout, links to readable
+  optional string action = 5;     // For button, links to actionable
+  repeated PluginUIElement children = 10;  // For group elements
+}
+
+// --------------------------------------------------------------------------
+// Plugin Instance Management Messages
+// --------------------------------------------------------------------------
+
+message SpawnPluginRequest {
+  string plugin_id = 1;
+  string address = 2;             // Port path or "host:port" for TCP
+  optional string instance_name = 3;  // Optional friendly name
+  bool mock_mode = 4;             // If true, use mock data instead of real communication
+}
+
+message SpawnPluginResponse {
+  bool success = 1;
+  string error_message = 2;
+  string instance_id = 3;         // Unique ID for this instance
+  string device_id = 4;           // Device ID registered with HardwareService
+}
+
+message ListPluginInstancesRequest {
+  optional string plugin_id = 1;  // Filter by plugin type
+}
+
+message ListPluginInstancesResponse {
+  repeated PluginInstanceSummary instances = 1;
+}
+
+message PluginInstanceSummary {
+  string instance_id = 1;
+  string plugin_id = 2;
+  string plugin_name = 3;
+  string address = 4;
+  string device_id = 5;
+  bool connected = 6;
+  bool mock_mode = 7;
+}
+
+message GetPluginInstanceStatusRequest {
+  string instance_id = 1;
+}
+
+message PluginInstanceStatus {
+  string instance_id = 1;
+  string plugin_id = 2;
+  string plugin_name = 3;
+  string address = 4;
+  string device_id = 5;
+  bool connected = 6;
+  bool mock_mode = 7;
+
+  // Last error (if any)
+  optional string last_error = 10;
+  optional uint64 last_error_time_ns = 11;
+
+  // Statistics
+  uint64 commands_sent = 20;
+  uint64 commands_failed = 21;
+  uint64 uptime_ns = 22;
+}
+
+message DestroyPluginInstanceRequest {
+  string instance_id = 1;
+  bool run_disconnect_sequence = 2;  // Execute on_disconnect commands first
+}
+
+message DestroyPluginInstanceResponse {
+  bool success = 1;
+  string error_message = 2;
 }
