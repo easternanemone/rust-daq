@@ -5,7 +5,7 @@
 use super::common::spawn_rpc;
 use crate::state::SharedState;
 use crate::ui::{
-    DeviceInfo, MainWindow, SelectedCamera, SelectedMovable, SelectedReadable,
+    DeviceInfo, MainWindow, SelectedCamera, SelectedLaser, SelectedMovable, SelectedReadable,
     SharedString, UiAdapter, VecModel, Weak,
 };
 use slint::Model;
@@ -22,8 +22,13 @@ pub fn register(ui: &MainWindow, adapter: UiAdapter, state: SharedState) {
     register_move_relative(ui, ui_weak.clone(), state.clone());
     register_stop_motion(ui, ui_weak.clone(), state.clone());
     register_home_device(ui, ui_weak.clone(), state.clone());
-    register_start_stream(ui, ui_weak.clone(), state);
-    register_stop_stream(ui, ui_weak);
+    register_start_stream(ui, ui_weak.clone(), state.clone());
+    register_stop_stream(ui, ui_weak.clone());
+    // Laser control handlers (bd-pwjo)
+    register_laser_shutter(ui, ui_weak.clone(), state.clone());
+    register_laser_wavelength(ui, ui_weak.clone(), state.clone());
+    register_laser_emission(ui, ui_weak.clone(), state.clone());
+    register_laser_stream(ui, ui_weak, state);
 }
 
 fn register_select_device(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
@@ -100,17 +105,25 @@ fn register_toggle_device(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: Sha
     });
 }
 
-/// Rebuild the selected movables, readables, and cameras panels from device selection
+/// Rebuild the selected movables, readables, cameras, and lasers panels from device selection
 fn rebuild_selected_panels(ui: &MainWindow, devices: &slint::ModelRc<DeviceInfo>) {
     let mut movables: Vec<SelectedMovable> = Vec::new();
     let mut readables: Vec<SelectedReadable> = Vec::new();
     let mut cameras: Vec<SelectedCamera> = Vec::new();
+    let mut lasers: Vec<SelectedLaser> = Vec::new();
 
     for i in 0..devices.row_count() {
         if let Some(device) = devices.row_data(i) {
             if !device.selected {
                 continue;
             }
+
+            // Check if this is a laser device (MaiTai or similar)
+            // Use case-insensitive matching for driver type
+            let driver_lower = device.driver_type.as_str().to_lowercase();
+            let is_laser = driver_lower == "maitai"
+                || driver_lower.contains("laser")
+                || driver_lower.contains("ti:sapphire");
 
             if device.is_movable {
                 movables.push(SelectedMovable {
@@ -125,7 +138,21 @@ fn rebuild_selected_panels(ui: &MainWindow, devices: &slint::ModelRc<DeviceInfo>
                 });
             }
 
-            if device.is_readable {
+            // For lasers, add to laser panel instead of readable panel
+            if is_laser {
+                lasers.push(SelectedLaser {
+                    device_id: device.id.clone(),
+                    device_name: device.name.clone(),
+                    power_reading: 0.0,
+                    power_units: device.reading_units.clone(),
+                    wavelength_nm: 800.0,  // Default for MaiTai
+                    min_wavelength_nm: 690.0,
+                    max_wavelength_nm: 1040.0,
+                    shutter_open: false,
+                    emission_enabled: false,
+                    streaming: false,
+                });
+            } else if device.is_readable {
                 readables.push(SelectedReadable {
                     device_id: device.id.clone(),
                     device_name: device.name.clone(),
@@ -155,6 +182,7 @@ fn rebuild_selected_panels(ui: &MainWindow, devices: &slint::ModelRc<DeviceInfo>
     ui.set_selected_movables(Rc::new(VecModel::from(movables)).into());
     ui.set_selected_readables(Rc::new(VecModel::from(readables)).into());
     ui.set_selected_cameras(Rc::new(VecModel::from(cameras)).into());
+    ui.set_selected_lasers(Rc::new(VecModel::from(lasers)).into());
 }
 
 fn register_move_absolute(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
@@ -339,6 +367,198 @@ fn set_streaming_state(ui_weak: &Weak<MainWindow>, device_id: &str, streaming: b
                     r.streaming = streaming;
                     if let Some(vm) = readables.as_any().downcast_ref::<VecModel<SelectedReadable>>() {
                         vm.set_row_data(i, r);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+// =============================================================================
+// Laser Control Handlers (bd-pwjo)
+// =============================================================================
+
+fn register_laser_shutter(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
+    ui.on_set_laser_shutter(move |device_id, open| {
+        let device_id = device_id.to_string();
+
+        spawn_rpc(ui_weak.clone(), state.clone(), move |client, ui_weak| async move {
+            info!("Setting shutter {} to {}", device_id, if open { "open" } else { "closed" });
+
+            match client.set_shutter(&device_id, open).await {
+                Ok(is_open) => {
+                    info!("Shutter {} now {}", device_id, if is_open { "open" } else { "closed" });
+                    update_laser_shutter(&ui_weak, &device_id, is_open);
+                }
+                Err(e) => {
+                    error!("SetShutter failed: {}", e);
+                    let error_msg = e.to_string();
+                    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Shutter Control Failed"),
+                            SharedString::from(error_msg),
+                        );
+                    });
+                }
+            }
+        });
+    });
+}
+
+fn register_laser_wavelength(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
+    ui.on_set_laser_wavelength(move |device_id, wavelength_nm| {
+        let device_id = device_id.to_string();
+
+        spawn_rpc(ui_weak.clone(), state.clone(), move |client, ui_weak| async move {
+            info!("Setting wavelength {} to {} nm", device_id, wavelength_nm);
+
+            match client.set_wavelength(&device_id, wavelength_nm as f64).await {
+                Ok(actual_wl) => {
+                    info!("Wavelength {} now {} nm", device_id, actual_wl);
+                    update_laser_wavelength(&ui_weak, &device_id, actual_wl as f32);
+                }
+                Err(e) => {
+                    error!("SetWavelength failed: {}", e);
+                    let error_msg = e.to_string();
+                    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Wavelength Control Failed"),
+                            SharedString::from(error_msg),
+                        );
+                    });
+                }
+            }
+        });
+    });
+}
+
+fn register_laser_emission(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
+    ui.on_set_laser_emission(move |device_id, enabled| {
+        let device_id = device_id.to_string();
+
+        spawn_rpc(ui_weak.clone(), state.clone(), move |client, ui_weak| async move {
+            info!("Setting emission {} to {}", device_id, if enabled { "ON" } else { "OFF" });
+
+            match client.set_emission(&device_id, enabled).await {
+                Ok(is_enabled) => {
+                    info!("Emission {} now {}", device_id, if is_enabled { "ON" } else { "OFF" });
+                    update_laser_emission(&ui_weak, &device_id, is_enabled);
+                }
+                Err(e) => {
+                    error!("SetEmission failed: {}", e);
+                    let error_msg = e.to_string();
+                    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Emission Control Failed"),
+                            SharedString::from(error_msg),
+                        );
+                    });
+                }
+            }
+        });
+    });
+}
+
+fn register_laser_stream(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
+    // Start laser power reading stream
+    let ui_weak_start = ui_weak.clone();
+    let state_start = state.clone();
+    ui.on_start_laser_stream(move |device_id| {
+        let state = Arc::clone(&state_start);
+        let ui_weak = ui_weak_start.clone();
+        let device_id = device_id.to_string();
+
+        tokio::spawn(async move {
+            {
+                let state_guard = state.lock().await;
+                if state_guard.client.is_none() {
+                    return;
+                }
+            }
+
+            info!("Starting laser power stream for {}", device_id);
+            set_laser_streaming(&ui_weak, &device_id, true);
+        });
+    });
+
+    // Stop laser power reading stream
+    ui.on_stop_laser_stream(move |device_id| {
+        let device_id = device_id.to_string();
+        info!("Stopping laser power stream for {}", device_id);
+        set_laser_streaming(&ui_weak, &device_id, false);
+    });
+}
+
+// Laser helper functions
+
+fn update_laser_shutter(ui_weak: &Weak<MainWindow>, device_id: &str, is_open: bool) {
+    let device_id = device_id.to_string();
+    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+        let lasers = ui.get_selected_lasers();
+        for i in 0..lasers.row_count() {
+            if let Some(mut laser) = lasers.row_data(i) {
+                if laser.device_id.as_str() == device_id {
+                    laser.shutter_open = is_open;
+                    if let Some(vm) = lasers.as_any().downcast_ref::<VecModel<SelectedLaser>>() {
+                        vm.set_row_data(i, laser);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn update_laser_wavelength(ui_weak: &Weak<MainWindow>, device_id: &str, wavelength_nm: f32) {
+    let device_id = device_id.to_string();
+    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+        let lasers = ui.get_selected_lasers();
+        for i in 0..lasers.row_count() {
+            if let Some(mut laser) = lasers.row_data(i) {
+                if laser.device_id.as_str() == device_id {
+                    laser.wavelength_nm = wavelength_nm;
+                    if let Some(vm) = lasers.as_any().downcast_ref::<VecModel<SelectedLaser>>() {
+                        vm.set_row_data(i, laser);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn update_laser_emission(ui_weak: &Weak<MainWindow>, device_id: &str, is_enabled: bool) {
+    let device_id = device_id.to_string();
+    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+        let lasers = ui.get_selected_lasers();
+        for i in 0..lasers.row_count() {
+            if let Some(mut laser) = lasers.row_data(i) {
+                if laser.device_id.as_str() == device_id {
+                    laser.emission_enabled = is_enabled;
+                    if let Some(vm) = lasers.as_any().downcast_ref::<VecModel<SelectedLaser>>() {
+                        vm.set_row_data(i, laser);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn set_laser_streaming(ui_weak: &Weak<MainWindow>, device_id: &str, streaming: bool) {
+    let device_id = device_id.to_string();
+    let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+        let lasers = ui.get_selected_lasers();
+        for i in 0..lasers.row_count() {
+            if let Some(mut laser) = lasers.row_data(i) {
+                if laser.device_id.as_str() == device_id {
+                    laser.streaming = streaming;
+                    if let Some(vm) = lasers.as_any().downcast_ref::<VecModel<SelectedLaser>>() {
+                        vm.set_row_data(i, laser);
                     }
                     break;
                 }

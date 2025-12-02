@@ -13,6 +13,10 @@ use rust_daq::grpc::{
     FrameData, StartStreamRequest, StopStreamRequest, StreamFramesRequest,
     // Exposure control types (bd-tm0b)
     SetExposureRequest, GetExposureRequest,
+    // Laser control types (bd-pwjo)
+    SetShutterRequest, GetShutterRequest,
+    SetWavelengthRequest, GetWavelengthRequest,
+    SetEmissionRequest, GetEmissionRequest,
     // Module service types (bd-xx7f)
     ModuleServiceClient, ListModuleTypesRequest, ModuleTypeSummary,
     CreateModuleRequest, AssignDeviceRequest, ConfigureModuleRequest,
@@ -702,6 +706,133 @@ impl DaqClient {
 
         let resp = response.into_inner();
         Ok(resp.exposure_ms)
+    }
+
+    // =========================================================================
+    // Laser Control Operations (bd-pwjo)
+    // =========================================================================
+
+    /// Set laser shutter state
+    ///
+    /// Returns the actual shutter state after the operation
+    pub async fn set_shutter(&self, device_id: &str, open: bool) -> Result<bool> {
+        let mut client = self.hardware.clone();
+
+        debug!("SetShutter: {} = {}", device_id, open);
+
+        let response = client
+            .set_shutter(SetShutterRequest {
+                device_id: device_id.to_string(),
+                open,
+            })
+            .await
+            .map_err(|e| anyhow!("SetShutter RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        if !resp.error_message.is_empty() {
+            return Err(anyhow!("SetShutter failed: {}", resp.error_message));
+        }
+
+        Ok(resp.is_open)
+    }
+
+    /// Get current laser shutter state
+    pub async fn get_shutter(&self, device_id: &str) -> Result<bool> {
+        let mut client = self.hardware.clone();
+
+        debug!("GetShutter: {}", device_id);
+
+        let response = client
+            .get_shutter(GetShutterRequest {
+                device_id: device_id.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("GetShutter RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        Ok(resp.is_open)
+    }
+
+    /// Set laser wavelength
+    ///
+    /// Returns the actual wavelength after the operation
+    pub async fn set_wavelength(&self, device_id: &str, wavelength_nm: f64) -> Result<f64> {
+        let mut client = self.hardware.clone();
+
+        debug!("SetWavelength: {} = {} nm", device_id, wavelength_nm);
+
+        let response = client
+            .set_wavelength(SetWavelengthRequest {
+                device_id: device_id.to_string(),
+                wavelength_nm,
+            })
+            .await
+            .map_err(|e| anyhow!("SetWavelength RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        if !resp.error_message.is_empty() {
+            return Err(anyhow!("SetWavelength failed: {}", resp.error_message));
+        }
+
+        Ok(resp.actual_wavelength_nm)
+    }
+
+    /// Get current laser wavelength
+    pub async fn get_wavelength(&self, device_id: &str) -> Result<f64> {
+        let mut client = self.hardware.clone();
+
+        debug!("GetWavelength: {}", device_id);
+
+        let response = client
+            .get_wavelength(GetWavelengthRequest {
+                device_id: device_id.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("GetWavelength RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        Ok(resp.wavelength_nm)
+    }
+
+    /// Set laser emission state
+    ///
+    /// Returns the actual emission state after the operation
+    pub async fn set_emission(&self, device_id: &str, enabled: bool) -> Result<bool> {
+        let mut client = self.hardware.clone();
+
+        debug!("SetEmission: {} = {}", device_id, enabled);
+
+        let response = client
+            .set_emission(SetEmissionRequest {
+                device_id: device_id.to_string(),
+                enabled,
+            })
+            .await
+            .map_err(|e| anyhow!("SetEmission RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        if !resp.error_message.is_empty() {
+            return Err(anyhow!("SetEmission failed: {}", resp.error_message));
+        }
+
+        Ok(resp.is_enabled)
+    }
+
+    /// Get current laser emission state
+    pub async fn get_emission(&self, device_id: &str) -> Result<bool> {
+        let mut client = self.hardware.clone();
+
+        debug!("GetEmission: {}", device_id);
+
+        let response = client
+            .get_emission(GetEmissionRequest {
+                device_id: device_id.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("GetEmission RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        Ok(resp.is_enabled)
     }
 
     // =========================================================================

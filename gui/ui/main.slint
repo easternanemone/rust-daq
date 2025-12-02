@@ -13,6 +13,7 @@ import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
          VerticalBox, GridBox, ProgressIndicator, CheckBox } from "std-widgets.slint";
 
 import { ToastMessage, ToastContainer, ConnectionBanner } from "toast.slint";
+import { AppColors, AppFonts, AppSpacing } from "globals.slint";
 
 import { ModulesPanel, ModuleTypeInfo, ModuleInstance, ModuleRole, 
          ModuleParameter, ModuleEvent } from "modules_panel.slint";
@@ -114,6 +115,20 @@ export struct SelectedCamera {
     max-exposure-ms: float,
     streaming: bool,
     frame-count: int,
+}
+
+// NEW: Selected laser state for LaserPanel (bd-pwjo)
+export struct SelectedLaser {
+    device-id: string,
+    device-name: string,
+    power-reading: float,        // Current power reading (W)
+    power-units: string,         // "W", "mW", etc.
+    wavelength-nm: float,        // Current wavelength in nm
+    min-wavelength-nm: float,    // Min tunable wavelength (e.g., 690)
+    max-wavelength-nm: float,    // Max tunable wavelength (e.g., 1040)
+    shutter-open: bool,          // Shutter state
+    emission-enabled: bool,      // Emission state
+    streaming: bool,             // Power reading stream active
 }
 
 // =============================================================================
@@ -947,6 +962,303 @@ component CameraPanel inherits Rectangle {
 }
 
 // =============================================================================
+// Laser Panel - MaiTai/Ti:Sapphire Laser Control (bd-pwjo)
+// =============================================================================
+
+component LaserPanel inherits Rectangle {
+    in property <string> device-id: "";
+    in property <string> device-name: "Laser";
+    in property <float> power-reading: 0.0;
+    in property <string> power-units: "W";
+    in property <float> wavelength-nm: 800.0;
+    in property <float> min-wavelength-nm: 690.0;
+    in property <float> max-wavelength-nm: 1040.0;
+    in property <bool> shutter-open: false;
+    in property <bool> emission-enabled: false;
+    in property <bool> streaming: false;
+
+    callback set-shutter(string, bool);        // device-id, open
+    callback set-wavelength(string, float);    // device-id, wavelength_nm
+    callback set-emission(string, bool);       // device-id, enabled
+    callback start-stream(string);             // device-id
+    callback stop-stream(string);              // device-id
+
+    property <float> target-wavelength: wavelength-nm;
+
+    background: AppColors.panel-bg;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: AppColors.border-light;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: #0003;
+
+    VerticalBox {
+        padding: AppSpacing.lg;
+        spacing: AppSpacing.lg;
+
+        // Header with laser icon
+        Rectangle {
+            height: 44px;
+            background: emission-enabled ? #c0392b : AppColors.header-bg;
+            border-radius: 6px;
+
+            HorizontalBox {
+                padding-left: AppSpacing.md;
+                padding-right: AppSpacing.md;
+
+                Text {
+                    text: "🔴 " + device-name;
+                    font-weight: 700;
+                    font-size: AppFonts.size-xl;
+                    color: AppColors.text-on-dark;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if emission-enabled: Text {
+                    text: "⚠️ LASER ON";
+                    font-weight: 700;
+                    font-size: AppFonts.size-base;
+                    color: #ffeb3b;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Power Reading Display
+        Rectangle {
+            height: 80px;
+            background: #1a252f;
+            border-radius: 6px;
+
+            HorizontalBox {
+                padding: AppSpacing.lg;
+
+                Text {
+                    text: "Power";
+                    vertical-alignment: center;
+                    color: #8899aa;
+                    font-size: AppFonts.size-base;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: format-power(power-reading);
+                    font-size: AppFonts.size-3xl;
+                    font-weight: 700;
+                    color: streaming ? #2ecc71 : #3498db;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: " " + power-units;
+                    font-size: AppFonts.size-xl;
+                    color: #8899aa;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Emission Control - PROMINENT
+        Rectangle {
+            height: 60px;
+            background: emission-enabled ? #e74c3c : #27ae60;
+            border-radius: 6px;
+
+            TouchArea {
+                clicked => {
+                    set-emission(device-id, !emission-enabled);
+                }
+
+                HorizontalBox {
+                    padding: AppSpacing.lg;
+
+                    Text {
+                        text: emission-enabled ? "⚡ EMISSION ON" : "⚡ EMISSION OFF";
+                        font-weight: 700;
+                        font-size: AppFonts.size-xl;
+                        color: white;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: emission-enabled ? "Click to DISABLE" : "Click to ENABLE";
+                        font-size: AppFonts.size-base;
+                        color: #ffffffcc;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Shutter Control
+        Rectangle {
+            height: 50px;
+            background: shutter-open ? #f39c12 : AppColors.sidebar-bg;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: shutter-open ? #e67e22 : AppColors.border-light;
+
+            TouchArea {
+                clicked => {
+                    set-shutter(device-id, !shutter-open);
+                }
+
+                HorizontalBox {
+                    padding: AppSpacing.md;
+
+                    Text {
+                        text: shutter-open ? "🔓 Shutter OPEN" : "🔒 Shutter CLOSED";
+                        font-weight: 600;
+                        font-size: AppFonts.size-lg;
+                        color: shutter-open ? white : AppColors.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: shutter-open ? "Click to close" : "Click to open";
+                        font-size: AppFonts.size-sm;
+                        color: shutter-open ? #ffffffcc : AppColors.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Wavelength Control
+        GroupBox {
+            title: "Wavelength Tuning";
+
+            VerticalBox {
+                spacing: AppSpacing.md;
+
+                // Current wavelength display
+                Rectangle {
+                    height: 50px;
+                    background: #1a252f;
+                    border-radius: 4px;
+
+                    HorizontalBox {
+                        padding: AppSpacing.md;
+
+                        Text {
+                            text: "Current:";
+                            color: #8899aa;
+                            font-size: AppFonts.size-base;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "\{round(wavelength-nm)} nm";
+                            font-size: AppFonts.size-xl;
+                            font-weight: 700;
+                            color: #9b59b6;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Target wavelength slider
+                VerticalBox {
+                    spacing: AppSpacing.xs;
+
+                    HorizontalBox {
+                        Text {
+                            text: "Target:";
+                            font-size: AppFonts.size-base;
+                            color: AppColors.text-primary;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "\{round(target-wavelength)} nm";
+                            font-size: AppFonts.size-lg;
+                            font-weight: 600;
+                            color: AppColors.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Slider {
+                        minimum: min-wavelength-nm;
+                        maximum: max-wavelength-nm;
+                        value <=> target-wavelength;
+                    }
+
+                    HorizontalBox {
+                        Text {
+                            text: "\{min-wavelength-nm} nm";
+                            font-size: AppFonts.size-xs;
+                            color: AppColors.text-muted;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "\{max-wavelength-nm} nm";
+                            font-size: AppFonts.size-xs;
+                            color: AppColors.text-muted;
+                        }
+                    }
+                }
+
+                // Apply wavelength button
+                Button {
+                    text: "Set Wavelength";
+                    enabled: abs(target-wavelength - wavelength-nm) > 0.5;
+                    clicked => {
+                        set-wavelength(device-id, target-wavelength);
+                    }
+                }
+            }
+        }
+
+        // Stream Controls
+        HorizontalBox {
+            spacing: AppSpacing.md;
+
+            Button {
+                text: streaming ? "⏹ Stop Stream" : "▶ Start Stream";
+                clicked => {
+                    if (streaming) {
+                        stop-stream(device-id);
+                    } else {
+                        start-stream(device-id);
+                    }
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            // Status indicator
+            Rectangle {
+                width: 120px;
+                height: 32px;
+                background: streaming ? #d5f5e3 : AppColors.sidebar-bg;
+                border-radius: 4px;
+
+                Text {
+                    text: streaming ? "● LIVE" : "○ Idle";
+                    color: streaming ? #1e8449 : AppColors.text-muted;
+                    font-size: AppFonts.size-base;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // Helper function for power display
+    pure function format-power(value: float) -> string {
+        if (abs(value) < 0.000001 && value != 0) {
+            return "\{round(value * 1000000000) / 1000} n";
+        } else if (abs(value) < 0.001) {
+            return "\{round(value * 1000000) / 1000} µ";
+        } else if (abs(value) < 1) {
+            return "\{round(value * 1000) / 1000} m";
+        } else {
+            return "\{round(value * 1000) / 1000}";
+        }
+    }
+}
+
+// =============================================================================
 // Scan Panel - Scan Configuration and Control
 // =============================================================================
 
@@ -1137,6 +1449,7 @@ export component MainWindow inherits Window {
     in property <[SelectedMovable]> selected-movables: [];
     in property <[SelectedReadable]> selected-readables: [];
     in property <[SelectedCamera]> selected-cameras: [];  // NEW: Camera devices (bd-tm0b)
+    in property <[SelectedLaser]> selected-lasers: [];    // NEW: Laser devices (bd-pwjo)
 
     // Scan data
     in property <ScanStatus> scan-status;
@@ -1162,6 +1475,13 @@ export component MainWindow inherits Window {
     callback set-camera-exposure(string, float);  // device-id, exposure_ms
     callback start-camera-stream(string);         // device-id
     callback stop-camera-stream(string);          // device-id
+
+    // Laser callbacks (bd-pwjo)
+    callback set-laser-shutter(string, bool);     // device-id, open
+    callback set-laser-wavelength(string, float); // device-id, wavelength_nm
+    callback set-laser-emission(string, bool);    // device-id, enabled
+    callback start-laser-stream(string);          // device-id (for power reading)
+    callback stop-laser-stream(string);           // device-id
 
     callback create-scan(ScanAxisConfig);
     callback start-scan();
@@ -1212,7 +1532,7 @@ export component MainWindow inherits Window {
     callback start-engine();
     callback pause-engine();
     callback resume-engine();
-    callback abort-plan(string);           // run-uid
+    callback request-abort(string);           // run-uid
     callback halt-engine();
     callback get-engine-status();
 
@@ -1414,6 +1734,58 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                // Laser Tab (bd-pwjo)
+                Tab {
+                    title: "Laser (\{root.selected-lasers.length})";
+
+                    ScrollView {
+                        VerticalBox {
+                            spacing: 16px;
+                            padding: 8px;
+
+                            if root.selected-lasers.length == 0: Rectangle {
+                                height: 200px;
+                                background: #fafafa;
+                                border-radius: 8px;
+
+                                VerticalBox {
+                                    alignment: center;
+                                    Text {
+                                        text: "No laser devices selected";
+                                        font-size: 14px;
+                                        color: #666;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "Select a MaiTai or similar laser in the device list";
+                                        font-size: 12px;
+                                        color: #999;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+
+                            for laser in root.selected-lasers: LaserPanel {
+                                device-id: laser.device-id;
+                                device-name: laser.device-name;
+                                power-reading: laser.power-reading;
+                                power-units: laser.power-units;
+                                wavelength-nm: laser.wavelength-nm;
+                                min-wavelength-nm: laser.min-wavelength-nm;
+                                max-wavelength-nm: laser.max-wavelength-nm;
+                                shutter-open: laser.shutter-open;
+                                emission-enabled: laser.emission-enabled;
+                                streaming: laser.streaming;
+                                set-shutter(id, open) => { root.set-laser-shutter(id, open); }
+                                set-wavelength(id, wl) => { root.set-laser-wavelength(id, wl); }
+                                set-emission(id, en) => { root.set-laser-emission(id, en); }
+                                start-stream(id) => { root.start-laser-stream(id); }
+                                stop-stream(id) => { root.stop-laser-stream(id); }
+                            }
+                        }
+                    }
+                }
+
                 Tab {
                     title: "Scan";
                     ScanPanel {
@@ -1491,7 +1863,7 @@ export component MainWindow inherits Window {
                         start-engine => { root.start-engine(); }
                         pause-engine => { root.pause-engine(); }
                         resume-engine => { root.resume-engine(); }
-                        abort-plan(run-uid) => { root.abort-plan(run-uid); }
+                        request-abort(run-uid) => { root.request-abort(run-uid); }
                         halt-engine => { root.halt-engine(); }
                         get-engine-status => { root.get-engine-status(); }
                     }
@@ -1552,7 +1924,7 @@ export component MainWindow inherits Window {
                 Rectangle { width: AppSpacing.xl; }
                 
                 Text {
-                    text: "Move: \{root.selected-movables.length} | View: \{root.selected-readables.length} | Cam: \{root.selected-cameras.length}";
+                    text: "Move: \{root.selected-movables.length} | View: \{root.selected-readables.length} | Cam: \{root.selected-cameras.length} | Laser: \{root.selected-lasers.length}";
                     font-size: AppFonts.size-sm;
                     color: #8899aa;
                     vertical-alignment: center;
@@ -1592,50 +1964,5 @@ export component MainWindow inherits Window {
 // =============================================================================
 // Global Style Constants (PyMoDAQ/DynExp-inspired)
 // =============================================================================
+// Moved to globals.slint
 
-// Colors - Professional scientific instrument palette
-global AppColors {
-    // Background hierarchy
-    out property <color> window-bg: #e8e8e8;        // Main window
-    out property <color> panel-bg: #ffffff;          // Panels
-    out property <color> sidebar-bg: #f5f5f5;        // Sidebar
-    out property <color> header-bg: #2c3e50;         // Dark headers
-    out property <color> accent-bg: #3498db;         // Primary accent
-    
-    // Text colors - HIGH CONTRAST
-    out property <color> text-primary: #1a1a1a;      // Almost black
-    out property <color> text-secondary: #4a4a4a;    // Dark gray
-    out property <color> text-muted: #6b6b6b;        // Medium gray
-    out property <color> text-on-dark: #ffffff;      // White on dark
-    out property <color> text-on-accent: #ffffff;    // White on accent
-    
-    // Status colors
-    out property <color> success: #27ae60;
-    out property <color> warning: #f39c12;
-    out property <color> error: #e74c3c;
-    out property <color> info: #3498db;
-    
-    // Border colors
-    out property <color> border-light: #ddd;
-    out property <color> border-medium: #bbb;
-}
-
-// Typography - Larger, more readable sizes
-global AppFonts {
-    out property <length> size-xs: 11px;
-    out property <length> size-sm: 13px;
-    out property <length> size-base: 14px;
-    out property <length> size-lg: 16px;
-    out property <length> size-xl: 18px;
-    out property <length> size-2xl: 24px;
-    out property <length> size-3xl: 32px;
-}
-
-// Spacing
-global AppSpacing {
-    out property <length> xs: 4px;
-    out property <length> sm: 8px;
-    out property <length> md: 12px;
-    out property <length> lg: 16px;
-    out property <length> xl: 24px;
-}
