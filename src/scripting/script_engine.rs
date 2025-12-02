@@ -144,35 +144,80 @@ impl fmt::Debug for ScriptValue {
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
     /// Script compilation/syntax error
+    ///
+    /// Indicates the script has invalid syntax and cannot be compiled/parsed.
+    /// Check the message for details about what syntax is incorrect.
     #[error("Syntax error: {message}")]
-    SyntaxError { message: String },
+    SyntaxError {
+        /// Human-readable description of the syntax error
+        message: String,
+    },
 
     /// Runtime error during script execution
+    ///
+    /// Indicates an error occurred while executing a valid script, such as
+    /// division by zero, type mismatch, or hardware operation failure.
     #[error("Runtime error: {message}{}", .backtrace.as_ref().map(|b| format!("\n{}", b)).unwrap_or_default())]
     RuntimeError {
+        /// Human-readable description of the runtime error
         message: String,
+        /// Optional stack trace showing where the error occurred in the script
         backtrace: Option<String>,
     },
 
     /// Variable not found in global scope
+    ///
+    /// Indicates an attempt to access a variable that doesn't exist in the
+    /// script's global namespace.
     #[error("Variable not found: {name}")]
-    VariableNotFound { name: String },
+    VariableNotFound {
+        /// Name of the missing variable
+        name: String,
+    },
 
     /// Type conversion error between Rust and script types
+    ///
+    /// Indicates a value couldn't be converted between Rust and the script
+    /// backend's type system (e.g., trying to extract a String from an i64).
     #[error("Type conversion error: expected {expected}, found {found}")]
-    TypeConversionError { expected: String, found: String },
+    TypeConversionError {
+        /// Expected type name
+        expected: String,
+        /// Actual type found
+        found: String,
+    },
 
     /// Backend-specific error (e.g., PyO3 initialization failure)
+    ///
+    /// Indicates an error specific to the scripting backend implementation,
+    /// such as Python interpreter initialization failure or Rhai engine setup error.
     #[error("Backend error ({backend}): {message}")]
-    BackendError { backend: String, message: String },
+    BackendError {
+        /// Name of the backend (e.g., "Rhai", "PyO3")
+        backend: String,
+        /// Backend-specific error message
+        message: String,
+    },
 
     /// Async task join error
+    ///
+    /// Indicates a tokio task failed to complete. This typically means the
+    /// task panicked or was cancelled unexpectedly.
     #[error("Async error: {message}")]
-    AsyncError { message: String },
+    AsyncError {
+        /// Description of the async error
+        message: String,
+    },
 
     /// Function registration error
+    ///
+    /// Indicates a function could not be registered with the script engine,
+    /// usually due to type incompatibility or backend limitations.
     #[error("Function registration error: {message}")]
-    FunctionRegistrationError { message: String },
+    FunctionRegistrationError {
+        /// Description of why registration failed
+        message: String,
+    },
 }
 
 // =============================================================================

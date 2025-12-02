@@ -867,12 +867,17 @@ impl HardwareService for HardwareServiceImpl {
                 ))
             })?;
 
-            match if req.open {
+            let open = req.open;
+            match if open {
                 shutter_ctrl.open_shutter().await
             } else {
                 shutter_ctrl.close_shutter().await
             } {
-                Ok(()) => Ok(Response::new(SetShutterResponse { success: true })),
+                Ok(()) => Ok(Response::new(SetShutterResponse {
+                    success: true,
+                    error_message: String::new(),
+                    is_open: open,
+                })),
                 Err(e) => Err(Status::internal(format!("Failed to set shutter: {}", e))),
             }
         }
@@ -907,7 +912,7 @@ impl HardwareService for HardwareServiceImpl {
             })?;
 
             match shutter_ctrl.is_shutter_open().await {
-                Ok(open) => Ok(Response::new(GetShutterResponse { open })),
+                Ok(is_open) => Ok(Response::new(GetShutterResponse { is_open })),
                 Err(e) => Err(Status::internal(format!("Failed to get shutter state: {}", e))),
             }
         }
@@ -941,8 +946,13 @@ impl HardwareService for HardwareServiceImpl {
                 ))
             })?;
 
-            match wavelength_ctrl.set_wavelength(req.wavelength_nm).await {
-                Ok(()) => Ok(Response::new(SetWavelengthResponse { success: true })),
+            let requested_nm = req.wavelength_nm;
+            match wavelength_ctrl.set_wavelength(requested_nm).await {
+                Ok(()) => Ok(Response::new(SetWavelengthResponse {
+                    success: true,
+                    error_message: String::new(),
+                    actual_wavelength_nm: requested_nm,
+                })),
                 Err(e) => Err(Status::internal(format!("Failed to set wavelength: {}", e))),
             }
         }
@@ -1011,12 +1021,17 @@ impl HardwareService for HardwareServiceImpl {
                 ))
             })?;
 
-            match if req.enabled {
+            let enabled = req.enabled;
+            match if enabled {
                 emission_ctrl.enable_emission().await
             } else {
                 emission_ctrl.disable_emission().await
             } {
-                Ok(()) => Ok(Response::new(SetEmissionResponse { success: true })),
+                Ok(()) => Ok(Response::new(SetEmissionResponse {
+                    success: true,
+                    error_message: String::new(),
+                    is_enabled: enabled,
+                })),
                 Err(e) => Err(Status::internal(format!("Failed to set emission: {}", e))),
             }
         }
@@ -1051,7 +1066,7 @@ impl HardwareService for HardwareServiceImpl {
             })?;
 
             match emission_ctrl.is_emission_enabled().await {
-                Ok(enabled) => Ok(Response::new(GetEmissionResponse { enabled })),
+                Ok(is_enabled) => Ok(Response::new(GetEmissionResponse { is_enabled })),
                 Err(e) => Err(Status::internal(format!("Failed to get emission state: {}", e))),
             }
         }

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, RwLock};
+use tokio::task::JoinHandle;
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
@@ -17,7 +18,7 @@ use uuid::Uuid;
 use crate::data::ring_buffer::RingBuffer;
 
 /// Metadata about an uploaded script
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ScriptMetadata {
     name: String,
     upload_time: u64,
@@ -25,7 +26,7 @@ struct ScriptMetadata {
 }
 
 /// State of a script execution
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ExecutionState {
     script_id: String,
     state: String,
@@ -44,6 +45,9 @@ pub struct DaqServer {
     scripts: Arc<RwLock<HashMap<String, String>>>,
     script_metadata: Arc<RwLock<HashMap<String, ScriptMetadata>>>,
     executions: Arc<RwLock<HashMap<String, ExecutionState>>>,
+    /// JoinHandles for running script tasks, keyed by execution_id.
+    /// Used for cancellation - calling abort() on the handle stops the script.
+    running_tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
     start_time: SystemTime,
 
     /// Broadcast channel for distributing hardware measurements to multiple consumers.
@@ -99,6 +103,9 @@ impl DaqServer {
                             break; // Channel closed, exit task
                         }
                     }
+                    
+                    // Yield to allow other tasks to run
+                    tokio::task::yield_now().await;
                 }
             });
         }
@@ -110,6 +117,7 @@ impl DaqServer {
             scripts: Arc::new(RwLock::new(HashMap::new())),
             script_metadata: Arc::new(RwLock::new(HashMap::new())),
             executions: Arc::new(RwLock::new(HashMap::new())),
+            running_tasks: Arc::new(RwLock::new(HashMap::new())),
             start_time: SystemTime::now(),
             data_tx,
             ring_buffer,
@@ -130,6 +138,7 @@ impl DaqServer {
             scripts: Arc::new(RwLock::new(HashMap::new())),
             script_metadata: Arc::new(RwLock::new(HashMap::new())),
             executions: Arc::new(RwLock::new(HashMap::new())),
+            running_tasks: Arc::new(RwLock::new(HashMap::new())),
             start_time: SystemTime::now(),
             data_tx,
         }
@@ -141,6 +150,20 @@ impl DaqServer {
     /// they can use to publish measurements.
     pub fn data_sender(&self) -> Arc<broadcast::Sender<Measurement>> {
         Arc::clone(&self.data_tx)
+    }
+}
+
+impl std::fmt::Debug for DaqServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaqServer")
+            .field("script_host", &"<RwLock<ScriptHost>>")
+            .field("scripts", &format!("{} scripts", self.scripts.try_read().map(|s| s.len()).unwrap_or(0)))
+            .field("script_metadata", &format!("{} metadata entries", self.script_metadata.try_read().map(|m| m.len()).unwrap_or(0)))
+            .field("executions", &format!("{} executions", self.executions.try_read().map(|e| e.len()).unwrap_or(0)))
+            .field("running_tasks", &format!("{} running tasks", self.running_tasks.try_read().map(|t| t.len()).unwrap_or(0)))
+            .field("start_time", &self.start_time)
+            .field("data_tx", &"<broadcast::Sender>")
+            .finish()
     }
 }
 
@@ -238,8 +261,10 @@ impl ControlService for DaqServer {
         let host_clone = self.script_host.clone();
         let executions_clone = self.executions.clone();
         let exec_id_clone = execution_id.clone();
+        let running_tasks_clone = self.running_tasks.clone();
+        let exec_id_for_cleanup = execution_id.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let host = host_clone.read().await;
             let result = host.run_script(&script_clone);
 
@@ -258,7 +283,16 @@ impl ControlService for DaqServer {
                     exec.error = Some(e.to_string());
                 }
             }
+
+            // Remove from running_tasks now that we're done
+            running_tasks_clone.write().await.remove(&exec_id_for_cleanup);
         });
+
+        // Store handle for potential cancellation
+        self.running_tasks
+            .write()
+            .await
+            .insert(execution_id.clone(), handle);
 
         Ok(Response::new(StartResponse {
             started: true,
@@ -267,36 +301,24 @@ impl ControlService for DaqServer {
     }
 
     /// Stop a running script execution
+    ///
+    /// For force=true, the task is immediately aborted.
+    /// For force=false (graceful), the task is also aborted since Rhai scripts
+    /// run synchronously and cannot be interrupted mid-execution.
     async fn stop_script(
         &self,
         request: Request<StopRequest>,
     ) -> Result<Response<StopResponse>, Status> {
         let req = request.into_inner();
-        let mut executions = self.executions.write().await;
 
-        if let Some(exec) = executions.get_mut(&req.execution_id) {
-            if exec.state == "RUNNING" {
-                // TODO: Implement actual cancellation with tokio::task::JoinHandle
-                // For now, mark as stopped
-                exec.state = "STOPPED".to_string();
-                exec.end_time = Some(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos() as u64,
-                );
+        // First check if execution exists and is running
+        {
+            let executions = self.executions.read().await;
+            let exec = executions
+                .get(&req.execution_id)
+                .ok_or_else(|| Status::not_found("Execution not found"))?;
 
-                let msg = if req.force {
-                    "Force stopped (not fully implemented - future enhancement)"
-                } else {
-                    "Graceful stop (not fully implemented - future enhancement)"
-                };
-
-                return Ok(Response::new(StopResponse {
-                    stopped: true,
-                    message: msg.to_string(),
-                }));
-            } else {
+            if exec.state != "RUNNING" {
                 return Ok(Response::new(StopResponse {
                     stopped: false,
                     message: format!("Cannot stop execution in state: {}", exec.state),
@@ -304,7 +326,41 @@ impl ControlService for DaqServer {
             }
         }
 
-        Err(Status::not_found("Execution not found"))
+        // Abort the running task
+        let handle = self
+            .running_tasks
+            .write()
+            .await
+            .remove(&req.execution_id);
+
+        let msg = if let Some(handle) = handle {
+            handle.abort();
+            if req.force {
+                "Force stopped: task aborted"
+            } else {
+                "Gracefully stopped: task aborted (Rhai scripts cannot be interrupted mid-execution)"
+            }
+        } else {
+            // Task completed between our check and removal - race condition
+            "Task already completed"
+        };
+
+        // Update execution state
+        let mut executions = self.executions.write().await;
+        if let Some(exec) = executions.get_mut(&req.execution_id) {
+            exec.state = "STOPPED".to_string();
+            exec.end_time = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+            );
+        }
+
+        Ok(Response::new(StopResponse {
+            stopped: true,
+            message: msg.to_string(),
+        }))
     }
 
     /// Get current status of a script execution
@@ -474,6 +530,9 @@ impl ControlService for DaqServer {
                 if tx.send(Ok(proto_data_point)).await.is_err() {
                     break; // Client disconnected
                 }
+                
+                // Yield to allow other tasks to run
+                tokio::task::yield_now().await;
             }
         });
 
@@ -614,31 +673,116 @@ pub async fn start_server_with_hardware(
     addr: std::net::SocketAddr,
     registry: std::sync::Arc<tokio::sync::RwLock<crate::hardware::registry::DeviceRegistry>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::data::ring_buffer::RingBuffer;
+    use crate::data::hdf5_writer::HDF5Writer;
     use crate::grpc::hardware_service::HardwareServiceImpl;
     use crate::grpc::module_service::ModuleServiceImpl;
+    use crate::grpc::plugin_service::PluginServiceImpl;
+    use crate::grpc::preset_service::{default_preset_storage_path, PresetServiceImpl};
     use crate::grpc::proto::hardware_service_server::HardwareServiceServer;
     use crate::grpc::proto::module_service_server::ModuleServiceServer;
+    use crate::grpc::proto::plugin_service_server::PluginServiceServer;
+    use crate::grpc::proto::preset_service_server::PresetServiceServer;
     use crate::grpc::proto::scan_service_server::ScanServiceServer;
+    use crate::grpc::proto::storage_service_server::StorageServiceServer;
     use crate::grpc::scan_service::ScanServiceImpl;
+    use crate::grpc::storage_service::StorageServiceImpl;
+    use std::path::Path;
+
+    // Create ring buffer for scan data persistence (The Mullet Strategy)
+    // Use /dev/shm on Linux, /tmp on macOS for memory-mapped storage
+    let ring_buffer_path = if cfg!(target_os = "linux") {
+        Path::new("/dev/shm/rust_daq_scan_data.buf")
+    } else {
+        Path::new("/tmp/rust_daq_scan_data.buf")
+    };
+    
+    let ring_buffer = match RingBuffer::create(ring_buffer_path, 100) {
+        Ok(rb) => {
+            println!("  - RingBuffer: {} (100 MB)", ring_buffer_path.display());
+            Some(std::sync::Arc::new(rb))
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to create ring buffer: {}. Scan data will not be persisted.", e);
+            None
+        }
+    };
+
+    // Spawn HDF5Writer background task if ring buffer is available
+    // This is the "Business in the Back" of The Mullet Strategy
+    if let Some(ref rb) = ring_buffer {
+        let hdf5_output_path = if cfg!(target_os = "linux") {
+            Path::new("/tmp/rust_daq_scan_data.h5")
+        } else {
+            Path::new("/tmp/rust_daq_scan_data.h5")
+        };
+        
+        match HDF5Writer::new(hdf5_output_path, rb.clone()) {
+            Ok(writer) => {
+                println!("  - HDF5Writer: {} (1 Hz flush)", hdf5_output_path.display());
+                tokio::spawn(async move {
+                    writer.run().await;
+                });
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to create HDF5 writer: {}. Data will not be persisted to disk.", e);
+            }
+        }
+    }
 
     let control_server = DaqServer::new();
     let hardware_server = HardwareServiceImpl::new(registry.clone());
     let module_server = ModuleServiceImpl::new(registry.clone());
-    let scan_server = ScanServiceImpl::new(registry);
+    
+    // Create PluginService with shared factory and registry (bd-0451)
+    #[cfg(feature = "tokio_serial")]
+    let plugin_server = {
+        let reg = registry.read().await;
+        let factory = reg.plugin_factory();
+        drop(reg);
+        PluginServiceImpl::new(factory, registry.clone())
+    };
+    
+    // Wire ScanService with optional data persistence
+    let scan_server = if let Some(rb) = ring_buffer {
+        ScanServiceImpl::new(registry.clone()).with_ring_buffer(rb)
+    } else {
+        ScanServiceImpl::new(registry.clone())
+    };
+    
+    let preset_server = PresetServiceImpl::new(registry, default_preset_storage_path());
+    let storage_server = StorageServiceImpl::new();
 
     println!("DAQ gRPC server (with hardware) listening on {}", addr);
     println!("  - ControlService: script management");
     println!("  - HardwareService: direct device control");
     println!("  - ModuleService: experiment modules (bd-c0ai)");
+    #[cfg(feature = "tokio_serial")]
+    println!("  - PluginService: YAML-defined instrument plugins (bd-0451)");
     println!("  - ScanService: coordinated multi-axis scans");
+    println!("  - PresetService: configuration save/load (bd-akcm)");
+    println!("  - StorageService: HDF5 data storage (bd-p6im)");
 
-    Server::builder()
+    #[cfg(feature = "tokio_serial")]
+    let server_builder = Server::builder()
+        .add_service(ControlServiceServer::new(control_server))
+        .add_service(HardwareServiceServer::new(hardware_server))
+        .add_service(ModuleServiceServer::new(module_server))
+        .add_service(PluginServiceServer::new(plugin_server))
+        .add_service(ScanServiceServer::new(scan_server))
+        .add_service(PresetServiceServer::new(preset_server))
+        .add_service(StorageServiceServer::new(storage_server));
+
+    #[cfg(not(feature = "tokio_serial"))]
+    let server_builder = Server::builder()
         .add_service(ControlServiceServer::new(control_server))
         .add_service(HardwareServiceServer::new(hardware_server))
         .add_service(ModuleServiceServer::new(module_server))
         .add_service(ScanServiceServer::new(scan_server))
-        .serve(addr)
-        .await?;
+        .add_service(PresetServiceServer::new(preset_server))
+        .add_service(StorageServiceServer::new(storage_server));
+
+    server_builder.serve(addr).await?;
 
     Ok(())
 }

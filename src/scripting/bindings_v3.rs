@@ -68,6 +68,11 @@ use crate::core::{Camera, Laser, PowerMeter, Roi, Stage};
 /// ```
 #[derive(Clone)]
 pub struct V3CameraHandle {
+    /// V3 Camera instrument wrapped in Arc<Mutex<>> for thread-safe access.
+    ///
+    /// The Mutex ensures exclusive access during camera operations. This is necessary
+    /// because V3 instruments maintain internal state that must be synchronized
+    /// across async operations.
     pub instrument: Arc<Mutex<dyn Camera>>,
 }
 
@@ -85,6 +90,11 @@ pub struct V3CameraHandle {
 /// ```
 #[derive(Clone)]
 pub struct V3PowerMeterHandle {
+    /// V3 PowerMeter instrument wrapped in Arc<Mutex<>> for thread-safe access.
+    ///
+    /// The Mutex ensures exclusive access during measurement operations. This is necessary
+    /// because V3 instruments maintain internal state that must be synchronized
+    /// across async operations.
     pub instrument: Arc<Mutex<dyn PowerMeter>>,
 }
 
@@ -102,6 +112,11 @@ pub struct V3PowerMeterHandle {
 /// ```
 #[derive(Clone)]
 pub struct V3StageHandle {
+    /// V3 Stage instrument wrapped in Arc<Mutex<>> for thread-safe access.
+    ///
+    /// The Mutex ensures exclusive access during motion operations. This is necessary
+    /// because V3 instruments maintain internal state that must be synchronized
+    /// across async operations.
     pub instrument: Arc<Mutex<dyn Stage>>,
 }
 
@@ -119,6 +134,11 @@ pub struct V3StageHandle {
 /// ```
 #[derive(Clone)]
 pub struct V3LaserHandle {
+    /// V3 Laser instrument wrapped in Arc<Mutex<>> for thread-safe access.
+    ///
+    /// The Mutex ensures exclusive access during laser operations. This is necessary
+    /// because V3 instruments maintain internal state that must be synchronized
+    /// across async operations.
     pub instrument: Arc<Mutex<dyn Laser>>,
 }
 

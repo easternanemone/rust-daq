@@ -35,7 +35,7 @@
 //! ```
 
 use chrono::Utc;
-use rhai::{Dynamic, Engine};
+use rhai::{Dynamic, Engine, EvalAltResult, Position};
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -62,6 +62,11 @@ use crate::hardware::capabilities::{Camera, Movable};
 /// ```
 #[derive(Clone)]
 pub struct StageHandle {
+    /// Hardware driver implementing the Movable trait.
+    ///
+    /// This is typically an Arc-wrapped driver (e.g., `Arc<MockStage>`, `Arc<Esp300>`)
+    /// that provides position control methods. The Arc enables sharing the driver
+    /// across multiple script handles and async tasks.
     pub driver: Arc<dyn Movable>,
     /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
     pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
@@ -81,6 +86,11 @@ pub struct StageHandle {
 /// ```
 #[derive(Clone)]
 pub struct CameraHandle {
+    /// Hardware driver implementing the Camera trait.
+    ///
+    /// This is typically an Arc-wrapped driver (e.g., `Arc<MockCamera>`, `Arc<PvcamDriver>`)
+    /// that provides camera control and frame acquisition methods. The Arc enables sharing
+    /// the driver across multiple script handles and async tasks.
     pub driver: Arc<dyn Camera>,
     /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
     pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
@@ -116,8 +126,14 @@ pub fn register_hardware(engine: &mut Engine) {
     // =========================================================================
 
     // stage.move_abs(10.0) - Move to absolute position
-    engine.register_fn("move_abs", move |stage: &mut StageHandle, pos: f64| {
-        block_in_place(|| Handle::current().block_on(stage.driver.move_abs(pos))).unwrap();
+    engine.register_fn("move_abs", move |stage: &mut StageHandle, pos: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+        block_in_place(|| Handle::current().block_on(stage.driver.move_abs(pos)))
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Stage move_abs failed: {}", e).into(),
+                    Position::NONE
+                ))
+            })?;
 
         // Send measurement to broadcast channel if sender available
         if let Some(ref tx) = stage.data_tx {
@@ -131,21 +147,43 @@ pub fn register_hardware(engine: &mut Engine) {
             // Ignore errors if no receivers (non-critical)
             let _ = tx.send(measurement);
         }
+        
+        Ok(Dynamic::UNIT)
     });
 
     // stage.move_rel(5.0) - Move relative distance
-    engine.register_fn("move_rel", move |stage: &mut StageHandle, dist: f64| {
-        block_in_place(|| Handle::current().block_on(stage.driver.move_rel(dist))).unwrap()
+    engine.register_fn("move_rel", move |stage: &mut StageHandle, dist: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+        block_in_place(|| Handle::current().block_on(stage.driver.move_rel(dist)))
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Stage move_rel failed: {}", e).into(),
+                    Position::NONE
+                ))
+            })?;
+        Ok(Dynamic::UNIT)
     });
 
     // let pos = stage.position() - Get current position
-    engine.register_fn("position", move |stage: &mut StageHandle| -> f64 {
-        block_in_place(|| Handle::current().block_on(stage.driver.position())).unwrap()
+    engine.register_fn("position", move |stage: &mut StageHandle| -> Result<f64, Box<EvalAltResult>> {
+        block_in_place(|| Handle::current().block_on(stage.driver.position()))
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Stage position query failed: {}", e).into(),
+                    Position::NONE
+                ))
+            })
     });
 
     // stage.wait_settled() - Wait for motion to complete
-    engine.register_fn("wait_settled", move |stage: &mut StageHandle| {
-        block_in_place(|| Handle::current().block_on(stage.driver.wait_settled())).unwrap()
+    engine.register_fn("wait_settled", move |stage: &mut StageHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+        block_in_place(|| Handle::current().block_on(stage.driver.wait_settled()))
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Stage wait_settled failed: {}", e).into(),
+                    Position::NONE
+                ))
+            })?;
+        Ok(Dynamic::UNIT)
     });
 
     // =========================================================================
@@ -155,35 +193,44 @@ pub fn register_hardware(engine: &mut Engine) {
     // camera.arm() - Prepare camera for trigger
     engine.register_fn(
         "arm",
-        move |camera: &mut CameraHandle| match block_in_place(|| {
-            Handle::current().block_on(camera.driver.arm())
-        }) {
-            Ok(_) => (),
-            Err(e) => panic!("Camera arm failed: {}", e),
+        move |camera: &mut CameraHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            block_in_place(|| Handle::current().block_on(camera.driver.arm()))
+                .map_err(|e| {
+                    Box::new(EvalAltResult::ErrorRuntime(
+                        format!("Camera arm failed: {}", e).into(),
+                        Position::NONE
+                    ))
+                })?;
+            Ok(Dynamic::UNIT)
         },
     );
 
     // camera.trigger() - Capture frame
     engine.register_fn(
         "trigger",
-        move |camera: &mut CameraHandle| match block_in_place(|| {
-            Handle::current().block_on(camera.driver.trigger())
-        }) {
-            Ok(_) => {
-                // Send measurement to broadcast channel if sender available
-                if let Some(ref tx) = camera.data_tx {
-                    let measurement = Measurement::Scalar {
-                        name: "camera_trigger".to_string(),
-                        value: 1.0, // Trigger event indicator
-                        unit: "event".to_string(),
-                        timestamp: Utc::now(),
-                    };
+        move |camera: &mut CameraHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            block_in_place(|| Handle::current().block_on(camera.driver.trigger()))
+                .map_err(|e| {
+                    Box::new(EvalAltResult::ErrorRuntime(
+                        format!("Camera trigger failed: {}", e).into(),
+                        Position::NONE
+                    ))
+                })?;
+            
+            // Send measurement to broadcast channel if sender available
+            if let Some(ref tx) = camera.data_tx {
+                let measurement = Measurement::Scalar {
+                    name: "camera_trigger".to_string(),
+                    value: 1.0, // Trigger event indicator
+                    unit: "event".to_string(),
+                    timestamp: Utc::now(),
+                };
 
-                    // Ignore errors if no receivers (non-critical)
-                    let _ = tx.send(measurement);
-                }
+                // Ignore errors if no receivers (non-critical)
+                let _ = tx.send(measurement);
             }
-            Err(e) => panic!("Camera trigger failed: {}", e),
+            
+            Ok(Dynamic::UNIT)
         },
     );
 

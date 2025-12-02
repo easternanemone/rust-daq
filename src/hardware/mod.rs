@@ -57,6 +57,10 @@ pub mod capabilities;
 pub mod mock;
 pub mod registry;
 
+// Plugin system for YAML-defined instrument drivers
+#[cfg(feature = "tokio_serial")]
+pub mod plugin;
+
 // Mock serial port for testing (always available)
 pub mod mock_serial;
 
@@ -87,36 +91,34 @@ pub mod newport_1830c;
 // Re-export core capability traits
 pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable};
 
+use std::sync::Arc;
+
 // =============================================================================
 // Data Types
 // =============================================================================
 
-/// Zero-copy frame reference for camera/image data
+/// Thread-safe frame reference for camera/image data
 ///
-/// This struct provides a view into frame buffer data without copying.
-/// The lifetime of the data is managed by the producer (camera driver).
+/// This struct provides shared access to frame buffer data using reference counting.
+/// The data is automatically freed when all references are dropped.
 ///
-/// # Safety
-/// - `data_ptr` must remain valid for the lifetime of this struct
-/// - Producer must ensure buffer is not freed while FrameRef exists
-/// - Consider using Arc<Vec<u8>> or similar for safer lifetime management
+/// # Thread Safety
+/// Uses `Arc<[u8]>` internally for safe shared ownership across threads.
+/// No manual lifetime management required - the Arc handles it automatically.
 ///
 /// # Example
 /// ```rust,ignore
-/// let frame = FrameRef {
-///     width: 1024,
-///     height: 1024,
-///     data_ptr: buffer.as_ptr(),
-///     stride: 1024,
-/// };
+/// let data: Vec<u8> = vec![0u8; 1024 * 1024];
+/// let frame = FrameRef::new(1024, 1024, data, 1024);
 ///
 /// // Access pixel at (x, y)
-/// unsafe {
-///     let offset = y * frame.stride + x;
-///     let pixel = *frame.data_ptr.add(offset);
-/// }
+/// let offset = y * frame.stride + x;
+/// let pixel = frame.as_slice()[offset];
+///
+/// // Safe to clone and share across threads
+/// let frame2 = frame.clone();
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FrameRef {
     /// Frame width in pixels
     pub width: u32,
@@ -124,11 +126,11 @@ pub struct FrameRef {
     /// Frame height in pixels
     pub height: u32,
 
-    /// Pointer to raw pixel data (row-major order)
+    /// Shared reference to pixel data (row-major order)
     ///
     /// Data format depends on camera (typically u8 or u16 per pixel).
     /// For multi-byte pixels, assume little-endian.
-    pub data_ptr: *const u8,
+    data: Arc<[u8]>,
 
     /// Number of bytes per row (may include padding)
     ///
@@ -137,38 +139,49 @@ pub struct FrameRef {
     pub stride: usize,
 }
 
-// Manual Send/Sync implementation (since raw pointers are !Send by default)
-// SAFETY: The producer must ensure buffer is valid across threads
-unsafe impl Send for FrameRef {}
-unsafe impl Sync for FrameRef {}
+// Note: No manual Send/Sync needed - Arc<[u8]> is automatically Send+Sync
 
 impl FrameRef {
-    /// Create a new frame reference
+    /// Create a new frame reference from owned data
     ///
-    /// # Safety
-    /// - `data_ptr` must point to valid memory for at least `height * stride` bytes
-    /// - Memory must remain valid for lifetime of FrameRef
-    pub unsafe fn new(width: u32, height: u32, data_ptr: *const u8, stride: usize) -> Self {
+    /// The data is moved into an Arc for shared ownership.
+    pub fn new(width: u32, height: u32, data: Vec<u8>, stride: usize) -> Self {
         Self {
             width,
             height,
-            data_ptr,
+            data: data.into(),
             stride,
         }
     }
 
-    /// Get pixel data as slice (if you trust the lifetime)
+    /// Create a new frame reference from an existing Arc
     ///
-    /// # Safety
-    /// - Caller must ensure buffer is still valid
-    /// - Returned slice lifetime is unconstrained (use carefully)
-    pub unsafe fn as_slice(&self) -> &[u8] {
-        std::slice::from_raw_parts(self.data_ptr, self.height as usize * self.stride)
+    /// Useful when the data is already in an Arc (e.g., from a ring buffer).
+    pub fn from_arc(width: u32, height: u32, data: Arc<[u8]>, stride: usize) -> Self {
+        Self {
+            width,
+            height,
+            data,
+            stride,
+        }
+    }
+
+    /// Get pixel data as slice
+    ///
+    /// Returns a reference to the underlying pixel data.
+    /// The slice is valid as long as any FrameRef to this data exists.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
     }
 
     /// Calculate total bytes in frame
     pub fn total_bytes(&self) -> usize {
         self.height as usize * self.stride
+    }
+
+    /// Get the Arc for efficient cloning without copying data
+    pub fn data_arc(&self) -> Arc<[u8]> {
+        Arc::clone(&self.data)
     }
 }
 

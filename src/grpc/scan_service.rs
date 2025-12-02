@@ -9,7 +9,15 @@
 //! 3. `StreamScanProgress` - Monitor progress in real-time
 //! 4. `PauseScan`/`ResumeScan` - Control execution
 //! 5. `StopScan` - Abort scan
+//!
+//! # Data Persistence (The Mullet Strategy)
+//!
+//! When configured with a RingBuffer, scan data is automatically persisted:
+//! - Scan progress and measurements are serialized to the ring buffer
+//! - HDF5Writer background task flushes to disk at 1 Hz
+//! - Scientists see HDF5 files compatible with Python/MATLAB/Igor
 
+use crate::data::ring_buffer::RingBuffer;
 use crate::grpc::proto::{
     scan_service_server::ScanService, CreateScanRequest, CreateScanResponse, GetScanStatusRequest,
     ListScansRequest, ListScansResponse, PauseScanRequest, PauseScanResponse, ResumeScanRequest,
@@ -105,10 +113,20 @@ impl ScanExecution {
 /// ScanService gRPC implementation
 ///
 /// Coordinates multi-axis scans with synchronized data acquisition.
+///
+/// # Data Persistence
+///
+/// When configured with a RingBuffer via `with_ring_buffer()`, scan data is
+/// automatically persisted using The Mullet Strategy:
+/// - Fast writes to memory-mapped ring buffer during scan
+/// - HDF5Writer background task flushes to disk at 1 Hz
+/// - Scientists see HDF5 files compatible with Python/MATLAB/Igor
 pub struct ScanServiceImpl {
     registry: Arc<RwLock<DeviceRegistry>>,
     scans: Arc<Mutex<HashMap<String, ScanExecution>>>,
     next_scan_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Optional ring buffer for data persistence
+    ring_buffer: Option<Arc<RingBuffer>>,
 }
 
 impl ScanServiceImpl {
@@ -118,7 +136,17 @@ impl ScanServiceImpl {
             registry,
             scans: Arc::new(Mutex::new(HashMap::new())),
             next_scan_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            ring_buffer: None,
         }
+    }
+
+    /// Configure data persistence via ring buffer
+    ///
+    /// When set, scan data will be written to the ring buffer in a format
+    /// that HDF5Writer can persist to disk.
+    pub fn with_ring_buffer(mut self, ring_buffer: Arc<RingBuffer>) -> Self {
+        self.ring_buffer = Some(ring_buffer);
+        self
     }
 
     /// Calculate total scan points from configuration
@@ -252,6 +280,7 @@ impl ScanServiceImpl {
         pause_requested: Arc<std::sync::atomic::AtomicBool>,
         stop_requested: Arc<std::sync::atomic::AtomicBool>,
         progress_tx: mpsc::Sender<ScanProgress>,
+        ring_buffer: Option<Arc<RingBuffer>>,
     ) {
         use std::sync::atomic::Ordering;
 
@@ -413,6 +442,22 @@ impl ScanServiceImpl {
                 data_points,
             };
 
+            // Persist scan data to ring buffer for HDF5 storage (The Mullet Strategy)
+            // Write length-prefixed Protobuf messages for HDF5Writer to decode
+            if let Some(ref rb) = ring_buffer {
+                use prost::Message;
+                let msg_len = progress.encoded_len();
+                // Allocate buffer: 4 bytes for length + message bytes
+                let mut buf = Vec::with_capacity(4 + msg_len);
+                // Write length prefix (4 bytes, little-endian)
+                buf.extend_from_slice(&(msg_len as u32).to_le_bytes());
+                if let Err(e) = progress.encode(&mut buf) {
+                    warn!("Failed to encode scan progress for persistence: {}", e);
+                } else if let Err(e) = rb.write(&buf) {
+                    warn!("Failed to write scan data to ring buffer: {}", e);
+                }
+            }
+
             match progress_tx.try_send(progress) {
                 Ok(()) => {} // Progress sent successfully
                 Err(mpsc::error::TrySendError::Full(_)) => {
@@ -560,6 +605,7 @@ impl ScanService for ScanServiceImpl {
             pause_requested,
             stop_requested,
             progress_tx,
+            self.ring_buffer.clone(),
         ));
 
         // Store handle (safe to lock now since we dropped the first guard)

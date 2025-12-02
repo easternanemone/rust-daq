@@ -51,20 +51,44 @@ use crate::error::DaqError;
 // =============================================================================
 
 /// Parameter constraints for validation
+///
+/// Defines validation rules applied when setting parameter values.
+/// Constraints are checked before hardware writes to prevent invalid
+/// values from reaching devices.
+///
+/// # Serialization
+///
+/// All variants except `Custom` are serializable to JSON for storage
+/// and network transmission. Custom validators are marked `#[serde(skip)]`
+/// and will serialize as `None`.
 #[derive(Clone, Serialize, Deserialize)]
 #[derive(Default)]
 pub enum Constraints<T> {
-    /// No constraints
+    /// No constraints - all values accepted.
     #[default]
     None,
 
-    /// Numeric range (min, max)
-    Range { min: T, max: T },
+    /// Numeric range constraint (inclusive bounds).
+    ///
+    /// Values must satisfy: `min <= value <= max`.
+    /// Commonly used for exposure times, positions, power levels.
+    Range {
+        /// Minimum allowed value (inclusive).
+        min: T,
+        /// Maximum allowed value (inclusive).
+        max: T,
+    },
 
-    /// Allowed discrete values
+    /// Discrete choice constraint.
+    ///
+    /// Value must match one of the provided choices exactly.
+    /// Useful for enumerated settings like trigger modes or filters.
     Choices(Vec<T>),
 
-    /// Custom validation function (not serializable)
+    /// Custom validation function (not serializable).
+    ///
+    /// Provides arbitrary validation logic. Cannot be serialized,
+    /// so this variant is skipped during JSON encoding.
     #[serde(skip)]
     Custom(Arc<dyn Fn(&T) -> Result<()> + Send + Sync>),
 }
@@ -396,18 +420,34 @@ where
         &self.name
     }
 
+    /// Get parameter description.
+    ///
+    /// Returns the human-readable description set via `with_description()`.
+    /// Used for GUI tooltips and API documentation.
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
+    /// Get parameter unit of measurement.
+    ///
+    /// Returns the unit string (e.g., "ms", "mW", "nm") set via `with_unit()`.
+    /// Used for GUI labels and formatted output.
     pub fn unit(&self) -> Option<&str> {
         self.unit.as_deref()
     }
 
+    /// Check if parameter is read-only.
+    ///
+    /// Returns `true` if the parameter was created with `.read_only()`.
+    /// Read-only parameters reject `set()` calls with [`DaqError::ParameterReadOnly`].
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
 
+    /// Get parameter constraints.
+    ///
+    /// Returns a reference to the validation constraints used by `set()`.
+    /// Use this to display valid ranges or choices in GUI widgets.
     pub fn constraints(&self) -> &Constraints<T> {
         &self.constraints
     }
@@ -452,6 +492,20 @@ where
 // =============================================================================
 
 /// Builder for creating parameters with fluent API
+///
+/// Provides a chainable interface for constructing parameters with
+/// optional metadata and constraints. More ergonomic than calling
+/// individual setter methods on `Parameter`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let param = ParameterBuilder::new("wavelength", 532.0)
+///     .description("Laser wavelength")
+///     .unit("nm")
+///     .range(400.0, 1000.0)
+///     .build();
+/// ```
 pub struct ParameterBuilder<T>
 where
     T: Clone + Send + Sync + PartialEq + PartialOrd + Debug,
@@ -468,6 +522,18 @@ impl<T> ParameterBuilder<T>
 where
     T: Clone + Send + Sync + PartialEq + PartialOrd + Debug + 'static,
 {
+    /// Create a new parameter builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique parameter identifier (e.g., "exposure_ms")
+    /// * `initial` - Initial parameter value
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let builder = ParameterBuilder::new("gain", 1.0);
+    /// ```
     pub fn new(name: impl Into<String>, initial: T) -> Self {
         Self {
             name: name.into(),
@@ -479,16 +545,33 @@ where
         }
     }
 
+    /// Set parameter description.
+    ///
+    /// Human-readable description for GUI tooltips and documentation.
+    /// Returns `self` for method chaining.
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
 
+    /// Set parameter unit of measurement.
+    ///
+    /// Unit string displayed in GUI labels (e.g., "ms", "mW", "degrees").
+    /// Returns `self` for method chaining.
     pub fn unit(mut self, unit: impl Into<String>) -> Self {
         self.unit = Some(unit.into());
         self
     }
 
+    /// Set numeric range constraints.
+    ///
+    /// Values will be validated against `min <= value <= max`.
+    /// Returns `self` for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum allowed value (inclusive)
+    /// * `max` - Maximum allowed value (inclusive)
     pub fn range(mut self, min: T, max: T) -> Self
     where
         T: PartialOrd,
@@ -497,16 +580,37 @@ where
         self
     }
 
+    /// Set discrete choice constraints.
+    ///
+    /// Values must match one of the provided choices exactly.
+    /// Returns `self` for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `choices` - List of valid parameter values
     pub fn choices(mut self, choices: Vec<T>) -> Self {
         self.constraints = Constraints::Choices(choices);
         self
     }
 
+    /// Make parameter read-only.
+    ///
+    /// Read-only parameters reject `set()` calls with an error.
+    /// Useful for computed values or hardware-reported parameters.
+    /// Returns `self` for method chaining.
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
         self
     }
 
+    /// Build the parameter.
+    ///
+    /// Constructs the final `Parameter<T>` instance from the builder
+    /// configuration. Consumes the builder.
+    ///
+    /// # Returns
+    ///
+    /// Configured parameter ready for use
     pub fn build(self) -> Parameter<T> {
         let param = Parameter::new(self.name, self.initial);
 

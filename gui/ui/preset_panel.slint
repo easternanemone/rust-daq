@@ -1,0 +1,329 @@
+// rust-daq GUI - Preset Panel Component
+// Manages experiment presets: save/load device configurations
+// Pattern: Configuration snapshot management (bd-i1c5)
+
+import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
+         ScrollView, VerticalBox, GridBox, StandardButton } from "std-widgets.slint";
+
+// =============================================================================
+// Data Models
+// =============================================================================
+
+export struct PresetInfo {
+    preset-id: string,
+    name: string,
+    description: string,
+    author: string,
+    created-at: string,  // Human-readable timestamp
+    updated-at: string,
+    device-count: int,   // Number of device configs in preset
+}
+
+// =============================================================================
+// Preset List Component
+// =============================================================================
+
+component PresetList inherits Rectangle {
+    in property <[PresetInfo]> presets;
+    in-out property <int> selected-index: -1;
+
+    callback preset-selected(string);  // preset-id
+
+    background: white;
+    border-radius: 8px;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 12px;
+
+        Text {
+            text: "Saved Presets";
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        if presets.length == 0: Rectangle {
+            height: 60px;
+            background: #f5f5f5;
+            border-radius: 4px;
+
+            Text {
+                text: "No presets saved yet";
+                color: #999;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        ScrollView {
+            ListView {
+                for preset[idx] in presets: Rectangle {
+                    height: 72px;
+                    background: idx == selected-index ? #e3f2fd : transparent;
+                    border-radius: 4px;
+
+                    TouchArea {
+                        clicked => {
+                            selected-index = idx;
+                            preset-selected(preset.preset-id);
+                        }
+                    }
+
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 4px;
+
+                        HorizontalBox {
+                            spacing: 12px;
+                            Text {
+                                text: preset.name;
+                                font-weight: 600;
+                                font-size: 13px;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: "\{preset.device-count} devices";
+                                font-size: 10px;
+                                color: #666;
+                            }
+                        }
+
+                        Text {
+                            text: preset.description;
+                            font-size: 11px;
+                            color: #666;
+                            wrap: word-wrap;
+                            overflow: elide;
+                        }
+
+                        HorizontalBox {
+                            spacing: 8px;
+                            Text {
+                                text: "by \{preset.author}";
+                                font-size: 10px;
+                                color: #999;
+                            }
+                            Text {
+                                text: preset.updated-at;
+                                font-size: 10px;
+                                color: #999;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Save Preset Dialog
+// =============================================================================
+
+component SavePresetDialog inherits Rectangle {
+    in-out property <bool> show-dialog: false;
+    in-out property <string> preset-name: "";
+    in-out property <string> preset-description: "";
+
+    callback save-requested(string, string);  // name, description
+    callback cancel-requested();
+
+    background: rgba(0, 0, 0, 0.5);
+    opacity: show-dialog ? 1 : 0;
+
+    if show-dialog: TouchArea {
+        clicked => { cancel-requested(); }
+    }
+
+    if show-dialog: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 400px;
+        height: 280px;
+        background: white;
+        border-radius: 12px;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: rgba(0, 0, 0, 0.2);
+
+        TouchArea {
+            // Prevent clicks from closing dialog
+        }
+
+        VerticalBox {
+            padding: 24px;
+            spacing: 16px;
+
+            Text {
+                text: "Save Current Configuration";
+                font-weight: 700;
+                font-size: 16px;
+            }
+
+            VerticalBox {
+                spacing: 8px;
+
+                Text {
+                    text: "Preset Name";
+                    font-size: 12px;
+                    color: #666;
+                }
+                LineEdit {
+                    placeholder-text: "e.g., Morning Calibration";
+                    text <=> preset-name;
+                }
+            }
+
+            VerticalBox {
+                spacing: 8px;
+
+                Text {
+                    text: "Description";
+                    font-size: 12px;
+                    color: #666;
+                }
+                LineEdit {
+                    placeholder-text: "Optional description...";
+                    text <=> preset-description;
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalBox {
+                spacing: 12px;
+                Rectangle { horizontal-stretch: 1; }
+
+                Button {
+                    text: "Cancel";
+                    clicked => {
+                        preset-name = "";
+                        preset-description = "";
+                        cancel-requested();
+                    }
+                }
+
+                Button {
+                    text: "Save Preset";
+                    primary: true;
+                    enabled: preset-name != "";
+                    clicked => {
+                        save-requested(preset-name, preset-description);
+                        preset-name = "";
+                        preset-description = "";
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Main Preset Panel
+// =============================================================================
+
+export component PresetPanel inherits Rectangle {
+    in property <[PresetInfo]> presets: [];
+    in property <bool> connected: false;
+
+    // Selected preset state
+    in-out property <string> selected-preset-id: "";
+
+    // Dialog state
+    property <bool> save-dialog-visible: false;
+
+    // Callbacks for Rust handlers
+    callback list-presets();
+    callback save-preset(string, string);  // name, description
+    callback load-preset(string);          // preset-id
+    callback delete-preset(string);        // preset-id
+
+    background: #f8f9fa;
+    border-radius: 12px;
+
+    VerticalBox {
+        padding: 20px;
+        spacing: 16px;
+
+        // Header
+        HorizontalBox {
+            spacing: 12px;
+
+            Text {
+                text: "Presets";
+                font-weight: 700;
+                font-size: 18px;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: "Refresh";
+                enabled: connected;
+                clicked => { list-presets(); }
+            }
+
+            Button {
+                text: "Save Current";
+                primary: true;
+                enabled: connected;
+                clicked => { save-dialog-visible = true; }
+            }
+        }
+
+        // Preset list
+        preset-list := PresetList {
+            presets: root.presets;
+            preset-selected(id) => {
+                selected-preset-id = id;
+                // Name lookup happens in the PresetList component where we have the index
+            }
+        }
+
+        // Action buttons for selected preset
+        if selected-preset-id != "": GroupBox {
+            title: "Selected Preset";
+
+            HorizontalBox {
+                spacing: 12px;
+                padding: 8px;
+
+                Button {
+                    text: "Load Preset";
+                    primary: true;
+                    clicked => {
+                        load-preset(selected-preset-id);
+                    }
+                }
+
+                Button {
+                    text: "Delete";
+                    clicked => {
+                        delete-preset(selected-preset-id);
+                        selected-preset-id = "";
+                        preset-list.selected-index = -1;
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+
+    // Save dialog overlay
+    SavePresetDialog {
+        show-dialog: save-dialog-visible;
+        width: parent.width;
+        height: parent.height;
+
+        save-requested(name, desc) => {
+            save-preset(name, desc);
+            save-dialog-visible = false;
+        }
+
+        cancel-requested => {
+            save-dialog-visible = false;
+        }
+    }
+}

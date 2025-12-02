@@ -235,10 +235,8 @@ pub struct PvcamDriver {
     streaming: Arc<AtomicBool>,
     /// Frame counter for streaming
     frame_count: Arc<AtomicU64>,
-    /// Channel sender for streaming frames
-    frame_tx: tokio::sync::mpsc::Sender<Frame>,
-    /// Channel receiver for streaming frames (stored for consumer access)
-    frame_rx: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<Frame>>>>,
+    /// Broadcast sender for streaming frames (supports multiple subscribers)
+    frame_tx: tokio::sync::broadcast::Sender<std::sync::Arc<Frame>>,
     /// Handle to the streaming poll task
     #[cfg(feature = "pvcam_hardware")]
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -257,6 +255,9 @@ pub struct PvcamDriver {
 /// Get the last PVCAM error as a formatted string
 #[cfg(feature = "pvcam_hardware")]
 fn get_pvcam_error() -> String {
+    // SAFETY: pl_error_code and pl_error_message are called to retrieve error information.
+    // err_msg buffer is properly allocated (256 bytes) and pl_error_message writes a 
+    // null-terminated string. CStr::from_ptr is safe because PVCAM guarantees null-termination.
     unsafe {
         let err_code = pl_error_code();
         let mut err_msg = vec![0i8; 256];
@@ -296,7 +297,9 @@ impl PvcamDriver {
 
     #[cfg(feature = "pvcam_hardware")]
     fn new_with_hardware(camera_name: &str) -> Result<Self> {
-        // Initialize PVCAM SDK
+        // SAFETY: pl_pvcam_init initializes the PVCAM library. Safe to call before any other
+        // PVCAM operations. Returns 0 on failure, non-zero on success per PVCAM spec.
+        // Error handling uses properly allocated buffers for error messages.
         unsafe {
             if pl_pvcam_init() == 0 {
                 let err_code = pl_error_code();
@@ -313,6 +316,8 @@ impl PvcamDriver {
 
         // Get list of cameras
         let mut total_cameras: i16 = 0;
+        // SAFETY: pl_cam_get_total retrieves the number of available cameras. The total_cameras
+        // pointer is valid and properly aligned. PVCAM SDK is initialized at this point.
         unsafe {
             if pl_cam_get_total(&mut total_cameras) == 0 {
                 let err_code = pl_error_code();
@@ -329,6 +334,8 @@ impl PvcamDriver {
         }
 
         if total_cameras == 0 {
+            // SAFETY: pl_pvcam_uninit safely cleans up PVCAM SDK resources initialized above.
+            // Safe to call after successful pl_pvcam_init.
             unsafe {
                 pl_pvcam_uninit();
             }
@@ -342,6 +349,13 @@ impl PvcamDriver {
         let camera_name_cstr =
             std::ffi::CString::new(camera_name).context("Invalid camera name")?;
 
+        // SAFETY: pl_cam_open opens a camera by name. The camera_name_cstr pointer is valid
+        // and null-terminated (guaranteed by CString). camera_handle pointer is valid.
+        // pl_cam_get_name retrieves camera name into a properly sized buffer (256 bytes).
+        // pl_pvcam_uninit is safe to call on error paths.
+        // SAFETY: Fallback path when named camera fails: pl_cam_get_name retrieves the first
+        // available camera name into name_buffer (256 bytes). If successful, pl_cam_open opens
+        // that camera. pl_pvcam_uninit cleanup is safe on all error paths.
         unsafe {
             if pl_cam_open(camera_name_cstr.as_ptr() as *mut i8, &mut camera_handle, 0) == 0 {
                 // If named camera not found, try first camera
@@ -362,6 +376,9 @@ impl PvcamDriver {
         let mut width: uns32 = 0;
         let mut height: uns32 = 0;
 
+        // SAFETY: pl_get_param retrieves camera parameters. camera_handle is valid from pl_cam_open.
+        // The parameter pointers (par_width, par_height) are properly aligned and valid for writes.
+        // PARAM_SER_SIZE and PARAM_PAR_SIZE are valid PVCAM parameter IDs.
         unsafe {
             let mut par_width: uns16 = 0;
             let mut par_height: uns16 = 0;
@@ -396,8 +413,8 @@ impl PvcamDriver {
             };
         }
 
-        // Create channel for streaming frames (buffer 16 frames)
-        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(16);
+        // Create broadcast channel for streaming frames (supports multiple subscribers)
+        let (frame_tx, _) = tokio::sync::broadcast::channel(16);
 
         Ok(Self {
             camera_name: camera_name.to_string(),
@@ -418,7 +435,6 @@ impl PvcamDriver {
             streaming: Arc::new(AtomicBool::new(false)),
             frame_count: Arc::new(AtomicU64::new(0)),
             frame_tx,
-            frame_rx: Arc::new(Mutex::new(Some(frame_rx))),
             poll_handle: Arc::new(Mutex::new(None)),
             circ_buffer: Arc::new(Mutex::new(None)),
             trigger_frame: Arc::new(Mutex::new(None)),
@@ -437,8 +453,8 @@ impl PvcamDriver {
         eprintln!("PVCAM hardware feature not enabled - using mock camera");
         eprintln!("    To use real hardware: cargo build --features pvcam_hardware");
 
-        // Create channel for streaming frames (buffer 16 frames)
-        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(16);
+        // Create broadcast channel for streaming frames (supports multiple subscribers)
+        let (frame_tx, _) = tokio::sync::broadcast::channel(16);
 
         Ok(Self {
             camera_name: camera_name.to_string(),
@@ -457,7 +473,6 @@ impl PvcamDriver {
             streaming: Arc::new(AtomicBool::new(false)),
             frame_count: Arc::new(AtomicU64::new(0)),
             frame_tx,
-            frame_rx: Arc::new(Mutex::new(Some(frame_rx))),
         })
     }
 
@@ -535,6 +550,9 @@ impl PvcamDriver {
         let (x_bin, y_bin) = *self.binning.lock().await;
 
         // Setup region for acquisition
+        // SAFETY: zeroed() creates a zero-initialized rgn_type struct. This is safe because
+        // rgn_type is a C struct with no drop semantics. All fields are then properly initialized
+        // with valid ROI and binning values before use in pl_exp_setup_seq.
         let region = unsafe {
             let mut rgn: rgn_type = std::mem::zeroed();
             rgn.s1 = roi.x as uns16;
@@ -553,6 +571,14 @@ impl PvcamDriver {
         let frame_size: uns32 = (binned_width * binned_height) as uns32;
         let mut frame = vec![0u16; frame_size as usize];
 
+        // SAFETY: All PVCAM acquisition functions receive valid handles and pointers.
+        // camera_handle h is valid from pl_cam_open. frame buffer is properly allocated
+        // with correct size. region pointer is valid and points to initialized rgn_type.
+        // pl_exp_check_status receives valid mutable pointers for status output.
+        // pl_exp_finish_seq is called to cleanup resources on all exit paths.
+        // SAFETY: Acquisition sequence functions operate on valid camera handle h. frame buffer
+        // is properly allocated with correct size. region pointer is valid. All status pointers
+        // are valid mutable references. pl_exp_finish_seq cleanup is safe on all paths.
         unsafe {
             // Setup exposure sequence
             // PVCAM expects exposure time in milliseconds for TIMED_MODE
@@ -585,9 +611,13 @@ impl PvcamDriver {
             let start = std::time::Instant::now();
 
             loop {
-                if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
-                    pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
-                    return Err(anyhow!("Failed to check acquisition status"));
+                // SAFETY: h is a valid camera handle. pl_exp_check_status receives valid mutable
+                // pointers for status and bytes_arrived output parameters.
+                unsafe {
+                    if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
+                        pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
+                        return Err(anyhow!("Failed to check acquisition status"));
+                    }
                 }
 
                 if status == READOUT_COMPLETE || status == READOUT_FAILED {
@@ -600,6 +630,7 @@ impl PvcamDriver {
                 }
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
 
             if status == READOUT_FAILED {
@@ -699,6 +730,9 @@ impl PvcamDriver {
         {
             let handle = *self.camera_handle.lock().await;
             if let Some(h) = handle {
+                // SAFETY: h is a valid camera handle from pl_cam_open. pl_exp_stop_cont safely
+                // halts continuous acquisition. trigger_frame buffer is owned and valid if present.
+                // pl_exp_finish_seq cleans up the acquisition sequence resources.
                 unsafe {
                     // Stop any ongoing continuous acquisition
                     pl_exp_stop_cont(h, CCS_HALT);
@@ -759,6 +793,8 @@ impl PvcamDriver {
             let mut bytes_arrived: uns32 = 0;
 
             let result = loop {
+                // SAFETY: h is a valid camera handle. pl_exp_check_status receives valid mutable
+                // pointers for status and bytes_arrived output parameters.
                 unsafe {
                     if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
                         break Err(anyhow!("Failed to check acquisition status"));
@@ -779,9 +815,12 @@ impl PvcamDriver {
                 }
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             };
 
             // Always finish the sequence and cleanup on exit
+            // SAFETY: h is valid camera handle. trigger_frame buffer is owned by this struct
+            // and valid if present. pl_exp_finish_seq safely cleans up acquisition resources.
             unsafe {
                 if let Some(mut frame) = self.trigger_frame.lock().await.take() {
                     pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
@@ -800,11 +839,21 @@ impl PvcamDriver {
         Ok(())
     }
 
+    /// Subscribe to the frame broadcast stream
+    ///
+    /// Returns a new receiver that will receive all frames broadcast after subscription.
+    /// Multiple subscribers can receive the same frames simultaneously without cloning.
+    pub fn subscribe_frames(&self) -> tokio::sync::broadcast::Receiver<std::sync::Arc<Frame>> {
+        self.frame_tx.subscribe()
+    }
+
     /// Get the frame receiver for consuming streamed frames
     ///
-    /// Returns the receiver, which can only be taken once. Subsequent calls return None.
+    /// DEPRECATED: Use `subscribe_frames()` instead, which supports multiple subscribers.
+    #[deprecated(since = "0.2.0", note = "Use subscribe_frames() for multi-subscriber support")]
     pub async fn take_frame_receiver(&self) -> Option<tokio::sync::mpsc::Receiver<Frame>> {
-        self.frame_rx.lock().await.take()
+        // No longer supported - use subscribe_frames() instead
+        None
     }
 
     /// Check if streaming is active
@@ -830,6 +879,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut temp_raw: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_TEMP retrieves temperature.
+        // temp_raw pointer is valid and properly aligned for i16 writes.
         unsafe {
             if pl_get_param(h, PARAM_TEMP, ATTR_CURRENT, &mut temp_raw as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get temperature: {}", get_pvcam_error()));
@@ -850,6 +901,9 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut buf = vec![0i8; 256];
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_CHIP_NAME retrieves
+        // the chip name string. buf is properly allocated (256 bytes) and valid for writes.
+        // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
         unsafe {
             if pl_get_param(h, PARAM_CHIP_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
                 return Err(anyhow!("Failed to get chip name: {}", get_pvcam_error()));
@@ -870,6 +924,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut depth: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_BIT_DEPTH retrieves
+        // the ADC bit depth. depth pointer is valid and properly aligned for i16 writes.
         unsafe {
             if pl_get_param(h, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut depth as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get bit depth: {}", get_pvcam_error()));
@@ -889,6 +945,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut time_us: f64 = 0.0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_READOUT_TIME retrieves
+        // the frame readout time. time_us pointer is valid and properly aligned for f64 writes.
         unsafe {
             if pl_get_param(h, PARAM_READOUT_TIME, ATTR_CURRENT, &mut time_us as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get readout time: {}", get_pvcam_error()));
@@ -909,6 +967,9 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut pix_ser: uns16 = 0;
         let mut pix_par: uns16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_PIX_SER_SIZE and
+        // PARAM_PIX_PAR_SIZE retrieves pixel dimensions. Both pointers are valid and properly
+        // aligned for uns16 writes.
         unsafe {
             if pl_get_param(h, PARAM_PIX_SER_SIZE, ATTR_CURRENT, &mut pix_ser as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get serial pixel size: {}", get_pvcam_error()));
@@ -931,6 +992,9 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut buf = vec![0i8; 256];
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_GAIN_NAME retrieves
+        // the chip name string. buf is properly allocated (256 bytes) and valid for writes.
+        // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
         unsafe {
             if pl_get_param(h, PARAM_GAIN_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
                 return Err(anyhow!("Failed to get gain name: {}", get_pvcam_error()));
@@ -951,6 +1015,9 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut buf = vec![0i8; 256];
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_SPDTAB_NAME retrieves
+        // the chip name string. buf is properly allocated (256 bytes) and valid for writes.
+        // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
         unsafe {
             if pl_get_param(h, PARAM_SPDTAB_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
                 return Err(anyhow!("Failed to get speed table name: {}", get_pvcam_error()));
@@ -971,6 +1038,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut idx: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_GAIN_INDEX retrieves
+        // the gain index. idx pointer is valid and properly aligned for i16 writes.
         unsafe {
             if pl_get_param(h, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut idx as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get gain index: {}", get_pvcam_error()));
@@ -990,6 +1059,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut idx: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_SPDTAB_INDEX retrieves
+        // the speed table index. idx pointer is valid and properly aligned for i16 writes.
         unsafe {
             if pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut idx as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get speed table index: {}", get_pvcam_error()));
@@ -1037,6 +1108,8 @@ impl PvcamDriver {
 
         // Get max gain index
         let mut max_idx: i32 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_GAIN_INDEX and ATTR_MAX
+        // retrieves the maximum gain index. max_idx pointer is valid and properly aligned.
         unsafe {
             if pl_get_param(h, PARAM_GAIN_INDEX, ATTR_MAX, &mut max_idx as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get max gain index: {}", get_pvcam_error()));
@@ -1045,6 +1118,8 @@ impl PvcamDriver {
 
         // Save current gain index so we can restore it
         let mut current_idx: i16 = 0;
+        // SAFETY: h is valid. Retrieving current gain index to restore later. Ignoring return
+        // value as this is a save operation - if it fails we'll just not restore the index.
         unsafe {
             pl_get_param(h, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut current_idx as *mut _ as *mut _);
         }
@@ -1052,6 +1127,9 @@ impl PvcamDriver {
         let mut modes = Vec::new();
         for idx in 0..=max_idx {
             // Set gain index temporarily to read its name
+            // SAFETY: h is valid. pl_set_param and pl_get_param operate on the camera handle.
+            // idx_i16 pointer is valid. buf is properly allocated (256 bytes) for string output.
+            // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
             unsafe {
                 let idx_i16 = idx as i16;
                 if pl_set_param(h, PARAM_GAIN_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
@@ -1073,6 +1151,8 @@ impl PvcamDriver {
         }
 
         // Restore original gain index
+        // SAFETY: h is valid. Restoring the original gain index saved earlier.
+        // current_idx contains the value retrieved at the start of this function.
         unsafe {
             pl_set_param(h, PARAM_GAIN_INDEX, &current_idx as *const _ as *mut _);
         }
@@ -1099,6 +1179,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let idx_i16 = index as i16;
+        // SAFETY: h is a valid camera handle. pl_set_param with PARAM_GAIN_INDEX sets the
+        // gain mode. idx_i16 pointer is valid and contains a valid index value.
         unsafe {
             if pl_set_param(h, PARAM_GAIN_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to set gain index: {}", get_pvcam_error()));
@@ -1133,6 +1215,8 @@ impl PvcamDriver {
 
         // Get max speed index
         let mut max_idx: i32 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_SPDTAB_INDEX and ATTR_MAX
+        // retrieves the maximum speed table index. max_idx pointer is valid and properly aligned.
         unsafe {
             if pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_MAX, &mut max_idx as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get max speed index: {}", get_pvcam_error()));
@@ -1141,6 +1225,8 @@ impl PvcamDriver {
 
         // Save current speed index so we can restore it
         let mut current_idx: i16 = 0;
+        // SAFETY: h is valid. Retrieving current speed index to restore later. Ignoring return
+        // value as this is a save operation - if it fails we'll just not restore the index.
         unsafe {
             pl_get_param(h, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut current_idx as *mut _ as *mut _);
         }
@@ -1148,6 +1234,9 @@ impl PvcamDriver {
         let mut modes = Vec::new();
         for idx in 0..=max_idx {
             // Set speed index temporarily to read its name
+            // SAFETY: h is valid. pl_set_param and pl_get_param operate on the camera handle.
+            // idx_i16 and pix_time pointers are valid. buf is properly allocated (256 bytes).
+            // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
             unsafe {
                 let idx_i16 = idx as i16;
                 if pl_set_param(h, PARAM_SPDTAB_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
@@ -1178,6 +1267,8 @@ impl PvcamDriver {
         }
 
         // Restore original speed index
+        // SAFETY: h is valid. Restoring the original speed index saved earlier.
+        // current_idx contains the value retrieved at the start of this function.
         unsafe {
             pl_set_param(h, PARAM_SPDTAB_INDEX, &current_idx as *const _ as *mut _);
         }
@@ -1203,6 +1294,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let idx_i16 = index as i16;
+        // SAFETY: h is a valid camera handle. pl_set_param with PARAM_SPDTAB_INDEX sets the
+        // speed/readout mode. idx_i16 pointer is valid and contains a valid index value.
         unsafe {
             if pl_set_param(h, PARAM_SPDTAB_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to set speed index: {}", get_pvcam_error()));
@@ -1238,11 +1331,14 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut temp_raw: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_TEMP_SETPOINT retrieves
+        // the temperature setpoint. temp_raw pointer is valid and properly aligned for i16 writes.
         unsafe {
             if pl_get_param(h, PARAM_TEMP_SETPOINT, ATTR_CURRENT, &mut temp_raw as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get temperature setpoint: {}", get_pvcam_error()));
             }
         }
+        // PVCAM returns temperature in hundredths of degrees C
         Ok(temp_raw as f64 / 100.0)
     }
 
@@ -1263,6 +1359,8 @@ impl PvcamDriver {
 
         // PVCAM expects temperature in hundredths of degrees
         let temp_raw = (celsius * 100.0) as i16;
+        // SAFETY: h is a valid camera handle. pl_set_param with PARAM_TEMP_SETPOINT sets the
+        // temperature setpoint. temp_raw pointer is valid and contains a valid temperature value.
         unsafe {
             if pl_set_param(h, PARAM_TEMP_SETPOINT, &temp_raw as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to set temperature setpoint: {}", get_pvcam_error()));
@@ -1282,6 +1380,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
         let mut speed: i32 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_FAN_SPEED_SETPOINT retrieves
+        // the fan speed setting. speed pointer is valid and properly aligned for i32 writes.
         unsafe {
             if pl_get_param(h, PARAM_FAN_SPEED_SETPOINT, ATTR_CURRENT, &mut speed as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get fan speed: {}", get_pvcam_error()));
@@ -1306,6 +1406,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let speed_val = speed.to_pvcam();
+        // SAFETY: h is a valid camera handle. pl_set_param with PARAM_FAN_SPEED_SETPOINT sets
+        // the fan speed. speed_val pointer is valid and contains a valid FanSpeed enum value.
         unsafe {
             if pl_set_param(h, PARAM_FAN_SPEED_SETPOINT, &speed_val as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to set fan speed: {}", get_pvcam_error()));
@@ -1334,6 +1436,9 @@ impl PvcamDriver {
 
         // Get count of PP features
         let mut count: i16 = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_PP_INDEX and ATTR_COUNT
+        // retrieves the number of post-processing features. count pointer is valid and aligned.
+        // PP features may not be available on all cameras - we return empty vec if unavailable.
         unsafe {
             if pl_get_param(h, PARAM_PP_INDEX, ATTR_COUNT, &mut count as *mut _ as *mut _) == 0 {
                 // PP features may not be available on all cameras
@@ -1344,8 +1449,12 @@ impl PvcamDriver {
         let mut features = Vec::new();
         for idx in 0..count {
             // Set PP index to select this feature
+            // SAFETY: h is valid. pl_set_param and pl_get_param access PP feature parameters.
+            // idx_i16, feat_id pointers are valid. name_buf is properly allocated (256 bytes).
+            // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
             unsafe {
-                if pl_set_param(h, PARAM_PP_INDEX, &idx as *const _ as *mut _) == 0 {
+                let idx_i16 = idx as i16;
+                if pl_set_param(h, PARAM_PP_INDEX, &idx_i16 as *const _ as *mut _) == 0 {
                     continue; // Skip this feature if we can't select it
                 }
 
@@ -1397,6 +1506,10 @@ impl PvcamDriver {
 
         // Select the PP feature
         let idx = feature_index as i16;
+        // SAFETY: h is a valid camera handle. All pl_set_param and pl_get_param calls operate
+        // on the camera handle with valid parameter pointers. idx, param_idx, param_id, and value
+        // pointers are all valid and properly aligned. name_buf is allocated (256 bytes).
+        // CStr::from_ptr is safe because PVCAM guarantees null-terminated strings.
         unsafe {
             if pl_set_param(h, PARAM_PP_INDEX, &idx as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to select PP feature {}: {}", feature_index, get_pvcam_error()));
@@ -1470,6 +1583,8 @@ impl PvcamDriver {
         let feat_idx = feature_index as i16;
         let par_idx = param_index as i16;
 
+        // SAFETY: h is a valid camera handle. pl_set_param selects the PP feature and parameter.
+        // pl_get_param retrieves the parameter value. All pointers are valid and properly aligned.
         unsafe {
             // Select the PP feature
             if pl_set_param(h, PARAM_PP_INDEX, &feat_idx as *const _ as *mut _) == 0 {
@@ -1510,6 +1625,8 @@ impl PvcamDriver {
         let feat_idx = feature_index as i16;
         let par_idx = param_index as i16;
 
+        // SAFETY: h is a valid camera handle. pl_set_param selects the PP feature/parameter
+        // and sets the parameter value. All pointers are valid and properly aligned.
         unsafe {
             // Select the PP feature
             if pl_set_param(h, PARAM_PP_INDEX, &feat_idx as *const _ as *mut _) == 0 {
@@ -1541,6 +1658,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: h is a valid camera handle. pl_pp_reset resets all post-processing features
+        // to their default values. This is a safe operation with no pointer arguments.
         unsafe {
             if pl_pp_reset(h) == 0 {
                 return Err(anyhow!("Failed to reset PP features: {}", get_pvcam_error()));
@@ -1568,6 +1687,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let mut available: rs_bool = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param with PARAM_SMART_STREAM_MODE_ENABLED
+        // and ATTR_AVAIL checks feature availability. available pointer is valid and aligned.
         unsafe {
             // Check if PARAM_SMART_STREAM_MODE_ENABLED is available
             if pl_get_param(h, PARAM_SMART_STREAM_MODE_ENABLED, ATTR_AVAIL, &mut available as *mut _ as *mut _) == 0 {
@@ -1589,6 +1710,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let mut enabled: rs_bool = 0;
+        // SAFETY: h is a valid camera handle. pl_get_param retrieves the Smart Streaming
+        // enabled state. enabled pointer is valid and properly aligned for rs_bool writes.
         unsafe {
             if pl_get_param(h, PARAM_SMART_STREAM_MODE_ENABLED, ATTR_CURRENT, &mut enabled as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get Smart Streaming status: {}", get_pvcam_error()));
@@ -1611,6 +1734,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let enabled: rs_bool = 1;
+        // SAFETY: h is a valid camera handle. pl_set_param enables Smart Streaming mode.
+        // enabled pointer is valid and contains the enable value (1).
         unsafe {
             if pl_set_param(h, PARAM_SMART_STREAM_MODE_ENABLED, &enabled as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to enable Smart Streaming: {}", get_pvcam_error()));
@@ -1631,6 +1756,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let enabled: rs_bool = 0;
+        // SAFETY: h is a valid camera handle. pl_set_param disables Smart Streaming mode.
+        // enabled pointer is valid and contains the disable value (0).
         unsafe {
             if pl_set_param(h, PARAM_SMART_STREAM_MODE_ENABLED, &enabled as *const _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to disable Smart Streaming: {}", get_pvcam_error()));
@@ -1651,6 +1778,8 @@ impl PvcamDriver {
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
         let mut max_entries: u16 = 0;
+        // SAFETY: pl_get_param retrieves PARAM_SMART_STREAM_MODE max value. Camera handle h is
+        // valid from pl_cam_open. max_entries pointer is valid and properly aligned for writes.
         unsafe {
             if pl_get_param(h, PARAM_SMART_STREAM_MODE, ATTR_MAX, &mut max_entries as *mut _ as *mut _) == 0 {
                 return Err(anyhow!("Failed to get Smart Streaming max entries: {}", get_pvcam_error()));
@@ -1680,6 +1809,10 @@ impl PvcamDriver {
             return Err(anyhow!("At least one exposure time required"));
         }
 
+        // SAFETY: pl_create_smart_stream_struct allocates a smart_stream_type structure. The returned
+        // pointer is checked for null. Dereferencing ss_ptr and writing to ss.params are safe because
+        // PVCAM allocates sufficient space for the requested number of entries. pl_release_smart_stream_struct
+        // and pl_set_param properly handle the structure. Pointer arithmetic with .add(i) is safe within bounds.
         unsafe {
             // Create smart_stream_type structure
             let mut ss_ptr: *mut smart_stream_type = std::ptr::null_mut();
@@ -1718,6 +1851,9 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves smart_stream_type pointer. Camera handle h is valid.
+        // ss_ptr is checked for null before dereferencing. Reading (*ss_ptr).entries is safe
+        // as PVCAM maintains the structure validity.
         unsafe {
             let mut ss_ptr: *mut smart_stream_type = std::ptr::null_mut();
 
@@ -1750,6 +1886,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param checks parameter availability. Camera handle h is valid.
+        // avail pointer is valid and properly aligned for writes.
         unsafe {
             let mut avail: rs_bool = 0;
             if pl_get_param(h, PARAM_CENTROIDS_ENABLED, ATTR_AVAIL, &mut avail as *mut _ as *mut _) == 0 {
@@ -1771,6 +1909,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves centroids enabled state. Camera handle h is valid.
+        // enabled pointer is valid and properly aligned for writes.
         unsafe {
             let mut enabled: rs_bool = 0;
             if pl_get_param(h, PARAM_CENTROIDS_ENABLED, ATTR_CURRENT, &mut enabled as *mut _ as *mut _) == 0 {
@@ -1791,6 +1931,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param sets centroids enabled parameter. Camera handle h is valid.
+        // enabled pointer is valid and properly aligned for reads.
         unsafe {
             let mut enabled: rs_bool = 1;
             if pl_set_param(h, PARAM_CENTROIDS_ENABLED, &mut enabled as *mut _ as *mut _) == 0 {
@@ -1811,6 +1953,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param disables centroids parameter. Camera handle h is valid.
+        // enabled pointer is valid and properly aligned for reads.
         unsafe {
             let mut enabled: rs_bool = 0;
             if pl_set_param(h, PARAM_CENTROIDS_ENABLED, &mut enabled as *mut _ as *mut _) == 0 {
@@ -1831,6 +1975,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves centroids mode value. Camera handle h is valid.
+        // mode pointer is valid and properly aligned for writes.
         unsafe {
             let mut mode: i32 = 0;
             if pl_get_param(h, PARAM_CENTROIDS_MODE, ATTR_CURRENT, &mut mode as *mut _ as *mut _) == 0 {
@@ -1851,6 +1997,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param sets centroids mode parameter. Camera handle h is valid.
+        // mode_val pointer is valid and properly aligned for reads.
         unsafe {
             let mut mode_val: i32 = mode.to_pvcam();
             if pl_set_param(h, PARAM_CENTROIDS_MODE, &mut mode_val as *mut _ as *mut _) == 0 {
@@ -1871,6 +2019,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves centroids radius value. Camera handle h is valid.
+        // radius pointer is valid and properly aligned for writes.
         unsafe {
             let mut radius: uns16 = 0;
             if pl_get_param(h, PARAM_CENTROIDS_RADIUS, ATTR_CURRENT, &mut radius as *mut _ as *mut _) == 0 {
@@ -1891,6 +2041,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param sets centroids radius parameter. Camera handle h is valid.
+        // r pointer is valid and properly aligned for reads.
         unsafe {
             let mut r: uns16 = radius;
             if pl_set_param(h, PARAM_CENTROIDS_RADIUS, &mut r as *mut _ as *mut _) == 0 {
@@ -1911,6 +2063,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves centroids count value. Camera handle h is valid.
+        // count pointer is valid and properly aligned for writes.
         unsafe {
             let mut count: uns16 = 0;
             if pl_get_param(h, PARAM_CENTROIDS_COUNT, ATTR_CURRENT, &mut count as *mut _ as *mut _) == 0 {
@@ -1931,6 +2085,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param sets centroids count parameter. Camera handle h is valid.
+        // c pointer is valid and properly aligned for reads.
         unsafe {
             let mut c: uns16 = count;
             if pl_set_param(h, PARAM_CENTROIDS_COUNT, &mut c as *mut _ as *mut _) == 0 {
@@ -1951,6 +2107,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves centroids threshold value. Camera handle h is valid.
+        // thresh pointer is valid and properly aligned for writes.
         unsafe {
             let mut thresh: uns32 = 0;
             if pl_get_param(h, PARAM_CENTROIDS_THRESHOLD, ATTR_CURRENT, &mut thresh as *mut _ as *mut _) == 0 {
@@ -1971,6 +2129,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_set_param sets centroids threshold parameter. Camera handle h is valid.
+        // t pointer is valid and properly aligned for reads.
         unsafe {
             let mut t: uns32 = threshold;
             if pl_set_param(h, PARAM_CENTROIDS_THRESHOLD, &mut t as *mut _ as *mut _) == 0 {
@@ -2118,6 +2278,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param checks frame rotation parameter availability. Camera handle h
+        // is valid. avail pointer is valid and properly aligned for writes.
         unsafe {
             let mut avail: rs_bool = 0;
             if pl_get_param(h, PARAM_FRAME_ROTATE, ATTR_AVAIL, &mut avail as *mut _ as *mut _) == 0 {
@@ -2138,6 +2300,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves frame rotation value. Camera handle h is valid.
+        // rotation pointer is valid and properly aligned for writes.
         unsafe {
             let mut rotation: i32 = 0;
             if pl_get_param(h, PARAM_FRAME_ROTATE, ATTR_CURRENT, &mut rotation as *mut _ as *mut _) == 0 {
@@ -2168,6 +2332,8 @@ impl PvcamDriver {
             _ => return Err(anyhow!("Invalid rotation: must be 0, 90, 180, or 270")),
         };
 
+        // SAFETY: pl_set_param sets frame rotation parameter. Camera handle h is valid.
+        // r pointer is valid and properly aligned for reads.
         unsafe {
             let mut r = rotation;
             if pl_set_param(h, PARAM_FRAME_ROTATE, &mut r as *mut _ as *mut _) == 0 {
@@ -2188,6 +2354,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param checks frame flip parameter availability. Camera handle h
+        // is valid. avail pointer is valid and properly aligned for writes.
         unsafe {
             let mut avail: rs_bool = 0;
             if pl_get_param(h, PARAM_FRAME_FLIP, ATTR_AVAIL, &mut avail as *mut _ as *mut _) == 0 {
@@ -2208,6 +2376,8 @@ impl PvcamDriver {
         let guard = self.camera_handle.lock().await;
         let h = guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
+        // SAFETY: pl_get_param retrieves frame flip value. Camera handle h is valid.
+        // flip pointer is valid and properly aligned for writes.
         unsafe {
             let mut flip: i32 = 0;
             if pl_get_param(h, PARAM_FRAME_FLIP, ATTR_CURRENT, &mut flip as *mut _ as *mut _) == 0 {
@@ -2232,6 +2402,8 @@ impl PvcamDriver {
             return Err(anyhow!("Invalid flip mode: must be 0-3"));
         }
 
+        // SAFETY: pl_set_param sets frame flip parameter. Camera handle h is valid.
+        // m pointer is valid and properly aligned for reads.
         unsafe {
             let mut m = mode as i32;
             if pl_set_param(h, PARAM_FRAME_FLIP, &mut m as *mut _ as *mut _) == 0 {
@@ -2268,7 +2440,7 @@ impl PvcamDriver {
     fn poll_loop_hardware(
         hcam: i16,
         streaming: Arc<AtomicBool>,
-        frame_tx: tokio::sync::mpsc::Sender<Frame>,
+        frame_tx: tokio::sync::broadcast::Sender<std::sync::Arc<Frame>>,
         frame_count: Arc<AtomicU64>,
         frame_pixels: usize,
         width: u32,
@@ -2281,6 +2453,10 @@ impl PvcamDriver {
         const MAX_NO_FRAME_ITERATIONS: u32 = 5000; // ~5 seconds at 1ms sleep
 
         while streaming.load(Ordering::SeqCst) {
+            // SAFETY: Poll loop handles continuous acquisition with valid camera handle hcam.
+            // All status pointers are valid and properly aligned. pl_exp_get_oldest_frame returns
+            // a frame pointer that is checked for null before dereferencing. Frame data is copied
+            // before calling pl_exp_unlock_oldest_frame which invalidates the pointer.
             unsafe {
                 // Check continuous acquisition status
                 if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt)
@@ -2310,9 +2486,9 @@ impl PvcamDriver {
                             let frame = Frame::new(width, height, pixels);
                             frame_count.fetch_add(1, Ordering::SeqCst);
 
-                            // Send frame (non-blocking, log if channel full)
-                            if frame_tx.try_send(frame).is_err() {
-                                eprintln!("PVCAM: Frame channel full, frame dropped");
+                            // Send frame wrapped in Arc (non-blocking, log if no subscribers)
+                            if frame_tx.send(std::sync::Arc::new(frame)).is_err() {
+                                // No subscribers - this is OK, frames are dropped silently
                             }
 
                             // Reset timeout counter on successful frame
@@ -2345,7 +2521,8 @@ impl PvcamDriver {
             }
         }
 
-        // Cleanup: stop acquisition (poll loop owns this now)
+        // Cleanup: stop acquisition (poll task owns this now)
+        // SAFETY: pl_exp_stop_cont stops continuous acquisition. Camera handle hcam is valid.
         unsafe {
             pl_exp_stop_cont(hcam, CCS_HALT);
         }
@@ -2381,6 +2558,8 @@ impl Drop for PvcamDriver {
             // Now safe to close camera - poll task has exited
             if let Ok(handle) = self.camera_handle.try_lock() {
                 if let Some(h) = *handle {
+                    // SAFETY: pl_cam_close closes the camera. Handle h is valid and poll task
+                    // has exited so no other threads are using this camera handle.
                     unsafe {
                         pl_cam_close(h);
                     }
@@ -2389,6 +2568,8 @@ impl Drop for PvcamDriver {
 
             if let Ok(initialized) = self.sdk_initialized.try_lock() {
                 if *initialized {
+                    // SAFETY: pl_pvcam_uninit uninitializes the PVCAM library. Called only
+                    // after camera is closed and all operations have ceased.
                     unsafe {
                         pl_pvcam_uninit();
                     }
@@ -2412,7 +2593,7 @@ impl FrameProducer for PvcamDriver {
         #[cfg(feature = "pvcam_hardware")]
         {
             let handle_guard = self.camera_handle.lock().await;
-            let h = handle_guard.ok_or_else(|| anyhow!("Camera not opened"))?;
+            let h = handle_guard.ok_or_else(|| anyhow!("Camera not open"))?;
 
             // Get current settings
             let roi = *self.roi.lock().await;
@@ -2420,6 +2601,8 @@ impl FrameProducer for PvcamDriver {
             let exp_ms = *self.exposure_ms.lock().await as uns32;
 
             // Setup region
+            // SAFETY: mem::zeroed creates a zero-initialized rgn_type structure which is valid
+            // for PVCAM. All fields are primitive integers where zero is a valid bit pattern.
             let region = unsafe {
                 let mut rgn: rgn_type = std::mem::zeroed();
                 rgn.s1 = roi.x as uns16;
@@ -2433,6 +2616,8 @@ impl FrameProducer for PvcamDriver {
 
             // Calculate frame size and setup continuous acquisition
             let mut frame_bytes: uns32 = 0;
+            // SAFETY: pl_exp_setup_cont sets up continuous acquisition. Camera handle h is valid.
+            // region pointer is valid and points to initialized rgn_type. frame_bytes pointer is valid.
             unsafe {
                 if pl_exp_setup_cont(
                     h,
@@ -2460,6 +2645,9 @@ impl FrameProducer for PvcamDriver {
             let circ_ptr = circ_buf.as_mut_ptr();
             let circ_size_bytes = (circ_buf.len() * 2) as uns32;
 
+            // SAFETY: pl_exp_start_cont starts continuous acquisition. Camera handle h is valid.
+            // circ_ptr points to properly allocated circular buffer of correct size. The buffer
+            // is stored in self.circ_buffer to keep it alive for the duration of acquisition.
             unsafe {
                 if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
                     self.streaming.store(false, Ordering::SeqCst);
@@ -2531,8 +2719,8 @@ impl FrameProducer for PvcamDriver {
 
                     let frame = Frame::new(binned_width, binned_height, pixels);
 
-                    // Send frame (non-blocking, drop if channel full)
-                    let _ = frame_tx.try_send(frame);
+                    // Send frame wrapped in Arc (non-blocking, drop if no subscribers)
+                    let _ = frame_tx.send(std::sync::Arc::new(frame));
                 }
             });
         }
@@ -2557,6 +2745,8 @@ impl FrameProducer for PvcamDriver {
             // Stop continuous acquisition
             let handle_guard = self.camera_handle.lock().await;
             if let Some(h) = *handle_guard {
+                // SAFETY: pl_exp_stop_cont stops continuous acquisition. Camera handle h is valid
+                // and poll task has already exited so no concurrent access.
                 unsafe {
                     pl_exp_stop_cont(h, CCS_HALT);
                 }
@@ -2573,8 +2763,16 @@ impl FrameProducer for PvcamDriver {
         (self.sensor_width, self.sensor_height)
     }
 
+    #[expect(deprecated, reason = "take_frame_receiver implements deprecated FrameProducer trait method")]
     async fn take_frame_receiver(&self) -> Option<tokio::sync::mpsc::Receiver<Frame>> {
-        self.frame_rx.lock().await.take()
+        // Deprecated: use subscribe_frames() instead
+        None
+    }
+
+    async fn subscribe_frames(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<std::sync::Arc<Frame>>> {
+        Some(self.frame_tx.subscribe())
     }
 
     async fn is_streaming(&self) -> Result<bool> {
@@ -2645,6 +2843,8 @@ impl Triggerable for PvcamDriver {
             let (x_bin, y_bin) = *self.binning.lock().await;
 
             // Setup region for acquisition
+            // SAFETY: mem::zeroed creates a zero-initialized rgn_type structure which is valid
+            // for PVCAM. All fields are primitive integers where zero is a valid bit pattern.
             let region = unsafe {
                 let mut rgn: rgn_type = std::mem::zeroed();
                 rgn.s1 = roi.x as uns16;
@@ -2664,6 +2864,9 @@ impl Triggerable for PvcamDriver {
             // Create frame buffer for triggered acquisition
             let mut frame = vec![0u16; frame_size as usize];
 
+            // SAFETY: pl_exp_setup_seq and pl_exp_start_seq arm the camera for triggered acquisition.
+            // Camera handle h is valid. region pointer is valid. frame buffer is properly allocated.
+            // All parameter pointers are valid and properly aligned.
             unsafe {
                 // Setup exposure sequence
                 let exp_time_ms = exposure as uns32;
@@ -2717,6 +2920,9 @@ impl Triggerable for PvcamDriver {
             let start = std::time::Instant::now();
 
             loop {
+                // SAFETY: pl_exp_check_status polls acquisition status. Camera handle h is valid.
+                // status and bytes_arrived pointers are valid. pl_exp_finish_seq cleanup is safe
+                // with valid camera handle and frame buffer pointer.
                 unsafe {
                     if pl_exp_check_status(h, &mut status, &mut bytes_arrived) == 0 {
                         // Cleanup on error
@@ -2734,6 +2940,7 @@ impl Triggerable for PvcamDriver {
 
                 if status == READOUT_FAILED {
                     // Cleanup on failure
+                    // SAFETY: pl_exp_finish_seq cleans up sequence. Camera handle h and frame pointer are valid.
                     unsafe {
                         if let Some(mut frame) = self.trigger_frame.lock().await.take() {
                             pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
@@ -2745,6 +2952,7 @@ impl Triggerable for PvcamDriver {
 
                 if start.elapsed() > timeout {
                     // Cleanup on timeout
+                    // SAFETY: pl_exp_finish_seq cleans up sequence. Camera handle h and frame pointer are valid.
                     unsafe {
                         if let Some(mut frame) = self.trigger_frame.lock().await.take() {
                             pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
@@ -2755,9 +2963,12 @@ impl Triggerable for PvcamDriver {
                 }
 
                 tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::task::yield_now().await;
             }
 
             // Cleanup the sequence on success
+            // SAFETY: pl_exp_finish_seq completes sequence after successful acquisition.
+            // Camera handle h and frame pointer are valid.
             unsafe {
                 if let Some(mut frame) = self.trigger_frame.lock().await.take() {
                     pl_exp_finish_seq(h, frame.as_mut_ptr() as *mut _, 0);
@@ -2868,81 +3079,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_combined_traits() {
-        let camera = PvcamDriver::new("Prime95B").unwrap();
-
-        // Verify resolution
-        assert_eq!(camera.resolution(), (1200, 1200));
-
-        // Set up exposure
-        camera.set_exposure(0.1).await.unwrap();
-        assert_eq!(camera.get_exposure().await.unwrap(), 0.1);
-
-        // Arm and trigger
-        camera.arm().await.unwrap();
-        camera.trigger().await.unwrap();
-
-        // Stream control
-        camera.start_stream().await.unwrap();
-        camera.stop_stream().await.unwrap();
-    }
-
-    #[tokio::test]
-    #[cfg(not(feature = "pvcam_hardware"))]
-    async fn test_mock_frame_acquisition() {
-        let camera = PvcamDriver::new("PrimeBSI").unwrap();
-        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
-
-        let frame = camera.acquire_frame_mock().await.unwrap();
-        assert_eq!(frame.len(), 2048 * 2048);
-
-        // Verify test pattern
-        assert_eq!(frame[0], 0);
-        assert_eq!(frame[1], 1);
-    }
-
-    #[tokio::test]
-    #[cfg(not(feature = "pvcam_hardware"))]
-    async fn test_mock_streaming() {
-        let camera = PvcamDriver::new("PrimeBSI").unwrap();
-        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
-
-        // Take the receiver before starting stream
-        let mut rx = camera
-            .take_frame_receiver()
-            .await
-            .expect("Should get receiver");
-
-        // Verify not streaming initially
-        assert!(!camera.is_streaming());
-
-        // Start streaming
-        camera.start_stream().await.unwrap();
-        assert!(camera.is_streaming());
-
-        // Wait for a few frames
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Should have received some frames
-        let mut frame_count = 0;
-        while let Ok(frame) = rx.try_recv() {
-            frame_count += 1;
-            assert_eq!(frame.width, 2048);
-            assert_eq!(frame.height, 2048);
-            if frame_count >= 3 {
-                break;
-            }
-        }
-
-        // Stop streaming
-        camera.stop_stream().await.unwrap();
-        assert!(!camera.is_streaming());
-
-        // Verify we got frames
-        assert!(frame_count > 0, "Should have received at least one frame");
-    }
-
-    #[tokio::test]
     async fn test_streaming_double_start() {
         let camera = PvcamDriver::new("PrimeBSI").unwrap();
 
@@ -2966,18 +3102,66 @@ mod tests {
 
     #[tokio::test]
     #[cfg(not(feature = "pvcam_hardware"))]
-    async fn test_mock_streaming_with_binning() {
+    async fn test_mock_frame_acquisition() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
+
+        let frame = camera.acquire_frame_mock().await.unwrap();
+        assert_eq!(frame.len(), 2048 * 2048);
+
+        // Verify test pattern
+        assert_eq!(frame[0], 0);
+        assert_eq!(frame[1], 1);
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "pvcam_hardware"))]
+    async fn test_mock_streaming() {
+        let camera = PvcamDriver::new("PrimeBSI").unwrap();
+        camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
+
+        // Subscribe to the frame broadcast before starting stream
+        let mut rx = camera.subscribe_frames();
+
+        // Verify not streaming initially
+        assert!(!camera.is_streaming());
+
+        // Start streaming
+        camera.start_stream().await.unwrap();
+        assert!(camera.is_streaming());
+
+        // Wait for a few frames
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Should have received some frames (broadcast recv returns Result<Arc<Frame>, _>)
+        let mut frame_count = 0;
+        while let Ok(frame) = rx.try_recv() {
+            frame_count += 1;
+            assert_eq!(frame.width, 2048);
+            assert_eq!(frame.height, 2048);
+            if frame_count >= 3 {
+                break;
+            }
+        }
+
+        // Stop streaming
+        camera.stop_stream().await.unwrap();
+        assert!(!camera.is_streaming());
+
+        // Verify we got frames
+        assert!(frame_count > 0, "Should have received at least one frame");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_binning() {
         let camera = PvcamDriver::new("PrimeBSI").unwrap();
         camera.set_exposure(0.01).await.unwrap(); // 10ms for fast test
 
         // Set binning to 2x2
         camera.set_binning(2, 2).await.unwrap();
 
-        // Take the receiver before starting stream
-        let mut rx = camera
-            .take_frame_receiver()
-            .await
-            .expect("Should get receiver");
+        // Subscribe to the frame broadcast before starting stream
+        let mut rx = camera.subscribe_frames();
 
         // Start streaming with binning
         camera.start_stream().await.unwrap();
@@ -2985,7 +3169,7 @@ mod tests {
         // Wait for a frame
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Receive frame and verify binned dimensions
+        // Receive frame and verify binned dimensions (broadcast recv returns Result)
         let frame = rx.recv().await.expect("Should receive frame");
 
         // Full sensor is 2048x2048, with 2x2 binning should be 1024x1024

@@ -105,7 +105,7 @@ impl StubModuleInstance {
         }
     }
 
-    #[allow(clippy::unnecessary_to_owned)]
+    #[expect(clippy::unnecessary_to_owned, reason = "Required for iterator lifetime in filter chain")]
     fn get_role_status(&self) -> (u32, u32) {
         let required_roles = get_module_type_required_roles(&self.type_id);
         let filled = required_roles
@@ -345,7 +345,7 @@ fn get_static_module_type_info(type_id: &str) -> Option<ModuleTypeInfo> {
 /// - Event and data streaming
 pub struct ModuleServiceImpl {
     /// Device registry for hardware access
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "device_registry will be used for device assignment validation")]
     device_registry: Arc<RwLock<DeviceRegistry>>,
 
     /// Stub module storage (used when modules feature is disabled)
@@ -809,7 +809,7 @@ impl ModuleService for ModuleServiceImpl {
     }
 
     // =========================================================================
-    // Module Execution Control (wired to ModuleRegistry)
+    // Module Execution Control (wired to ModuleInstance event/data receivers)
     // =========================================================================
 
     async fn start_module(

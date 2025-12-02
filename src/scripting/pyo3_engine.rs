@@ -56,8 +56,14 @@ use pyo3::types::PyModule;
 #[cfg(feature = "scripting_python")]
 pub struct PyO3Engine {
     /// Global namespace for Python variables
+    ///
+    /// Maps variable names to Python objects. This namespace persists across
+    /// script executions, allowing scripts to share state.
     globals: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
     /// Registered functions that can be called from Python
+    ///
+    /// Maps function names to Python callable objects. These functions are
+    /// injected into each script's namespace before execution.
     functions: Arc<Mutex<HashMap<String, Py<PyAny>>>>,
 }
 
@@ -288,11 +294,29 @@ impl ScriptEngine for PyO3Engine {
 }
 
 // Stub implementation when scripting_python feature is disabled
+/// Stub PyO3Engine when scripting_python feature is disabled.
+///
+/// This empty struct exists to allow code to reference `PyO3Engine` regardless
+/// of whether the `scripting_python` feature is enabled. Any attempt to create
+/// this engine will fail with an error indicating the feature is required.
 #[cfg(not(feature = "scripting_python"))]
 pub struct PyO3Engine;
 
 #[cfg(not(feature = "scripting_python"))]
 impl PyO3Engine {
+    /// Returns an error indicating scripting_python feature is required.
+    ///
+    /// # Errors
+    ///
+    /// Always returns `ScriptError::BackendError` explaining that the
+    /// `scripting_python` feature must be enabled in Cargo.toml.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // This will fail at runtime if scripting_python is not enabled:
+    /// let engine = PyO3Engine::new()?; // Error: feature not enabled
+    /// ```
     pub fn new() -> Result<Self, super::script_engine::ScriptError> {
         Err(super::script_engine::ScriptError::BackendError {
             backend: "PyO3".to_string(),

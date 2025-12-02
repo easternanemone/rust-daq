@@ -1,0 +1,631 @@
+// rust-daq GUI - Data Panel Component
+// Data export wizard and storage management (bd-0stf)
+// Pattern: AcquisitionConfig, StorageSettings, ExportWizard
+
+import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
+         ScrollView, VerticalBox, GridBox, ProgressIndicator, CheckBox } from "std-widgets.slint";
+
+// =============================================================================
+// Data Models
+// =============================================================================
+
+export struct StorageFormat {
+    id: string,        // "hdf5", "csv", "arrow", "netcdf"
+    name: string,      // "HDF5", "CSV", "Apache Arrow", "NetCDF"
+    extension: string, // ".h5", ".csv", ".parquet", ".nc"
+    available: bool,   // Whether the format is compiled in
+}
+
+export struct AcquisitionInfo {
+    acquisition-id: string,
+    name: string,
+    start-time: string,
+    end-time: string,
+    status: string,         // "running", "completed", "error"
+    total-points: int,
+    file-path: string,
+    format: string,
+    size-bytes: int,
+}
+
+export struct StorageStatus {
+    enabled: bool,
+    current-format: string,
+    output-directory: string,
+    disk-free-bytes: int,
+    disk-total-bytes: int,
+    active-writers: int,
+}
+
+export struct ExportRequest {
+    acquisition-id: string,
+    target-format: string,
+    output-path: string,
+    include-metadata: bool,
+    compress: bool,
+}
+
+// =============================================================================
+// Format Selector Component
+// =============================================================================
+
+component FormatSelector inherits Rectangle {
+    in property <[StorageFormat]> formats;
+    in-out property <int> selected-index: 0;
+
+    callback format-selected(string);  // format-id
+
+    background: white;
+    border-radius: 8px;
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: "Output Format";
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+
+            for format[idx] in formats: Rectangle {
+                horizontal-stretch: 1;
+                height: 60px;
+                background: idx == selected-index ? #e3f2fd :
+                           format.available ? #fafafa : #f0f0f0;
+                border-radius: 8px;
+                border-width: idx == selected-index ? 2px : 1px;
+                border-color: idx == selected-index ? #2196f3 : #e0e0e0;
+
+                TouchArea {
+                    enabled: format.available;
+                    clicked => {
+                        selected-index = idx;
+                        format-selected(format.id);
+                    }
+                }
+
+                VerticalBox {
+                    padding: 8px;
+                    alignment: center;
+
+                    Text {
+                        text: format.name;
+                        font-weight: 600;
+                        font-size: 12px;
+                        color: format.available ? #333 : #999;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: format.extension;
+                        font-size: 10px;
+                        color: #666;
+                        horizontal-alignment: center;
+                    }
+
+                    if !format.available: Text {
+                        text: "Not available";
+                        font-size: 9px;
+                        color: #f44336;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Storage Status Component
+// =============================================================================
+
+component StorageStatusDisplay inherits Rectangle {
+    in property <StorageStatus> status;
+
+    background: white;
+    border-radius: 8px;
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalBox {
+            Text {
+                text: "Storage Status";
+                font-weight: 700;
+                font-size: 13px;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: status.enabled ? #4caf50 : #9e9e9e;
+            }
+
+            Text {
+                text: status.enabled ? "Enabled" : "Disabled";
+                font-size: 11px;
+                color: status.enabled ? #4caf50 : #666;
+                vertical-alignment: center;
+            }
+        }
+
+        // Disk usage bar
+        VerticalBox {
+            spacing: 4px;
+
+            HorizontalBox {
+                Text {
+                    text: "Disk Space";
+                    font-size: 11px;
+                    color: #666;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: format-bytes(status.disk-total-bytes - status.disk-free-bytes) +
+                          " / " + format-bytes(status.disk-total-bytes);
+                    font-size: 11px;
+                    color: #666;
+                }
+            }
+
+            Rectangle {
+                height: 6px;
+                background: #e0e0e0;
+                border-radius: 3px;
+
+                Rectangle {
+                    width: parent.width * (1 - (status.disk-free-bytes / max(status.disk-total-bytes, 1)));
+                    height: parent.height;
+                    border-radius: 3px;
+                    background: status.disk-free-bytes < status.disk-total-bytes * 0.1 ? #f44336 :
+                               status.disk-free-bytes < status.disk-total-bytes * 0.25 ? #ff9800 : #4caf50;
+                }
+            }
+        }
+
+        // Current settings
+        GridBox {
+            spacing: 4px;
+
+            Row {
+                Text { text: "Format:"; font-size: 11px; color: #666; }
+                Text { text: status.current-format; font-size: 11px; font-weight: 500; }
+            }
+
+            Row {
+                Text { text: "Directory:"; font-size: 11px; color: #666; }
+                Text {
+                    text: status.output-directory;
+                    font-size: 11px;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            Row {
+                Text { text: "Active Writers:"; font-size: 11px; color: #666; }
+                Text { text: "\{status.active-writers}"; font-size: 11px; }
+            }
+        }
+    }
+
+    // Helper function to format bytes
+    pure function format-bytes(bytes: int) -> string {
+        if bytes < 1024 {
+            return "\{bytes} B";
+        } else if bytes < 1048576 {
+            return "\{round(bytes / 1024)} KB";
+        } else if bytes < 1073741824 {
+            return "\{round(bytes / 1048576)} MB";
+        } else {
+            return "\{round(bytes / 1073741824 * 10) / 10} GB";
+        }
+    }
+}
+
+// =============================================================================
+// Acquisition List Component
+// =============================================================================
+
+component AcquisitionList inherits Rectangle {
+    in property <[AcquisitionInfo]> acquisitions;
+    in-out property <int> selected-index: -1;
+
+    callback acquisition-selected(string);  // acquisition-id
+    callback export-clicked(string, string);  // acquisition-id, name
+
+    background: white;
+    border-radius: 8px;
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalBox {
+            Text {
+                text: "Recent Acquisitions";
+                font-weight: 700;
+                font-size: 13px;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: "(\{acquisitions.length})";
+                font-size: 11px;
+                color: #666;
+            }
+        }
+
+        if acquisitions.length == 0: Rectangle {
+            height: 60px;
+            background: #f5f5f5;
+            border-radius: 4px;
+
+            Text {
+                text: "No acquisitions yet";
+                color: #999;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        ScrollView {
+            ListView {
+                for acq[idx] in acquisitions: Rectangle {
+                    height: 64px;
+                    background: idx == selected-index ? #e3f2fd : transparent;
+                    border-radius: 4px;
+
+                    TouchArea {
+                        clicked => {
+                            selected-index = idx;
+                            acquisition-selected(acq.acquisition-id);
+                        }
+                    }
+
+                    HorizontalBox {
+                        padding: 8px;
+                        spacing: 8px;
+
+                        // Status indicator
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            y: parent.height / 2 - self.height / 2;
+                            background: acq.status == "running" ? #ff9800 :
+                                       acq.status == "completed" ? #4caf50 : #f44336;
+                        }
+
+                        VerticalBox {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+
+                            Text {
+                                text: acq.name;
+                                font-weight: 600;
+                                font-size: 12px;
+                            }
+
+                            HorizontalBox {
+                                spacing: 8px;
+
+                                Text {
+                                    text: acq.start-time;
+                                    font-size: 10px;
+                                    color: #666;
+                                }
+
+                                Text {
+                                    text: "\{acq.total-points} points";
+                                    font-size: 10px;
+                                    color: #666;
+                                }
+
+                                Text {
+                                    text: acq.format;
+                                    font-size: 10px;
+                                    color: #2196f3;
+                                }
+                            }
+
+                            Text {
+                                text: acq.file-path;
+                                font-size: 9px;
+                                color: #999;
+                                overflow: elide;
+                            }
+                        }
+
+                        if acq.status == "completed": Button {
+                            text: "Export";
+                            clicked => { export-clicked(acq.acquisition-id, acq.name); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Export Dialog Component
+// =============================================================================
+
+component ExportDialog inherits Rectangle {
+    in-out property <bool> show-dialog: false;
+    in property <[StorageFormat]> available-formats;
+    in property <string> source-acquisition-id;
+    in property <string> source-name;
+
+    in-out property <string> output-path: "";
+    in-out property <int> selected-format-index: 0;
+    in-out property <bool> include-metadata: true;
+    in-out property <bool> compress: false;
+
+    callback export-requested(ExportRequest);
+    callback cancel-requested();
+
+    background: rgba(0, 0, 0, 0.5);
+    opacity: show-dialog ? 1 : 0;
+
+    if show-dialog: TouchArea {
+        clicked => { cancel-requested(); }
+    }
+
+    if show-dialog: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 480px;
+        height: 400px;
+        background: white;
+        border-radius: 12px;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: rgba(0, 0, 0, 0.2);
+
+        TouchArea {
+            // Prevent clicks from closing dialog
+        }
+
+        VerticalBox {
+            padding: 24px;
+            spacing: 16px;
+
+            Text {
+                text: "Export Acquisition";
+                font-weight: 700;
+                font-size: 16px;
+            }
+
+            Text {
+                text: "Source: " + source-name;
+                font-size: 12px;
+                color: #666;
+            }
+
+            // Format selection
+            VerticalBox {
+                spacing: 8px;
+
+                Text {
+                    text: "Export Format";
+                    font-size: 12px;
+                    color: #666;
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+
+                    for format[idx] in available-formats: Rectangle {
+                        horizontal-stretch: 1;
+                        height: 48px;
+                        background: idx == selected-format-index ? #e3f2fd : #fafafa;
+                        border-radius: 4px;
+                        border-width: idx == selected-format-index ? 2px : 1px;
+                        border-color: idx == selected-format-index ? #2196f3 : #e0e0e0;
+
+                        TouchArea {
+                            enabled: format.available;
+                            clicked => { selected-format-index = idx; }
+                        }
+
+                        VerticalBox {
+                            alignment: center;
+                            Text {
+                                text: format.name;
+                                font-size: 11px;
+                                font-weight: 500;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Output path
+            VerticalBox {
+                spacing: 8px;
+
+                Text {
+                    text: "Output Path";
+                    font-size: 12px;
+                    color: #666;
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> output-path;
+                        placeholder-text: "/path/to/output.ext";
+                    }
+
+                    Button {
+                        text: "Browse";
+                        // Would open file dialog
+                    }
+                }
+            }
+
+            // Options
+            HorizontalBox {
+                spacing: 16px;
+
+                CheckBox {
+                    text: "Include metadata";
+                    checked <=> include-metadata;
+                }
+
+                CheckBox {
+                    text: "Compress output";
+                    checked <=> compress;
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // Buttons
+            HorizontalBox {
+                spacing: 12px;
+                Rectangle { horizontal-stretch: 1; }
+
+                Button {
+                    text: "Cancel";
+                    clicked => {
+                        cancel-requested();
+                    }
+                }
+
+                Button {
+                    text: "Export";
+                    primary: true;
+                    enabled: output-path != "";
+                    clicked => {
+                        export-requested({
+                            acquisition-id: source-acquisition-id,
+                            target-format: available-formats[selected-format-index].id,
+                            output-path: output-path,
+                            include-metadata: include-metadata,
+                            compress: compress,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Main Data Panel
+// =============================================================================
+
+export component DataPanel inherits Rectangle {
+    in property <[StorageFormat]> available-formats: [];
+    in property <[AcquisitionInfo]> acquisitions: [];
+    in property <StorageStatus> storage-status;
+    in property <bool> connected: false;
+
+    // Export dialog state
+    property <bool> export-dialog-visible: false;
+    property <string> export-source-id: "";
+    property <string> export-source-name: "";
+
+    // Callbacks for Rust handlers
+    callback refresh-acquisitions();
+    callback configure-storage(string, string);  // format-id, output-directory
+    callback export-acquisition(ExportRequest);
+    callback delete-acquisition(string);         // acquisition-id
+
+    background: #f8f9fa;
+    border-radius: 12px;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 12px;
+
+        // Header
+        HorizontalBox {
+            spacing: 12px;
+
+            Text {
+                text: "Data & Export";
+                font-weight: 700;
+                font-size: 18px;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: "Refresh";
+                enabled: connected;
+                clicked => { refresh-acquisitions(); }
+            }
+        }
+
+        // Main content in two columns
+        HorizontalBox {
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            // Left column: Status and Format
+            VerticalBox {
+                width: 300px;
+                spacing: 12px;
+
+                StorageStatusDisplay {
+                    status: storage-status;
+                }
+
+                FormatSelector {
+                    formats: available-formats;
+                    format-selected(format-id) => {
+                        configure-storage(format-id, storage-status.output-directory);
+                    }
+                }
+            }
+
+            // Right column: Acquisitions
+            AcquisitionList {
+                horizontal-stretch: 1;
+                acquisitions: acquisitions;
+                acquisition-selected(id) => {
+                    // Could show details panel
+                }
+                export-clicked(id, name) => {
+                    export-source-id = id;
+                    export-source-name = name;
+                    export-dialog-visible = true;
+                }
+            }
+        }
+    }
+
+    // Export dialog overlay
+    ExportDialog {
+        show-dialog: export-dialog-visible;
+        available-formats: available-formats;
+        source-acquisition-id: export-source-id;
+        source-name: export-source-name;
+        width: parent.width;
+        height: parent.height;
+
+        export-requested(request) => {
+            export-acquisition(request);
+            export-dialog-visible = false;
+        }
+
+        cancel-requested => {
+            export-dialog-visible = false;
+        }
+    }
+}

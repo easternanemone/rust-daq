@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 /// Driver for Newport ESP300 Universal Motion Controller
@@ -61,6 +62,10 @@ impl Esp300Driver {
     ///
     /// # Errors
     /// Returns error if serial port cannot be opened or axis is invalid
+    ///
+    /// # Note
+    /// This constructor may block the async runtime during serial port opening.
+    /// For non-blocking construction, use [`new_async`] instead.
     pub fn new(port_path: &str, axis: u8) -> Result<Self> {
         if !(1..=3).contains(&axis) {
             return Err(anyhow!("ESP300 axis must be 1-3, got {}", axis));
@@ -75,6 +80,44 @@ impl Esp300Driver {
             .flow_control(tokio_serial::FlowControl::None)
             .open_native_async()
             .context(format!("Failed to open ESP300 serial port: {}", port_path))?;
+
+        Ok(Self {
+            port: Mutex::new(BufReader::new(port)),
+            axis,
+            timeout: Duration::from_secs(5),
+        })
+    }
+
+    /// Create a new ESP300 driver instance asynchronously
+    ///
+    /// This is the preferred constructor as it uses `spawn_blocking` to avoid
+    /// blocking the async runtime during serial port opening.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    /// * `axis` - Axis number (1-3)
+    ///
+    /// # Errors
+    /// Returns error if serial port cannot be opened or axis is invalid
+    pub async fn new_async(port_path: &str, axis: u8) -> Result<Self> {
+        if !(1..=3).contains(&axis) {
+            return Err(anyhow!("ESP300 axis must be 1-3, got {}", axis));
+        }
+
+        let port_path = port_path.to_string();
+
+        // Use spawn_blocking to avoid blocking the async runtime
+        let port = spawn_blocking(move || {
+            tokio_serial::new(&port_path, 19200)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .flow_control(tokio_serial::FlowControl::None)
+                .open_native_async()
+                .context(format!("Failed to open ESP300 serial port: {}", port_path))
+        })
+        .await
+        .context("spawn_blocking for ESP300 port opening failed")??;
 
         Ok(Self {
             port: Mutex::new(BufReader::new(port)),

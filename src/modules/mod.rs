@@ -156,6 +156,19 @@ pub struct ModuleContext {
     shutdown_rx: broadcast::Receiver<()>,
 }
 
+impl std::fmt::Debug for ModuleContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModuleContext")
+            .field("module_id", &self.module_id)
+            .field("assignments", &self.assignments)
+            .field("registry", &"<Arc<RwLock<DeviceRegistry>>>")
+            .field("event_tx", &"<mpsc::Sender>")
+            .field("data_tx", &"<mpsc::Sender>")
+            .field("shutdown_rx", &"<broadcast::Receiver>")
+            .finish()
+    }
+}
+
 impl ModuleContext {
     /// Create a new module context
     pub fn new(
@@ -299,6 +312,26 @@ pub struct ModuleInstance {
     pub events_emitted: u64,
     pub data_points_produced: u64,
     pub error_message: Option<String>,
+}
+
+impl std::fmt::Debug for ModuleInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModuleInstance")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("module", &"<Box<dyn Module>>")
+            .field("assignments", &self.assignments)
+            .field("event_tx", &"<mpsc::Sender>")
+            .field("event_rx", &format!("{:?}", self.event_rx.is_some()))
+            .field("data_tx", &"<mpsc::Sender>")
+            .field("data_rx", &format!("{:?}", self.data_rx.is_some()))
+            .field("shutdown_tx", &"<broadcast::Sender>")
+            .field("start_time_ns", &self.start_time_ns)
+            .field("events_emitted", &self.events_emitted)
+            .field("data_points_produced", &self.data_points_produced)
+            .field("error_message", &self.error_message)
+            .finish()
+    }
 }
 
 impl ModuleInstance {
@@ -449,6 +482,17 @@ pub struct ModuleRegistry {
 
     /// Active module instances: module_id -> instance
     instances: HashMap<String, ModuleInstance>,
+}
+
+impl std::fmt::Debug for ModuleRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModuleRegistry")
+            .field("device_registry", &"<Arc<RwLock<DeviceRegistry>>>")
+            .field("module_types", &format!("{} registered types", self.module_types.len()))
+            .field("type_info_cache", &self.type_info_cache.keys().collect::<Vec<_>>())
+            .field("instances", &format!("{} active instances", self.instances.len()))
+            .finish()
+    }
 }
 
 impl ModuleRegistry {

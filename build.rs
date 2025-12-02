@@ -9,9 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // .expect("flatc");
 
     // Compile Protocol Buffers schema (Phase 3: gRPC server)
+    // NOTE: type_attribute adds #[allow(missing_docs)] to all generated types
+    // since protobuf-generated code cannot have doc comments at source
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
+        .type_attribute(".", "#[allow(missing_docs)]")
         .compile(&["proto/daq.proto"], &["proto"])?;
 
     Ok(())

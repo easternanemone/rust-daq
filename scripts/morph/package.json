@@ -1,0 +1,21 @@
+{
+  "name": "rust-daq-morph-tools",
+  "version": "1.0.0",
+  "description": "Morph SDK utilities for rust-daq codebase",
+  "type": "module",
+  "scripts": {
+    "setup": "npx tsx setup-repo.ts",
+    "search": "npx tsx search.ts",
+    "embed": "npx tsx embed.ts",
+    "rerank": "npx tsx rerank.ts",
+    "push": "npx tsx push-and-index.ts"
+  },
+  "dependencies": {
+    "@morphllm/morphsdk": "^0.2.44",
+    "openai": "^4.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

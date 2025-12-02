@@ -12,6 +12,7 @@ slint = "1.9"
 
 # Async runtime
 tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-stream = "0.1"
 
 # gRPC client (must match rust_daq versions)
 tonic = "0.10"

@@ -1,11 +1,11 @@
 //! HDF5 Background Writer - The Mullet Strategy Backend
 //!
 //! This implements the "business in the back" of The Mullet Strategy:
-//! - Arrow in front (fast, 10k+ writes/sec)
+//! - Protobuf in front (fast, compact, 10k+ writes/sec)
 //! - HDF5 in back (compatible with Python/MATLAB/Igor)
 //!
-//! Scientists never see Arrow - they only see f64/Vec<f64> and HDF5 files.
-//! The background writer translates Arrow → HDF5 at 1 Hz without blocking
+//! Scientists never see Protobuf - they only see f64/Vec<f64> and HDF5 files.
+//! The background writer translates Protobuf → HDF5 at 1 Hz without blocking
 //! the hardware loop.
 
 use anyhow::Result;
@@ -56,7 +56,7 @@ use super::ring_buffer::RingBuffer;
 /// }
 /// ```
 pub struct HDF5Writer {
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "output_path will be used when HDF5 writing is implemented")]
     output_path: PathBuf,
     ring_buffer: Arc<RingBuffer>,
     flush_interval: Duration,
@@ -103,17 +103,19 @@ impl HDF5Writer {
 
     /// Flush new data from ring buffer to HDF5 file
     ///
-    /// This reads new data since last flush and appends to HDF5.
+    /// This reads new data since last flush, decodes Protobuf messages,
+    /// and writes structured datasets to HDF5.
     /// Non-blocking if no new data is available.
     #[cfg(feature = "storage_hdf5")]
     fn flush_to_disk(&self) -> Result<()> {
-        use hdf5::{File, Group};
+        use hdf5::File;
+        use prost::Message;
 
-        // Check if there's new data
-        let current_tail = self.ring_buffer.read_tail();
-        let last_tail = self.last_read_tail.load(Ordering::Acquire);
+        // Check if there's new data by comparing write_head to our last read position
+        let current_write_head = self.ring_buffer.write_head();
+        let last_processed = self.last_read_tail.load(Ordering::Acquire);
 
-        if current_tail <= last_tail {
+        if current_write_head <= last_processed {
             // No new data since last flush
             return Ok(());
         }
@@ -143,26 +145,28 @@ impl HDF5Writer {
         let batch_name = format!("batch_{:06}", batch_id);
         let batch_group = measurements.create_group(&batch_name)?;
 
-        // Parse and write Arrow data
-        #[cfg(feature = "storage_arrow")]
-        {
-            self.write_arrow_to_hdf5(&batch_group, &snapshot)?;
-        }
+        // Decode and write Protobuf ScanProgress messages
+        // Returns bytes successfully processed to handle partial messages
+        #[cfg(feature = "networking")]
+        let bytes_processed = {
+            self.write_protobuf_to_hdf5(&batch_group, &snapshot)?
+        };
 
-        #[cfg(not(feature = "storage_arrow"))]
-        {
-            // Fallback: Write raw bytes
+        #[cfg(not(feature = "networking"))]
+        let bytes_processed = {
+            // Fallback: Write raw bytes when networking feature is disabled
             batch_group
                 .new_dataset::<u8>()
                 .create("raw_data", snapshot.len())?
                 .write(&snapshot)?;
-        }
+            snapshot.len()
+        };
 
         // Add metadata
         batch_group
             .new_attr::<u64>()
             .create("ring_tail")?
-            .write_scalar(&current_tail)?;
+            .write_scalar(&current_write_head)?;
 
         batch_group
             .new_attr::<u64>()
@@ -174,26 +178,177 @@ impl HDF5Writer {
                     .as_nanos() as u64,
             )?;
 
-        // Update last read position
-        self.last_read_tail.store(current_tail, Ordering::Release);
-
-        // Mark data as consumed in ring buffer
-        let bytes_written = snapshot.len() as u64;
-        self.ring_buffer.advance_tail(bytes_written);
+        // Only advance by bytes actually processed (to preserve partial messages)
+        let new_tail = last_processed + bytes_processed as u64;
+        self.last_read_tail.store(new_tail, Ordering::Release);
+        self.ring_buffer.advance_tail(bytes_processed as u64);
 
         Ok(())
     }
 
+    /// Decode Protobuf ScanProgress messages and write to HDF5
+    ///
+    /// Returns the number of bytes successfully processed so partial messages
+    /// are preserved in the ring buffer for the next flush.
+    ///
+    /// Converts ScanProgress messages to structured HDF5 datasets:
+    /// - /scan_id (string attribute)
+    /// - /timestamps (u64 array)
+    /// - /point_indices (u32 array)
+    /// - /axis_positions/<device_id> (f64 arrays)
+    /// - /data/<device_id> (f64 arrays)
+    #[cfg(all(feature = "storage_hdf5", feature = "networking"))]
+    fn write_protobuf_to_hdf5(&self, group: &hdf5::Group, data: &[u8]) -> Result<usize> {
+        use crate::grpc::ScanProgress;
+        use prost::Message;
+        use std::collections::HashMap;
+
+        // Decode length-prefixed messages from buffer
+        let mut offset = 0;
+        let mut last_complete_offset = 0; // Track last fully processed message
+        let mut timestamps: Vec<u64> = Vec::new();
+        let mut point_indices: Vec<u32> = Vec::new();
+        let mut axis_positions: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut data_values: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut scan_id: Option<String> = None;
+
+        while offset + 4 <= data.len() {
+            // Read message length (4 bytes, little-endian)
+            let len_bytes: [u8; 4] = data[offset..offset + 4].try_into()?;
+            let msg_len = u32::from_le_bytes(len_bytes) as usize;
+
+            if offset + 4 + msg_len > data.len() {
+                // Incomplete message - stop here, don't consume partial data
+                break;
+            }
+
+            // Move past length prefix
+            offset += 4;
+
+            // Decode ScanProgress message
+            match ScanProgress::decode(&data[offset..offset + msg_len]) {
+                Ok(progress) => {
+                    // Store scan ID from first message
+                    if scan_id.is_none() && !progress.scan_id.is_empty() {
+                        scan_id = Some(progress.scan_id.clone());
+                    }
+
+                    timestamps.push(progress.timestamp_ns);
+                    point_indices.push(progress.point_index);
+
+                    // Store axis positions
+                    for (device_id, position) in &progress.axis_positions {
+                        axis_positions
+                            .entry(device_id.clone())
+                            .or_default()
+                            .push(*position);
+                    }
+
+                    // Store data points
+                    for data_point in &progress.data_points {
+                        data_values
+                            .entry(data_point.device_id.clone())
+                            .or_default()
+                            .push(data_point.value);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to decode ScanProgress: {}", e);
+                    // Still advance past this message even if decode fails
+                }
+            }
+
+            offset += msg_len;
+            last_complete_offset = offset; // Mark this as successfully processed
+        }
+
+        // Write scan_id as attribute
+        if let Some(ref id) = scan_id {
+            // HDF5 string attributes require special handling
+            group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create("scan_id")?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(id.as_str()))?;
+        }
+
+        // Write timestamps
+        if !timestamps.is_empty() {
+            group
+                .new_dataset::<u64>()
+                .create("timestamps", timestamps.len())?
+                .write(&timestamps)?;
+        }
+
+        // Write point indices
+        if !point_indices.is_empty() {
+            group
+                .new_dataset::<u32>()
+                .create("point_indices", point_indices.len())?
+                .write(&point_indices)?;
+        }
+
+        // Write axis positions as subgroup
+        if !axis_positions.is_empty() {
+            let axes_group = group.create_group("axis_positions")?;
+            for (device_id, positions) in &axis_positions {
+                axes_group
+                    .new_dataset::<f64>()
+                    .create(device_id, positions.len())?
+                    .write(positions)?;
+            }
+        }
+
+        // Write data values as subgroup
+        if !data_values.is_empty() {
+            let data_group = group.create_group("data")?;
+            for (device_id, values) in &data_values {
+                data_group
+                    .new_dataset::<f64>()
+                    .create(device_id, values.len())?
+                    .write(values)?;
+            }
+        }
+
+        Ok(last_complete_offset)
+    }
+
     /// Fallback implementation when HDF5 feature is disabled
+    /// Writes scan data as CSV for basic persistence
     #[cfg(not(feature = "storage_hdf5"))]
     fn flush_to_disk(&self) -> Result<()> {
-        // Just advance the tail to prevent ring buffer from filling
-        let snapshot = self.ring_buffer.read_snapshot();
-        if !snapshot.is_empty() {
-            let bytes = snapshot.len() as u64;
-            self.ring_buffer.advance_tail(bytes);
-            self.last_read_tail.fetch_add(bytes, Ordering::SeqCst);
+        use std::fs::OpenOptions;
+        use std::io::Write;
+
+        // Check if there's new data
+        let current_write_head = self.ring_buffer.write_head();
+        let last_processed = self.last_read_tail.load(Ordering::Acquire);
+
+        if current_write_head <= last_processed {
+            return Ok(());
         }
+
+        let snapshot = self.ring_buffer.read_snapshot();
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+
+        // Write raw bytes to a binary file as fallback
+        // This preserves the Protobuf-encoded ScanProgress data
+        let fallback_path = self.output_path.with_extension("bin");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&fallback_path)?;
+        
+        // Write length-prefixed message (allows decoding multiple messages)
+        let len = snapshot.len() as u32;
+        file.write_all(&len.to_le_bytes())?;
+        file.write_all(&snapshot)?;
+
+        // Advance tail to prevent buffer overflow
+        self.ring_buffer.advance_tail(snapshot.len() as u64);
+        self.last_read_tail.store(current_write_head, Ordering::Release);
+
         Ok(())
     }
 
@@ -276,7 +431,7 @@ impl HDF5Writer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[allow(unused_imports)]
+    #[expect(unused_imports, reason = "TempDir used conditionally based on test configuration")]
     use tempfile::{NamedTempFile, TempDir};
 
     #[tokio::test]

@@ -171,6 +171,18 @@ pub struct PowerMonitor {
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+impl std::fmt::Debug for PowerMonitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PowerMonitor")
+            .field("config", &self.config)
+            .field("state", &self.state)
+            .field("running", &self.running.load(Ordering::Relaxed))
+            .field("paused", &self.paused.load(Ordering::Relaxed))
+            .field("task_handle", &self.task_handle.is_some())
+            .finish()
+    }
+}
+
 impl Default for PowerMonitor {
     fn default() -> Self {
         Self {

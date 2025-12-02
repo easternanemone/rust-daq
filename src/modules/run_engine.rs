@@ -139,6 +139,16 @@ pub struct StagedModules {
     closed: bool,
 }
 
+impl std::fmt::Debug for StagedModules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StagedModules")
+            .field("staged_ids", &self.staged_ids)
+            .field("registry", &"<Arc<RwLock<ModuleRegistry>>>")
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
 impl StagedModules {
     /// Create and stage all modules.
     pub async fn new(
@@ -224,6 +234,14 @@ impl Drop for StagedModules {
 /// Central orchestrator for module execution.
 pub struct RunEngine {
     registry: Arc<RwLock<ModuleRegistry>>,
+}
+
+impl std::fmt::Debug for RunEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunEngine")
+            .field("registry", &"<Arc<RwLock<ModuleRegistry>>>")
+            .finish()
+    }
 }
 
 impl RunEngine {

@@ -45,6 +45,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 /// Driver for Spectra-Physics MaiTai tunable Ti:Sapphire laser
@@ -68,6 +69,10 @@ impl MaiTaiDriver {
     ///
     /// # Errors
     /// Returns error if serial port cannot be opened
+    ///
+    /// # Note
+    /// This constructor may block the async runtime during serial port opening.
+    /// For non-blocking construction, use [`new_async`] instead.
     pub fn new(port_path: &str) -> Result<Self> {
         // Configure serial settings with XON/XOFF flow control (required for MaiTai)
         let port = tokio_serial::new(port_path, 9600)
@@ -77,6 +82,39 @@ impl MaiTaiDriver {
             .flow_control(tokio_serial::FlowControl::Software) // XON/XOFF for MaiTai
             .open_native_async()
             .context(format!("Failed to open MaiTai serial port: {}", port_path))?;
+
+        Ok(Self {
+            port: Mutex::new(BufReader::new(port)),
+            timeout: Duration::from_secs(5),
+            wavelength_nm: Mutex::new(800.0), // Default center wavelength
+        })
+    }
+
+    /// Create a new MaiTai driver instance asynchronously
+    ///
+    /// This is the preferred constructor as it uses `spawn_blocking` to avoid
+    /// blocking the async runtime during serial port opening.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    ///
+    /// # Errors
+    /// Returns error if serial port cannot be opened
+    pub async fn new_async(port_path: &str) -> Result<Self> {
+        let port_path = port_path.to_string();
+
+        // Use spawn_blocking to avoid blocking the async runtime
+        let port = spawn_blocking(move || {
+            tokio_serial::new(&port_path, 9600)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .flow_control(tokio_serial::FlowControl::Software) // XON/XOFF for MaiTai
+                .open_native_async()
+                .context(format!("Failed to open MaiTai serial port: {}", port_path))
+        })
+        .await
+        .context("spawn_blocking for MaiTai port opening failed")??;
 
         Ok(Self {
             port: Mutex::new(BufReader::new(port)),

@@ -10,6 +10,19 @@
 //! - Apache Arrow IPC format support for structured data
 //! - Designed for 10k+ writes/sec throughput
 //!
+//! # Architecture
+//!
+//! The ring buffer uses a memory-mapped file with a fixed header followed by a circular
+//! data region. Writers append data at the `write_head` position, while readers consume
+//! from the `read_tail` position. When the write head reaches capacity, it wraps back
+//! to the beginning (circular behavior).
+//!
+//! # Thread Safety
+//!
+//! - **Writes**: Serialized via internal mutex. Multiple writers are safe but sequential.
+//! - **Reads**: Lock-free using atomic loads with Acquire ordering.
+//! - **Concurrent read/write**: Safe via seqlock pattern with epoch counter validation.
+//!
 //! # Memory Layout
 //! ```text
 //! [128-byte header] [variable-size data region]
@@ -22,12 +35,37 @@
 //!   schema_len: u32         (Arrow schema length)
 //!   padding: [u8; 116]      (cache line alignment)
 //! ```
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use rust_daq::data::ring_buffer::RingBuffer;
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! // Create a 100 MB ring buffer
+//! let rb = RingBuffer::create(Path::new("/tmp/my_ring.buf"), 100)?;
+//!
+//! // Write data
+//! rb.write(b"Hello, world!")?;
+//!
+//! // Read snapshot
+//! let data = rb.read_snapshot();
+//! assert_eq!(&data, b"Hello, world!");
+//!
+//! // Mark data as consumed
+//! rb.advance_tail(data.len() as u64);
+//! # Ok(())
+//! # }
+//! ```
 
 use anyhow::{anyhow, Context, Result};
 use memmap2::{MmapMut, MmapOptions};
 use std::fs::OpenOptions;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
 
 #[cfg(feature = "storage_arrow")]
 use arrow::record_batch::RecordBatch;
@@ -42,6 +80,16 @@ const HEADER_SIZE: usize = 128;
 ///
 /// This structure uses #[repr(C)] to ensure a predictable memory layout
 /// that can be accessed from other languages (Python, C++).
+///
+/// Layout (128 bytes total):
+/// - magic: u64 (8 bytes)
+/// - capacity_bytes: u64 (8 bytes)
+/// - write_head: AtomicU64 (8 bytes)
+/// - read_tail: AtomicU64 (8 bytes)
+/// - write_epoch: AtomicU64 (8 bytes)
+/// - schema_len: u32 (4 bytes)
+/// - _padding: [u8; 84] (84 bytes)
+/// Total: 8 + 8 + 8 + 8 + 8 + 4 + 84 = 128 bytes
 #[repr(C)]
 struct RingBufferHeader {
     /// Magic number for validation (0xDADADADA00000001)
@@ -56,12 +104,26 @@ struct RingBufferHeader {
     /// Oldest valid data position (for circular buffer management)
     read_tail: AtomicU64,
 
+    /// Write epoch counter for seqlock synchronization
+    ///
+    /// Incremented before and after each write operation.
+    /// Readers check this before and after reading - if it changed
+    /// (or is odd during read), the read may have seen partial data.
+    write_epoch: AtomicU64,
+
     /// Length of the Arrow schema JSON (if using Arrow format)
     schema_len: u32,
 
     /// Padding to align header to 128 bytes (cache line boundary)
-    _padding: [u8; 116],
+    /// Calculation: 128 - (8 + 8 + 8 + 8 + 8 + 4) = 128 - 44 = 84 bytes
+    _padding: [u8; 84],
 }
+
+// Static assertion to ensure header size matches HEADER_SIZE constant
+const _: () = assert!(
+    std::mem::size_of::<RingBufferHeader>() == HEADER_SIZE,
+    "RingBufferHeader size must equal HEADER_SIZE (128 bytes)"
+);
 
 /// High-performance memory-mapped ring buffer.
 ///
@@ -69,12 +131,15 @@ struct RingBufferHeader {
 /// This structure contains raw pointers to memory-mapped regions. It is safe to use
 /// as long as:
 /// - The memory-mapped file remains valid for the lifetime of RingBuffer
-/// - Only one writer exists at a time
 /// - Readers use appropriate atomic ordering (Acquire)
 /// - Writers use appropriate atomic ordering (Release)
+///
+/// # Thread Safety
+/// The buffer uses an internal write lock to serialize concurrent writes, making it
+/// safe for multiple writers. Reads remain lock-free.
 pub struct RingBuffer {
     /// Memory-mapped file backing the ring buffer
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "mmap must be kept alive to maintain memory mapping validity")]
     mmap: MmapMut,
 
     /// Pointer to the header structure
@@ -87,14 +152,30 @@ pub struct RingBuffer {
 
     /// Capacity of the data region in bytes
     capacity: u64,
+
+    /// Write lock to serialize concurrent writes and prevent data races
+    write_lock: Mutex<()>,
+}
+
+impl std::fmt::Debug for RingBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RingBuffer")
+            .field("capacity", &self.capacity)
+            .field("write_head", &self.write_head())
+            .field("read_tail", &self.read_tail())
+            .field("data_ptr", &format!("{:p}", self.data_ptr))
+            .field("header", &format!("{:p}", self.header))
+            .finish()
+    }
 }
 
 // SAFETY: RingBuffer uses atomic operations for synchronization and can be safely
 // sent between threads. The raw pointers are only accessed with proper atomic ordering.
 unsafe impl Send for RingBuffer {}
 
-// SAFETY: All read/write operations use atomic instructions with appropriate ordering,
-// making concurrent access safe.
+// SAFETY: Write operations are serialized via write_lock. Read operations use atomic
+// instructions with Acquire ordering to see all previous writes. The combination
+// makes concurrent access safe.
 unsafe impl Sync for RingBuffer {}
 
 impl RingBuffer {
@@ -122,8 +203,10 @@ impl RingBuffer {
         let mut opts = OpenOptions::new();
         opts.read(true).write(true).create(true);
 
+        let is_new_file = !path.exists();
+
         // Only truncate when creating a brand-new buffer; preserve existing data otherwise.
-        if !path.exists() {
+        if is_new_file {
             opts.truncate(true);
         }
 
@@ -131,9 +214,24 @@ impl RingBuffer {
             .open(path)
             .with_context(|| format!("Failed to create/open ring buffer file: {:?}", path))?;
 
-        // Set file size
-        file.set_len(total_size as u64)
-            .context("Failed to set ring buffer file size")?;
+        // Validate existing file size or set for new file
+        let existing_size = file.metadata()
+            .context("Failed to get file metadata")?
+            .len();
+
+        if is_new_file || existing_size == 0 {
+            // Set file size for new buffer or empty file
+            file.set_len(total_size as u64)
+                .context("Failed to set ring buffer file size")?;
+        } else if existing_size != total_size as u64 {
+            // Existing buffer with data has different capacity - this would corrupt data
+            return Err(anyhow!(
+                "Ring buffer capacity mismatch: file has {} bytes but requested {} bytes. \
+                 Delete the existing file or use matching capacity.",
+                existing_size,
+                total_size
+            ));
+        }
 
         // Create memory mapping
         // SAFETY: We just created the file and set its size, so mapping is safe
@@ -152,6 +250,7 @@ impl RingBuffer {
             (*header).capacity_bytes = capacity_bytes as u64;
             (*header).write_head = AtomicU64::new(0);
             (*header).read_tail = AtomicU64::new(0);
+            (*header).write_epoch = AtomicU64::new(0);
             (*header).schema_len = 0;
 
             // Zero out padding for deterministic behavior
@@ -167,6 +266,7 @@ impl RingBuffer {
             header,
             data_ptr,
             capacity: capacity_bytes as u64,
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -213,13 +313,14 @@ impl RingBuffer {
             header,
             data_ptr,
             capacity,
+            write_lock: Mutex::new(()),
         })
     }
 
-    /// Write data to the ring buffer (lock-free).
+    /// Write data to the ring buffer.
     ///
-    /// This operation is lock-free and safe for concurrent readers. However, only
-    /// one writer should exist at a time.
+    /// This operation uses an internal lock to serialize concurrent writes.
+    /// Reads remain lock-free via atomic operations.
     ///
     /// # Arguments
     /// * `data` - Byte slice to write
@@ -229,7 +330,13 @@ impl RingBuffer {
     ///
     /// # Note
     /// If the buffer is full, this will overwrite the oldest data (circular behavior)
+    ///
+    /// # Thread Safety
+    /// Multiple concurrent writers are safe - the internal lock serializes writes.
     pub fn write(&self, data: &[u8]) -> Result<()> {
+        // Acquire write lock to serialize concurrent writes
+        let _guard = self.write_lock.lock().map_err(|_| anyhow!("Write lock poisoned"))?;
+
         let len = data.len() as u64;
 
         if len > self.capacity {
@@ -240,8 +347,13 @@ impl RingBuffer {
             ));
         }
 
-        // SAFETY: header is valid for the lifetime of self
+        // SAFETY: header is valid for the lifetime of self, and data_ptr points to a
+        // valid mmap region of size self.capacity bytes
         unsafe {
+            // Increment epoch BEFORE write (odd = write in progress)
+            // Use AcqRel to prevent the memcpy from floating up before this increment
+            (*self.header).write_epoch.fetch_add(1, Ordering::AcqRel);
+
             // Load current write position with Acquire ordering to see previous writes
             let head = (*self.header).write_head.load(Ordering::Acquire);
 
@@ -250,12 +362,16 @@ impl RingBuffer {
 
             // Handle wrap-around: if data doesn't fit before end, split the write
             if write_offset + data.len() > self.capacity as usize {
-                // Write first part to the end of buffer
+                // SAFETY: write_offset < capacity (due to modulo), and first_part_len
+                // is bounded by capacity - write_offset, so data_ptr.add(write_offset)
+                // is within the mmap region [data_ptr, data_ptr + capacity)
                 let first_part_len = self.capacity as usize - write_offset;
                 let dest = self.data_ptr.add(write_offset);
                 std::ptr::copy_nonoverlapping(data.as_ptr(), dest, first_part_len);
 
-                // Write second part to the beginning of buffer
+                // SAFETY: second_part_len = data.len() - first_part_len, and we already
+                // checked data.len() <= capacity, so second_part_len <= capacity.
+                // Writing to data_ptr (start of region) is always valid.
                 let second_part_len = data.len() - first_part_len;
                 std::ptr::copy_nonoverlapping(
                     data.as_ptr().add(first_part_len),
@@ -263,13 +379,17 @@ impl RingBuffer {
                     second_part_len,
                 );
             } else {
-                // Data fits without wrapping
+                // SAFETY: write_offset + data.len() <= capacity (checked above),
+                // so the entire write range is within the mmap data region
                 let dest = self.data_ptr.add(write_offset);
                 std::ptr::copy_nonoverlapping(data.as_ptr(), dest, data.len());
             }
 
             // Update write head with Release ordering to publish the write
             (*self.header).write_head.fetch_add(len, Ordering::Release);
+
+            // Increment epoch AFTER write (even = write complete)
+            (*self.header).write_epoch.fetch_add(1, Ordering::Release);
         }
 
         Ok(())
@@ -278,51 +398,117 @@ impl RingBuffer {
     /// Read a snapshot of current data in the ring buffer.
     ///
     /// This creates a copy of the available data from read_tail to write_head.
-    /// Safe for concurrent use with write operations.
+    /// Safe for concurrent use with write operations - uses seqlock validation
+    /// to detect and retry if a write occurred during the read.
     ///
     /// # Returns
     /// A Vec containing a snapshot of the current buffer contents
+    ///
+    /// # Note
+    /// This method will retry automatically if a concurrent write is detected.
+    /// If the writer crashes mid-write (leaving epoch odd), this will timeout
+    /// after MAX_RETRY_DURATION_MS and return an empty Vec.
     pub fn read_snapshot(&self) -> Vec<u8> {
-        // SAFETY: header is valid for the lifetime of self
-        unsafe {
-            // Load positions with Acquire ordering to see all previous writes
-            let head = (*self.header).write_head.load(Ordering::Acquire);
-            let tail = (*self.header).read_tail.load(Ordering::Acquire);
+        const MAX_RETRIES: usize = 100;
+        const MAX_RETRY_DURATION_MS: u128 = 100; // 100ms timeout for crashed writer detection
 
-            // Calculate available data (capped at capacity to handle wrap-around)
-            let available = (head.saturating_sub(tail)).min(self.capacity);
+        let start_time = Instant::now();
 
-            if available == 0 {
+        for retry in 0..MAX_RETRIES {
+            // Check for timeout (handles crashed writer scenario where epoch stays odd)
+            if start_time.elapsed().as_millis() > MAX_RETRY_DURATION_MS {
+                tracing::error!(
+                    "read_snapshot timed out after {}ms - possible crashed writer (epoch stuck odd)",
+                    MAX_RETRY_DURATION_MS
+                );
                 return Vec::new();
             }
 
-            // Calculate read offset (circular)
-            let read_offset = (tail % self.capacity) as usize;
+            // SAFETY: header is valid for the lifetime of self
+            unsafe {
+                // Load epoch BEFORE read (must be even = no write in progress)
+                let epoch_before = (*self.header).write_epoch.load(Ordering::Acquire);
 
-            let mut buffer = vec![0u8; available as usize];
+                // If epoch is odd, a write is in progress - brief spin then retry
+                if epoch_before % 2 != 0 {
+                    // Exponential backoff for odd epoch (write in progress)
+                    if retry < 10 {
+                        std::hint::spin_loop();
+                    } else {
+                        // After 10 fast retries, yield to OS scheduler
+                        std::thread::yield_now();
+                    }
+                    continue;
+                }
 
-            // Handle wrap-around
-            if read_offset + available as usize > self.capacity as usize {
-                // Read first part from read_offset to end
-                let first_part_len = self.capacity as usize - read_offset;
-                let src = self.data_ptr.add(read_offset);
-                std::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), first_part_len);
+                // Load positions with Acquire ordering to see all previous writes
+                let head = (*self.header).write_head.load(Ordering::Acquire);
+                let tail = (*self.header).read_tail.load(Ordering::Acquire);
 
-                // Read second part from beginning
-                let second_part_len = available as usize - first_part_len;
-                std::ptr::copy_nonoverlapping(
-                    self.data_ptr,
-                    buffer.as_mut_ptr().add(first_part_len),
-                    second_part_len,
-                );
-            } else {
-                // Data doesn't wrap
-                let src = self.data_ptr.add(read_offset);
-                std::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), available as usize);
+                // Calculate available data (capped at capacity to handle wrap-around)
+                let available = (head.saturating_sub(tail)).min(self.capacity);
+
+                if available == 0 {
+                    return Vec::new();
+                }
+
+                // Calculate read offset (circular)
+                let read_offset = (tail % self.capacity) as usize;
+
+                let mut buffer = vec![0u8; available as usize];
+
+                // Handle wrap-around
+                if read_offset + available as usize > self.capacity as usize {
+                    // SAFETY: read_offset < capacity (due to modulo), and first_part_len
+                    // is bounded by capacity - read_offset, so data_ptr.add(read_offset)
+                    // is within the mmap region [data_ptr, data_ptr + capacity)
+                    let first_part_len = self.capacity as usize - read_offset;
+                    let src = self.data_ptr.add(read_offset);
+                    std::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), first_part_len);
+
+                    // SAFETY: second_part_len = available - first_part_len <= capacity,
+                    // and we read from data_ptr (start of data region) which is valid
+                    let second_part_len = available as usize - first_part_len;
+                    std::ptr::copy_nonoverlapping(
+                        self.data_ptr,
+                        buffer.as_mut_ptr().add(first_part_len),
+                        second_part_len,
+                    );
+                } else {
+                    // SAFETY: read_offset + available <= capacity, so the entire read
+                    // range [data_ptr + read_offset, data_ptr + read_offset + available)
+                    // is within the mmap data region
+                    let src = self.data_ptr.add(read_offset);
+                    std::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), available as usize);
+                }
+
+                // Fence to ensure all data reads complete before loading epoch
+                // Required for ARM/Apple Silicon where loads can be reordered
+                fence(Ordering::SeqCst);
+
+                // Load epoch AFTER read - must match epoch_before
+                let epoch_after = (*self.header).write_epoch.load(Ordering::Acquire);
+
+                if epoch_before == epoch_after {
+                    // Read was consistent - no concurrent write occurred
+                    return buffer;
+                }
+
+                // Epoch changed - a write occurred during our read, retry with backoff
+                if retry < 10 {
+                    std::hint::spin_loop();
+                } else {
+                    std::thread::yield_now();
+                }
             }
-
-            buffer
         }
+
+        // After max retries, return empty (caller should handle high contention)
+        tracing::warn!(
+            "read_snapshot exceeded {} retries due to high write contention",
+            MAX_RETRIES
+        );
+        Vec::new()
     }
 
     /// Get the memory address of the data region for external mapping (Python/C++).
@@ -335,18 +521,119 @@ impl RingBuffer {
         self.data_ptr as usize
     }
 
-    /// Get the capacity of the ring buffer in bytes.
+    /// Get the capacity of the data region in bytes.
+    ///
+    /// This returns the maximum amount of data that can be stored in the ring buffer
+    /// before wrap-around occurs. The actual file size is larger by [`HEADER_SIZE`]
+    /// bytes (128 bytes for the header).
+    ///
+    /// # Returns
+    ///
+    /// The capacity in bytes as specified during creation.
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is safe to call from multiple threads concurrently. The capacity
+    /// is immutable after buffer creation.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use rust_daq::data::ring_buffer::RingBuffer;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let rb = RingBuffer::create(Path::new("/tmp/test.buf"), 100)?;
+    /// assert_eq!(rb.capacity(), 100 * 1024 * 1024); // 100 MB
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn capacity(&self) -> u64 {
         self.capacity
     }
 
-    /// Get the current write head position.
+    /// Get the current write head position (monotonically increasing).
+    ///
+    /// The write head tracks the total number of bytes written to the buffer since
+    /// creation. It increases monotonically and never wraps. To get the actual offset
+    /// in the circular buffer, compute `write_head % capacity`.
+    ///
+    /// # Returns
+    ///
+    /// Total bytes written since buffer creation.
+    ///
+    /// # Thread Safety
+    ///
+    /// Uses atomic load with Acquire ordering to ensure visibility of all writes
+    /// that happened-before this load. Safe to call concurrently with writes.
+    ///
+    /// # Producer/Consumer Semantics
+    ///
+    /// - Available data = `write_head - read_tail` (capped at capacity)
+    /// - If `write_head == read_tail`, the buffer is empty
+    /// - If `write_head - read_tail > capacity`, old data has been overwritten
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use rust_daq::data::ring_buffer::RingBuffer;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let rb = RingBuffer::create(Path::new("/tmp/test.buf"), 1)?;
+    ///
+    /// rb.write(b"test")?;
+    /// assert_eq!(rb.write_head(), 4);
+    ///
+    /// rb.write(b"data")?;
+    /// assert_eq!(rb.write_head(), 8); // Monotonically increasing
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn write_head(&self) -> u64 {
         // SAFETY: header is valid for the lifetime of self
         unsafe { (*self.header).write_head.load(Ordering::Acquire) }
     }
 
-    /// Get the current read tail position.
+    /// Get the current read tail position (marks oldest unconsumed data).
+    ///
+    /// The read tail tracks the oldest data position that has not yet been consumed
+    /// by readers. Like the write head, it increases monotonically and never wraps.
+    /// To get the actual offset in the circular buffer, compute `read_tail % capacity`.
+    ///
+    /// # Returns
+    ///
+    /// Position of the oldest unconsumed byte.
+    ///
+    /// # Thread Safety
+    ///
+    /// Uses atomic load with Acquire ordering. Safe to call concurrently with
+    /// `update_read_tail()` and `advance_tail()` operations.
+    ///
+    /// # Producer/Consumer Semantics
+    ///
+    /// - Consumers should call `update_read_tail()` or `advance_tail()` after
+    ///   processing data to free up buffer space
+    /// - The tail is managed by consumers; the buffer itself only updates it
+    ///   via explicit calls
+    /// - If not updated, old data will eventually be overwritten when the
+    ///   write head laps the tail
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use rust_daq::data::ring_buffer::RingBuffer;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let rb = RingBuffer::create(Path::new("/tmp/test.buf"), 1)?;
+    ///
+    /// rb.write(b"test")?;
+    /// assert_eq!(rb.read_tail(), 0); // No data consumed yet
+    ///
+    /// let snapshot = rb.read_snapshot();
+    /// rb.advance_tail(snapshot.len() as u64);
+    /// assert_eq!(rb.read_tail(), 4); // Tail advanced after consumption
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn read_tail(&self) -> u64 {
         // SAFETY: header is valid for the lifetime of self
         unsafe { (*self.header).read_tail.load(Ordering::Acquire) }

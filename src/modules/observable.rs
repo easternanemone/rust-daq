@@ -231,6 +231,15 @@ pub struct ParameterSet {
     parameters: std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>,
 }
 
+impl std::fmt::Debug for ParameterSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParameterSet")
+            .field("parameters", &format!("{} parameters", self.parameters.len()))
+            .field("names", &self.names())
+            .finish()
+    }
+}
+
 impl ParameterSet {
     /// Create a new empty parameter set.
     pub fn new() -> Self {

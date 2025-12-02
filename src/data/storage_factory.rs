@@ -44,6 +44,14 @@ pub struct StorageWriterRegistry {
     factories: HashMap<String, WriterFactory>,
 }
 
+impl std::fmt::Debug for StorageWriterRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageWriterRegistry")
+            .field("formats", &self.list_formats())
+            .finish()
+    }
+}
+
 impl Default for StorageWriterRegistry {
     fn default() -> Self {
         Self::new()

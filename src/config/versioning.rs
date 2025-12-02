@@ -6,23 +6,129 @@ use similar::{ChangeTag, TextDiff};
 use std::path::PathBuf;
 use tokio::fs;
 
+/// Unique identifier for a configuration version snapshot.
+///
+/// Encapsulates the filename of a configuration snapshot, which includes
+/// timestamp, content hash, and optional label information.
+///
+/// # Format
+///
+/// - Unlabeled: `config-YYYYMMDD_HHMMSS_ffffff-HASH.toml`
+/// - Labeled: `config-YYYYMMDD_HHMMSS_ffffff-HASH-LABEL.toml`
+///
+/// Where:
+/// - `YYYYMMDD_HHMMSS_ffffff` is the UTC timestamp with microseconds
+/// - `HASH` is the first 8 characters of the SHA-256 hash of the configuration
+/// - `LABEL` is an optional user-provided identifier
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[allow(dead_code)]
 pub struct VersionId(pub String);
 
+/// Metadata about a configuration version snapshot.
+///
+/// Contains the version identifier, creation timestamp, and optional label.
+/// Used for displaying version history and selecting snapshots for rollback.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let info = VersionInfo {
+///     id: VersionId("config-20250129_143022_123456-a1b2c3d4-production.toml".to_string()),
+///     created_at: Utc::now(),
+///     label: Some("production".to_string()),
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct VersionInfo {
+    /// Unique identifier for this version snapshot.
+    ///
+    /// Contains the full filename including timestamp, hash, and optional label.
     pub id: VersionId,
+
+    /// UTC timestamp when this snapshot was created.
+    ///
+    /// Extracted from the filename timestamp component.
+    /// Used for sorting versions chronologically and cleanup of old versions.
     pub created_at: DateTime<Utc>,
+
+    /// Optional human-readable label for this version.
+    ///
+    /// If `Some`, this version is considered "labeled" and will not be
+    /// automatically deleted during cleanup. Useful for marking important
+    /// configurations like "production", "baseline", or "pre-migration".
+    ///
+    /// If `None`, this is an automatic snapshot subject to retention policies.
     pub label: Option<String>,
 }
 
+/// Manages configuration versioning, snapshots, and rollback.
+///
+/// Provides automatic configuration snapshot creation with content-based hashing,
+/// version history management, diff generation between versions, and rollback
+/// capabilities. Implements a retention policy to limit the number of unlabeled
+/// snapshots while preserving all labeled versions.
+///
+/// # Architecture
+///
+/// - **Snapshots**: Automatically created with timestamp + SHA-256 hash filenames
+/// - **Labeled versions**: User-tagged versions preserved indefinitely
+/// - **Retention policy**: Keeps most recent N unlabeled versions (default: 10)
+/// - **Diffs**: Uses the `similar` crate for line-by-line comparison
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use rust_daq::config::versioning::VersionManager;
+/// use rust_daq::config::Settings;
+/// use std::path::PathBuf;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// let manager = VersionManager::new(PathBuf::from("config/versions"));
+/// let settings = Settings::default();
+///
+/// // Create automatic snapshot
+/// let version_id = manager.create_snapshot(&settings, None).await?;
+///
+/// // Create labeled snapshot
+/// let prod_id = manager.create_snapshot(&settings, Some("production".to_string())).await?;
+///
+/// // List all versions
+/// let versions = manager.list_versions().await?;
+/// println!("Found {} snapshots", versions.len());
+///
+/// // Rollback to previous version
+/// let restored = manager.rollback(&version_id).await?;
+///
+/// // Compare two versions
+/// let diff = manager.diff_versions(&version_id, &prod_id).await?;
+/// println!("Diff:\n{}", diff);
+/// # Ok(())
+/// # }
+/// ```
 pub struct VersionManager {
     versions_dir: PathBuf,
     max_versions: usize,
 }
 
 impl VersionManager {
+    /// Creates a new version manager for the specified directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `versions_dir` - Directory where version snapshots will be stored.
+    ///   The directory will be created automatically if it doesn't exist.
+    ///
+    /// # Defaults
+    ///
+    /// - `max_versions`: 10 unlabeled snapshots retained
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::config::versioning::VersionManager;
+    /// use std::path::PathBuf;
+    ///
+    /// let manager = VersionManager::new(PathBuf::from("config/versions"));
+    /// ```
     pub fn new(versions_dir: PathBuf) -> Self {
         Self {
             versions_dir,
@@ -30,6 +136,47 @@ impl VersionManager {
         }
     }
 
+    /// Creates a new configuration snapshot with optional label.
+    ///
+    /// Serializes the configuration to TOML, computes a content hash, generates
+    /// a timestamped filename, writes the snapshot to disk, and performs cleanup
+    /// of old unlabeled versions according to the retention policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Configuration to snapshot
+    /// * `label` - Optional label to mark this version as important.
+    ///   Labeled versions are never automatically deleted.
+    ///
+    /// # Returns
+    ///
+    /// Returns the [`VersionId`] of the created snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - TOML serialization fails
+    /// - File write operation fails
+    /// - Directory traversal during cleanup fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use rust_daq::config::versioning::VersionManager;
+    /// # use rust_daq::config::Settings;
+    /// # use std::path::PathBuf;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let manager = VersionManager::new(PathBuf::from("config/versions"));
+    /// let settings = Settings::default();
+    ///
+    /// // Automatic snapshot
+    /// let auto_id = manager.create_snapshot(&settings, None).await?;
+    ///
+    /// // Labeled snapshot (never auto-deleted)
+    /// let prod_id = manager.create_snapshot(&settings, Some("production".to_string())).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_snapshot(
         &self,
         settings: &Settings,
@@ -83,6 +230,44 @@ impl VersionManager {
         Ok(())
     }
 
+    /// Restores configuration from a previous snapshot.
+    ///
+    /// Reads the snapshot file, deserializes the TOML content, and returns
+    /// the restored configuration. Does not modify the current configuration
+    /// or create any new snapshots.
+    ///
+    /// # Arguments
+    ///
+    /// * `version_id` - Identifier of the snapshot to restore
+    ///
+    /// # Returns
+    ///
+    /// Returns the deserialized [`Settings`] from the snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Snapshot file cannot be found
+    /// - File read operation fails
+    /// - TOML deserialization fails
+    /// - Configuration validation fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use rust_daq::config::versioning::{VersionManager, VersionId};
+    /// # use std::path::PathBuf;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let manager = VersionManager::new(PathBuf::from("config/versions"));
+    /// let versions = manager.list_versions().await?;
+    ///
+    /// if let Some(prev_version) = versions.first() {
+    ///     let restored = manager.rollback(&prev_version.id).await?;
+    ///     println!("Restored configuration from {}", prev_version.created_at);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn rollback(&self, version_id: &VersionId) -> Result<Settings> {
         let path = self.versions_dir.join(&version_id.0);
         let toml_str = fs::read_to_string(&path).await?;
@@ -90,6 +275,40 @@ impl VersionManager {
         Ok(settings)
     }
 
+    /// Lists all available configuration snapshots.
+    ///
+    /// Scans the versions directory, parses filenames to extract metadata,
+    /// and returns a vector of version information. The order is not guaranteed;
+    /// use `created_at` to sort chronologically.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of [`VersionInfo`] for all valid snapshots found.
+    /// Invalid filenames are silently skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory traversal fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use rust_daq::config::versioning::VersionManager;
+    /// # use std::path::PathBuf;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let manager = VersionManager::new(PathBuf::from("config/versions"));
+    /// let mut versions = manager.list_versions().await?;
+    ///
+    /// // Sort by creation time (newest first)
+    /// versions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    ///
+    /// for version in versions {
+    ///     let label_str = version.label.as_deref().unwrap_or("auto");
+    ///     println!("{}: {} [{}]", version.created_at, version.id.0, label_str);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list_versions(&self) -> Result<Vec<VersionInfo>> {
         let mut versions = Vec::new();
         let mut read_dir = fs::read_dir(&self.versions_dir).await?;
@@ -135,6 +354,46 @@ impl VersionManager {
         })
     }
 
+    /// Generates a line-by-line diff between two configuration snapshots.
+    ///
+    /// Uses the `similar` crate to compute a unified diff showing additions,
+    /// deletions, and unchanged lines. Useful for understanding what changed
+    /// between configurations before performing a rollback.
+    ///
+    /// # Arguments
+    ///
+    /// * `version_a` - First snapshot to compare
+    /// * `version_b` - Second snapshot to compare
+    ///
+    /// # Returns
+    ///
+    /// Returns a string containing the diff in unified format:
+    /// - Lines prefixed with `-` are only in `version_a`
+    /// - Lines prefixed with `+` are only in `version_b`
+    /// - Lines prefixed with ` ` (space) are unchanged
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Either snapshot file cannot be found
+    /// - File read operations fail
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use rust_daq::config::versioning::VersionManager;
+    /// # use std::path::PathBuf;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let manager = VersionManager::new(PathBuf::from("config/versions"));
+    /// let versions = manager.list_versions().await?;
+    ///
+    /// if versions.len() >= 2 {
+    ///     let diff = manager.diff_versions(&versions[0].id, &versions[1].id).await?;
+    ///     println!("Changes:\n{}", diff);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn diff_versions(
         &self,
         version_a: &VersionId,

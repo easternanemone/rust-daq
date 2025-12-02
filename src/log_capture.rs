@@ -36,16 +36,65 @@ use std::sync::{Arc, Mutex};
 const MAX_LOG_ENTRIES: usize = 10000;
 
 /// Represents a single log entry.
-#[derive(Clone)]
+///
+/// Captures timestamp, severity level, source module, and formatted message
+/// for display in the GUI log panel.
+///
+/// # Example
+///
+/// ```rust
+/// use rust_daq::log_capture::LogEntry;
+/// use log::Level;
+/// use chrono::Local;
+///
+/// let entry = LogEntry {
+///     timestamp: Local::now(),
+///     level: Level::Info,
+///     target: "rust_daq::hardware".to_string(),
+///     message: "Camera connected".to_string(),
+/// };
+/// ```
+#[derive(Clone, Debug)]
 pub struct LogEntry {
+    /// When the log entry was created
     pub timestamp: DateTime<Local>,
+    
+    /// Severity level (Error, Warn, Info, Debug, Trace)
     pub level: Level,
+    
+    /// Source module or component that generated the log
     pub target: String,
+    
+    /// Formatted log message
     pub message: String,
 }
 
 impl LogEntry {
     /// Returns a color corresponding to the log level for GUI display.
+    ///
+    /// Maps log levels to colors for visual distinction:
+    /// - Error: Light red (255, 100, 100)
+    /// - Warn: Yellow (255, 255, 100)
+    /// - Info: Light blue (100, 200, 255)
+    /// - Debug: Gray (150, 150, 150)
+    /// - Trace: Light purple (200, 150, 255)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::log_capture::LogEntry;
+    /// # use log::Level;
+    /// # use chrono::Local;
+    /// use egui::Color32;
+    ///
+    /// let entry = LogEntry {
+    ///     timestamp: Local::now(),
+    ///     level: Level::Error,
+    ///     target: "test".to_string(),
+    ///     message: "Test".to_string(),
+    /// };
+    /// assert_eq!(entry.color(), Color32::from_rgb(255, 100, 100));
+    /// ```
     pub fn color(&self) -> Color32 {
         match self.level {
             Level::Error => Color32::from_rgb(255, 100, 100), // Light Red
@@ -58,52 +107,182 @@ impl LogEntry {
 }
 
 /// A thread-safe, fixed-capacity log buffer.
+///
+/// Stores log entries in a circular buffer with a maximum capacity of 10,000 entries.
+/// When full, the oldest entry is discarded to make room for new entries.
+///
+/// Uses `Arc<Mutex<VecDeque>>` internally for safe sharing between the logging
+/// thread and GUI thread.
+///
+/// # Example
+///
+/// ```rust
+/// use rust_daq::log_capture::LogBuffer;
+///
+/// let buffer = LogBuffer::new();
+/// // Buffer can be cloned and shared across threads
+/// let buffer_clone = buffer.clone();
+/// ```
 #[derive(Clone)]
 pub struct LogBuffer(Arc<Mutex<VecDeque<LogEntry>>>);
 
+impl std::fmt::Debug for LogBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogBuffer")
+            .field("entries", &format!("{} entries", self.0.lock().map(|b| b.len()).unwrap_or(0)))
+            .finish()
+    }
+}
+
 impl Default for LogBuffer {
+    /// Creates a new empty log buffer.
+    ///
+    /// Equivalent to `LogBuffer::new()`.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl LogBuffer {
+    /// Creates a new empty log buffer with default capacity.
+    ///
+    /// The buffer can hold up to 10,000 entries before discarding old ones.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::log_capture::LogBuffer;
+    ///
+    /// let buffer = LogBuffer::new();
+    /// ```
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(VecDeque::with_capacity(
             MAX_LOG_ENTRIES,
         ))))
     }
 
+    /// Acquires a lock and returns a reference to the log entries.
+    ///
+    /// Use this to iterate over or display log entries in the GUI.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mutex is poisoned (should never happen in normal operation).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::log_capture::LogBuffer;
+    ///
+    /// let buffer = LogBuffer::new();
+    /// let entries = buffer.read();
+    /// for entry in entries.iter() {
+    ///     // Display entry in GUI
+    /// }
+    /// ```
     pub fn read(&self) -> std::sync::MutexGuard<'_, VecDeque<LogEntry>> {
         self.0.lock().unwrap()
     }
 
+    /// Clears all log entries from the buffer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mutex is poisoned.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::log_capture::LogBuffer;
+    ///
+    /// let buffer = LogBuffer::new();
+    /// buffer.clear();
+    /// assert_eq!(buffer.read().len(), 0);
+    /// ```
     pub fn clear(&self) {
         self.0.lock().unwrap().clear();
     }
 }
 
 /// A simple logger that captures logs into a `LogBuffer`.
+///
+/// Implements the `log::Log` trait to intercept log records and store them
+/// in memory for GUI display. Must be registered as the global logger using
+/// `log::set_logger` or `log::set_boxed_logger`.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use rust_daq::log_capture::{LogBuffer, LogCollector};
+/// use log::LevelFilter;
+///
+/// let buffer = LogBuffer::new();
+/// let collector = LogCollector::new(buffer.clone());
+///
+/// log::set_boxed_logger(Box::new(collector))
+///     .map(|()| log::set_max_level(LevelFilter::Trace))
+///     .expect("Failed to initialize logger");
+///
+/// // Now all logs will be captured in the buffer
+/// log::info!("Application started");
+/// ```
+#[derive(Debug)]
 pub struct LogCollector {
     buffer: LogBuffer,
 }
 
 impl LogCollector {
+    /// Creates a new log collector that writes to the given buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - Shared log buffer to store captured log entries
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::log_capture::{LogBuffer, LogCollector};
+    ///
+    /// let buffer = LogBuffer::new();
+    /// let collector = LogCollector::new(buffer.clone());
+    /// ```
     pub fn new(buffer: LogBuffer) -> Self {
         Self { buffer }
     }
 
     /// Returns a reference to the internal log buffer.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::log_capture::{LogBuffer, LogCollector};
+    ///
+    /// let buffer = LogBuffer::new();
+    /// let collector = LogCollector::new(buffer.clone());
+    /// let same_buffer = collector.buffer();
+    /// ```
     pub fn buffer(&self) -> &LogBuffer {
         &self.buffer
     }
 }
 
 impl Log for LogCollector {
+    /// Checks if a log record should be captured.
+    ///
+    /// Currently returns `true` for all log levels. Filtering should be done
+    /// in the GUI when displaying entries.
     fn enabled(&self, _metadata: &Metadata) -> bool {
         true // Capture all levels, filtering will be done in the GUI
     }
 
+    /// Captures a log record and stores it in the buffer.
+    ///
+    /// Creates a `LogEntry` from the record and pushes it to the circular buffer.
+    /// If the buffer is full (10,000 entries), the oldest entry is discarded.
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - Log record to capture
     fn log(&self, record: &Record) {
         if !self.enabled(record.metadata()) {
             return;
@@ -123,5 +302,6 @@ impl Log for LogCollector {
         });
     }
 
+    /// Flushes the log (no-op for in-memory buffer).
     fn flush(&self) {}
 }

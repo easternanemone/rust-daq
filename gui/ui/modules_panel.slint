@@ -220,13 +220,21 @@ component ModuleInstanceList inherits Rectangle {
                                     font-weight: 600;
                                 }
                                 Rectangle { horizontal-stretch: 1; }
-                                Text {
-                                    text: module.state;
-                                    font-size: 10px;
-                                    color: #666;
+                                Rectangle {
                                     background: #f0f0f0;
-                                    padding: 2px 6px;
+                                    padding-top: 2px;
+                                    padding-bottom: 2px;
+                                    padding-left: 6px;
+                                    padding-right: 6px;
                                     border-radius: 2px;
+                                    height: 18px;
+                                    
+                                    Text {
+                                        text: module.state;
+                                        font-size: 10px;
+                                        color: #666;
+                                        vertical-alignment: center;
+                                    }
                                 }
                             }
 
@@ -305,13 +313,21 @@ component DeviceAssignmentPanel inherits Rectangle {
                                 color: #999;
                             }
                             Rectangle { horizontal-stretch: 1; }
-                            if role.allows-multiple: Text {
-                                text: "Multiple OK";
-                                font-size: 9px;
-                                color: #2196f3;
+                            if role.allows-multiple: Rectangle {
                                 background: #e3f2fd;
-                                padding: 2px 6px;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+                                padding-left: 6px;
+                                padding-right: 6px;
                                 border-radius: 2px;
+                                height: 16px;
+                                
+                                Text {
+                                    text: "Multiple OK";
+                                    font-size: 9px;
+                                    color: #2196f3;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
 
@@ -322,7 +338,10 @@ component DeviceAssignmentPanel inherits Rectangle {
                                 horizontal-stretch: 1;
                                 background: #e8f5e9;
                                 border-radius: 4px;
-                                padding: 6px 8px;
+                                padding-top: 6px;
+                                padding-bottom: 6px;
+                                padding-left: 8px;
+                                padding-right: 8px;
 
                                 HorizontalBox {
                                     spacing: 8px;
@@ -343,10 +362,8 @@ component DeviceAssignmentPanel inherits Rectangle {
                                 horizontal-stretch: 1;
                                 model: available-devices;
                                 current-index: -1;
-                                current-value-changed => {
-                                    if self.current-index >= 0 {
-                                        assign-device(role.role-id, available-devices[self.current-index]);
-                                    }
+                                selected(device-name) => {
+                                    assign-device(role.role-id, device-name);
                                 }
                             }
                         }
@@ -453,11 +470,11 @@ component ConfigurationPanel inherits Rectangle {
                         }
 
                         if param.param-type == "enum": ComboBox {
-                            model: param.enum-values.split(",");
+                            model: [param.enum-values];
                             current-value: param.current-value;
                             enabled: !is-running;
-                            current-value-changed => {
-                                parameter-changed(param.param-id, self.current-value);
+                            selected(idx) => {
+                                parameter-changed(param.param-id, param.enum-values);
                             }
                         }
                     }
@@ -500,8 +517,8 @@ component EventLog inherits Rectangle {
         ScrollView {
             ListView {
                 for event[idx] in events: Rectangle {
-                    height: event.message.length > 60 ? 56px : 40px;
-                    background: idx % 2 == 0 ? transparent : #f5f5f5;
+                    height: 48px;  // Fixed height for event items
+                    background: Math.mod(idx, 2) == 0 ? transparent : #f5f5f5;
                     border-radius: 2px;
 
                     HorizontalBox {
@@ -553,7 +570,7 @@ component EventLog inherits Rectangle {
     pure function format-time(ms: int) -> string {
         let total-secs = ms / 1000;
         let mins = total-secs / 60;
-        let secs = total-secs % 60;
+        let secs = Math.mod(total-secs, 60);
         return "\{mins}:\{secs < 10 ? "0" : ""}\{secs}";
     }
 }
@@ -625,7 +642,7 @@ export component ModulesPanel inherits Rectangle {
     in property <[ModuleRole]> current-module-roles;
     in property <[ModuleParameter]> current-module-parameters;
     in property <[ModuleEvent]> current-module-events;
-    in property <string> selected-module-id: "";
+    in-out property <string> selected-module-id: "";
     in property <bool> selected-module-running: false;
 
     callback list-module-types();

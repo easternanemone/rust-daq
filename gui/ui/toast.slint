@@ -1,0 +1,293 @@
+// rust-daq GUI - Toast Notification System
+// Provides user-friendly error/warning/info feedback
+
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+// =============================================================================
+// Toast Data Model
+// =============================================================================
+
+export struct ToastMessage {
+    id: int,
+    severity: string,      // "info", "success", "warning", "error"
+    title: string,
+    message: string,
+    auto-dismiss: bool,
+    timestamp-ms: int,
+}
+
+// =============================================================================
+// Single Toast Component
+// =============================================================================
+
+component Toast inherits Rectangle {
+    in property <ToastMessage> toast;
+    in property <bool> show-toast: true;
+
+    callback dismiss(int);
+
+    property <color> bg-color: toast.severity == "error" ? #ffebee :
+                               toast.severity == "warning" ? #fff3e0 :
+                               toast.severity == "success" ? #e8f5e9 : #e3f2fd;
+    property <color> accent-color: toast.severity == "error" ? #f44336 :
+                                   toast.severity == "warning" ? #ff9800 :
+                                   toast.severity == "success" ? #4caf50 : #2196f3;
+    property <string> icon-text: toast.severity == "error" ? "✕" :
+                                 toast.severity == "warning" ? "⚠" :
+                                 toast.severity == "success" ? "✓" : "ℹ";
+
+    width: 360px;
+    height: toast.message == "" ? 48px : 72px;
+    background: bg-color;
+    border-radius: 8px;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: #0003;
+    drop-shadow-offset-y: 2px;
+
+    // Left accent bar
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 4px;
+        height: parent.height;
+        background: accent-color;
+        border-top-left-radius: 8px;
+        border-bottom-left-radius: 8px;
+    }
+
+    HorizontalBox {
+        padding: 12px;
+        padding-left: 16px;
+        spacing: 12px;
+
+        // Icon circle
+        Rectangle {
+            width: 24px;
+            height: 24px;
+            border-radius: 12px;
+            background: accent-color;
+
+            Text {
+                text: icon-text;
+                color: white;
+                font-size: 14px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Content
+        VerticalBox {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: toast.title;
+                font-weight: 600;
+                font-size: 13px;
+                color: #333;
+            }
+
+            if toast.message != "": Text {
+                text: toast.message;
+                font-size: 11px;
+                color: #666;
+                wrap: word-wrap;
+            }
+        }
+
+        // Dismiss button
+        TouchArea {
+            width: 24px;
+            height: 24px;
+
+            Rectangle {
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: parent.has-hover ? #0001 : transparent;
+
+                Text {
+                    text: "×";
+                    font-size: 18px;
+                    color: #999;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            clicked => {
+                dismiss(toast.id);
+            }
+        }
+    }
+
+    // Entry animation
+    states [
+        visible when show-toast: {
+            opacity: 1;
+            x: 0;
+            in {
+                animate opacity { duration: 200ms; easing: ease-out; }
+                animate x { duration: 200ms; easing: ease-out; }
+            }
+        }
+        hidden when !show-toast: {
+            opacity: 0;
+            x: 50px;
+            out {
+                animate opacity { duration: 150ms; easing: ease-in; }
+                animate x { duration: 150ms; easing: ease-in; }
+            }
+        }
+    ]
+}
+
+// =============================================================================
+// Toast Container - Manages stack of toasts
+// =============================================================================
+
+export component ToastContainer inherits Rectangle {
+    in property <[ToastMessage]> toasts;
+
+    callback dismiss-toast(int);
+
+    // Position in top-right corner
+    width: 380px;
+    background: transparent;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 8px;
+        alignment: start;
+
+        for toast in toasts: Toast {
+            toast: toast;
+            show-toast: true;
+            dismiss(id) => {
+                dismiss-toast(id);
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Inline Error Display (for form fields)
+// =============================================================================
+
+export component InlineError inherits Rectangle {
+    in property <string> message: "";
+    in property <bool> show: message != "";
+
+    height: show ? 20px : 0px;
+    background: transparent;
+    clip: true;
+
+    animate height { duration: 150ms; easing: ease-out; }
+
+    HorizontalBox {
+        spacing: 4px;
+        padding-left: 4px;
+
+        Text {
+            text: "⚠";
+            font-size: 10px;
+            color: #f44336;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: message;
+            font-size: 11px;
+            color: #f44336;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// =============================================================================
+// Connection Banner (persistent status bar)
+// =============================================================================
+
+export component ConnectionBanner inherits Rectangle {
+    in property <string> status: "connected";  // "connected", "connecting", "disconnected", "error"
+    in property <string> message: "";
+    in property <int> retry-count: 0;
+
+    callback retry-clicked();
+
+    property <color> bg-color: status == "connected" ? #e8f5e9 :
+                               status == "connecting" ? #fff3e0 :
+                               status == "error" ? #ffebee : #f5f5f5;
+    property <color> text-color: status == "connected" ? #2e7d32 :
+                                 status == "connecting" ? #f57c00 :
+                                 status == "error" ? #c62828 : #616161;
+    property <bool> show-retry: status == "disconnected" || status == "error";
+
+    height: (status == "connected" && message == "") ? 0px : 36px;
+    background: bg-color;
+
+    animate height { duration: 200ms; easing: ease-out; }
+
+    HorizontalBox {
+        padding: 8px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+
+        // Status indicator
+        if status == "connecting": Rectangle {
+            width: 16px;
+            height: 16px;
+
+            // Simple spinning animation placeholder
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                x: 2px;
+                y: 2px;
+                border-radius: 6px;
+                border-width: 2px;
+                border-color: #ff9800;
+                background: transparent;
+            }
+        }
+
+        if status != "connecting": Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: status == "connected" ? #4caf50 :
+                       status == "error" ? #f44336 : #9e9e9e;
+        }
+
+        // Message
+        Text {
+            text: message != "" ? message :
+                  status == "connected" ? "Connected" :
+                  status == "connecting" ? "Connecting..." :
+                  status == "error" ? "Connection error" : "Disconnected";
+            font-size: 12px;
+            color: text-color;
+            vertical-alignment: center;
+        }
+
+        // Retry count
+        if retry-count > 0 && status == "connecting": Text {
+            text: "(attempt \{retry-count})";
+            font-size: 11px;
+            color: #999;
+            vertical-alignment: center;
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        // Retry button
+        if show-retry: Button {
+            text: "Retry";
+            clicked => { retry-clicked(); }
+        }
+    }
+}

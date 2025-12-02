@@ -36,6 +36,10 @@
 //! the application will not start, preventing runtime errors due to misconfiguration.
 
 use crate::validation::{is_in_range, is_not_empty, is_valid_ip, is_valid_path, is_valid_port};
+/// Dependency graph tracking for module-instrument relationships.
+///
+/// Tracks which modules depend on which instruments to prevent removal of
+/// instruments that are still in use by active modules.
 pub mod dependencies;
 use anyhow::{Context, Result};
 use config::Config;
@@ -43,6 +47,10 @@ use figment::{providers::Serialized, Figment, Provider};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Configuration versioning and rollback system.
+///
+/// Provides automatic configuration snapshots, version history, diff generation,
+/// and rollback capabilities for configuration changes.
 pub mod versioning;
 
 impl Provider for Settings {
@@ -78,17 +86,56 @@ pub struct InstrumentConfigV3 {
     pub settings: serde_json::Value,
 }
 
+/// Top-level application configuration.
+///
+/// Aggregates all settings for logging, storage, instruments, and processors.
+/// Loaded from TOML files via `Settings::from_file()` or environment overrides.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
+    /// Logging verbosity level.
+    ///
+    /// Valid values: "error", "warn", "info", "debug", "trace".
+    /// Default: "info".
+    ///
+    /// Controls the minimum log level for the tracing/logging system.
+    /// Higher verbosity levels (trace, debug) significantly impact performance.
     pub log_level: String,
+
+    /// Application-level settings for channels, distributors, and timeouts.
+    ///
+    /// Contains configuration for internal message passing, data distribution,
+    /// and operation timeouts. See [`ApplicationSettings`] for details.
     pub application: ApplicationSettings,
+
+    /// Storage backend configuration.
+    ///
+    /// Defines where and how measurement data is persisted to disk.
+    /// See [`StorageSettings`] for details.
     pub storage: StorageSettings,
+
+    /// Legacy (V1/V2) instrument configurations.
+    ///
+    /// Map of instrument ID → type-specific configuration.
+    /// Each value is a flexible TOML table with instrument-specific fields.
+    /// The `type` field is required and determines the driver to use.
+    ///
+    /// **Deprecated**: Prefer `instruments_v3` for new configurations.
     pub instruments: HashMap<String, toml::Value>,
+
+    /// Optional data processor configurations per channel.
+    ///
+    /// Map of channel name → list of processor configs.
+    /// Each processor has a `type` field and processor-specific settings.
+    ///
+    /// If `None`, no processing pipeline is configured.
     pub processors: Option<HashMap<String, Vec<ProcessorConfig>>>,
 
-    /// V3 instruments configuration (Phase 3)
+    /// V3 instruments configuration (Phase 3+).
     ///
-    /// Backward compatible: missing [[instruments_v3]] sections result in empty vec
+    /// Strongly-typed instrument configurations using the V3 architecture.
+    /// Each entry must have an `id` and `type` field matching a factory registry key.
+    ///
+    /// Default: empty vector (backward compatible with configs lacking `[[instruments_v3]]`).
     #[serde(default)]
     pub instruments_v3: Vec<InstrumentConfigV3>,
 }
@@ -106,12 +153,50 @@ impl Default for Settings {
     }
 }
 
+/// Application-level runtime configuration.
+///
+/// Controls internal channel capacities, data distribution behavior, and
+/// operation timeouts for the entire DAQ system.
+///
+/// # Defaults
+///
+/// - `broadcast_channel_capacity`: 1024 messages
+/// - `command_channel_capacity`: 32 messages
+/// - `data_distributor`: See [`DataDistributorSettings`]
+/// - `timeouts`: See [`TimeoutSettings`]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct ApplicationSettings {
+    /// Capacity of broadcast channels for system-wide events.
+    ///
+    /// Valid range: 64-65536.
+    /// Default: 1024.
+    ///
+    /// Controls the buffer size for async broadcast channels used for
+    /// events like state changes and notifications. Larger values reduce
+    /// the risk of dropped messages under high load but increase memory usage.
     pub broadcast_channel_capacity: usize,
+
+    /// Capacity of command channels for control messages.
+    ///
+    /// Valid range: 8-4096.
+    /// Default: 32.
+    ///
+    /// Controls the buffer size for command channels used for instrument
+    /// control and orchestration. Typically lower than broadcast capacity
+    /// since commands are less frequent.
     pub command_channel_capacity: usize,
+
+    /// Data distributor configuration for measurement data streaming.
+    ///
+    /// Controls subscriber capacity, drop rate warnings, and performance metrics
+    /// for the data distribution system. See [`DataDistributorSettings`] for details.
     pub data_distributor: DataDistributorSettings,
+
+    /// Operation timeout configuration for all subsystems.
+    ///
+    /// Defines timeouts for serial I/O, network operations, SCPI commands,
+    /// and instrument lifecycle operations. See [`TimeoutSettings`] for details.
     pub timeouts: TimeoutSettings,
 }
 
@@ -134,17 +219,74 @@ fn default_command_capacity() -> usize {
     32
 }
 
+/// Data processor configuration for a single processing stage.
+///
+/// Processors are chained together to form data pipelines. Each processor
+/// has a type identifier and type-specific configuration parameters.
+///
+/// # Example TOML
+///
+/// ```toml
+/// [[processors.channel_a]]
+/// type = "moving_average"
+/// window_size = 10
+///
+/// [[processors.channel_a]]
+/// type = "threshold_filter"
+/// min = 0.1
+/// max = 10.0
+/// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProcessorConfig {
+    /// Processor type identifier.
+    ///
+    /// Must match a registered processor factory key (e.g., "moving_average",
+    /// "fft", "threshold_filter"). The type determines which processor
+    /// implementation is instantiated.
     pub r#type: String,
+
+    /// Type-specific processor configuration.
+    ///
+    /// Flexible TOML value containing processor-specific settings.
+    /// Each processor type defines its own expected fields.
+    /// The processor factory is responsible for parsing and validating this configuration.
     #[serde(flatten)]
     pub config: toml::Value,
 }
 
+/// Storage backend configuration.
+///
+/// Defines where measurement data is saved and which file format to use.
+///
+/// # Defaults
+///
+/// - `default_path`: "./data"
+/// - `default_format`: "hdf5"
+///
+/// # Supported Formats
+///
+/// - "csv" - Human-readable CSV files (feature: `storage_csv`)
+/// - "hdf5" - Hierarchical Data Format 5 (feature: `storage_hdf5`)
+/// - "arrow" - Apache Arrow/Parquet (feature: `storage_arrow`)
+/// - "matlab" - MATLAB .mat files (feature: `storage_matlab`)
+/// - "netcdf" - NetCDF format (feature: `storage_netcdf`)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct StorageSettings {
+    /// Directory path where data files are saved.
+    ///
+    /// Default: "./data"
+    ///
+    /// Can be absolute or relative. The directory will be created if it doesn't exist.
+    /// Path validation is performed during configuration loading.
     pub default_path: String,
+
+    /// Default file format for data storage.
+    ///
+    /// Default: "hdf5"
+    ///
+    /// Must be one of the supported formats (see [`StorageSettings`]).
+    /// The chosen format must have its corresponding feature flag enabled at compile time.
     pub default_format: String,
 }
 
@@ -157,12 +299,54 @@ impl Default for StorageSettings {
     }
 }
 
+/// Data distribution settings for streaming measurement data to subscribers.
+///
+/// Controls the behavior of the data distributor, which manages real-time
+/// data streaming to multiple subscribers (GUI, storage, processing pipelines).
+///
+/// # Defaults
+///
+/// - `subscriber_capacity`: 1024 messages per subscriber
+/// - `warn_drop_rate_percent`: 1.0% drop rate triggers warning
+/// - `error_saturation_percent`: 90.0% saturation triggers error
+/// - `metrics_window_secs`: 10 seconds for metrics aggregation
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct DataDistributorSettings {
+    /// Per-subscriber channel capacity in messages.
+    ///
+    /// Valid range: 64-65536.
+    /// Default: 1024.
+    ///
+    /// Each subscriber gets its own channel with this buffer size.
+    /// Larger values provide more resilience to slow subscribers but increase memory usage.
     pub subscriber_capacity: usize,
+
+    /// Drop rate percentage threshold for warnings.
+    ///
+    /// Valid range: 0.0-100.0.
+    /// Default: 1.0.
+    ///
+    /// If a subscriber drops more than this percentage of messages within the
+    /// metrics window, a warning is logged. Helps identify slow or blocked subscribers.
     pub warn_drop_rate_percent: f64,
+
+    /// Saturation percentage threshold for errors.
+    ///
+    /// Valid range: 0.0-100.0.
+    /// Default: 90.0.
+    ///
+    /// If a subscriber's channel is more than this percentage full, an error
+    /// is logged. Indicates the subscriber cannot keep up with the data rate.
     pub error_saturation_percent: f64,
+
+    /// Time window for metrics aggregation in seconds.
+    ///
+    /// Valid range: 1-3600.
+    /// Default: 10.
+    ///
+    /// Drop rates and saturation are computed over this rolling time window.
+    /// Shorter windows provide faster detection of issues; longer windows smooth out transients.
     pub metrics_window_secs: u64,
 }
 
@@ -412,14 +596,40 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Load configuration using the legacy config crate (backward compatibility)
+    /// Load configuration using the legacy config crate (backward compatibility).
     ///
-    /// This method is deprecated and will be removed once the Figment migration is complete.
-    /// Use `load_v5()` for new code.
+    /// **Deprecated**: This method is deprecated and will be removed once the
+    /// Figment migration is complete. Use [`Settings::load_v5`] for new code.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_name` - Optional config file name without extension (e.g., "default" for "config/default.toml")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Configuration file cannot be found or parsed
+    /// - Configuration validation fails
+    /// - Required fields are missing or invalid
     pub fn new(config_name: Option<&str>) -> Result<Self> {
         Self::new_legacy(config_name)
     }
 
+    /// Load configuration using the legacy config crate (backward compatibility).
+    ///
+    /// **Deprecated**: This method is deprecated and will be removed once the
+    /// Figment migration is complete. Use [`Settings::load_v5`] for new code.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_name` - Optional config file name without extension (e.g., "default" for "config/default.toml")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Configuration file cannot be found or parsed
+    /// - Configuration validation fails
+    /// - Required fields are missing or invalid
     pub fn new_legacy(config_name: Option<&str>) -> Result<Self> {
         let config_path = format!("config/{}", config_name.unwrap_or("default"));
         let s = Config::builder()

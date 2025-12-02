@@ -24,15 +24,18 @@
 //! rust-daq daemon --port 50051
 //! ```
 
+// Global allocator (Microsoft Rust Guidelines: M-MIMALLOC-APPS)
+// Use mimalloc for improved allocation performance in multi-threaded DAQ scenarios
+#[cfg(not(test))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
 use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
-
-#[cfg(feature = "networking")]
-use tonic::transport::Server;
 
 #[cfg(feature = "networking")]
 use rust_daq::grpc::proto::*;
@@ -64,6 +67,16 @@ enum Commands {
         /// gRPC port
         #[arg(long, default_value = "50051")]
         port: u16,
+
+        /// Hardware configuration file (TOML format)
+        /// If not provided, uses mock devices only
+        #[arg(long)]
+        hardware_config: Option<PathBuf>,
+
+        /// Use the default lab hardware configuration (maitai@100.117.5.12)
+        /// Mutually exclusive with --hardware-config
+        #[arg(long, conflicts_with = "hardware_config")]
+        lab_hardware: bool,
     },
 
     /// Remote control commands (connect to daemon)
@@ -135,7 +148,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run { script, config } => run_script_once(script, config).await,
-        Commands::Daemon { port } => start_daemon(port).await,
+        Commands::Daemon { port, hardware_config, lab_hardware } => {
+            start_daemon(port, hardware_config, lab_hardware).await
+        }
         #[cfg(feature = "networking")]
         Commands::Client(cmd) => handle_client_command(cmd).await,
     }
@@ -188,7 +203,7 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
     }
 }
 
-async fn start_daemon(port: u16) -> Result<()> {
+async fn start_daemon(port: u16, hardware_config: Option<PathBuf>, lab_hardware: bool) -> Result<()> {
     println!("🌐 Starting Headless DAQ Daemon");
     println!("   Architecture: V5 (Headless-First + Scriptable)");
     println!("   gRPC Port: {}", port);
@@ -226,32 +241,52 @@ async fn start_daemon(port: u16) -> Result<()> {
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]
     {
-        use rust_daq::grpc::proto::control_service_server::ControlServiceServer;
-        use rust_daq::grpc::server::DaqServer;
+        use rust_daq::grpc::start_server_with_hardware;
+        use rust_daq::hardware::registry::{
+            create_lab_registry, create_mock_registry, create_registry_from_file,
+        };
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
 
         let addr = format!("0.0.0.0:{}", port).parse()?;
 
-        // Pass RingBuffer to DaqServer if storage features enabled
-        #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
-        let server = DaqServer::new(ring_buffer);
+        // Create device registry based on configuration
+        println!("🔧 Initializing hardware registry...");
+        let registry = if let Some(config_path) = hardware_config {
+            println!("   Loading from config: {}", config_path.display());
+            create_registry_from_file(&config_path).await?
+        } else if lab_hardware {
+            println!("   Using lab hardware configuration (maitai@100.117.5.12)");
+            create_lab_registry().await?
+        } else {
+            println!("   Using mock devices (no hardware config specified)");
+            create_mock_registry().await?
+        };
 
-        #[cfg(not(all(feature = "storage_hdf5", feature = "storage_arrow")))]
-        let server = DaqServer::new();
+        let device_count = registry.len();
+        println!("   Registered {} device(s)", device_count);
+        for info in registry.list_devices() {
+            println!("     - {}: {} ({:?})", info.id, info.name, info.capabilities);
+        }
+        println!();
+
+        let registry = Arc::new(RwLock::new(registry));
 
         println!("✅ gRPC server ready");
         println!("   Listening on: {}", addr);
         println!("   Features:");
         println!("     - Script upload & execution");
-        println!("     - Remote hardware control");
-        println!("     - Real-time status streaming");
+        println!("     - Remote hardware control (HardwareService)");
+        println!("     - Module system (ModuleService)");
+        println!("     - Coordinated scans (ScanService)");
+        println!("     - Preset save/load (PresetService)");
         println!();
         println!("📡 Daemon running - Press Ctrl+C to stop");
         println!();
 
-        Server::builder()
-            .add_service(ControlServiceServer::new(server))
-            .serve(addr)
-            .await?;
+        start_server_with_hardware(addr, registry)
+            .await
+            .map_err(|e| anyhow::anyhow!("gRPC server error: {}", e))?;
 
         println!("\n👋 Daemon shutting down...");
         Ok(())
@@ -260,6 +295,9 @@ async fn start_daemon(port: u16) -> Result<()> {
     // Fallback if networking feature not enabled
     #[cfg(not(feature = "networking"))]
     {
+        // Silence unused variable warnings
+        let _ = (hardware_config, lab_hardware);
+        
         println!("⚠️  Networking feature not enabled - daemon mode requires 'networking' feature");
         println!("   Rebuild with: cargo build --features networking");
         println!();

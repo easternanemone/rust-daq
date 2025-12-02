@@ -25,11 +25,19 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+Library/
 
 # Build
 dist/
 build/
 *.tsbuildinfo
+*.rlib
+
+# Backups and Temp
+*.toml.backup
+check_output.txt
+test_compile_output.txt
+.beads-backup*/
 
 
 # Removed Windows wrapper files per user request
@@ -88,3 +96,11 @@ coordination/orchestration/*
 claude-flow
 # Removed Windows wrapper files per user request
 hive-mind-prompt-*.txt
+.codemachine/
+.codemachine/logs
+.codemachine/memory
+.codemachine/prompts
+.codemachine/agents
+.codemachine/template.json
+proto/__pycache__/
+zen_generated.code

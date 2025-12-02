@@ -1,84 +1,209 @@
 # rust-daq
 
-`rust-daq` is a high-performance, headless-first data acquisition (DAQ) system written in Rust, designed for scientific and industrial applications.
+A high-performance, headless-first data acquisition (DAQ) system written in Rust, designed for scientific and industrial applications.
 
-## Architecture - V5 Headless-First Design
+![GUI Screenshot](docs/images/gui-screenshot.png)
 
-**Status**: ✅ V5 architecture fully implemented (as of 2025-11-20)
+## Features
 
-**rust-daq v5.0** implements a modern, script-driven DAQ system with complete separation of core daemon from UI:
+- **Headless-First Architecture**: Core daemon runs independently of any UI
+- **Capability-Based Hardware Abstraction**: Composable traits for motion, sensing, triggering, and camera control
+- **YAML Plugin System**: Define new instruments without writing code
+- **Slint GUI**: Modern, cross-platform desktop interface connecting via gRPC
+- **High-Performance Data Pipeline**: Memory-mapped ring buffers with Arrow IPC and HDF5 persistence
+- **Script-Driven Automation**: Rhai scripting for experiment control
+- **Remote Control**: Full gRPC API for network-transparent operation
 
-- 🎯 **Capability-based hardware**: Atomic traits (`Readable`, `Movable`, `Triggerable`) for composable instruments
-- 📝 **Script-driven**: Rhai and Python engines for flexible experiment logic without recompilation
-- 🌐 **Remote-first**: gRPC API for headless operation and network control
-- 📊 **High-throughput**: Arrow batching + HDF5 storage for scientific data
-- 🔒 **Type-safe**: Pure Rust with async throughout, zero-copy data access
-- 🛡️ **Crash resilient**: UI crashes don't stop experiments
+## Architecture
 
-**All legacy V1-V4 architectures have been removed** as of November 2025. See [V5_TRANSITION_COMPLETE.md](./docs/architecture/V5_TRANSITION_COMPLETE.md) for migration details.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         GUI (Slint)                             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │
+│  │  Move   │ │ Camera  │ │  Scan   │ │ Modules │ │  Data   │   │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘   │
+└───────┼──────────┼─────────┼─────────┼───────────┼──────────────┘
+        │          │         │         │           │
+        └──────────┴─────────┴─────────┴───────────┘
+                             │ gRPC
+┌────────────────────────────┴────────────────────────────────────┐
+│                        DAQ Daemon                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │   Hardware   │  │    Plugin    │  │   Storage    │           │
+│  │   Registry   │  │   Factory    │  │   Service    │           │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
+│         │                 │                 │                    │
+│  ┌──────┴─────────────────┴─────────────────┴──────┐            │
+│  │              Capability Traits                   │            │
+│  │  Movable │ Readable │ Triggerable │ FrameProducer │           │
+│  └──────────────────────────────────────────────────┘            │
+└──────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                         Hardware                                  │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐    │
+│  │ ELL14   │ │ ESP300  │ │ MaiTai  │ │ PVCAM   │ │ Plugin  │    │
+│  │(Thorlab)│ │(Newport)│ │ (Laser) │ │(Camera) │ │ Drivers │    │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘    │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-### V5 Core Principles
+## Quick Start
 
-1. **Headless-First**: Core daemon runs independently of any UI
-2. **Capability Composition**: Hardware implements only capabilities it supports
-3. **Script Extensibility**: Scientists write experiment logic in Rhai/Python
-4. **Network Transparency**: Remote control via gRPC from any platform
-5. **Zero-Copy Data**: Memory-mapped Arrow buffers accessible from Python
-
-## Quick Start (Headless-First Architecture)
-
-The system now supports a scriptable, headless-first architecture using Rhai scripts:
+### Build
 
 ```bash
-# Run a simple stage scan
-cargo run -- run examples/simple_scan.rhai
+# Build with default features
+cargo build
 
-# Run a triggered acquisition workflow
-cargo run -- run examples/triggered_acquisition.rhai
+# Build with all features (all storage backends and hardware drivers)
+cargo build --all-features
 
-# Start daemon for remote control (Phase 3 - not yet implemented)
+# Build the GUI
+cargo build --package rust-daq-gui
+```
+
+### Run
+
+```bash
+# Start the daemon
 cargo run -- daemon --port 50051
 
-# Show help
-cargo run -- --help
+# Run a Rhai script
+cargo run -- run examples/simple_scan.rhai
+
+# Launch the GUI (connects to daemon)
+cargo run --package rust-daq-gui
 ```
 
-## Example Scripts
+### Test
 
-### Simple Scan (`examples/simple_scan.rhai`)
-```rhai
-// Simple stage scan experiment
-print("Starting scan...");
+```bash
+# Run all tests (122 passing)
+cargo test
 
-for i in 0..10 {
-    let pos = i * 1.0;
-    stage.move_abs(pos);
-    print(`Moved to ${pos}mm`);
-    sleep(0.1);
-}
-
-print("Scan complete!");
+# Run specific test suite
+cargo test --test plugin_system_integration
 ```
 
-### Triggered Acquisition (`examples/triggered_acquisition.rhai`)
-```rhai
-// Camera triggered acquisition
-print("Setting up acquisition...");
+## Capability Traits
 
-camera.arm();
-print("Camera armed");
+Hardware devices implement composable capability traits:
 
-for i in 0..5 {
-    let pos = i * 2.0;
-    stage.move_abs(pos);
-    stage.wait_settled();
-    camera.trigger();
-    print(`Frame ${i+1} captured at ${pos}mm`);
-}
+| Trait | Description | Example Devices |
+|-------|-------------|-----------------|
+| `Movable` | Position control | Stages, rotation mounts |
+| `Readable` | Scalar measurements | Power meters, temperature sensors |
+| `Settable` | Parameter adjustment | Setpoint controls |
+| `Switchable` | On/off control | Shutters, heaters |
+| `Triggerable` | External triggering | Cameras, pulse generators |
+| `ExposureControl` | Camera exposure | Scientific cameras |
+| `FrameProducer` | Image acquisition | PVCAM cameras |
+| `Actionable` | One-shot commands | Home, calibrate |
+| `Loggable` | Continuous logging | Any readable device |
 
-print("Acquisition complete!");
+## Hardware Drivers
+
+### Native Drivers
+
+| Driver | Device | Capabilities |
+|--------|--------|--------------|
+| `ell14` | Thorlabs Elliptec | Movable |
+| `esp300` | Newport ESP300 | Movable |
+| `maitai` | Spectra-Physics MaiTai | Readable, Settable |
+| `pvcam` | Photometrics Cameras | FrameProducer, ExposureControl, Triggerable |
+| `newport_1830c` | Newport 1830-C | Readable |
+
+### Plugin System
+
+Define new instruments with YAML:
+
+```yaml
+# plugins/my-device.yaml
+metadata:
+  id: "my-device"
+  name: "My Custom Device"
+  version: "1.0.0"
+  driver_type: "serial_scpi"
+
+protocol:
+  baud_rate: 9600
+  termination: "\r\n"
+
+capabilities:
+  readable:
+    - name: "temperature"
+      command: "TEMP?"
+      unit: "C"
+  movable:
+    axes:
+      - name: "x"
+        unit: "mm"
+        min: 0.0
+        max: 100.0
+    set_cmd: "POS:{axis} {val}"
+    get_cmd: "POS:{axis}?"
 ```
 
-## Getting Started
+## Data Pipeline ("The Mullet Strategy")
 
-To get started with the development, please see the [Getting Started Guide](./docs/getting_started/rust-daq-getting-started.md). Note that some of this documentation may be outdated until the V4 refactor is complete.
+- **Party in front**: Memory-mapped ring buffer for high-throughput Arrow IPC writes (10k+ writes/sec)
+- **Business in back**: Background HDF5 writer for Python/MATLAB/Igor compatibility (1 Hz flush)
+
+```rust
+// Data flows: Hardware → Ring Buffer → HDF5
+let ring = RingBuffer::create("/dev/shm/daq_data", capacity)?;
+ring.write(&measurements)?;  // Fast, non-blocking
+
+// Background writer handles persistence
+let writer = HDF5Writer::new(ring, output_path)?;
+writer.start_background_flush(Duration::from_secs(1));
+```
+
+## gRPC Services
+
+| Service | Description |
+|---------|-------------|
+| `HardwareService` | Device discovery, motion control, value streaming |
+| `ScanService` | Coordinated multi-axis scanning |
+| `ModuleService` | Module lifecycle and configuration |
+| `PresetService` | Hardware state presets |
+| `StorageService` | Recording control and data export |
+| `PluginService` | Dynamic plugin loading and spawning |
+| `RunEngineService` | Plan queue execution (experimental) |
+
+## GUI Panels
+
+The Slint-based GUI provides:
+
+- **Move Panel**: Control movable devices with position display
+- **Viewer Panel**: Real-time value monitoring
+- **Camera Panel**: Frame preview and exposure control
+- **Scan Panel**: Configure and execute multi-axis scans
+- **Modules Panel**: Create, configure, and monitor modules
+- **Presets Panel**: Save and load hardware configurations
+- **Experiments Panel**: Queue and execute plans
+- **Data Panel**: Recording status and export
+
+## Documentation
+
+- [Architecture Overview](./docs/architecture/)
+- [CLI Guide](./docs/guides/cli_guide.md)
+- [PVCAM Operator Guide](./docs/instruments/PVCAM_OPERATOR_GUIDE.md)
+- [Morph Integration](./docs/MORPH_INTEGRATION.md)
+
+## Project Status
+
+**Build**: ✅ Passing  
+**Tests**: ✅ 122 passing  
+**Architecture**: V5 Headless-First (stable)
+
+### Known Issues
+
+- Frame streaming in plugin system defaults to mock mode (bd-fsx5)
+- Some plugin handles require explicit mock flag (bd-dks4)
+
+## License
+
+[License information here]

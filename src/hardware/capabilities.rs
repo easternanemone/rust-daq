@@ -286,16 +286,44 @@ pub trait FrameProducer: Send + Sync {
 
     /// Take the frame receiver for consuming streamed frames
     ///
+    /// **DEPRECATED**: Use `subscribe_frames()` instead for multi-subscriber support.
+    ///
     /// This can only be called once - subsequent calls return None.
     /// Call this BEFORE `start_stream()` to receive frames.
     ///
     /// # Returns
     /// - Some(receiver) if receiver is available
     /// - None if receiver was already taken or not supported by this device
+    #[deprecated(since = "0.2.0", note = "Use subscribe_frames() for multi-subscriber support")]
     async fn take_frame_receiver(
         &self,
     ) -> Option<tokio::sync::mpsc::Receiver<crate::hardware::Frame>> {
         // Default: no frame receiver support
+        None
+    }
+
+    /// Subscribe to the frame stream
+    ///
+    /// Returns a broadcast receiver that will receive `Arc<Frame>` for each captured frame.
+    /// Multiple subscribers can receive the same frames without copying pixel data.
+    /// Can be called multiple times to create additional subscribers.
+    ///
+    /// # Returns
+    /// - Some(receiver) if subscription succeeded
+    /// - None if streaming is not supported by this device
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let rx = camera.subscribe_frames().await?;
+    /// while let Ok(frame) = rx.recv().await {
+    ///     // Process Arc<Frame> without copying pixel data
+    ///     println!("Frame: {}x{}", frame.width, frame.height);
+    /// }
+    /// ```
+    async fn subscribe_frames(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<std::sync::Arc<crate::hardware::Frame>>> {
+        // Default: no broadcast support
         None
     }
 
@@ -475,6 +503,103 @@ pub trait EmissionControl: Send + Sync {
     async fn is_emission_enabled(&self) -> Result<bool> {
         anyhow::bail!("Emission state query not supported by this device")
     }
+}
+
+/// Capability: Settable (Configurable Parameters)
+///
+/// Devices that have parameters which can be set and optionally queried.
+///
+/// # Contract
+/// - `set_value()` sets the parameter to a new value.
+/// - `get_value()` queries the current value of the parameter.
+/// - Values are represented as `serde_json::Value` to allow flexibility (f64, i64, bool, string, enum).
+/// - Methods take `&self` (not `&mut self`) to allow use with `Arc<dyn Settable>`.
+///   Implementations should use interior mutability (e.g., `Mutex`) for state changes.
+#[async_trait]
+pub trait Settable: Send + Sync {
+    /// Set a named parameter to a new value.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the parameter to set.
+    /// * `value` - The new value for the parameter.
+    async fn set_value(&self, name: &str, value: serde_json::Value) -> Result<()>;
+
+    /// Get the current value of a named parameter.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the parameter to query.
+    async fn get_value(&self, name: &str) -> Result<serde_json::Value> {
+        anyhow::bail!("Get value for '{}' not supported by this device", name)
+    }
+}
+
+/// Capability: Switchable (On/Off States)
+///
+/// Devices that can be turned on or off.
+///
+/// # Contract
+/// - `turn_on()` activates the device/feature.
+/// - `turn_off()` deactivates the device/feature.
+/// - `is_on()` queries the current on/off state.
+#[async_trait]
+pub trait Switchable: Send + Sync {
+    /// Turn on a named switchable feature.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the feature to turn on.
+    async fn turn_on(&mut self, name: &str) -> Result<()>;
+
+    /// Turn off a named switchable feature.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the feature to turn off.
+    async fn turn_off(&mut self, name: &str) -> Result<()>;
+
+    /// Query the on/off state of a named switchable feature.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the feature to query.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the feature is on.
+    /// - `Ok(false)` if the feature is off.
+    /// - `Err` if the state cannot be determined or is not supported.
+    async fn is_on(&self, name: &str) -> Result<bool> {
+        anyhow::bail!("State query for '{}' not supported by this device", name)
+    }
+}
+
+/// Capability: Actionable (One-Time Commands)
+///
+/// Devices that can perform one-time actions.
+///
+/// # Contract
+/// - `execute_action()` triggers a specific action.
+/// - Actions are typically fire-and-forget or block until completion.
+#[async_trait]
+pub trait Actionable: Send + Sync {
+    /// Execute a named one-time action.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the action to execute.
+    async fn execute_action(&mut self, name: &str) -> Result<()>;
+}
+
+/// Capability: Loggable (Static Metadata)
+///
+/// Devices that provide static, typically read-only, identification or configuration data.
+/// This data is usually read once at initialization and logged.
+///
+/// # Contract
+/// - `get_log_value()` retrieves a specific piece of loggable data.
+/// - Values are typically strings (e.g., serial number, firmware version).
+#[async_trait]
+pub trait Loggable: Send + Sync {
+    /// Get a named piece of static loggable data.
+    ///
+    /// # Arguments
+    /// * `name` - The identifier for the loggable data (e.g., "serial_number", "firmware_version").
+    async fn get_log_value(&self, name: &str) -> Result<String>;
 }
 
 // =============================================================================

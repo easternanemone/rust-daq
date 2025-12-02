@@ -60,11 +60,8 @@ async fn test_streaming_frame_delivery() {
         .await
         .expect("Failed to set exposure");
 
-    // Get frame receiver
-    let mut rx = camera
-        .take_frame_receiver()
-        .await
-        .expect("Failed to get frame receiver");
+    // Subscribe to frame broadcasts (supports multiple subscribers)
+    let mut rx = camera.subscribe_frames();
 
     // Start streaming
     camera.start_stream().await.expect("Failed to start stream");
@@ -78,7 +75,7 @@ async fn test_streaming_frame_delivery() {
 
     while start.elapsed() < test_duration {
         match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
-            Ok(Some(frame)) => {
+            Ok(Ok(frame)) => {
                 frame_count += 1;
                 if frame_count == 1 {
                     println!(
@@ -89,7 +86,7 @@ async fn test_streaming_frame_delivery() {
                     );
                 }
             }
-            Ok(None) => {
+            Ok(Err(_)) => {
                 println!("Channel closed");
                 break;
             }
@@ -147,14 +144,11 @@ async fn test_streaming_backpressure() {
     println!("Streaming without consuming for 500ms...");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Now consume
-    let mut rx = camera
-        .take_frame_receiver()
-        .await
-        .expect("Failed to get frame receiver");
+    // Now subscribe and consume
+    let mut rx = camera.subscribe_frames();
 
     let mut consumed = 0;
-    while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+    while let Ok(Ok(_)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
         consumed += 1;
         if consumed >= 10 {
             break;
@@ -185,10 +179,7 @@ async fn test_streaming_stability() {
         .await
         .expect("Failed to set exposure");
 
-    let mut rx = camera
-        .take_frame_receiver()
-        .await
-        .expect("Failed to get frame receiver");
+    let mut rx = camera.subscribe_frames();
 
     camera.start_stream().await.expect("Failed to start stream");
 
@@ -202,7 +193,7 @@ async fn test_streaming_stability() {
 
     while start.elapsed() < test_duration {
         match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
-            Ok(Some(frame)) => {
+            Ok(Ok(frame)) => {
                 frame_count += 1;
 
                 // Validate frame
@@ -221,7 +212,7 @@ async fn test_streaming_stability() {
                     last_report = Instant::now();
                 }
             }
-            Ok(None) => {
+            Ok(Err(_)) => {
                 println!("Channel closed unexpectedly");
                 errors += 1;
                 break;

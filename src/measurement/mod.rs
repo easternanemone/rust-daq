@@ -1,4 +1,42 @@
-// src/measurement/mod.rs
+//! Measurement types and data distribution for instrument readings.
+//!
+//! This module provides the core abstractions for handling measurements from
+//! various instruments, including power meters, stages, and cameras. It includes
+//! a high-performance fan-out data distributor for broadcasting measurements to
+//! multiple consumers without backpressure.
+//!
+//! # Architecture
+//!
+//! ```text
+//! Instrument → DataDistributor → [Subscriber 1, Subscriber 2, ...]
+//!                                        ↓              ↓
+//!                                   Storage        GUI/Analysis
+//! ```
+//!
+//! # Key Components
+//!
+//! - [`DataDistributor`] - Non-blocking broadcast system for measurements
+//! - [`Measure`] - Legacy trait for instrument measurements (deprecated)
+//! - [`PowerMeasure`] - Trait for power meter readings
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use rust_daq::measurement::DataDistributor;
+//! use std::sync::Arc;
+//!
+//! # async fn example() -> anyhow::Result<()> {
+//! let distributor = DataDistributor::<Arc<f64>>::new(100);
+//!
+//! // Subscribe multiple consumers
+//! let mut storage_rx = distributor.subscribe("storage").await;
+//! let mut gui_rx = distributor.subscribe("gui").await;
+//!
+//! // Broadcast measurements
+//! distributor.broadcast(Arc::new(42.5)).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -10,9 +48,13 @@ use tokio::sync::{mpsc, Mutex};
 /// New code should use V2/V3 architecture with `daq_core::Measurement` enum.
 #[async_trait]
 pub trait Measure: Send + Sync {
+    /// The data type produced by this measurement source.
     type Data: Send + Sync + Clone;
 
+    /// Takes a single measurement and returns the result.
     async fn measure(&mut self) -> Result<Self::Data>;
+    
+    /// Returns a channel receiver for continuous measurement streaming.
     async fn data_stream(&self) -> Result<mpsc::Receiver<std::sync::Arc<Self::Data>>>;
 }
 
@@ -29,15 +71,64 @@ pub struct DataDistributor<T: Clone> {
     config: DataDistributorConfig,
 }
 
+/// Configuration for the fan-out data distributor.
+///
+/// Controls channel sizing, drop detection thresholds, and metrics collection
+/// behavior. These parameters balance memory usage against backpressure tolerance
+/// and observability granularity.
+///
+/// # Example
+///
+/// ```rust
+/// use rust_daq::measurement::DataDistributorConfig;
+/// use std::time::Duration;
+///
+/// // Conservative config for low-latency systems
+/// let config = DataDistributorConfig::with_thresholds(
+///     1000,                      // 1000 message buffer
+///     0.1,                       // Warn at 0.1% drop rate
+///     80.0,                      // Error at 80% channel saturation
+///     Duration::from_secs(5),    // 5-second metrics window
+/// );
+/// ```
 #[derive(Clone, Debug)]
 pub struct DataDistributorConfig {
+    /// Maximum number of messages buffered per subscriber channel.
+    ///
+    /// Higher values reduce message drops for bursty workloads but increase
+    /// memory usage. Recommended: 100-1000 for typical acquisition rates.
     pub capacity: usize,
+
+    /// Drop rate threshold (percentage) that triggers a warning log.
+    ///
+    /// Measured over the [`metrics_window`](Self::metrics_window). Set to 0.0
+    /// to disable warnings. Typical values: 0.1-1.0.
     pub warn_drop_rate_percent: f64,
+
+    /// Channel occupancy threshold (percentage) that triggers an error log.
+    ///
+    /// When a subscriber's channel fills beyond this point, an error is logged
+    /// once per metrics window. Set to 100.0 to disable. Typical values: 80-95.
     pub error_saturation_percent: f64,
+
+    /// Time window for computing drop rate and saturation metrics.
+    ///
+    /// Shorter windows provide faster alerting but may produce false positives
+    /// from transient spikes. Typical values: 5-60 seconds.
     pub metrics_window: Duration,
 }
 
 impl DataDistributorConfig {
+    /// Creates a configuration with default thresholds and a specified channel capacity.
+    ///
+    /// Defaults:
+    /// - `warn_drop_rate_percent`: 1.0 (warn if >1% of messages dropped)
+    /// - `error_saturation_percent`: 90.0 (error if channel >90% full)
+    /// - `metrics_window`: 10 seconds
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Buffer size per subscriber channel. Must be > 0.
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity,
@@ -47,6 +138,18 @@ impl DataDistributorConfig {
         }
     }
 
+    /// Creates a configuration with custom thresholds for fine-grained control.
+    ///
+    /// Use this constructor when the default thresholds don't match your
+    /// system's characteristics (e.g., very high data rates, strict latency
+    /// requirements, or constrained memory).
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Buffer size per subscriber channel
+    /// * `warn_drop_rate_percent` - Drop rate (0-100) triggering warnings
+    /// * `error_saturation_percent` - Occupancy (0-100) triggering errors
+    /// * `metrics_window` - Time window for aggregating metrics
     pub fn with_thresholds(
         capacity: usize,
         warn_drop_rate_percent: f64,
@@ -62,13 +165,43 @@ impl DataDistributorConfig {
     }
 }
 
+/// Performance and health metrics snapshot for a single subscriber.
+///
+/// Provides visibility into message delivery success rates, channel backpressure,
+/// and overall subscriber health. Used for diagnostics and system monitoring.
+///
+/// # Interpretation
+///
+/// - `drop_rate_percent > 5%` - Subscriber is consistently too slow
+/// - `channel_occupancy / channel_capacity > 0.8` - Backpressure building
+/// - `total_dropped > 1000` - Consider increasing channel capacity
 #[derive(Clone, Debug, Default)]
 pub struct SubscriberMetricsSnapshot {
+    /// Subscriber name (as provided to [`DataDistributor::subscribe`]).
     pub subscriber: String,
+
+    /// Total number of messages successfully delivered since subscriber creation.
     pub total_sent: u64,
+
+    /// Total number of messages dropped due to full channel since subscriber creation.
+    ///
+    /// Drops occur when the subscriber can't keep up with the broadcast rate.
     pub total_dropped: u64,
+
+    /// Current drop rate as a percentage (0-100).
+    ///
+    /// Calculated as `(total_dropped / (total_sent + total_dropped)) * 100`.
     pub drop_rate_percent: f64,
+
+    /// Current number of messages waiting in the subscriber's channel.
+    ///
+    /// A value close to [`channel_capacity`](Self::channel_capacity) indicates
+    /// the subscriber is falling behind.
     pub channel_occupancy: usize,
+
+    /// Maximum capacity of the subscriber's channel.
+    ///
+    /// Configured via [`DataDistributorConfig::capacity`].
     pub channel_capacity: usize,
 }
 
@@ -163,12 +296,50 @@ impl SubscriberMetrics {
 }
 
 impl<T: Clone> DataDistributor<T> {
-    /// Creates a new DataDistributor with specified channel capacity
+    /// Creates a new DataDistributor with default configuration.
+    ///
+    /// Uses default warning and error thresholds (1% drop rate, 90% saturation)
+    /// with a 10-second metrics window.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Buffer size per subscriber channel. Typical values: 100-1000.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::measurement::DataDistributor;
+    ///
+    /// let distributor = DataDistributor::<u32>::new(500);
+    /// ```
     pub fn new(capacity: usize) -> Self {
         Self::with_config(DataDistributorConfig::new(capacity))
     }
 
-    /// Creates a new DataDistributor with detailed observability configuration
+    /// Creates a new DataDistributor with custom observability configuration.
+    ///
+    /// Allows fine-grained control over alerting thresholds and metrics collection.
+    /// Use this when default thresholds don't match your system's performance
+    /// characteristics.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Complete configuration including capacity and thresholds
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rust_daq::measurement::{DataDistributor, DataDistributorConfig};
+    /// use std::time::Duration;
+    ///
+    /// let config = DataDistributorConfig::with_thresholds(
+    ///     1000,
+    ///     0.5,
+    ///     85.0,
+    ///     Duration::from_secs(5),
+    /// );
+    /// let distributor = DataDistributor::<f64>::with_config(config);
+    /// ```
     pub fn with_config(config: DataDistributorConfig) -> Self {
         Self {
             subscribers: Mutex::new(Vec::new()),
@@ -244,12 +415,57 @@ impl<T: Clone> DataDistributor<T> {
         Ok(())
     }
 
-    /// Returns the number of active subscribers
+    /// Returns the current number of active subscribers.
+    ///
+    /// Subscribers are automatically removed when their receiver is dropped,
+    /// so this count reflects only live connections.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::measurement::DataDistributor;
+    /// # async fn example() {
+    /// let distributor = DataDistributor::<i32>::new(100);
+    /// let rx1 = distributor.subscribe("client1").await;
+    /// assert_eq!(distributor.subscriber_count().await, 1);
+    ///
+    /// drop(rx1);
+    /// distributor.broadcast(42).await.unwrap(); // Triggers cleanup
+    /// assert_eq!(distributor.subscriber_count().await, 0);
+    /// # }
+    /// ```
     pub async fn subscriber_count(&self) -> usize {
         self.subscribers.lock().await.len()
     }
 
-    /// Returns a snapshot of current metrics for each subscriber
+    /// Returns a snapshot of current metrics for all active subscribers.
+    ///
+    /// Useful for monitoring dashboards, health checks, and debugging
+    /// performance issues. The snapshot is point-in-time and may change
+    /// immediately after this call returns.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rust_daq::measurement::DataDistributor;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let distributor = DataDistributor::<u32>::new(100);
+    /// let _rx = distributor.subscribe("monitor").await;
+    ///
+    /// // Broadcast some data...
+    /// distributor.broadcast(1).await?;
+    ///
+    /// // Check subscriber health
+    /// for metrics in distributor.metrics_snapshot().await {
+    ///     println!("{}: {:.2}% dropped, {} queued",
+    ///         metrics.subscriber,
+    ///         metrics.drop_rate_percent,
+    ///         metrics.channel_occupancy
+    ///     );
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn metrics_snapshot(&self) -> Vec<SubscriberMetricsSnapshot> {
         let subscribers = self.subscribers.lock().await;
         subscribers
@@ -275,8 +491,11 @@ impl<T: Clone> DataDistributor<T> {
     }
 }
 
+/// Legacy data point structures for V1/V2 compatibility.
 pub mod datapoint;
+/// Instrument measurement types and conversion utilities.
 pub mod instrument_measurement;
+/// Power measurement types with unit support.
 pub mod power;
 
 pub use instrument_measurement::InstrumentMeasurement;

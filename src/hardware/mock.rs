@@ -22,6 +22,7 @@ use tokio::time::{sleep, Duration};
 use crate::hardware::capabilities::{
     ExposureControl, FrameProducer, Movable, Readable, Triggerable,
 };
+use crate::hardware::Frame;
 
 // =============================================================================
 // MockStage - Simulated Motion Stage
@@ -127,19 +128,18 @@ impl Movable for MockStage {
 
 /// Mock camera with trigger and streaming support
 ///
-/// Simulates a triggered camera with:
+/// Simulates a camera with:
 /// - Configurable resolution
-/// - 33ms frame readout time (30fps)
-/// - Arm/trigger lifecycle
-/// - Frame counting for diagnostics
+/// - 33ms frame readout (30fps)
+/// - Arm/disarm triggering
+/// - Start/stop streaming with broadcast support
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// let camera = MockCamera::new(1920, 1080);
+/// let camera = MockCamera::new(640, 480);
 /// camera.arm().await?;
-/// camera.trigger().await?; // Takes ~33ms
-/// assert_eq!(camera.resolution(), (1920, 1080));
+/// camera.trigger().await?;
 /// ```
 pub struct MockCamera {
     resolution: (u32, u32),
@@ -147,6 +147,8 @@ pub struct MockCamera {
     armed: Arc<RwLock<bool>>,
     streaming: Arc<RwLock<bool>>,
     exposure_s: Arc<RwLock<f64>>,
+    /// Broadcast channel for frame streaming
+    frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
 }
 
 impl MockCamera {
@@ -156,12 +158,14 @@ impl MockCamera {
     /// * `width` - Frame width in pixels
     /// * `height` - Frame height in pixels
     pub fn new(width: u32, height: u32) -> Self {
+        let (frame_tx, _) = tokio::sync::broadcast::channel(16);
         Self {
             resolution: (width, height),
             frame_count: std::sync::atomic::AtomicU64::new(0),
             armed: Arc::new(RwLock::new(false)),
             streaming: Arc::new(RwLock::new(false)),
             exposure_s: Arc::new(RwLock::new(0.033)),
+            frame_tx,
         }
     }
 
@@ -246,6 +250,38 @@ impl FrameProducer for MockCamera {
 
         println!("MockCamera: Stream started");
         *self.streaming.write().await = true;
+
+        // Spawn background task to generate frames at ~30fps
+        let streaming = Arc::clone(&self.streaming);
+        let frame_tx = self.frame_tx.clone();
+        let frame_count = self.frame_count.load(std::sync::atomic::Ordering::SeqCst);
+        let resolution = self.resolution;
+
+        tokio::spawn(async move {
+            let mut frame_num = frame_count;
+            loop {
+                // Check if still streaming
+                if !*streaming.read().await {
+                    break;
+                }
+
+                // Generate a mock frame with test pattern
+                frame_num += 1;
+                let (width, height) = resolution;
+                let buffer: Vec<u16> = (0..(width * height))
+                    .map(|i| ((i + frame_num as u32) % 65536) as u16)
+                    .collect();
+
+                let frame = Arc::new(Frame::new(width, height, buffer));
+
+                // Broadcast (ignore errors if no receivers)
+                let _ = frame_tx.send(frame);
+
+                // ~30fps
+                sleep(Duration::from_millis(33)).await;
+            }
+        });
+
         Ok(())
     }
 
@@ -271,6 +307,10 @@ impl FrameProducer for MockCamera {
 
     fn frame_count(&self) -> u64 {
         self.frame_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn subscribe_frames(&self) -> Option<tokio::sync::broadcast::Receiver<Arc<Frame>>> {
+        Some(self.frame_tx.subscribe())
     }
 }
 

@@ -58,6 +58,7 @@ pub mod parameter;
 // V5 Headless-First Architecture (bd-oq51)
 pub mod hardware; // Phase 1: Capability traits + Mock implementations
 pub mod scripting; // Phase 2: Rhai scripting engine
+pub mod experiment; // Phase 4: RunEngine experiment orchestration (bd-73yh)
 
 // Measurement data types (shared between scripting and grpc modules)
 pub mod measurement_types;
@@ -69,3 +70,7 @@ pub mod grpc;
 // Phase 3B: Module system for reusable experiment components (bd-c0ai)
 #[cfg(feature = "modules")]
 pub mod modules;
+
+// Procedure framework for calibration and automation (bd-r0iq)
+#[cfg(feature = "modules")]
+pub mod procedures;
