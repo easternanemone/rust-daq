@@ -70,6 +70,8 @@ pub use proto::{
     DeviceStateUpdate, ListDevicesRequest, ListDevicesResponse, MoveRequest, MoveResponse,
     PositionUpdate, ReadValueRequest, ReadValueResponse, StopMotionRequest, StopMotionResponse,
     StreamValuesRequest, ValueUpdate,
+    // Parameter control types (bd-lxwp)
+    SetParameterRequest, SetParameterResponse, GetParameterRequest, ParameterValue,
     // Frame streaming types (bd-p6vz)
     StartStreamRequest, StartStreamResponse, StopStreamRequest, StopStreamResponse,
     StreamFramesRequest, FrameData,

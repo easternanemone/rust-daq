@@ -13,15 +13,33 @@ use crate::ui::{
 use std::rc::Rc;
 use tracing::{error, info, warn};
 
+/// Send-safe UI element data for transferring across threads
+#[derive(Clone)]
+struct UiElementData {
+    element_type: String,
+    label: String,
+    target: String,
+    source: String,
+    action: String,
+    current_value: f32,
+    current_string: String,
+    unit: String,
+    min_value: f32,
+    max_value: f32,
+    options: Vec<String>,
+    is_loading: bool,
+    child_count: i32,
+}
+
 /// Register plugin-related callbacks
 pub fn register(ui: &MainWindow, adapter: UiAdapter, state: SharedState) {
     let ui_weak = adapter.weak();
-    register_refresh_plugins(ui, ui_weak.clone());
+    register_refresh_plugins(ui, ui_weak.clone(), state.clone());
     register_slider_changed(ui, ui_weak.clone(), state.clone());
     register_readout_refresh(ui, ui_weak.clone(), state.clone());
     register_toggle_changed(ui, ui_weak.clone(), state.clone());
     register_action_triggered(ui, ui_weak.clone(), state.clone());
-    register_dropdown_changed(ui, ui_weak, state);
+    register_dropdown_changed(ui, ui_weak.clone(), state.clone());
 
     // Initialize with example plugin devices for development
     initialize_example_plugins(ui);
@@ -163,23 +181,199 @@ fn initialize_example_plugins(ui: &MainWindow) {
     ui.set_plugin_devices(model.into());
 }
 
-fn register_refresh_plugins(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_refresh_plugins(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_refresh_plugins(move || {
         info!("Refreshing plugin devices");
 
-        // TODO: In the future, this would query PluginService::ListPlugins
-        // and PluginService::GetPluginInfo for each spawned device
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            // Re-initialize with example data for now
-            initialize_example_plugins(&ui);
+        let ui_weak_clone = ui_weak.clone();
+        let state_clone = state.clone();
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Plugins Refreshed"),
-                SharedString::from("Loaded example plugin devices (stub)"),
-            );
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state_clone.lock().await;
+                app_state.get_client()
+            };
+
+            let Some(client) = client else {
+                error!("Cannot refresh plugins: not connected to daemon");
+                let _ = ui_weak_clone.upgrade_in_event_loop(|ui| {
+                    ui.invoke_show_toast(
+                        SharedString::from("error"),
+                        SharedString::from("Connection Error"),
+                        SharedString::from("Not connected to daemon"),
+                    );
+                });
+                return;
+            };
+
+            // Fetch plugin instances
+            let instances = match client.list_plugin_instances().await {
+                Ok(instances) => instances,
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    error!("Failed to list plugin instances: {}", error_msg);
+                    let _ = ui_weak_clone.upgrade_in_event_loop(move |ui| {
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Plugin Refresh Failed"),
+                            SharedString::from(format!("Failed to list plugins: {}", error_msg)),
+                        );
+                    });
+                    return;
+                }
+            };
+
+            // Build plugin device info for each instance
+            // We collect Send-safe data first, then build PluginDeviceInfo in the event loop
+            #[derive(Clone)]
+            struct PluginDeviceData {
+                device_id: String,
+                device_name: String,
+                plugin_id: String,
+                connected: bool,
+                mock_mode: bool,
+                has_readable: bool,
+                has_movable: bool,
+                has_settable: bool,
+                has_switchable: bool,
+                has_actionable: bool,
+                ui_elements: Vec<UiElementData>,
+            }
+
+            let mut plugin_data_list = Vec::new();
+            for instance in instances {
+                // Get plugin info to fetch UI layout and capabilities
+                let plugin_info = match client.get_plugin_info(&instance.plugin_id).await {
+                    Ok(info) => info,
+                    Err(e) => {
+                        warn!("Failed to get plugin info for {}: {}", instance.plugin_id, e);
+                        continue;
+                    }
+                };
+
+                // Convert UI elements from proto - just extract data, don't build Slint types
+                let ui_elements: Vec<UiElementData> = plugin_info
+                    .ui_layout
+                    .into_iter()
+                    .flat_map(|elem| convert_ui_element_data(&elem))
+                    .collect();
+
+                // Extract capability flags
+                let caps = plugin_info.capabilities.as_ref();
+                let has_readable = caps.map_or(false, |c| !c.readable.is_empty());
+                let has_movable = caps.map_or(false, |c| c.movable.is_some());
+                let has_settable = caps.map_or(false, |c| !c.settable.is_empty());
+                let has_switchable = caps.map_or(false, |c| !c.switchable.is_empty());
+                let has_actionable = caps.map_or(false, |c| !c.actionable.is_empty());
+
+                plugin_data_list.push(PluginDeviceData {
+                    device_id: instance.device_id,
+                    device_name: plugin_info.name,
+                    plugin_id: instance.plugin_id,
+                    connected: instance.connected,
+                    mock_mode: instance.mock_mode,
+                    has_readable,
+                    has_movable,
+                    has_settable,
+                    has_switchable,
+                    has_actionable,
+                    ui_elements,
+                });
+            }
+
+            let count = plugin_data_list.len();
+
+            // Update UI - build PluginDeviceInfo with Rc inside event loop
+            let _ = ui_weak_clone.upgrade_in_event_loop(move |ui| {
+                let plugin_devices: Vec<PluginDeviceInfo> = plugin_data_list
+                    .into_iter()
+                    .map(|data| {
+                        let ui_elements: Vec<PluginUiElementInfo> = data
+                            .ui_elements
+                            .into_iter()
+                            .map(|elem| PluginUiElementInfo {
+                                element_type: SharedString::from(&elem.element_type),
+                                label: SharedString::from(&elem.label),
+                                target: SharedString::from(&elem.target),
+                                source: SharedString::from(&elem.source),
+                                action: SharedString::from(&elem.action),
+                                current_value: elem.current_value,
+                                current_string: SharedString::from(&elem.current_string),
+                                unit: SharedString::from(&elem.unit),
+                                min_value: elem.min_value,
+                                max_value: elem.max_value,
+                                options: Rc::new(VecModel::from(
+                                    elem.options
+                                        .into_iter()
+                                        .map(|s| SharedString::from(&s))
+                                        .collect::<Vec<_>>(),
+                                ))
+                                .into(),
+                                is_loading: elem.is_loading,
+                                child_count: elem.child_count,
+                            })
+                            .collect();
+
+                        PluginDeviceInfo {
+                            device_id: SharedString::from(&data.device_id),
+                            device_name: SharedString::from(&data.device_name),
+                            plugin_id: SharedString::from(&data.plugin_id),
+                            connected: data.connected,
+                            mock_mode: data.mock_mode,
+                            has_readable: data.has_readable,
+                            has_movable: data.has_movable,
+                            has_settable: data.has_settable,
+                            has_switchable: data.has_switchable,
+                            has_actionable: data.has_actionable,
+                            ui_elements: Rc::new(VecModel::from(ui_elements)).into(),
+                        }
+                    })
+                    .collect();
+
+                let model = Rc::new(VecModel::from(plugin_devices));
+                ui.set_plugin_devices(model.into());
+
+                ui.invoke_show_toast(
+                    SharedString::from("success"),
+                    SharedString::from("Plugins Refreshed"),
+                    SharedString::from(format!("Loaded {} plugin device(s)", count)),
+                );
+            });
         });
     });
+}
+
+/// Convert a protobuf PluginUIElement to raw data (Send-safe)
+/// Returns a vec to handle groups (which flatten to children)
+fn convert_ui_element_data(elem: &rust_daq::grpc::PluginUiElement) -> Vec<UiElementData> {
+    let element_type = elem.element_type.as_str();
+
+    // Handle groups specially - they flatten into their children
+    if element_type == "group" {
+        return elem
+            .children
+            .iter()
+            .flat_map(|child| convert_ui_element_data(child))
+            .collect();
+    }
+
+    // Regular elements - extract raw data
+    vec![UiElementData {
+        element_type: elem.element_type.clone(),
+        label: elem.label.clone(),
+        target: elem.target.as_deref().unwrap_or("").to_string(),
+        source: elem.source.as_deref().unwrap_or("").to_string(),
+        action: elem.action.as_deref().unwrap_or("").to_string(),
+        current_value: 0.0,
+        current_string: String::new(),
+        unit: String::new(),
+        min_value: 0.0,
+        max_value: 100.0,
+        options: Vec::new(), // TODO: Extract from proto if available
+        is_loading: false,
+        child_count: elem.children.len() as i32,
+    }]
 }
 
 fn register_slider_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
@@ -187,6 +381,7 @@ fn register_slider_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: Sh
         let device_id = device_id.to_string();
         let target = target.to_string();
         let state = state.clone();
+        let ui_weak = ui_weak.clone();
 
         info!(
             "Plugin slider changed: device={}, target={}, value={}",
@@ -210,7 +405,7 @@ fn register_slider_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: Sh
             // For settable parameters, use set_parameter
             let result = if target == "position" {
                 // This is a movable device slider
-                client.move_absolute(&device_id, value).await
+                client.move_absolute(&device_id, value as f64).await
                     .map(|pos| pos.to_string())
             } else {
                 // This is a settable parameter slider
@@ -248,6 +443,7 @@ fn register_readout_refresh(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: S
         let device_id = device_id.to_string();
         let source = source.to_string();
         let state = state.clone();
+        let ui_weak = ui_weak.clone();
 
         info!(
             "Plugin readout refresh: device={}, source={}",
@@ -305,6 +501,7 @@ fn register_toggle_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: Sh
         let device_id = device_id.to_string();
         let target = target.to_string();
         let state = state.clone();
+        let ui_weak = ui_weak.clone();
 
         info!(
             "Plugin toggle changed: device={}, target={}, is_on={}",
@@ -359,6 +556,7 @@ fn register_action_triggered(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: 
         let device_id = device_id.to_string();
         let action = action.to_string();
         let state = state.clone();
+        let ui_weak = ui_weak.clone();
 
         info!(
             "Plugin action triggered: device={}, action={}",
@@ -422,6 +620,7 @@ fn register_dropdown_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: 
         let target = target.to_string();
         let value = value.to_string();
         let state = state.clone();
+        let ui_weak = ui_weak.clone();
 
         info!(
             "Plugin dropdown changed: device={}, target={}, value={}",

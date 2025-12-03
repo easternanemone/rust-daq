@@ -9,6 +9,8 @@ use rust_daq::grpc::{
     ReadValueRequest, ResumeScanRequest, ScanConfig, ScanProgress, ScanServiceClient,
     ScanType, StartScanRequest, StopMotionRequest, StopScanRequest, StreamScanProgressRequest,
     StreamValuesRequest, ValueUpdate,
+    // Parameter control (for settable devices)
+    SetParameterRequest, GetParameterRequest,
     // Frame streaming types (bd-p6vz)
     FrameData, StartStreamRequest, StopStreamRequest, StreamFramesRequest,
     // Exposure control types (bd-tm0b)
@@ -32,8 +34,7 @@ use rust_daq::grpc::{
     EngineStatus, StreamDocumentsRequest, Document,
     // Plugin service types (bd-tr9l)
     PluginServiceClient, ListPluginsRequest, PluginSummary, GetPluginInfoRequest, PluginInfo,
-    // Parameter control (for settable plugins)
-    SetParameterRequest, GetParameterRequest,
+    ListPluginInstancesRequest, PluginInstanceSummary,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -1423,6 +1424,23 @@ impl DaqClient {
             .map_err(|e| anyhow!("GetPluginInfo RPC failed: {}", e))?;
 
         Ok(response.into_inner())
+    }
+
+    /// List spawned plugin instances (actual devices)
+    #[expect(dead_code, reason = "Used by PluginPanel")]
+    pub async fn list_plugin_instances(&self) -> Result<Vec<PluginInstanceSummary>> {
+        let mut client = self.plugin.clone();
+
+        debug!("ListPluginInstances");
+
+        let response = client
+            .list_plugin_instances(ListPluginInstancesRequest {
+                plugin_id: None, // List all instances regardless of plugin type
+            })
+            .await
+            .map_err(|e| anyhow!("ListPluginInstances RPC failed: {}", e))?;
+
+        Ok(response.into_inner().instances)
     }
 
     /// Set a parameter on a settable device
