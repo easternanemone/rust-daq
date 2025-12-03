@@ -39,7 +39,9 @@
 //! }
 //! ```
 
-use crate::hardware::capabilities::{EmissionControl, Readable, ShutterControl, WavelengthTunable};
+use crate::hardware::capabilities::{EmissionControl, Parameterized, Readable, ShutterControl, WavelengthTunable};
+use crate::observable::ParameterSet;
+use crate::parameter::Parameter;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::time::Duration;
@@ -58,7 +60,9 @@ pub struct MaiTaiDriver {
     /// Command timeout duration
     timeout: Duration,
     /// Current wavelength setting (cached for reference)
-    wavelength_nm: Mutex<f64>,
+    wavelength_nm: Parameter<f64>,
+    /// Parameter registry
+    params: ParameterSet,
 }
 
 impl MaiTaiDriver {
@@ -83,10 +87,21 @@ impl MaiTaiDriver {
             .open_native_async()
             .context(format!("Failed to open MaiTai serial port: {}", port_path))?;
 
+        // Create wavelength parameter with metadata
+        let mut params = ParameterSet::new();
+        let wavelength = Parameter::new("wavelength_nm", 800.0)
+            .with_description("Tunable laser wavelength")
+            .with_unit("nm")
+            .with_range(690.0, 1040.0); // MaiTai tuning range
+        
+        // Register parameter
+        params.register(wavelength.inner().clone());
+
         Ok(Self {
             port: Mutex::new(BufReader::new(port)),
             timeout: Duration::from_secs(5),
-            wavelength_nm: Mutex::new(800.0), // Default center wavelength
+            wavelength_nm: wavelength,
+            params,
         })
     }
 
@@ -116,10 +131,21 @@ impl MaiTaiDriver {
         .await
         .context("spawn_blocking for MaiTai port opening failed")??;
 
+        // Create wavelength parameter with metadata
+        let mut params = ParameterSet::new();
+        let wavelength = Parameter::new("wavelength_nm", 800.0)
+            .with_description("Tunable laser wavelength")
+            .with_unit("nm")
+            .with_range(690.0, 1040.0); // MaiTai tuning range
+        
+        // Register parameter
+        params.register(wavelength.inner().clone());
+
         Ok(Self {
             port: Mutex::new(BufReader::new(port)),
             timeout: Duration::from_secs(5),
-            wavelength_nm: Mutex::new(800.0), // Default center wavelength
+            wavelength_nm: wavelength,
+            params,
         })
     }
 
@@ -142,7 +168,7 @@ impl MaiTaiDriver {
             .await?;
 
         // Update cached value
-        *self.wavelength_nm.lock().await = wavelength_nm;
+        self.wavelength_nm.set(wavelength_nm).await?;
 
         // Allow time for wavelength tuning (hardware can take several seconds)
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -166,7 +192,7 @@ impl MaiTaiDriver {
             .context(format!("Failed to parse wavelength from '{}'", response))?;
 
         // Update cached value
-        *self.wavelength_nm.lock().await = wavelength;
+        self.wavelength_nm.set(wavelength).await?;
 
         Ok(wavelength)
     }
@@ -338,6 +364,12 @@ impl MaiTaiDriver {
         }
 
         Ok(())
+    }
+}
+
+impl Parameterized for MaiTaiDriver {
+    fn parameters(&self) -> &ParameterSet {
+        &self.params
     }
 }
 
