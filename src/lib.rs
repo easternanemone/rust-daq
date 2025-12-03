@@ -31,7 +31,9 @@
 //!   that orchestrate instruments to accomplish scientific tasks.
 //! - **`session`**: Implements session management for saving and loading the application state.
 //! - **`validation`**: A collection of utility functions for validating configuration parameters.
-//! - **`parameter`**: Parameter<T> abstraction for declarative parameter management
+//! - **`parameter`**: Reactive Parameter<T> system with async hardware callbacks.
+//!   All V5 drivers MUST implement Parameterized trait to expose parameters for
+//!   gRPC control, presets, and experiment metadata. See docs/architecture/ADR_005_REACTIVE_PARAMETERS.md
 
 // pub mod app; // REMOVED: Depends on app_actor (bd-9si6)
 // pub mod app_actor; // REMOVED: V2 actor pattern deleted (bd-9si6)
