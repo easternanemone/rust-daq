@@ -37,12 +37,30 @@ use tonic::{Request, Response, Status};
 /// All hardware operations are delegated to the appropriate capability traits.
 pub struct HardwareServiceImpl {
     registry: Arc<RwLock<DeviceRegistry>>,
+    /// Broadcast sender for parameter changes (enables real-time GUI synchronization)
+    param_change_tx: tokio::sync::broadcast::Sender<ParameterChange>,
 }
 
 impl HardwareServiceImpl {
     /// Create a new HardwareService with the given device registry
     pub fn new(registry: Arc<RwLock<DeviceRegistry>>) -> Self {
-        Self { registry }
+        // Create broadcast channel for parameter changes (capacity 256 in-flight messages)
+        let (param_change_tx, _) = tokio::sync::broadcast::channel(256);
+        Self { registry, param_change_tx }
+    }
+
+    /// Create a new HardwareService with an existing parameter change broadcast sender
+    /// (useful when sharing the sender across multiple services)
+    pub fn with_param_broadcast(
+        registry: Arc<RwLock<DeviceRegistry>>,
+        param_change_tx: tokio::sync::broadcast::Sender<ParameterChange>,
+    ) -> Self {
+        Self { registry, param_change_tx }
+    }
+
+    /// Get a clone of the parameter change broadcast sender for external notification
+    pub fn param_change_sender(&self) -> tokio::sync::broadcast::Sender<ParameterChange> {
+        self.param_change_tx.clone()
     }
 }
 
@@ -1255,12 +1273,11 @@ impl HardwareService for HardwareServiceImpl {
 
     /// Stage a device for acquisition (Bluesky-style lifecycle).
     ///
-    /// Staging prepares a device for use in a scan or acquisition sequence.
-    /// This is called once at the start of a scan for each device involved.
+    /// Staging prepares a device before a scan or acquisition sequence.
+    /// This is called once at the beginning of a scan for each device involved.
     ///
-    /// Currently implements a no-op that validates the device exists. When a
-    /// Stageable trait is added, this will call device-specific preparation
-    /// (e.g., arm camera, open shutter, check motion limits).
+    /// If the device implements Stageable, calls device.stage(). Otherwise,
+    /// staging is a no-op that validates the device exists.
     async fn stage_device(
         &self,
         request: Request<StageDeviceRequest>,
@@ -1276,9 +1293,16 @@ impl HardwareService for HardwareServiceImpl {
             )));
         }
 
-        // TODO: When Stageable trait is implemented, call device.stage() here
-        // For now, staging is a no-op that validates device existence
-        tracing::debug!("Staged device '{}' (no-op)", req.device_id);
+        // If device implements Stageable, call stage()
+        if let Some(stageable) = registry.get_stageable(&req.device_id) {
+            stageable.stage().await.map_err(|e| {
+                Status::internal(format!("Failed to stage device '{}': {}", req.device_id, e))
+            })?;
+            tracing::info!("Staged device '{}' successfully", req.device_id);
+        } else {
+            // No-op for devices that don't implement Stageable
+            tracing::debug!("Staged device '{}' (no Stageable impl, no-op)", req.device_id);
+        }
 
         Ok(Response::new(StageDeviceResponse {
             success: true,
@@ -1292,9 +1316,8 @@ impl HardwareService for HardwareServiceImpl {
     /// Unstaging cleans up a device after a scan or acquisition sequence.
     /// This is called once at the end of a scan for each device involved.
     ///
-    /// Currently implements a no-op that validates the device exists. When a
-    /// Stageable trait is added, this will call device-specific cleanup
-    /// (e.g., disarm camera, close shutter, return to safe position).
+    /// If the device implements Stageable, calls device.unstage(). Otherwise,
+    /// unstaging is a no-op that validates the device exists.
     async fn unstage_device(
         &self,
         request: Request<UnstageDeviceRequest>,
@@ -1310,9 +1333,16 @@ impl HardwareService for HardwareServiceImpl {
             )));
         }
 
-        // TODO: When Stageable trait is implemented, call device.unstage() here
-        // For now, unstaging is a no-op that validates device existence
-        tracing::debug!("Unstaged device '{}' (no-op)", req.device_id);
+        // If device implements Stageable, call unstage()
+        if let Some(stageable) = registry.get_stageable(&req.device_id) {
+            stageable.unstage().await.map_err(|e| {
+                Status::internal(format!("Failed to unstage device '{}': {}", req.device_id, e))
+            })?;
+            tracing::info!("Unstaged device '{}' successfully", req.device_id);
+        } else {
+            // No-op for devices that don't implement Stageable
+            tracing::debug!("Unstaged device '{}' (no Stageable impl, no-op)", req.device_id);
+        }
 
         Ok(Response::new(UnstageDeviceResponse {
             success: true,
@@ -1541,6 +1571,13 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
         
+        // Get old value before setting (for change notification)
+        let old_value = settable
+            .get_value(&req.parameter_name)
+            .await
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        
         // Parse the value string to JSON
         let json_value: serde_json::Value = serde_json::from_str(&req.value)
             .or_else(|_| {
@@ -1562,6 +1599,17 @@ impl HardwareService for HardwareServiceImpl {
             .map(|v| v.to_string())
             .unwrap_or_else(|_| req.value.clone());
         
+        // Broadcast parameter change notification (ignore send errors - no subscribers is ok)
+        let _ = self.param_change_tx.send(ParameterChange {
+            device_id: req.device_id.clone(),
+            name: req.parameter_name.clone(),
+            old_value,
+            new_value: actual_value.clone(),
+            units: String::new(), // Would need parameter metadata for units
+            timestamp_ns: now_ns(),
+            source: "user".to_string(),
+        });
+        
         Ok(Response::new(SetParameterResponse {
             success: true,
             error_message: String::new(),
@@ -1577,13 +1625,51 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<StreamParameterChangesRequest>,
     ) -> Result<Response<Self::StreamParameterChangesStream>, Status> {
         let req = request.into_inner();
-        // TODO: Implement parameter change streaming
-        // This should stream changes to observable parameters in real-time
-        let device_filter = req.device_id.as_deref().unwrap_or("all devices");
-        Err(Status::unimplemented(format!(
-            "StreamParameterChanges not yet implemented for '{}'",
-            device_filter
-        )))
+        
+        // Extract filter criteria
+        let device_filter = req.device_id.clone();
+        let param_filter: std::collections::HashSet<String> = req.parameter_names.into_iter().collect();
+        
+        // Subscribe to parameter change broadcast
+        let mut rx = self.param_change_tx.subscribe();
+        
+        // Create mpsc channel for the gRPC stream
+        let (tx, stream_rx) = tokio::sync::mpsc::channel(32);
+        
+        // Spawn task to forward filtered changes to the stream
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(change) => {
+                        // Apply device filter if specified
+                        if let Some(ref filter_device) = device_filter {
+                            if &change.device_id != filter_device {
+                                continue;
+                            }
+                        }
+                        
+                        // Apply parameter name filter if specified
+                        if !param_filter.is_empty() && !param_filter.contains(&change.name) {
+                            continue;
+                        }
+                        
+                        // Send to stream (exit if receiver dropped)
+                        if tx.send(Ok(change)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Parameter change stream lagged, dropped {} messages", n);
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+        
+        Ok(Response::new(ReceiverStream::new(stream_rx)))
     }
 }
 
@@ -2034,7 +2120,6 @@ mod tests {
         let registry = create_mock_registry().await.unwrap();
         let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
 
-        // mock_stage doesn't have FrameProducer capability
         let request = Request::new(StreamFramesRequest {
             device_id: "mock_stage".to_string(),
             include_pixel_data: None,
@@ -2044,5 +2129,102 @@ mod tests {
         assert!(result.is_err());
         // Should return NotFound since mock_stage doesn't have frame producer capability
         assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn test_stream_parameter_changes() {
+        use tokio_stream::StreamExt;
+
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        
+        // Get the parameter change sender to simulate changes
+        let param_sender = service.param_change_sender();
+
+        // Start streaming (no filters)
+        let request = Request::new(StreamParameterChangesRequest {
+            device_id: None,
+            parameter_names: vec![],
+        });
+        let response = service.stream_parameter_changes(request).await.unwrap();
+        let mut stream = response.into_inner();
+
+        // Give the stream task time to start
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Send a parameter change
+        let _ = param_sender.send(ParameterChange {
+            device_id: "mock_stage".to_string(),
+            name: "position".to_string(),
+            old_value: "0.0".to_string(),
+            new_value: "10.5".to_string(),
+            units: "mm".to_string(),
+            timestamp_ns: now_ns(),
+            source: "user".to_string(),
+        });
+
+        // Receive the change
+        let change = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.next()
+        ).await.expect("timeout waiting for parameter change");
+
+        assert!(change.is_some());
+        let change_data = change.unwrap().expect("stream item should be Ok");
+        assert_eq!(change_data.device_id, "mock_stage");
+        assert_eq!(change_data.name, "position");
+        assert_eq!(change_data.new_value, "10.5");
+    }
+
+    #[tokio::test]
+    async fn test_stream_parameter_changes_with_filter() {
+        use tokio_stream::StreamExt;
+
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let param_sender = service.param_change_sender();
+
+        // Start streaming with device filter
+        let request = Request::new(StreamParameterChangesRequest {
+            device_id: Some("mock_camera".to_string()),
+            parameter_names: vec![],
+        });
+        let response = service.stream_parameter_changes(request).await.unwrap();
+        let mut stream = response.into_inner();
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Send a change for mock_stage (should be filtered out)
+        let _ = param_sender.send(ParameterChange {
+            device_id: "mock_stage".to_string(),
+            name: "position".to_string(),
+            old_value: "0.0".to_string(),
+            new_value: "5.0".to_string(),
+            units: "mm".to_string(),
+            timestamp_ns: now_ns(),
+            source: "user".to_string(),
+        });
+
+        // Send a change for mock_camera (should pass filter)
+        let _ = param_sender.send(ParameterChange {
+            device_id: "mock_camera".to_string(),
+            name: "exposure".to_string(),
+            old_value: "0.1".to_string(),
+            new_value: "0.5".to_string(),
+            units: "s".to_string(),
+            timestamp_ns: now_ns(),
+            source: "user".to_string(),
+        });
+
+        // Should receive only the camera change
+        let change = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            stream.next()
+        ).await.expect("timeout waiting for parameter change");
+
+        assert!(change.is_some());
+        let change_data = change.unwrap().expect("stream item should be Ok");
+        assert_eq!(change_data.device_id, "mock_camera");
+        assert_eq!(change_data.name, "exposure");
     }
 }
