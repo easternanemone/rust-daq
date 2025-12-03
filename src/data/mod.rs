@@ -14,6 +14,7 @@
 //!
 //! - [`ring_buffer::RingBuffer`] - Memory-mapped ring buffer for high-throughput Arrow IPC
 //! - [`hdf5_writer::HDF5Writer`] - Background writer that flushes ring buffer to HDF5 (1 Hz, non-blocking)
+//! - [`ring_buffer_reader::RingBufferReader`] - Helper for clients to decode frames from ring buffer taps
 //!
 //! ## Legacy Code (Deprecated)
 //!
@@ -47,3 +48,14 @@ pub mod hdf5_writer;
 /// Stores Arrow IPC format data in `/dev/shm` for fast writes (10k+ writes/sec).
 /// Works in tandem with [`hdf5_writer`] to implement The Mullet Strategy.
 pub mod ring_buffer;
+
+/// Helper utility for reading frames from ring buffer taps
+///
+/// Provides convenient API for clients to receive and deserialize frames sent
+/// via [`ring_buffer::RingBuffer::register_tap()`]. Useful for live data
+/// visualization and remote monitoring.
+pub mod ring_buffer_reader;
+
+// Re-export main types for convenience
+pub use ring_buffer::RingBuffer;
+pub use ring_buffer_reader::{RingBufferReader, ReaderStats};

@@ -299,6 +299,79 @@ mod hdf5_tests {
         let result = writer.flush_to_disk();
         assert!(result.is_err(), "Should return error for invalid path");
     }
+
+    #[tokio::test]
+    async fn test_hdf5_manifest_persistence() {
+        use rust_daq::experiment::document::ExperimentManifest;
+        use std::collections::HashMap;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ring_path = temp_dir.path().join("test_ring_manifest.buf");
+        let hdf5_path = temp_dir.path().join("test_manifest.h5");
+
+        let ring = Arc::new(RingBuffer::create(&ring_path, 10).unwrap());
+        let writer = HDF5Writer::new(&hdf5_path, ring.clone()).unwrap();
+
+        // Create a test manifest with mock device parameters
+        let mut parameters = HashMap::new();
+        let mut stage_params = HashMap::new();
+        stage_params.insert("position".to_string(), serde_json::json!(10.5));
+        stage_params.insert("velocity".to_string(), serde_json::json!(1.0));
+        parameters.insert("stage1".to_string(), stage_params);
+
+        let mut camera_params = HashMap::new();
+        camera_params.insert("exposure".to_string(), serde_json::json!(0.1));
+        camera_params.insert("gain".to_string(), serde_json::json!(2));
+        parameters.insert("camera1".to_string(), camera_params);
+
+        let manifest = ExperimentManifest::new(
+            "test-run-uid",
+            "test_plan",
+            "Test Plan",
+            parameters,
+        );
+
+        // Write manifest to HDF5
+        writer.write_manifest(&manifest).unwrap();
+
+        // Verify HDF5 file was created and contains manifest group
+        assert!(hdf5_path.exists(), "HDF5 file should be created");
+
+        // Verify manifest structure using hdf5 crate
+        use hdf5::File;
+        let file = File::open(&hdf5_path).unwrap();
+        
+        // Check manifest group exists
+        assert!(file.group("manifest").is_ok(), "Manifest group should exist");
+        let manifest_group = file.group("manifest").unwrap();
+
+        // Check basic attributes
+        let run_uid_attr = manifest_group.attr("run_uid").unwrap();
+        let run_uid: hdf5::types::VarLenUnicode = run_uid_attr.read_scalar().unwrap();
+        assert_eq!(run_uid.as_str(), "test-run-uid");
+
+        let plan_type_attr = manifest_group.attr("plan_type").unwrap();
+        let plan_type: hdf5::types::VarLenUnicode = plan_type_attr.read_scalar().unwrap();
+        assert_eq!(plan_type.as_str(), "test_plan");
+
+        // Check parameters subgroup
+        assert!(manifest_group.group("parameters").is_ok(), "Parameters group should exist");
+        let params_group = manifest_group.group("parameters").unwrap();
+        
+        // Check stage1 parameters
+        assert!(params_group.group("stage1").is_ok(), "stage1 group should exist");
+        let stage1_group = params_group.group("stage1").unwrap();
+        let position_attr = stage1_group.attr("position").unwrap();
+        let position_json: hdf5::types::VarLenUnicode = position_attr.read_scalar().unwrap();
+        assert!(position_json.as_str().contains("10.5"));
+
+        // Check system info
+        assert!(manifest_group.group("system").is_ok(), "System group should exist");
+        let system_group = manifest_group.group("system").unwrap();
+        let version_attr = system_group.attr("software_version").unwrap();
+        let version: hdf5::types::VarLenUnicode = version_attr.read_scalar().unwrap();
+        assert!(!version.as_str().is_empty(), "Version should not be empty");
+    }
 }
 
 // =============================================================================

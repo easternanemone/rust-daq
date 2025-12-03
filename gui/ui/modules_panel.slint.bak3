@@ -6,8 +6,6 @@ import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
          ScrollView, SpinBox, StandardButton, TabWidget, TextEdit,
          VerticalBox, GridBox, ProgressIndicator, CheckBox } from "std-widgets.slint";
 
-import { AppColors, AppFonts, AppSpacing, AppLayout } from "globals.slint";
-
 // =============================================================================
 // Data Models
 // =============================================================================

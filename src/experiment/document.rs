@@ -14,6 +14,8 @@
 //! ```text
 //! StartDoc (1)
 //!    │
+//!    ├── ExperimentManifest (1, hardware parameter snapshot)
+//!    │
 //!    ├── DescriptorDoc (1+, one per data stream)
 //!    │       │
 //!    │       └── EventDoc (N, measurements)
@@ -43,10 +45,16 @@ pub fn now_ns() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Document {
+    /// Experiment start document - intent and metadata
     Start(StartDoc),
+    /// Data stream descriptor - schema definition
     Descriptor(DescriptorDoc),
+    /// Event document - actual measurement data
     Event(EventDoc),
+    /// Experiment stop document - completion status
     Stop(StopDoc),
+    /// Experiment manifest - hardware parameter snapshot (bd-ib06)
+    Manifest(ExperimentManifest),
 }
 
 impl Document {
@@ -57,6 +65,7 @@ impl Document {
             Document::Descriptor(d) => &d.uid,
             Document::Event(d) => &d.uid,
             Document::Stop(d) => &d.uid,
+            Document::Manifest(d) => &d.run_uid,
         }
     }
 
@@ -67,6 +76,7 @@ impl Document {
             Document::Descriptor(d) => &d.run_uid,
             Document::Event(d) => &d.run_uid,
             Document::Stop(d) => &d.run_uid,
+            Document::Manifest(d) => &d.run_uid,
         }
     }
 
@@ -77,6 +87,7 @@ impl Document {
             Document::Descriptor(d) => d.time_ns,
             Document::Event(d) => d.time_ns,
             Document::Stop(d) => d.time_ns,
+            Document::Manifest(d) => d.timestamp_ns,
         }
     }
 }

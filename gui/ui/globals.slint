@@ -1,0 +1,123 @@
+// =============================================================================
+// Global Theming System
+// =============================================================================
+//
+// This file defines centralized theming for the entire Slint UI.
+// It provides semantic color names, font sizes, and spacing values
+// to ensure consistent styling across all panels.
+//
+// Usage in other .slint files:
+//   import { AppColors, AppFonts, AppSpacing } from "globals.slint";
+//
+// =============================================================================
+
+// =============================================================================
+// Color Palette
+// =============================================================================
+
+export global AppColors {
+    // Primary text colors
+    out property <color> text-primary: #333333;
+    out property <color> text-secondary: #666666;
+    out property <color> text-muted: #999999;
+    out property <color> text-on-dark: #ffffff;
+
+    // Background colors
+    out property <color> panel-bg: #ffffff;
+    out property <color> sidebar-bg: #fafafa;
+    out property <color> header-bg: #2196f3;
+    out property <color> window-bg: #f0f0f0;
+
+    // Accent colors
+    out property <color> accent-bg: #2196f3;
+    out property <color> accent-hover: #1976d2;
+
+    // Border colors
+    out property <color> border-light: #e0e0e0;
+    out property <color> border-medium: #bdbdbd;
+    out property <color> border-dark: #757575;
+
+    // Status colors
+    out property <color> success: #4caf50;
+    out property <color> warning: #ff9800;
+    out property <color> error: #f44336;
+    out property <color> info: #2196f3;
+
+    // State-specific backgrounds
+    out property <color> bg-success: #e8f5e9;
+    out property <color> bg-warning: #fff3e0;
+    out property <color> bg-error: #ffebee;
+    out property <color> bg-info: #e3f2fd;
+
+    // Interactive states
+    out property <color> hover-bg: #f5f5f5;
+    out property <color> active-bg: #e3f2fd;
+    out property <color> selected-bg: #e3f2fd;
+    out property <color> selected-border: #2196f3;
+
+    // Disabled state
+    out property <color> disabled-bg: #f0f0f0;
+    out property <color> disabled-text: #9e9e9e;
+}
+
+// =============================================================================
+// Typography Scale
+// =============================================================================
+
+export global AppFonts {
+    // Font sizes (using rem-like scale)
+    out property <length> size-xs: 9px;    // Extra small (hints, metadata)
+    out property <length> size-sm: 11px;   // Small (secondary text, labels)
+    out property <length> size-base: 13px; // Base (primary text, headers)
+    out property <length> size-lg: 15px;   // Large (section titles)
+    out property <length> size-xl: 18px;   // Extra large (page titles)
+    out property <length> size-xxl: 24px;  // 2X large (hero text)
+    out property <length> size-xxxl: 32px; // 3X large (hero text)
+
+    // Font weights
+    out property <int> weight-normal: 400;
+    out property <int> weight-medium: 500;
+    out property <int> weight-semibold: 600;
+    out property <int> weight-bold: 700;
+}
+
+// =============================================================================
+// Spacing Scale
+// =============================================================================
+
+export global AppSpacing {
+    // Spacing units (8px base unit)
+    out property <length> xs: 4px;   // 0.5 unit
+    out property <length> sm: 8px;   // 1 unit
+    out property <length> md: 12px;  // 1.5 units
+    out property <length> lg: 16px;  // 2 units
+    out property <length> xl: 24px;  // 3 units
+    out property <length> xxl: 32px; // 4 units
+
+    // Component-specific spacing
+    out property <length> panel-padding: 12px;
+    out property <length> section-spacing: 16px;
+    out property <length> item-spacing: 8px;
+}
+
+// =============================================================================
+// Layout Constants
+// =============================================================================
+
+export global AppLayout {
+    // Border radius values
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 8px;
+    out property <length> radius-lg: 12px;
+
+    // Border widths
+    out property <length> border-thin: 1px;
+    out property <length> border-medium: 2px;
+    out property <length> border-thick: 3px;
+
+    // Common component heights
+    out property <length> header-height: 32px;
+    out property <length> button-height: 32px;
+    out property <length> input-height: 28px;
+    out property <length> list-item-height: 56px;
+}

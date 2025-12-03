@@ -30,6 +30,10 @@ use rust_daq::grpc::{
     GetPlanTypeInfoRequest, QueuePlanRequest, StartEngineRequest, PauseEngineRequest,
     ResumeEngineRequest, AbortPlanRequest, HaltEngineRequest, GetEngineStatusRequest,
     EngineStatus, StreamDocumentsRequest, Document,
+    // Plugin service types (bd-tr9l)
+    PluginServiceClient, ListPluginsRequest, PluginSummary, GetPluginInfoRequest, PluginInfo,
+    // Parameter control (for settable plugins)
+    SetParameterRequest, GetParameterRequest,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -61,6 +65,7 @@ pub struct DaqClient {
     module: ModuleServiceClient<Channel>,
     preset: PresetServiceClient<Channel>,
     run_engine: RunEngineServiceClient<Channel>,
+    plugin: PluginServiceClient<Channel>,
 }
 
 impl DaqClient {
@@ -85,9 +90,10 @@ impl DaqClient {
         let scan = ScanServiceClient::new(channel.clone());
         let module = ModuleServiceClient::new(channel.clone());
         let preset = PresetServiceClient::new(channel.clone());
-        let run_engine = RunEngineServiceClient::new(channel);
+        let run_engine = RunEngineServiceClient::new(channel.clone());
+        let plugin = PluginServiceClient::new(channel);
 
-        Ok(Self { hardware, scan, module, preset, run_engine })
+        Ok(Self { hardware, scan, module, preset, run_engine, plugin })
     }
 
     /// List all devices from the daemon
@@ -1379,5 +1385,91 @@ impl DaqClient {
         });
 
         Ok(rx)
+    }
+
+    // =========================================================================
+    // Plugin Operations (bd-tr9l)
+    // =========================================================================
+
+    /// List available plugins
+    #[expect(dead_code, reason = "Used by PluginPanel")]
+    pub async fn list_plugins(&self) -> Result<Vec<PluginSummary>> {
+        let mut client = self.plugin.clone();
+
+        debug!("ListPlugins");
+
+        let response = client
+            .list_plugins(ListPluginsRequest {
+                driver_type_filter: None,
+            })
+            .await
+            .map_err(|e| anyhow!("ListPlugins RPC failed: {}", e))?;
+
+        Ok(response.into_inner().plugins)
+    }
+
+    /// Get detailed plugin information
+    #[expect(dead_code, reason = "Used by PluginPanel")]
+    pub async fn get_plugin_info(&self, plugin_id: &str) -> Result<PluginInfo> {
+        let mut client = self.plugin.clone();
+
+        debug!("GetPluginInfo: {}", plugin_id);
+
+        let response = client
+            .get_plugin_info(GetPluginInfoRequest {
+                plugin_id: plugin_id.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("GetPluginInfo RPC failed: {}", e))?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Set a parameter on a settable device
+    #[expect(dead_code, reason = "Used by PluginPanel")]
+    pub async fn set_parameter(
+        &self,
+        device_id: &str,
+        parameter_name: &str,
+        value: &str,
+    ) -> Result<String> {
+        let mut client = self.hardware.clone();
+
+        debug!("SetParameter: {}.{} = {}", device_id, parameter_name, value);
+
+        let response = client
+            .set_parameter(SetParameterRequest {
+                device_id: device_id.to_string(),
+                parameter_name: parameter_name.to_string(),
+                value: value.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("SetParameter RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(anyhow!("SetParameter failed: {}", resp.error_message));
+        }
+
+        Ok(resp.actual_value)
+    }
+
+    /// Get a parameter from a device
+    #[expect(dead_code, reason = "Used by PluginPanel")]
+    pub async fn get_parameter(&self, device_id: &str, parameter_name: &str) -> Result<String> {
+        let mut client = self.hardware.clone();
+
+        debug!("GetParameter: {}.{}", device_id, parameter_name);
+
+        let response = client
+            .get_parameter(GetParameterRequest {
+                device_id: device_id.to_string(),
+                parameter_name: parameter_name.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow!("GetParameter RPC failed: {}", e))?;
+
+        let resp = response.into_inner();
+        Ok(resp.value)
     }
 }

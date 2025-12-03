@@ -1532,7 +1532,7 @@ export component MainWindow inherits Window {
     callback start-engine();
     callback pause-engine();
     callback resume-engine();
-    callback abort-plan(string);           // run-uid
+    callback request-abort(string);           // run-uid
     callback halt-engine();
     callback get-engine-status();
 
@@ -1863,7 +1863,7 @@ export component MainWindow inherits Window {
                         start-engine => { root.start-engine(); }
                         pause-engine => { root.pause-engine(); }
                         resume-engine => { root.resume-engine(); }
-                        abort-plan(run-uid) => { root.abort-plan(run-uid); }
+                        request-abort(run-uid) => { root.request-abort(run-uid); }
                         halt-engine => { root.halt-engine(); }
                         get-engine-status => { root.get-engine-status(); }
                     }

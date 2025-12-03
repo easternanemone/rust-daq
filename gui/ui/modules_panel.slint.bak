@@ -6,8 +6,6 @@ import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
          ScrollView, SpinBox, StandardButton, TabWidget, TextEdit,
          VerticalBox, GridBox, ProgressIndicator, CheckBox } from "std-widgets.slint";
 
-import { AppColors, AppFonts, AppSpacing, AppLayout } from "globals.slint";
-
 // =============================================================================
 // Data Models
 // =============================================================================
@@ -405,7 +403,7 @@ component ConfigurationPanel inherits Rectangle {
 
                 for param in parameters: Rectangle {
                     height: param.param-type == "bool" ? 40px : 68px;
-                    background: AppColors.sidebar-bg;
+                    background: #f9f9f9;
                     border-radius: AppLayout.radius-sm;
 
                     VerticalBox {

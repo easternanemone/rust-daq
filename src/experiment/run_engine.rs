@@ -273,9 +273,10 @@ impl RunEngine {
             "Captured experiment manifest with hardware parameters"
         );
 
-        // TODO(bd-ej44): Wire manifest to HDF5Writer when storage_hdf5 feature is enabled
-        // For now, manifest is created but not yet persisted to HDF5
-        // Future work: Add manifest to HDF5 root attributes or dedicated group
+        // Emit manifest document for persistence (bd-ib06)
+        // Storage backends (e.g., HDF5Writer) can subscribe to this document
+        // and persist the hardware state snapshot for experiment reproducibility
+        self.emit_document(Document::Manifest(manifest)).await;
 
         // Create and emit DescriptorDoc for the primary stream
         let mut descriptor = DescriptorDoc::new(&run_uid, "primary");
@@ -641,6 +642,15 @@ mod tests {
         assert!(doc.is_ok());
         if let Ok(Ok(Document::Start(start))) = doc {
             assert_eq!(start.plan_type, "count");
+        }
+
+        // Should receive Manifest document after Start (bd-ib06)
+        let doc = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert!(doc.is_ok());
+        if let Ok(Ok(Document::Manifest(manifest))) = doc {
+            assert_eq!(manifest.plan_type, "count");
+            // Manifest should contain system info
+            assert!(manifest.system_info.contains_key("software_version"));
         }
     }
 }

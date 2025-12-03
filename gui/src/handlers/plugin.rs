@@ -11,17 +11,17 @@ use crate::ui::{
     MainWindow, PluginDeviceInfo, PluginUiElementInfo, SharedString, UiAdapter, VecModel, Weak,
 };
 use std::rc::Rc;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Register plugin-related callbacks
-pub fn register(ui: &MainWindow, adapter: UiAdapter, _state: SharedState) {
+pub fn register(ui: &MainWindow, adapter: UiAdapter, state: SharedState) {
     let ui_weak = adapter.weak();
     register_refresh_plugins(ui, ui_weak.clone());
-    register_slider_changed(ui, ui_weak.clone());
-    register_readout_refresh(ui, ui_weak.clone());
-    register_toggle_changed(ui, ui_weak.clone());
-    register_action_triggered(ui, ui_weak.clone());
-    register_dropdown_changed(ui, ui_weak);
+    register_slider_changed(ui, ui_weak.clone(), state.clone());
+    register_readout_refresh(ui, ui_weak.clone(), state.clone());
+    register_toggle_changed(ui, ui_weak.clone(), state.clone());
+    register_action_triggered(ui, ui_weak.clone(), state.clone());
+    register_dropdown_changed(ui, ui_weak, state);
 
     // Initialize with example plugin devices for development
     initialize_example_plugins(ui);
@@ -182,127 +182,290 @@ fn register_refresh_plugins(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
     });
 }
 
-fn register_slider_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_slider_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_plugin_slider_changed(move |device_id, target, value| {
         let device_id = device_id.to_string();
         let target = target.to_string();
+        let state = state.clone();
 
         info!(
             "Plugin slider changed: device={}, target={}, value={}",
             device_id, target, value
         );
 
-        // TODO: Call appropriate gRPC method based on capability
-        // e.g., HardwareService::MoveAbsolute for movable, or a generic SetValue
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            warn!("Plugin slider is a stub - no actual change performed");
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state.lock().await;
+                app_state.get_client()
+            };
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Slider Changed"),
-                SharedString::from(format!(
-                    "{}.{} = {:.3} (stub)",
-                    device_id, target, value
-                )),
-            );
+            let Some(client) = client else {
+                error!("Cannot set slider value: not connected to daemon");
+                return;
+            };
+
+            // Call appropriate gRPC method based on capability
+            // For movable devices (sliders control position), use move_absolute
+            // For settable parameters, use set_parameter
+            let result = if target == "position" {
+                // This is a movable device slider
+                client.move_absolute(&device_id, value).await
+                    .map(|pos| pos.to_string())
+            } else {
+                // This is a settable parameter slider
+                client.set_parameter(&device_id, &target, &value.to_string()).await
+            };
+
+            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(actual_value) => {
+                        ui.invoke_show_toast(
+                            SharedString::from("success"),
+                            SharedString::from("Value Set"),
+                            SharedString::from(format!(
+                                "{}.{} = {}",
+                                device_id, target, actual_value
+                            )),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to set slider value: {}", e);
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Slider Error"),
+                            SharedString::from(format!("Failed to set {}.{}: {}", device_id, target, e)),
+                        );
+                    }
+                }
+            });
         });
     });
 }
 
-fn register_readout_refresh(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_readout_refresh(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_plugin_readout_refresh(move |device_id, source| {
         let device_id = device_id.to_string();
         let source = source.to_string();
+        let state = state.clone();
 
         info!(
             "Plugin readout refresh: device={}, source={}",
             device_id, source
         );
 
-        // TODO: Call HardwareService::ReadValue or similar
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            warn!("Plugin readout refresh is a stub - no actual read performed");
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state.lock().await;
+                app_state.get_client()
+            };
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Readout Refreshed"),
-                SharedString::from(format!("{}.{} (stub)", device_id, source)),
-            );
+            let Some(client) = client else {
+                error!("Cannot read value: not connected to daemon");
+                return;
+            };
+
+            // Call HardwareService::ReadValue for readable devices
+            // or GetParameter for parameter readouts
+            let result = if source == "position" || source == "reading" {
+                // This is a readable device (Readable trait)
+                client.read_value(&device_id).await
+                    .map(|(value, units)| format!("{} {}", value, units))
+            } else {
+                // This is a parameter readout
+                client.get_parameter(&device_id, &source).await
+            };
+
+            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(value) => {
+                        ui.invoke_show_toast(
+                            SharedString::from("info"),
+                            SharedString::from("Readout Refreshed"),
+                            SharedString::from(format!("{}.{} = {}", device_id, source, value)),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to read value: {}", e);
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Read Error"),
+                            SharedString::from(format!("Failed to read {}.{}: {}", device_id, source, e)),
+                        );
+                    }
+                }
+            });
         });
     });
 }
 
-fn register_toggle_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_toggle_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_plugin_toggle_changed(move |device_id, target, is_on| {
         let device_id = device_id.to_string();
         let target = target.to_string();
+        let state = state.clone();
 
         info!(
             "Plugin toggle changed: device={}, target={}, is_on={}",
             device_id, target, is_on
         );
 
-        // TODO: Call HardwareService::SetSwitch or similar
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            warn!("Plugin toggle is a stub - no actual change performed");
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state.lock().await;
+                app_state.get_client()
+            };
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Toggle Changed"),
-                SharedString::from(format!(
-                    "{}.{} = {} (stub)",
-                    device_id,
-                    target,
-                    if is_on { "ON" } else { "OFF" }
-                )),
-            );
+            let Some(client) = client else {
+                error!("Cannot set toggle: not connected to daemon");
+                return;
+            };
+
+            // Call HardwareService::SetParameter with boolean value
+            // Toggles are typically boolean or enum parameters
+            let value = if is_on { "true" } else { "false" };
+            let result = client.set_parameter(&device_id, &target, value).await;
+
+            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(actual_value) => {
+                        ui.invoke_show_toast(
+                            SharedString::from("success"),
+                            SharedString::from("Toggle Changed"),
+                            SharedString::from(format!(
+                                "{}.{} = {}",
+                                device_id, target, actual_value
+                            )),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to set toggle: {}", e);
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Toggle Error"),
+                            SharedString::from(format!("Failed to set {}.{}: {}", device_id, target, e)),
+                        );
+                    }
+                }
+            });
         });
     });
 }
 
-fn register_action_triggered(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_action_triggered(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_plugin_action_triggered(move |device_id, action| {
         let device_id = device_id.to_string();
         let action = action.to_string();
+        let state = state.clone();
 
         info!(
             "Plugin action triggered: device={}, action={}",
             device_id, action
         );
 
-        // TODO: Call HardwareService::ExecuteAction or similar
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            warn!("Plugin action is a stub - no actual action performed");
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state.lock().await;
+                app_state.get_client()
+            };
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Action Triggered"),
-                SharedString::from(format!("{}.{}() (stub)", device_id, action)),
-            );
+            let Some(client) = client else {
+                error!("Cannot execute action: not connected to daemon");
+                return;
+            };
+
+            // Execute plugin-specific actions via HardwareService
+            // Common actions: "home", "zero", "calibrate", etc.
+            // These are typically device-specific commands
+            let result = match action.as_str() {
+                "home" => {
+                    // For movable devices, home typically means move to position 0
+                    client.move_absolute(&device_id, 0.0).await
+                        .map(|_| "Homed".to_string())
+                }
+                _ => {
+                    // For other actions, use set_parameter with action name
+                    // This allows plugin-defined actions to be triggered
+                    client.set_parameter(&device_id, &action, "execute").await
+                }
+            };
+
+            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(msg) => {
+                        ui.invoke_show_toast(
+                            SharedString::from("success"),
+                            SharedString::from("Action Executed"),
+                            SharedString::from(format!("{}.{}() - {}", device_id, action, msg)),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to execute action: {}", e);
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Action Error"),
+                            SharedString::from(format!("Failed to execute {}.{}(): {}", device_id, action, e)),
+                        );
+                    }
+                }
+            });
         });
     });
 }
 
-fn register_dropdown_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>) {
+fn register_dropdown_changed(ui: &MainWindow, ui_weak: Weak<MainWindow>, state: SharedState) {
     ui.on_plugin_dropdown_changed(move |device_id, target, value| {
         let device_id = device_id.to_string();
         let target = target.to_string();
         let value = value.to_string();
+        let state = state.clone();
 
         info!(
             "Plugin dropdown changed: device={}, target={}, value={}",
             device_id, target, value
         );
 
-        // TODO: Call appropriate setter method
-        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
-            warn!("Plugin dropdown is a stub - no actual change performed");
+        tokio::spawn(async move {
+            // Get client from state
+            let client = {
+                let app_state = state.lock().await;
+                app_state.get_client()
+            };
 
-            ui.invoke_show_toast(
-                SharedString::from("info"),
-                SharedString::from("Selection Changed"),
-                SharedString::from(format!("{}.{} = {} (stub)", device_id, target, value)),
-            );
+            let Some(client) = client else {
+                error!("Cannot set dropdown value: not connected to daemon");
+                return;
+            };
+
+            // Call HardwareService::SetParameter for dropdown selections
+            // Dropdowns typically set enum or string parameters
+            let result = client.set_parameter(&device_id, &target, &value).await;
+
+            let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(actual_value) => {
+                        ui.invoke_show_toast(
+                            SharedString::from("success"),
+                            SharedString::from("Selection Changed"),
+                            SharedString::from(format!(
+                                "{}.{} = {}",
+                                device_id, target, actual_value
+                            )),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to set dropdown value: {}", e);
+                        ui.invoke_show_toast(
+                            SharedString::from("error"),
+                            SharedString::from("Dropdown Error"),
+                            SharedString::from(format!("Failed to set {}.{}: {}", device_id, target, e)),
+                        );
+                    }
+                }
+            });
         });
     });
 }

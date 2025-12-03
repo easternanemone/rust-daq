@@ -352,6 +352,126 @@ impl HDF5Writer {
         Ok(())
     }
 
+    /// Write ExperimentManifest to HDF5 file as attributes (bd-ib06)
+    ///
+    /// Stores manifest under /manifest/ group for experiment reproducibility:
+    /// - /manifest/timestamp_ns
+    /// - /manifest/run_uid
+    /// - /manifest/plan_type
+    /// - /manifest/plan_name
+    /// - /manifest/parameters/<device_id>/<param_name> (JSON string)
+    /// - /manifest/system/<key> (software version, hostname, etc.)
+    /// - /manifest/metadata/<key> (user metadata)
+    ///
+    /// # Arguments
+    ///
+    /// * `manifest` - The ExperimentManifest to persist
+    ///
+    /// # Errors
+    ///
+    /// Returns error if HDF5 file operations fail
+    #[cfg(feature = "storage_hdf5")]
+    pub fn write_manifest(&self, manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
+        use hdf5::File;
+
+        // Open or create HDF5 file
+        let file = if self.output_path.exists() {
+            File::open_rw(&self.output_path)?
+        } else {
+            File::create(&self.output_path)?
+        };
+
+        // Create manifest group if it doesn't exist
+        let manifest_group = if file.group("manifest").is_ok() {
+            file.group("manifest")?
+        } else {
+            file.create_group("manifest")?
+        };
+
+        // Write basic manifest attributes
+        manifest_group
+            .new_attr::<u64>()
+            .create("timestamp_ns")?
+            .write_scalar(&manifest.timestamp_ns)?;
+
+        manifest_group
+            .new_attr::<hdf5::types::VarLenUnicode>()
+            .create("run_uid")?
+            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.run_uid.as_str()))?;
+
+        manifest_group
+            .new_attr::<hdf5::types::VarLenUnicode>()
+            .create("plan_type")?
+            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_type.as_str()))?;
+
+        manifest_group
+            .new_attr::<hdf5::types::VarLenUnicode>()
+            .create("plan_name")?
+            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_name.as_str()))?;
+
+        // Create parameters subgroup
+        let params_group = if manifest_group.group("parameters").is_ok() {
+            manifest_group.group("parameters")?
+        } else {
+            manifest_group.create_group("parameters")?
+        };
+
+        // Write device parameters as JSON attributes
+        for (device_id, params) in &manifest.parameters {
+            let device_group = if params_group.group(device_id).is_ok() {
+                params_group.group(device_id)?
+            } else {
+                params_group.create_group(device_id)?
+            };
+
+            for (param_name, param_value) in params {
+                // Serialize JSON value to string for HDF5 storage
+                let json_str = serde_json::to_string(param_value)?;
+                device_group
+                    .new_attr::<hdf5::types::VarLenUnicode>()
+                    .create(param_name)?
+                    .write_scalar(&hdf5::types::VarLenUnicode::from(json_str.as_str()))?;
+            }
+        }
+
+        // Create system_info subgroup
+        let system_group = if manifest_group.group("system").is_ok() {
+            manifest_group.group("system")?
+        } else {
+            manifest_group.create_group("system")?
+        };
+
+        for (key, value) in &manifest.system_info {
+            system_group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create(key)?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+        }
+
+        // Create metadata subgroup
+        let metadata_group = if manifest_group.group("metadata").is_ok() {
+            manifest_group.group("metadata")?
+        } else {
+            manifest_group.create_group("metadata")?
+        };
+
+        for (key, value) in &manifest.metadata {
+            metadata_group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create(key)?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+        }
+
+        Ok(())
+    }
+
+    /// No-op when storage_hdf5 feature is disabled
+    #[cfg(not(feature = "storage_hdf5"))]
+    pub fn write_manifest(&self, _manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
+        // Gracefully degrade when HDF5 not available
+        Ok(())
+    }
+
     /// Write Arrow RecordBatch to HDF5 group
     ///
     /// Converts Arrow columns to HDF5 datasets for compatibility with

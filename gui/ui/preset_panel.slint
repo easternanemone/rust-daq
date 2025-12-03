@@ -5,6 +5,8 @@
 import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit, ListView,
          ScrollView, VerticalBox, GridBox, StandardButton } from "std-widgets.slint";
 
+import { AppColors, AppFonts, AppSpacing, AppLayout } from "globals.slint";
+
 // =============================================================================
 // Data Models
 // =============================================================================
@@ -29,28 +31,42 @@ component PresetList inherits Rectangle {
 
     callback preset-selected(string);  // preset-id
 
-    background: white;
-    border-radius: 8px;
+    background: AppColors.panel-bg;
+    border-radius: AppLayout.radius-md;
+    border-width: AppLayout.border-thin;
+    border-color: AppColors.border-light;
 
     VerticalBox {
-        padding: 16px;
-        spacing: 12px;
+        padding: AppSpacing.lg;
+        spacing: AppSpacing.md;
 
-        Text {
-            text: "Saved Presets";
-            font-weight: 700;
-            font-size: 14px;
+        Rectangle {
+            height: AppLayout.header-height;
+            background: AppColors.header-bg;
+            border-radius: AppLayout.radius-sm;
+            
+            HorizontalBox {
+                padding-left: AppSpacing.sm;
+                padding-right: AppSpacing.sm;
+                Text {
+                    text: "Saved Presets";
+                    font-weight: AppFonts.weight-bold;
+                    font-size: AppFonts.size-base;
+                    color: AppColors.text-on-dark;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         if presets.length == 0: Rectangle {
             height: 60px;
-            background: #f5f5f5;
-            border-radius: 4px;
+            background: AppColors.sidebar-bg;
+            border-radius: AppLayout.radius-sm;
 
             Text {
                 text: "No presets saved yet";
-                color: #999;
-                font-size: 12px;
+                color: AppColors.text-muted;
+                font-size: AppFonts.size-sm;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -60,8 +76,8 @@ component PresetList inherits Rectangle {
             ListView {
                 for preset[idx] in presets: Rectangle {
                     height: 72px;
-                    background: idx == selected-index ? #e3f2fd : transparent;
-                    border-radius: 4px;
+                    background: idx == selected-index ? AppColors.selected-bg : transparent;
+                    border-radius: AppLayout.radius-sm;
 
                     TouchArea {
                         clicked => {
@@ -71,43 +87,43 @@ component PresetList inherits Rectangle {
                     }
 
                     VerticalBox {
-                        padding: 12px;
-                        spacing: 4px;
+                        padding: AppSpacing.md;
+                        spacing: AppSpacing.xs;
 
                         HorizontalBox {
-                            spacing: 12px;
+                            spacing: AppSpacing.md;
                             Text {
                                 text: preset.name;
-                                font-weight: 600;
-                                font-size: 13px;
+                                font-weight: AppFonts.weight-semibold;
+                                font-size: AppFonts.size-base;
                             }
                             Rectangle { horizontal-stretch: 1; }
                             Text {
                                 text: "\{preset.device-count} devices";
-                                font-size: 10px;
-                                color: #666;
+                                font-size: AppFonts.size-xs;
+                                color: AppColors.text-secondary;
                             }
                         }
 
                         Text {
                             text: preset.description;
-                            font-size: 11px;
-                            color: #666;
+                            font-size: AppFonts.size-xs;
+                            color: AppColors.text-secondary;
                             wrap: word-wrap;
                             overflow: elide;
                         }
 
                         HorizontalBox {
-                            spacing: 8px;
+                            spacing: AppSpacing.sm;
                             Text {
                                 text: "by \{preset.author}";
-                                font-size: 10px;
-                                color: #999;
+                                font-size: AppFonts.size-xs;
+                                color: AppColors.text-muted;
                             }
                             Text {
                                 text: preset.updated-at;
-                                font-size: 10px;
-                                color: #999;
+                                font-size: AppFonts.size-xs;
+                                color: AppColors.text-muted;
                             }
                         }
                     }
@@ -140,9 +156,9 @@ component SavePresetDialog inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         width: 400px;
-        height: 280px;
-        background: white;
-        border-radius: 12px;
+        height: 320px;
+        background: AppColors.panel-bg;
+        border-radius: AppLayout.radius-lg;
         drop-shadow-blur: 20px;
         drop-shadow-color: rgba(0, 0, 0, 0.2);
 
@@ -151,40 +167,42 @@ component SavePresetDialog inherits Rectangle {
         }
 
         VerticalBox {
-            padding: 24px;
-            spacing: 16px;
+            padding: AppSpacing.xl;
+            spacing: AppSpacing.lg;
 
             Text {
-                text: "Save Current Configuration";
-                font-weight: 700;
-                font-size: 16px;
+                text: "Save Preset";
+                font-weight: AppFonts.weight-bold;
+                font-size: AppFonts.size-lg;
             }
 
             VerticalBox {
-                spacing: 8px;
+                spacing: AppSpacing.sm;
 
                 Text {
                     text: "Preset Name";
-                    font-size: 12px;
-                    color: #666;
+                    font-size: AppFonts.size-sm;
+                    color: AppColors.text-secondary;
                 }
+
                 LineEdit {
-                    placeholder-text: "e.g., Morning Calibration";
                     text <=> preset-name;
+                    placeholder-text: "e.g., Two-Photon Standard";
                 }
             }
 
             VerticalBox {
-                spacing: 8px;
+                spacing: AppSpacing.sm;
 
                 Text {
                     text: "Description";
-                    font-size: 12px;
-                    color: #666;
+                    font-size: AppFonts.size-sm;
+                    color: AppColors.text-secondary;
                 }
+
                 LineEdit {
-                    placeholder-text: "Optional description...";
                     text <=> preset-description;
+                    placeholder-text: "Optional description...";
                 }
             }
 
@@ -238,21 +256,21 @@ export component PresetPanel inherits Rectangle {
     callback load-preset(string);          // preset-id
     callback delete-preset(string);        // preset-id
 
-    background: #f8f9fa;
-    border-radius: 12px;
+    background: AppColors.sidebar-bg;
+    border-radius: AppLayout.radius-lg;
 
     VerticalBox {
-        padding: 20px;
-        spacing: 16px;
+        padding: AppSpacing.xl;
+        spacing: AppSpacing.lg;
 
         // Header
         HorizontalBox {
-            spacing: 12px;
+            spacing: AppSpacing.md;
 
             Text {
                 text: "Presets";
-                font-weight: 700;
-                font-size: 18px;
+                font-weight: AppFonts.weight-bold;
+                font-size: AppFonts.size-xl;
                 vertical-alignment: center;
             }
 
@@ -286,8 +304,8 @@ export component PresetPanel inherits Rectangle {
             title: "Selected Preset";
 
             HorizontalBox {
-                spacing: 12px;
-                padding: 8px;
+                spacing: AppSpacing.md;
+                padding: AppSpacing.sm;
 
                 Button {
                     text: "Load Preset";

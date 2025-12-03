@@ -6,8 +6,6 @@
 import { Button, ComboBox, GroupBox, HorizontalBox, LineEdit,
          ScrollView, Slider, SpinBox, VerticalBox, CheckBox, ProgressIndicator } from "std-widgets.slint";
 
-import { AppColors, AppFonts, AppSpacing, AppLayout } from "globals.slint";
-
 // =============================================================================
 // Data Models for Plugin UI Elements
 // =============================================================================

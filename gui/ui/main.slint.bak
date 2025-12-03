@@ -479,7 +479,7 @@ component MovePanel inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
                 Text {
                     text: "\{round(current-position * 1000) / 1000}";
-                    font-size: AppFonts.size-xxxl;
+                    font-size: AppFonts.size-3xl;
                     font-weight: 700;
                     color: is-moving ? #3498db : #2ecc71;
                     vertical-alignment: center;
@@ -1042,7 +1042,7 @@ component LaserPanel inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
                 Text {
                     text: format-power(power-reading);
-                    font-size: AppFonts.size-xxxl;
+                    font-size: AppFonts.size-3xl;
                     font-weight: 700;
                     color: streaming ? #2ecc71 : #3498db;
                     vertical-alignment: center;
@@ -1532,7 +1532,7 @@ export component MainWindow inherits Window {
     callback start-engine();
     callback pause-engine();
     callback resume-engine();
-    callback abort-plan(string);           // run-uid
+    callback request-abort(string);           // run-uid
     callback halt-engine();
     callback get-engine-status();
 
@@ -1863,7 +1863,7 @@ export component MainWindow inherits Window {
                         start-engine => { root.start-engine(); }
                         pause-engine => { root.pause-engine(); }
                         resume-engine => { root.resume-engine(); }
-                        abort-plan(run-uid) => { root.abort-plan(run-uid); }
+                        request-abort(run-uid) => { root.request-abort(run-uid); }
                         halt-engine => { root.halt-engine(); }
                         get-engine-status => { root.get-engine-status(); }
                     }
