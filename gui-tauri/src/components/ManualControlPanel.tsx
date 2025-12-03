@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Move,
   StopCircle,
@@ -30,7 +30,6 @@ interface ManualControlPanelProps {
 function MovableControl({ device }: { device: DeviceInfo }) {
   const [targetPosition, setTargetPosition] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const queryClient = useQueryClient();
 
   const moveMutation = useMutation({
     mutationFn: async ({ position, wait }: { position: number; wait: boolean }) => {
@@ -42,7 +41,6 @@ function MovableControl({ device }: { device: DeviceInfo }) {
     },
     onSuccess: (msg) => {
       setMessage({ type: "success", text: msg });
-      queryClient.invalidateQueries({ queryKey: ["device-state", device.id] });
       setTimeout(() => setMessage(null), 3000);
     },
     onError: (error: string) => {
@@ -57,7 +55,6 @@ function MovableControl({ device }: { device: DeviceInfo }) {
     },
     onSuccess: (msg) => {
       setMessage({ type: "success", text: msg });
-      queryClient.invalidateQueries({ queryKey: ["device-state", device.id] });
     },
     onError: (error: string) => {
       setMessage({ type: "error", text: error });
@@ -225,7 +222,6 @@ function ReadableControl({ device }: { device: DeviceInfo }) {
 
 function ExposureControl({ device }: { device: DeviceInfo }) {
   const [exposureMs, setExposureMs] = useState("");
-  const queryClient = useQueryClient();
 
   const setExposureMutation = useMutation({
     mutationFn: async (ms: number) => {
@@ -233,9 +229,6 @@ function ExposureControl({ device }: { device: DeviceInfo }) {
         deviceId: device.id,
         exposureMs: ms,
       });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["device-state", device.id] });
     },
   });
 
@@ -304,7 +297,6 @@ function ExposureControl({ device }: { device: DeviceInfo }) {
 
 function LaserControl({ device }: { device: DeviceInfo }) {
   const [wavelengthNm, setWavelengthNm] = useState("");
-  const queryClient = useQueryClient();
 
   const setShutterMutation = useMutation({
     mutationFn: async (open: boolean) => {
