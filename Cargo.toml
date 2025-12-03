@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "pvcam-sys",
-    "gui",
 ]
 exclude = ["python", "fuzz"]
 

@@ -28,6 +28,7 @@ use crate::grpc::proto::{
 use crate::hardware::registry::DeviceRegistry;
 use log::warn;
 use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -130,6 +131,23 @@ pub struct ScanServiceImpl {
 }
 
 impl ScanServiceImpl {
+    const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+
+    async fn with_request_deadline<F, T>(&self, operation: &str, fut: F) -> Result<T, Status>
+    where
+        F: Future<Output = Result<T, Status>> + Send,
+        T: Send,
+    {
+        match tokio::time::timeout(Self::RPC_TIMEOUT, fut).await {
+            Ok(result) => result,
+            Err(_) => Err(Status::deadline_exceeded(format!(
+                "{} timed out after {:?}",
+                operation,
+                Self::RPC_TIMEOUT
+            ))),
+        }
+    }
+
     /// Create a new ScanService with the given device registry
     pub fn new(registry: Arc<RwLock<DeviceRegistry>>) -> Self {
         Self {
@@ -524,6 +542,14 @@ impl ScanService for ScanServiceImpl {
         request: Request<CreateScanRequest>,
     ) -> Result<Response<CreateScanResponse>, Status> {
         let req = request.into_inner();
+        self.with_request_deadline("CreateScan", self.create_scan_inner(req))
+            .await
+    }
+
+    async fn create_scan_inner(
+        &self,
+        req: CreateScanRequest,
+    ) -> Result<Response<CreateScanResponse>, Status> {
         let config = req
             .config
             .ok_or_else(|| Status::invalid_argument("Missing scan config"))?;
@@ -561,7 +587,14 @@ impl ScanService for ScanServiceImpl {
         request: Request<StartScanRequest>,
     ) -> Result<Response<StartScanResponse>, Status> {
         let req = request.into_inner();
+        self.with_request_deadline("StartScan", self.start_scan_inner(req))
+            .await
+    }
 
+    async fn start_scan_inner(
+        &self,
+        req: StartScanRequest,
+    ) -> Result<Response<StartScanResponse>, Status> {
         let mut scans_guard = self.scans.lock().await;
         let scan = scans_guard
             .get_mut(&req.scan_id)
@@ -626,7 +659,14 @@ impl ScanService for ScanServiceImpl {
         request: Request<PauseScanRequest>,
     ) -> Result<Response<PauseScanResponse>, Status> {
         let req = request.into_inner();
+        self.with_request_deadline("PauseScan", self.pause_scan_inner(req))
+            .await
+    }
 
+    async fn pause_scan_inner(
+        &self,
+        req: PauseScanRequest,
+    ) -> Result<Response<PauseScanResponse>, Status> {
         let scans_guard = self.scans.lock().await;
         let scan = scans_guard
             .get(&req.scan_id)
@@ -651,7 +691,14 @@ impl ScanService for ScanServiceImpl {
         request: Request<ResumeScanRequest>,
     ) -> Result<Response<ResumeScanResponse>, Status> {
         let req = request.into_inner();
+        self.with_request_deadline("ResumeScan", self.resume_scan_inner(req))
+            .await
+    }
 
+    async fn resume_scan_inner(
+        &self,
+        req: ResumeScanRequest,
+    ) -> Result<Response<ResumeScanResponse>, Status> {
         let scans_guard = self.scans.lock().await;
         let scan = scans_guard
             .get(&req.scan_id)
@@ -676,7 +723,14 @@ impl ScanService for ScanServiceImpl {
         request: Request<StopScanRequest>,
     ) -> Result<Response<StopScanResponse>, Status> {
         let req = request.into_inner();
+        self.with_request_deadline("StopScan", self.stop_scan_inner(req))
+            .await
+    }
 
+    async fn stop_scan_inner(
+        &self,
+        req: StopScanRequest,
+    ) -> Result<Response<StopScanResponse>, Status> {
         let scans_guard = self.scans.lock().await;
         let scan = scans_guard
             .get(&req.scan_id)

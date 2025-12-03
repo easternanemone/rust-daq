@@ -88,10 +88,12 @@
 //! }
 //! ```
 
+use crate::error_recovery::RetryPolicy;
 use crate::hardware::capabilities::{Movable, Parameterized};
 use crate::observable::ParameterSet;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -160,6 +162,36 @@ pub struct Ell14Driver {
 }
 
 impl Ell14Driver {
+    async fn with_retry<F, Fut, T>(&self, operation: &str, mut op: F) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let policy = RetryPolicy::default();
+        let mut attempts = 0;
+        loop {
+            match op().await {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    attempts += 1;
+                    if attempts >= policy.max_attempts {
+                        return Err(err);
+                    }
+                    tracing::warn!(
+                        target: "hardware::ell14",
+                        attempt = attempts,
+                        max_attempts = policy.max_attempts,
+                        "Operation '{}' failed: {}. Retrying in {:?}",
+                        operation,
+                        err,
+                        policy.backoff_delay
+                    );
+                    tokio::time::sleep(policy.backoff_delay).await;
+                }
+            }
+        }
+    }
+
     /// Create a new ELL14 driver instance (opens dedicated serial port)
     ///
     /// # Arguments
@@ -278,10 +310,19 @@ impl Ell14Driver {
         self.wait_settled().await
     }
 
-    /// Helper to send a command and get a response
+    async fn transaction(&self, command: &str) -> Result<String> {
+        let command = command.to_string();
+        self.with_retry("ELL14 transaction", || {
+            let cmd = command.clone();
+            async move { self.transaction_once(&cmd).await }
+        })
+        .await
+    }
+
+    /// Helper to send a command and get a response without retry
     ///
     /// ELL14 protocol is ASCII based with format: {Address}{Command}{Data}
-    async fn transaction(&self, command: &str) -> Result<String> {
+    async fn transaction_once(&self, command: &str) -> Result<String> {
         let mut port = self.port.lock().await;
 
         // Construct packet: Address + Command
@@ -362,6 +403,15 @@ impl Ell14Driver {
     /// Movement commands may not return a response until motion completes.
     /// Use wait_settled() to wait for motion completion.
     async fn send_command(&self, command: &str) -> Result<()> {
+        let command = command.to_string();
+        self.with_retry("ELL14 send_command", || {
+            let cmd = command.clone();
+            async move { self.send_command_once(&cmd).await }
+        })
+        .await
+    }
+
+    async fn send_command_once(&self, command: &str) -> Result<()> {
         let mut port = self.port.lock().await;
 
         let payload = format!("{}{}", self.address, command);

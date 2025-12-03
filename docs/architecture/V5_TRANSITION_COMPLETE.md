@@ -337,10 +337,10 @@ git revert <cleanup-commits>
 ### Should Have
 - ✅ Cargo.toml cleaned (kameo optional dependency removed)
 - ✅ Build time improved (1.28s clean build)
-- 🔄 Documentation updated (in progress)
+- ✅ Documentation updated
 
 ### Nice to Have
-- 🔄 Archive legacy code references in docs/archive/
+- ✅ Legacy code archived (docs/archive/ removed in bd-ou6y.2)
 - 🔄 Update CHANGELOG.md
 - ⏳ Migration guide for external users (if any exist)
 

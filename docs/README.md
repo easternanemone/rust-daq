@@ -29,8 +29,3 @@ Technical reference material.
 - [Hardware Inventory](./reference/hardware_inventory.md): List of supported and available hardware.
 - [Hardware Testing Strategy](./reference/hardware_testing_strategy.md): Testing methodologies.
 - [PVCAM SDK](./reference/pvcam-sdk/): Documentation for the PVCAM camera SDK.
-
-### 📦 [Archive](./archive/)
-Legacy documentation, obsolete architecture descriptions (V4 and older), and migration reports.
-- [Legacy V4](./archive/legacy_v4/): Documentation for the deprecated Kameo-based architecture.
-- [Migration 2025](./archive/migration_2025/): Status reports, design docs, and plans from the V4->V5 migration.

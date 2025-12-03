@@ -77,9 +77,9 @@
 //! # V3 vs V5 Bindings
 //!
 //! - **V5 bindings** (`bindings.rs`): Use capability traits (`Movable`, `Camera`)
-//! - **V3 bindings** (`bindings_v3.rs`): Use V3 instrument traits (legacy, being phased out)
+//! - **V3 bindings** (REMOVED in bd-ou6y.3): Legacy V3 instrument traits removed
 //!
-//! Use V5 bindings for new code. V3 bindings exist for backward compatibility.
+//! Use V5 bindings for all new code.
 
 // V5 ScriptEngine trait and implementations
 pub mod pyo3_engine;
@@ -88,7 +88,6 @@ pub mod script_engine;
 
 // Legacy Rhai-specific (V4 compatibility)
 pub mod bindings;
-pub mod bindings_v3;
 pub mod engine;
 
 // Plan bindings for experiment orchestration (bd-73yh.4)
@@ -102,9 +101,6 @@ pub use script_engine::{ScriptEngine, ScriptError, ScriptValue};
 
 // Re-export legacy types (V4)
 pub use bindings::{register_hardware, CameraHandle, StageHandle};
-pub use bindings_v3::{
-    register_v3_hardware, V3CameraHandle, V3LaserHandle, V3PowerMeterHandle, V3StageHandle,
-};
 pub use engine::ScriptHost;
 
 // Re-export plan bindings (bd-73yh.4)

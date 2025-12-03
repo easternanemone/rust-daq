@@ -9,7 +9,7 @@ A high-performance, headless-first data acquisition (DAQ) system written in Rust
 - **Headless-First Architecture**: Core daemon runs independently of any UI
 - **Capability-Based Hardware Abstraction**: Composable traits for motion, sensing, triggering, and camera control
 - **YAML Plugin System**: Define new instruments without writing code
-- **Slint GUI**: Modern, cross-platform desktop interface connecting via gRPC
+- **Tauri GUI**: Modern, cross-platform desktop interface (React + Tauri) connecting via gRPC
 - **High-Performance Data Pipeline**: Memory-mapped ring buffers with Arrow IPC and HDF5 persistence
 - **Script-Driven Automation**: Rhai scripting for experiment control
 - **Remote Control**: Full gRPC API for network-transparent operation
@@ -18,7 +18,7 @@ A high-performance, headless-first data acquisition (DAQ) system written in Rust
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         GUI (Slint)                             │
+│                      GUI (Tauri + React)                        │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │
 │  │  Move   │ │ Camera  │ │  Scan   │ │ Modules │ │  Data   │   │
 │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘   │
@@ -60,8 +60,8 @@ cargo build
 # Build with all features (all storage backends and hardware drivers)
 cargo build --all-features
 
-# Build the GUI
-cargo build --package rust-daq-gui
+# Build the Tauri GUI (in gui-tauri directory)
+cd gui-tauri && npm install && npm run tauri build
 ```
 
 ### Run
@@ -73,8 +73,8 @@ cargo run -- daemon --port 50051
 # Run a Rhai script
 cargo run -- run examples/simple_scan.rhai
 
-# Launch the GUI (connects to daemon)
-cargo run --package rust-daq-gui
+# Launch the Tauri GUI (in gui-tauri directory)
+cd gui-tauri && npm run tauri dev
 ```
 
 ### Test
@@ -175,7 +175,7 @@ writer.start_background_flush(Duration::from_secs(1));
 
 ## GUI Panels
 
-The Slint-based GUI provides:
+The Tauri-based GUI provides:
 
 - **Move Panel**: Control movable devices with position display
 - **Viewer Panel**: Real-time value monitoring

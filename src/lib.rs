@@ -38,7 +38,6 @@
 // pub mod app; // REMOVED: Depends on app_actor (bd-9si6)
 // pub mod app_actor; // REMOVED: V2 actor pattern deleted (bd-9si6)
 pub mod config;
-pub mod config_v4; // V4 configuration system (bd-rir3)
 pub mod core;
 pub mod data; // Re-enabled for ring buffer implementation (Phase 4J: bd-q2we)
 pub mod error;
@@ -47,7 +46,8 @@ pub mod log_capture;
 pub mod measurement;
 pub mod metadata;
 pub mod session;
-pub mod tracing_v4; // V4 tracing infrastructure (bd-fxb7)
+// REMOVED: V4 tracing infrastructure (bd-ou6y.3)
+// pub mod tracing_v4;
 pub mod validation;
 
 // Phase 1: Architectural redesign - New core abstractions

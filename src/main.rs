@@ -324,7 +324,7 @@ async fn start_daemon(
         if let Some((writer, handle)) = writer_handle {
             println!("   Flushing HDF5 writer...");
             // Final flush to ensure all data is written
-            if let Err(e) = writer.flush_to_disk() {
+            if let Err(e) = writer.flush_to_disk().await {
                 eprintln!("   Warning: HDF5 flush error during shutdown: {}", e);
             }
             // Abort the background writer task
@@ -355,7 +355,7 @@ async fn start_daemon(
         if let Some((writer, handle)) = writer_handle {
             println!("   Flushing HDF5 writer...");
             // Final flush to ensure all data is written
-            if let Err(e) = writer.flush_to_disk() {
+            if let Err(e) = writer.flush_to_disk().await {
                 eprintln!("   Warning: HDF5 flush error during shutdown: {}", e);
             }
             // Abort the background writer task

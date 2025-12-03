@@ -145,7 +145,7 @@ mod hdf5_tests {
         }
 
         // Flush to HDF5
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify file was created
         assert!(hdf5_path.exists(), "HDF5 file should exist");
@@ -180,7 +180,7 @@ mod hdf5_tests {
             }
         }
 
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
         assert!(hdf5_path.exists(), "HDF5 file should exist");
     }
 
@@ -206,7 +206,7 @@ mod hdf5_tests {
             }
         }
 
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
         assert!(hdf5_path.exists(), "HDF5 file should exist");
     }
 
@@ -229,7 +229,7 @@ mod hdf5_tests {
             }
         }
 
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify metadata attributes exist
         let file = hdf5::File::open(&hdf5_path).unwrap();
@@ -268,7 +268,7 @@ mod hdf5_tests {
                 }
             }
 
-            writer.flush_to_disk().unwrap();
+            writer.flush_to_disk().await.unwrap();
         }
 
         // Verify multiple batches were created
@@ -308,7 +308,7 @@ mod hdf5_tests {
         }
 
         // Flush should return error but not panic
-        let result = writer.flush_to_disk();
+        let result = writer.flush_to_disk().await;
         assert!(result.is_err(), "Should return error for invalid path");
     }
 
@@ -728,7 +728,7 @@ mod ringbuffer_hdf5_integration {
         }
 
         // Flush to HDF5
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify HDF5 file was created and contains data
         assert!(hdf5_path.exists(), "HDF5 file should exist");
@@ -764,13 +764,13 @@ mod ringbuffer_hdf5_integration {
 
                 // Flush periodically
                 if batch_num % 2 == 0 {
-                    writer.flush_to_disk().unwrap();
+                    writer.flush_to_disk().await.unwrap();
                 }
             }
         }
 
         // Final flush
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify throughput
         assert!(writer.batch_count() >= 5, "Should have multiple batches");
@@ -792,7 +792,7 @@ mod ringbuffer_hdf5_integration {
             // Run for a short time
             for _ in 0..5 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let _ = writer_clone.flush_to_disk();
+                let _ = writer_clone.flush_to_disk().await;
             }
         });
 

@@ -781,14 +781,14 @@ pub async fn start_server_with_hardware(
     };
 
     // Wire ScanService with optional data persistence
-    let scan_server = if let Some(rb) = ring_buffer {
+    let scan_server = if let Some(rb) = ring_buffer.clone() {
         ScanServiceImpl::new(registry.clone()).with_ring_buffer(rb)
     } else {
         ScanServiceImpl::new(registry.clone())
     };
 
     let preset_server = PresetServiceImpl::new(registry, default_preset_storage_path());
-    let storage_server = StorageServiceImpl::new();
+    let storage_server = StorageServiceImpl::new(ring_buffer.clone());
 
     println!("DAQ gRPC server (with hardware) listening on {}", addr);
     println!("  - ControlService: script management");

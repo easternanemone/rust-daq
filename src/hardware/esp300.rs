@@ -31,10 +31,12 @@
 //! }
 //! ```
 
+use crate::error_recovery::RetryPolicy;
 use crate::hardware::capabilities::{Movable, Parameterized};
 use crate::observable::ParameterSet;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use std::future::Future;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
@@ -57,6 +59,36 @@ pub struct Esp300Driver {
 }
 
 impl Esp300Driver {
+    async fn with_retry<F, Fut, T>(&self, operation: &str, mut op: F) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let policy = RetryPolicy::default();
+        let mut attempts = 0;
+        loop {
+            match op().await {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    attempts += 1;
+                    if attempts >= policy.max_attempts {
+                        return Err(err);
+                    }
+                    tracing::warn!(
+                        target: "hardware::esp300",
+                        attempt = attempts,
+                        max_attempts = policy.max_attempts,
+                        "Operation '{}' failed: {}. Retrying in {:?}",
+                        operation,
+                        err,
+                        policy.backoff_delay
+                    );
+                    tokio::time::sleep(policy.backoff_delay).await;
+                }
+            }
+        }
+    }
+
     /// Create a new ESP300 driver instance for a specific axis
     ///
     /// # Arguments
@@ -182,6 +214,15 @@ impl Esp300Driver {
 
     /// Send command and read response
     async fn query(&self, command: &str) -> Result<String> {
+        let command = command.to_string();
+        self.with_retry("ESP300 query", || {
+            let cmd = command.clone();
+            async move { self.query_once(&cmd).await }
+        })
+        .await
+    }
+
+    async fn query_once(&self, command: &str) -> Result<String> {
         let mut port = self.port.lock().await;
 
         // Write command with terminator
@@ -203,6 +244,15 @@ impl Esp300Driver {
 
     /// Send command without expecting response
     async fn send_command(&self, command: &str) -> Result<()> {
+        let command = command.to_string();
+        self.with_retry("ESP300 send_command", || {
+            let cmd = command.clone();
+            async move { self.send_command_once(&cmd).await }
+        })
+        .await
+    }
+
+    async fn send_command_once(&self, command: &str) -> Result<()> {
         let mut port = self.port.lock().await;
 
         let cmd = format!("{}\r\n", command);

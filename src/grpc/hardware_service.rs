@@ -69,8 +69,10 @@ use crate::grpc::proto::{
     WaitSettledResponse,
 };
 use crate::hardware::registry::{Capability, DeviceRegistry};
+use anyhow::Error as AnyError;
 use serde_json;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -89,6 +91,24 @@ pub struct HardwareServiceImpl {
 }
 
 impl HardwareServiceImpl {
+    const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+
+    async fn await_with_timeout<F, T>(&self, operation: &str, fut: F) -> Result<T, Status>
+    where
+        F: Future<Output = Result<T, AnyError>> + Send,
+        T: Send,
+    {
+        match tokio::time::timeout(Self::RPC_TIMEOUT, fut).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(err)) => Err(map_hardware_error_to_status(&err.to_string())),
+            Err(_) => Err(Status::deadline_exceeded(format!(
+                "{} timed out after {:?}",
+                operation,
+                Self::RPC_TIMEOUT
+            ))),
+        }
+    }
+
     /// Create a new HardwareService with the given device registry
     pub fn new(registry: Arc<RwLock<DeviceRegistry>>) -> Self {
         // Create broadcast channel for parameter changes (capacity 256 in-flight messages)
@@ -411,60 +431,50 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        // Send move command
-        match movable.move_abs(req.value).await {
-            Ok(_) => {
-                // Check if we should wait for completion
-                let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
-                    // Wait for motion to complete with optional timeout
-                    let settle_result = if let Some(timeout_ms) = req.timeout_ms {
-                        tokio::time::timeout(
-                            Duration::from_millis(timeout_ms as u64),
-                            movable.wait_settled(),
-                        )
-                        .await
-                    } else {
-                        Ok(movable.wait_settled().await)
-                    };
+        self.await_with_timeout("move_abs", movable.move_abs(req.value))
+            .await?;
 
-                    match settle_result {
-                        Ok(Ok(_)) => {
-                            let pos = movable.position().await.unwrap_or(req.value);
-                            (pos, Some(true))
-                        }
-                        Ok(Err(e)) => {
-                            // wait_settled failed
-                            return Err(map_hardware_error_to_status(&e.to_string()));
-                        }
-                        Err(_) => {
-                            // Timeout
-                            let pos = movable.position().await.unwrap_or(req.value);
-                            return Err(Status::deadline_exceeded(format!(
-                                "Motion did not complete within {} ms, current position: {}",
-                                req.timeout_ms.unwrap_or(0),
-                                pos
-                            )));
-                        }
+        let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
+            if let Some(timeout_ms) = req.timeout_ms {
+                match tokio::time::timeout(
+                    Duration::from_millis(timeout_ms as u64),
+                    movable.wait_settled(),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
+                        let pos = movable.position().await.unwrap_or(req.value);
+                        (pos, Some(true))
                     }
-                } else {
-                    // Return immediately without waiting
-                    let pos = movable.position().await.unwrap_or(req.value);
-                    (pos, None)
-                };
+                    Ok(Err(e)) => {
+                        return Err(map_hardware_error_to_status(&e.to_string()));
+                    }
+                    Err(_) => {
+                        let pos = movable.position().await.unwrap_or(req.value);
+                        return Err(Status::deadline_exceeded(format!(
+                            "Motion did not complete within {} ms, current position: {}",
+                            req.timeout_ms.unwrap_or(0),
+                            pos
+                        )));
+                    }
+                }
+            } else {
+                self.await_with_timeout("wait_settled", movable.wait_settled())
+                    .await?;
+                let pos = movable.position().await.unwrap_or(req.value);
+                (pos, Some(true))
+            }
+        } else {
+            let pos = movable.position().await.unwrap_or(req.value);
+            (pos, None)
+        };
 
-                Ok(Response::new(MoveResponse {
-                    success: true,
-                    error_message: String::new(),
-                    final_position,
-                    settled,
-                }))
-            }
-            Err(e) => {
-                let err_msg = e.to_string();
-                let status = map_hardware_error_to_status(&err_msg);
-                Err(status)
-            }
-        }
+        Ok(Response::new(MoveResponse {
+            success: true,
+            error_message: String::new(),
+            final_position,
+            settled,
+        }))
     }
 
     async fn move_relative(
@@ -486,58 +496,50 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        // Send move command
-        match movable.move_rel(req.value).await {
-            Ok(_) => {
-                // Check if we should wait for completion
-                let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
-                    // Wait for motion to complete with optional timeout
-                    let settle_result = if let Some(timeout_ms) = req.timeout_ms {
-                        tokio::time::timeout(
-                            Duration::from_millis(timeout_ms as u64),
-                            movable.wait_settled(),
-                        )
-                        .await
-                    } else {
-                        Ok(movable.wait_settled().await)
-                    };
+        self.await_with_timeout("move_rel", movable.move_rel(req.value))
+            .await?;
 
-                    match settle_result {
-                        Ok(Ok(_)) => {
-                            let pos = movable.position().await.unwrap_or(0.0);
-                            (pos, Some(true))
-                        }
-                        Ok(Err(e)) => {
-                            return Err(map_hardware_error_to_status(&e.to_string()));
-                        }
-                        Err(_) => {
-                            let pos = movable.position().await.unwrap_or(0.0);
-                            return Err(Status::deadline_exceeded(format!(
-                                "Motion did not complete within {} ms, current position: {}",
-                                req.timeout_ms.unwrap_or(0),
-                                pos
-                            )));
-                        }
+        let (final_position, settled) = if req.wait_for_completion.unwrap_or(false) {
+            if let Some(timeout_ms) = req.timeout_ms {
+                match tokio::time::timeout(
+                    Duration::from_millis(timeout_ms as u64),
+                    movable.wait_settled(),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
+                        let pos = movable.position().await.unwrap_or(0.0);
+                        (pos, Some(true))
                     }
-                } else {
-                    // Return immediately without waiting
-                    let pos = movable.position().await.unwrap_or(0.0);
-                    (pos, None)
-                };
+                    Ok(Err(e)) => {
+                        return Err(map_hardware_error_to_status(&e.to_string()));
+                    }
+                    Err(_) => {
+                        let pos = movable.position().await.unwrap_or(0.0);
+                        return Err(Status::deadline_exceeded(format!(
+                            "Motion did not complete within {} ms, current position: {}",
+                            req.timeout_ms.unwrap_or(0),
+                            pos
+                        )));
+                    }
+                }
+            } else {
+                self.await_with_timeout("wait_settled", movable.wait_settled())
+                    .await?;
+                let pos = movable.position().await.unwrap_or(0.0);
+                (pos, Some(true))
+            }
+        } else {
+            let pos = movable.position().await.unwrap_or(0.0);
+            (pos, None)
+        };
 
-                Ok(Response::new(MoveResponse {
-                    success: true,
-                    error_message: String::new(),
-                    final_position,
-                    settled,
-                }))
-            }
-            Err(e) => {
-                let err_msg = e.to_string();
-                let status = map_hardware_error_to_status(&err_msg);
-                Err(status)
-            }
-        }
+        Ok(Response::new(MoveResponse {
+            success: true,
+            error_message: String::new(),
+            final_position,
+            settled,
+        }))
     }
 
     async fn stop_motion(
@@ -559,23 +561,14 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        // Call the actual stop method on the Movable trait
-        match movable.stop().await {
-            Ok(_) => {
-                // Get the stopped position
-                let position = movable.position().await.unwrap_or(0.0);
-                Ok(Response::new(StopMotionResponse {
-                    success: true,
-                    stopped_position: position,
-                }))
-            }
-            Err(e) => {
-                // Stop not supported or hardware error
-                let err_msg = e.to_string();
-                let status = map_hardware_error_to_status(&err_msg);
-                Err(status)
-            }
-        }
+        self.await_with_timeout("stop_motion", movable.stop())
+            .await?;
+
+        let position = movable.position().await.unwrap_or(0.0);
+        Ok(Response::new(StopMotionResponse {
+            success: true,
+            stopped_position: position,
+        }))
     }
 
     async fn wait_settled(
@@ -597,40 +590,33 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        // Apply timeout if specified
-        let settle_future = movable.wait_settled();
-        let result = if let Some(timeout_ms) = req.timeout_ms {
-            tokio::time::timeout(
-                std::time::Duration::from_millis(timeout_ms as u64),
-                settle_future,
+        if let Some(timeout_ms) = req.timeout_ms {
+            match tokio::time::timeout(
+                Duration::from_millis(timeout_ms as u64),
+                movable.wait_settled(),
             )
             .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => return Err(map_hardware_error_to_status(&e.to_string())),
+                Err(_) => {
+                    return Err(Status::deadline_exceeded(format!(
+                        "Wait settled operation timed out for device '{}'",
+                        req.device_id
+                    )));
+                }
+            }
         } else {
-            Ok(settle_future.await)
-        };
-
-        match result {
-            Ok(Ok(_)) => {
-                let position = movable.position().await.unwrap_or(0.0);
-                Ok(Response::new(WaitSettledResponse {
-                    success: true,
-                    settled: true,
-                    position,
-                }))
-            }
-            Ok(Err(e)) => {
-                let err_msg = e.to_string();
-                let status = map_hardware_error_to_status(&err_msg);
-                Err(status)
-            }
-            Err(_) => {
-                // Timeout occurred
-                Err(Status::deadline_exceeded(format!(
-                    "Wait settled operation timed out for device '{}'",
-                    req.device_id
-                )))
-            }
+            self.await_with_timeout("wait_settled", movable.wait_settled())
+                .await?;
         }
+
+        let position = movable.position().await.unwrap_or(0.0);
+        Ok(Response::new(WaitSettledResponse {
+            success: true,
+            settled: true,
+            position,
+        }))
     }
 
     type StreamPositionStream =
@@ -729,23 +715,20 @@ impl HardwareService for HardwareServiceImpl {
             ))
         })?;
 
-        match readable.read().await {
-            Ok(value) => Ok(Response::new(ReadValueResponse {
-                success: true,
-                error_message: String::new(),
-                value,
-                units,
-                timestamp_ns: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64,
-            })),
-            Err(e) => {
-                let err_msg = e.to_string();
-                let status = map_hardware_error_to_status(&err_msg);
-                Err(status)
-            }
-        }
+        let value = self
+            .await_with_timeout("read_value", readable.read())
+            .await?;
+
+        Ok(Response::new(ReadValueResponse {
+            success: true,
+            error_message: String::new(),
+            value,
+            units,
+            timestamp_ns: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64,
+        }))
     }
 
     type StreamValuesStream = tokio_stream::wrappers::ReceiverStream<Result<ValueUpdate, Status>>;

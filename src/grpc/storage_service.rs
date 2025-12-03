@@ -4,6 +4,8 @@
 //! Uses the "Mullet Strategy": Arrow for fast in-memory processing,
 //! HDF5 for long-term storage and cross-platform compatibility.
 
+use crate::data::hdf5_writer::HDF5Writer;
+use crate::data::ring_buffer::RingBuffer;
 use crate::grpc::proto::{
     storage_service_server::StorageService, AcquisitionInfo, AcquisitionSummary,
     ConfigureStorageRequest, ConfigureStorageResponse, DeleteAcquisitionRequest,
@@ -18,7 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -38,6 +41,7 @@ struct RecordingSession {
     metadata: HashMap<String, String>,
     scan_id: Option<String>,
     run_uid: Option<String>,
+    writer: Mutex<Option<ActiveWriter>>,
 }
 
 /// Completed acquisition metadata
@@ -53,6 +57,11 @@ struct AcquisitionRecord {
     metadata: HashMap<String, String>,
     scan_id: Option<String>,
     run_uid: Option<String>,
+}
+
+struct ActiveWriter {
+    writer: Arc<HDF5Writer>,
+    handle: JoinHandle<()>,
 }
 
 /// Storage configuration
@@ -90,14 +99,11 @@ pub struct StorageServiceImpl {
     current_recording: Arc<RwLock<Option<Arc<RecordingSession>>>>,
     acquisitions: Arc<RwLock<HashMap<String, AcquisitionRecord>>>,
     is_recording: AtomicBool,
-
-    #[cfg(feature = "storage_hdf5")]
     ring_buffer: Option<Arc<RingBuffer>>,
 }
 
 impl StorageServiceImpl {
     /// Create a new StorageService
-    #[cfg(feature = "storage_hdf5")]
     pub fn new(ring_buffer: Option<Arc<RingBuffer>>) -> Self {
         Self {
             settings: Arc::new(RwLock::new(StorageSettings::default())),
@@ -105,17 +111,6 @@ impl StorageServiceImpl {
             acquisitions: Arc::new(RwLock::new(HashMap::new())),
             is_recording: AtomicBool::new(false),
             ring_buffer,
-        }
-    }
-
-    /// Create a new StorageService without HDF5 feature
-    #[cfg(not(feature = "storage_hdf5"))]
-    pub fn new() -> Self {
-        Self {
-            settings: Arc::new(RwLock::new(StorageSettings::default())),
-            current_recording: Arc::new(RwLock::new(None)),
-            acquisitions: Arc::new(RwLock::new(HashMap::new())),
-            is_recording: AtomicBool::new(false),
         }
     }
 
@@ -155,6 +150,16 @@ impl StorageServiceImpl {
     async fn scan_existing_acquisitions(&self) -> HashMap<String, AcquisitionRecord> {
         let mut records = HashMap::new();
         let settings = self.settings.read().await;
+
+        if self.ring_buffer.is_none() {
+            return Ok(Response::new(StartRecordingResponse {
+                success: false,
+                error_message: "Ring buffer not initialized; storage pipeline unavailable"
+                    .to_string(),
+                recording_id: String::new(),
+                output_path: String::new(),
+            }));
+        }
 
         if let Ok(entries) = std::fs::read_dir(&settings.output_directory) {
             for entry in entries.flatten() {
@@ -329,19 +334,66 @@ impl StorageService for StorageServiceImpl {
             metadata: req.metadata,
             scan_id: req.scan_id,
             run_uid: req.run_uid,
+            writer: Mutex::new(None),
         });
 
         // Store session
-        *self.current_recording.write().await = Some(session);
+        *self.current_recording.write().await = Some(session.clone());
         self.is_recording.store(true, Ordering::SeqCst);
 
-        // Background flush task with HDF5Writer integration is not yet implemented.
-        // When storage_hdf5 feature is enabled, this should spawn a task that
-        // periodically calls flush_to_disk to write ring buffer data to HDF5.
-        tracing::warn!(
-            recording_id = %recording_id,
-            "Background HDF5 flush task not implemented - data will not be persisted automatically"
-        );
+        if let Some(rb) = &self.ring_buffer {
+            match HDF5Writer::new(&output_path, rb.clone()) {
+                Ok(mut writer_instance) => {
+                    let interval = Duration::from_millis(settings.flush_interval_ms as u64);
+                    writer_instance.set_flush_interval(interval);
+                    let writer_arc = Arc::new(writer_instance);
+                    let session_clone = Arc::clone(&session);
+                    let writer_clone = writer_arc.clone();
+                    let handle = tokio::spawn(async move {
+                        let mut ticker = tokio::time::interval(writer_clone.flush_interval());
+                        loop {
+                            ticker.tick().await;
+                            match writer_clone.flush_to_disk().await {
+                                Ok(bytes) => {
+                                    if bytes > 0 {
+                                        session_clone
+                                            .bytes_written
+                                            .fetch_add(bytes as u64, Ordering::SeqCst);
+                                        session_clone
+                                            .samples_recorded
+                                            .fetch_add(1, Ordering::SeqCst);
+                                        session_clone
+                                            .flushes_completed
+                                            .fetch_add(1, Ordering::SeqCst);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        error = %e,
+                                        "Recording flush failed; data may be incomplete"
+                                    );
+                                }
+                            }
+                        }
+                    });
+
+                    *session.writer.lock().await = Some(ActiveWriter {
+                        writer: writer_arc,
+                        handle,
+                    });
+                }
+                Err(e) => {
+                    self.is_recording.store(false, Ordering::SeqCst);
+                    *self.current_recording.write().await = None;
+                    return Ok(Response::new(StartRecordingResponse {
+                        success: false,
+                        error_message: format!("Failed to initialize HDF5 writer: {e}"),
+                        recording_id: String::new(),
+                        output_path: String::new(),
+                    }));
+                }
+            }
+        }
 
         Ok(Response::new(StartRecordingResponse {
             success: true,
@@ -401,6 +453,16 @@ impl StorageService for StorageServiceImpl {
             .unwrap()
             .as_nanos() as u64;
         let duration_ns = end_time_ns - session.start_time_ns;
+
+        if let Some(active) = session.writer.lock().await.take() {
+            active.handle.abort();
+            if let Err(e) = active.writer.flush_to_disk().await {
+                tracing::warn!(
+                    error = %e,
+                    "Final flush failed while stopping recording; data may be incomplete"
+                );
+            }
+        }
 
         // Get file size
         let file_size = std::fs::metadata(&session.output_path)
@@ -674,20 +736,46 @@ impl StorageService for StorageServiceImpl {
             }));
         }
 
-        // HDF5Writer flush trigger not yet implemented (requires storage_hdf5 feature)
-        // When implemented, this would call ring_buffer.read_snapshot() and write to HDF5
+        let session_arc = self.current_recording.read().await.clone();
+        let writer = if let Some(session) = session_arc.as_ref() {
+            let guard = session.writer.lock().await;
+            guard.as_ref().map(|active| active.writer.clone())
+        } else {
+            None
+        };
 
-        #[cfg(feature = "storage_hdf5")]
-        {
-            if let Some(ref _rb) = self.ring_buffer {
-                // Actual flush implementation would go here
-                // For now, return success with zero counts
+        if let Some(writer) = writer {
+            match writer.flush_to_disk().await {
+                Ok(bytes) => {
+                    if let Some(session) = session_arc.as_ref() {
+                        session
+                            .bytes_written
+                            .fetch_add(bytes as u64, Ordering::SeqCst);
+                        session.flushes_completed.fetch_add(1, Ordering::SeqCst);
+                        session.samples_recorded.fetch_add(1, Ordering::SeqCst);
+                    }
+
+                    return Ok(Response::new(FlushToStorageResponse {
+                        success: true,
+                        error_message: String::new(),
+                        samples_flushed: 1,
+                        bytes_written: bytes as u64,
+                    }));
+                }
+                Err(e) => {
+                    return Ok(Response::new(FlushToStorageResponse {
+                        success: false,
+                        error_message: format!("Flush failed: {e}"),
+                        samples_flushed: 0,
+                        bytes_written: 0,
+                    }));
+                }
             }
         }
 
         Ok(Response::new(FlushToStorageResponse {
-            success: true,
-            error_message: String::new(),
+            success: false,
+            error_message: "Recording writer is not initialized".to_string(),
             samples_flushed: 0,
             bytes_written: 0,
         }))
@@ -771,11 +859,14 @@ impl StorageService for StorageServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_configure_storage() {
-        let service = StorageServiceImpl::new();
         let temp_dir = tempfile::tempdir().unwrap();
+        let ring_path = temp_dir.path().join("ring.buf");
+        let ring_buffer = Arc::new(RingBuffer::create(&ring_path, 4).unwrap());
+        let service = StorageServiceImpl::new(Some(ring_buffer));
 
         let request = Request::new(ConfigureStorageRequest {
             output_directory: temp_dir.path().to_string_lossy().to_string(),
@@ -800,7 +891,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_stop_recording() {
-        let service = StorageServiceImpl::new();
+        let service = StorageServiceImpl::new(None);
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Configure storage first
@@ -857,7 +948,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_acquisitions() {
-        let service = StorageServiceImpl::new();
+        let service = StorageServiceImpl::new(None);
 
         let request = Request::new(ListAcquisitionsRequest {
             name_pattern: None,

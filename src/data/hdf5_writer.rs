@@ -92,21 +92,30 @@ impl HDF5Writer {
     /// This never returns - it runs continuously until the task is cancelled.
     /// Flushes data every `flush_interval` (default 1 second).
     pub async fn run(self) {
-        let mut interval = interval(self.flush_interval);
+        self.run_loop().await;
+    }
 
+    /// Run the writer loop using a shared reference.
+    pub async fn run_shared(self: Arc<Self>) {
+        self.run_loop().await;
+    }
+
+    /// Flush interval accessor.
+    pub fn flush_interval(&self) -> Duration {
+        self.flush_interval
+    }
+
+    /// Override the flush interval (primarily for tests and recording control).
+    pub fn set_flush_interval(&mut self, interval: Duration) {
+        self.flush_interval = interval;
+    }
+
+    async fn run_loop(&self) {
+        let mut ticker = interval(self.flush_interval);
         loop {
-            interval.tick().await;
-
-            #[cfg(feature = "storage_hdf5")]
+            ticker.tick().await;
             if let Err(e) = self.flush_to_disk().await {
                 eprintln!("HDF5 flush error: {}", e);
-                // Continue running even on error
-            }
-
-            #[cfg(not(feature = "storage_hdf5"))]
-            if let Err(e) = self.flush_to_disk().await {
-                eprintln!("HDF5 flush error: {}", e);
-                // Continue running even on error
             }
         }
     }
@@ -117,20 +126,20 @@ impl HDF5Writer {
     /// and writes structured datasets to HDF5.
     /// Non-blocking if no new data is available.
     #[cfg(feature = "storage_hdf5")]
-    async fn flush_to_disk(&self) -> Result<()> {
+    async fn flush_to_disk(&self) -> Result<usize> {
         // Check if there's new data by comparing write_head to our last read position
         let current_write_head = self.ring_buffer.write_head();
         let last_processed = self.last_read_tail.load(Ordering::Acquire);
 
         if current_write_head <= last_processed {
             // No new data since last flush
-            return Ok(());
+            return Ok(0);
         }
 
         // Read snapshot from ring buffer (fast, non-blocking)
         let snapshot = self.ring_buffer.read_snapshot();
         if snapshot.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         // Clone data needed for blocking task
@@ -201,7 +210,7 @@ impl HDF5Writer {
         self.last_read_tail.store(new_tail, Ordering::Release);
         self.ring_buffer.advance_tail(bytes_processed as u64);
 
-        Ok(())
+        Ok(bytes_processed)
     }
 
     /// Decode Protobuf ScanProgress messages and write to HDF5
@@ -335,18 +344,18 @@ impl HDF5Writer {
     /// Fallback implementation when HDF5 feature is disabled
     /// Writes scan data as CSV for basic persistence
     #[cfg(not(feature = "storage_hdf5"))]
-    async fn flush_to_disk(&self) -> Result<()> {
+    async fn flush_to_disk(&self) -> Result<usize> {
         // Check if there's new data
         let current_write_head = self.ring_buffer.write_head();
         let last_processed = self.last_read_tail.load(Ordering::Acquire);
 
         if current_write_head <= last_processed {
-            return Ok(());
+            return Ok(0);
         }
 
         let snapshot = self.ring_buffer.read_snapshot();
         if snapshot.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         // Clone data for blocking task
@@ -379,7 +388,7 @@ impl HDF5Writer {
         self.last_read_tail
             .store(current_write_head, Ordering::Release);
 
-        Ok(())
+        Ok(snapshot_len)
     }
 
     /// Write ExperimentManifest to HDF5 file as attributes (bd-ib06)
@@ -590,11 +599,6 @@ impl HDF5Writer {
     /// Get number of batches written so far
     pub fn batch_count(&self) -> u64 {
         self.batch_counter.load(Ordering::Acquire)
-    }
-
-    /// Get current flush interval
-    pub fn flush_interval(&self) -> Duration {
-        self.flush_interval
     }
 }
 
