@@ -89,6 +89,136 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // =============================================================================
+// Configuration Validation
+// =============================================================================
+
+/// Validate a driver configuration before attempting to instantiate
+///
+/// This checks for common configuration errors that would cause driver spawn to fail:
+/// - Serial ports that don't exist
+/// - Invalid baud rates (if applicable)
+/// - Invalid device addresses
+/// - Missing required fields
+///
+/// Returns Ok(()) if configuration is valid, or an error with helpful diagnostics.
+pub fn validate_driver_config(driver: &DriverType) -> Result<()> {
+    match driver {
+        DriverType::Newport1830C { port } => {
+            validate_serial_port(port, "Newport 1830-C")?;
+        }
+        
+        DriverType::MaiTai { port } => {
+            validate_serial_port(port, "MaiTai Laser")?;
+        }
+        
+        DriverType::Ell14 { port, address } => {
+            validate_serial_port(port, "ELL14 Rotation Mount")?;
+            validate_ell14_address(address)?;
+        }
+        
+        DriverType::Esp300 { port, axis } => {
+            validate_serial_port(port, "ESP300 Motion Controller")?;
+            if *axis < 1 || *axis > 3 {
+                anyhow::bail!(
+                    "Invalid ESP300 axis: {}. Must be 1-3",
+                    axis
+                );
+            }
+        }
+        
+        DriverType::Pvcam { camera_name } => {
+            if camera_name.is_empty() {
+                anyhow::bail!("PVCAM camera name cannot be empty");
+            }
+        }
+        
+        #[cfg(feature = "tokio_serial")]
+        DriverType::Plugin { plugin_id, address } => {
+            if plugin_id.is_empty() {
+                anyhow::bail!("Plugin ID cannot be empty");
+            }
+            if address.is_empty() {
+                anyhow::bail!("Plugin address cannot be empty");
+            }
+            // Address can be serial port or network address
+            // Don't validate serial port here as it might be network
+        }
+        
+        // Mock devices don't need validation
+        DriverType::MockStage { .. } |
+        DriverType::MockPowerMeter { .. } |
+        DriverType::MockCamera => {}
+    }
+    
+    Ok(())
+}
+
+/// Validate that a serial port exists and is accessible
+///
+/// Provides helpful error messages listing available ports if the requested port is not found.
+fn validate_serial_port(port: &str, device_name: &str) -> Result<()> {
+    // Check if port path exists (basic check)
+    let port_path = std::path::Path::new(port);
+    
+    if !port_path.exists() {
+        // Port doesn't exist - provide helpful diagnostics
+        let available = match serialport::available_ports() {
+            Ok(ports) => {
+                if ports.is_empty() {
+                    "No serial ports detected on this system".to_string()
+                } else {
+                    let port_list: Vec<String> = ports
+                        .iter()
+                        .map(|p| format!("  - {}", p.port_name))
+                        .collect();
+                    format!("Available serial ports:\n{}", port_list.join("\n"))
+                }
+            }
+            Err(e) => {
+                format!("Could not enumerate serial ports: {}", e)
+            }
+        };
+        
+        anyhow::bail!(
+            "Serial port '{}' does not exist for device '{}'.\n\n{}\n\n\
+             Troubleshooting:\n\
+             - Verify device is connected and powered on\n\
+             - Check USB cable connection\n\
+             - On Linux, ensure you have permissions (add user to 'dialout' group)\n\
+             - On macOS, check /dev/tty.* and /dev/cu.* devices\n\
+             - Run 'ls /dev/tty*' or 'ls /dev/cu*' to list available ports",
+            port,
+            device_name,
+            available
+        );
+    }
+    
+    Ok(())
+}
+
+/// Validate ELL14 device address
+///
+/// ELL14 addresses must be hex digits 0-F
+fn validate_ell14_address(address: &str) -> Result<()> {
+    if address.len() != 1 {
+        anyhow::bail!(
+            "Invalid ELL14 address '{}': must be a single hex digit (0-F)",
+            address
+        );
+    }
+    
+    let addr_char = address.chars().next().unwrap();
+    if !addr_char.is_ascii_hexdigit() {
+        anyhow::bail!(
+            "Invalid ELL14 address '{}': must be a hex digit (0-9, A-F)",
+            address
+        );
+    }
+    
+    Ok(())
+}
+
+// =============================================================================
 // Device Identification
 // =============================================================================
 
@@ -421,11 +551,22 @@ impl DeviceRegistry {
     /// # Errors
     /// Returns error if:
     /// - Device ID is already registered
+    /// - Configuration validation fails (missing ports, invalid parameters)
     /// - Hardware driver fails to initialize
     pub async fn register(&mut self, config: DeviceConfig) -> Result<()> {
         if self.devices.contains_key(&config.id) {
             return Err(anyhow!("Device '{}' is already registered", config.id));
         }
+
+        // Validate configuration before attempting to instantiate
+        validate_driver_config(&config.driver).map_err(|e| {
+            anyhow!(
+                "Configuration validation failed for device '{}' ({}): {}",
+                config.id,
+                config.driver.driver_name(),
+                e
+            )
+        })?;
 
         let registered = self.instantiate_device(config).await?;
         self.devices
@@ -702,7 +843,9 @@ impl DeviceRegistry {
 
             #[cfg(feature = "instrument_photometrics")]
             DriverType::Pvcam { camera_name } => {
-                let driver = Arc::new(crate::hardware::pvcam::PvcamDriver::new(&camera_name)?);
+                let driver = Arc::new(
+                    crate::hardware::pvcam::PvcamDriver::new_async(camera_name.clone()).await?
+                );
                 let (width, height) = driver.resolution();
                 Ok(RegisteredDevice {
                     config,
@@ -1002,7 +1145,7 @@ impl DeviceRegistry {
             exposure_control: None,
             settable: None,
             stageable: None,
-            parameterized: None, // TODO: Populate from Parameterized trait (bd-dili)
+            parameterized: Some(driver.clone()), // bd-plb6: Wire Parameterized for plugin devices
             #[cfg(feature = "instrument_spectra_physics")]
             shutter_control: None,
             #[cfg(feature = "instrument_spectra_physics")]
@@ -1124,6 +1267,26 @@ impl HardwareConfig {
 /// ```
 pub async fn create_registry_from_config(config: &HardwareConfig) -> Result<DeviceRegistry> {
     let mut registry = DeviceRegistry::new();
+
+    // Validate all device configurations first (fail fast)
+    let mut validation_errors = Vec::new();
+    for device_config in &config.devices {
+        if let Err(e) = validate_driver_config(&device_config.driver) {
+            validation_errors.push(format!(
+                "Device '{}' ({}): {}",
+                device_config.id,
+                device_config.driver.driver_name(),
+                e
+            ));
+        }
+    }
+    
+    if !validation_errors.is_empty() {
+        anyhow::bail!(
+            "Hardware configuration validation failed:\n  - {}",
+            validation_errors.join("\n  - ")
+        );
+    }
 
     // Load plugins from configured search paths
     #[cfg(feature = "tokio_serial")]
@@ -1457,6 +1620,106 @@ mod tests {
         assert!(Arc::ptr_eq(&factory, &factory_ref));
 
         // Verify that the registry starts empty
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_validate_driver_config_missing_serial_port() {
+        let driver = DriverType::Newport1830C {
+            port: "/dev/nonexistent_serial_port_xyz123".to_string(),
+        };
+        
+        let result = validate_driver_config(&driver);
+        assert!(result.is_err());
+        
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("does not exist"));
+        assert!(err_msg.contains("Newport 1830-C"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_driver_config_invalid_ell14_address() {
+        // Create a temporary file to act as a valid serial port for this test
+        let temp_port = std::env::temp_dir().join("test_serial_port");
+        std::fs::write(&temp_port, "").unwrap();
+        
+        let driver = DriverType::Ell14 {
+            port: temp_port.to_string_lossy().to_string(),
+            address: "XYZ".to_string(), // Invalid address
+        };
+        
+        let result = validate_driver_config(&driver);
+        assert!(result.is_err());
+        
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("single hex digit"));
+        
+        // Clean up
+        std::fs::remove_file(temp_port).ok();
+    }
+
+    #[tokio::test]
+    async fn test_validate_driver_config_invalid_esp300_axis() {
+        let temp_port = std::env::temp_dir().join("test_serial_port_esp");
+        std::fs::write(&temp_port, "").unwrap();
+        
+        let driver = DriverType::Esp300 {
+            port: temp_port.to_string_lossy().to_string(),
+            axis: 5, // Invalid axis (must be 1-3)
+        };
+        
+        let result = validate_driver_config(&driver);
+        assert!(result.is_err());
+        
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Must be 1-3"));
+        
+        std::fs::remove_file(temp_port).ok();
+    }
+
+    #[tokio::test]
+    async fn test_validate_driver_config_empty_pvcam_name() {
+        let driver = DriverType::Pvcam {
+            camera_name: "".to_string(),
+        };
+        
+        let result = validate_driver_config(&driver);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_driver_config_mock_devices_always_valid() {
+        // Mock devices should always pass validation
+        assert!(validate_driver_config(&DriverType::MockStage {
+            initial_position: 0.0
+        }).is_ok());
+        
+        assert!(validate_driver_config(&DriverType::MockPowerMeter {
+            reading: 1e-6
+        }).is_ok());
+        
+        assert!(validate_driver_config(&DriverType::MockCamera).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_fails_on_invalid_config() {
+        let mut registry = DeviceRegistry::new();
+        
+        let result = registry.register(DeviceConfig {
+            id: "invalid_device".into(),
+            name: "Invalid Device".into(),
+            driver: DriverType::Newport1830C {
+                port: "/dev/definitely_does_not_exist_xyz".into(),
+            },
+        }).await;
+        
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Configuration validation failed"));
+        
+        // Registry should remain empty
         assert_eq!(registry.len(), 0);
     }
 }

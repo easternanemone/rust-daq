@@ -332,7 +332,7 @@ mod hdf5_tests {
         );
 
         // Write manifest to HDF5
-        writer.write_manifest(&manifest).unwrap();
+        writer.write_manifest(&manifest).await.unwrap();
 
         // Verify HDF5 file was created and contains manifest group
         assert!(hdf5_path.exists(), "HDF5 file should be created");

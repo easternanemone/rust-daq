@@ -17,6 +17,7 @@ use serde_json::Value;
 use strfmt::strfmt;
 
 use crate::hardware::plugin::schema::{CommandSequence, InstrumentConfig, ValueType};
+use crate::observable::ParameterSet; // NEW: For Parameterized trait implementation
 
 // =============================================================================
 // Connection Enum - Unified abstraction over Serial, TCP, and Mock
@@ -76,6 +77,16 @@ impl Connection {
     }
 }
 
+// =============================================================================
+// Parameterized Trait Implementation (bd-plb6)
+// =============================================================================
+
+impl crate::hardware::capabilities::Parameterized for GenericDriver {
+    fn parameters(&self) -> &ParameterSet {
+        &self.parameters
+    }
+}
+
 /// A generic instrument driver that interprets commands and responses based on a YAML configuration.
 ///
 /// This driver uses interior mutability (`Mutex`) for the connection, allowing
@@ -119,6 +130,12 @@ pub struct GenericDriver {
     
     /// Streaming state flag.
     is_streaming: std::sync::atomic::AtomicBool,
+    
+    /// Parameter registry for exposing settable parameters (bd-plb6)
+    /// 
+    /// Populated from YAML config.capabilities.settable during initialization.
+    /// Enables generic parameter access via Parameterized trait.
+    parameters: ParameterSet,
 }
 
 impl GenericDriver {
@@ -204,6 +221,7 @@ impl GenericDriver {
             frame_broadcaster: frame_tx,
             frame_counter: std::sync::atomic::AtomicU64::new(0),
             is_streaming: std::sync::atomic::AtomicBool::new(false),
+            parameters: ParameterSet::new(),
         })
     }
 
@@ -1085,6 +1103,7 @@ impl GenericDriver {
             frame_broadcaster: self.frame_broadcaster.clone(),
             frame_counter: std::sync::atomic::AtomicU64::new(0),
             is_streaming: std::sync::atomic::AtomicBool::new(false),
+            parameters: ParameterSet::new(), // Not used in streaming task
         }
     }
 

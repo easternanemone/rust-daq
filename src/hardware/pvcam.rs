@@ -272,7 +272,39 @@ fn get_pvcam_error() -> String {
 }
 
 impl PvcamDriver {
-    /// Create a new PVCAM driver instance
+    /// Create a new PVCAM driver instance (async-safe version)
+    ///
+    /// # Arguments
+    /// * `camera_name` - Name of camera (e.g., "PrimeBSI", "PMCam")
+    ///
+    /// # Errors
+    /// Returns error if camera cannot be opened
+    ///
+    /// # Hardware Feature
+    /// With `pvcam_hardware` feature enabled, this will:
+    /// - Call pl_pvcam_init() to initialize PVCAM SDK (in spawn_blocking)
+    /// - Call pl_cam_open() to open the camera (in spawn_blocking)
+    /// - Query actual sensor size from hardware
+    ///
+    /// Without feature, uses mock data with known dimensions.
+    ///
+    /// # Performance
+    /// This method runs blocking C-API calls in `tokio::task::spawn_blocking()` to avoid
+    /// blocking the async runtime. This is critical during application startup when
+    /// multiple drivers may be initializing concurrently.
+    pub async fn new_async(camera_name: String) -> Result<Self> {
+        #[cfg(feature = "pvcam_hardware")]
+        {
+            Self::new_with_hardware_async(camera_name).await
+        }
+
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            Self::new_mock(&camera_name)
+        }
+    }
+
+    /// Create a new PVCAM driver instance (synchronous, deprecated)
     ///
     /// # Arguments
     /// * `camera_name` - Name of camera (e.g., "PrimeBSI", "PMCam")
@@ -287,6 +319,10 @@ impl PvcamDriver {
     /// - Query actual sensor size from hardware
     ///
     /// Without feature, uses mock data with known dimensions.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use new_async() instead to avoid blocking the async runtime during PVCAM initialization"
+    )]
     pub fn new(camera_name: &str) -> Result<Self> {
         #[cfg(feature = "pvcam_hardware")]
         {
@@ -297,6 +333,16 @@ impl PvcamDriver {
         {
             Self::new_mock(camera_name)
         }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    async fn new_with_hardware_async(camera_name: String) -> Result<Self> {
+        // Run all blocking PVCAM C-API calls in spawn_blocking to avoid blocking the async runtime
+        tokio::task::spawn_blocking(move || {
+            Self::new_with_hardware(&camera_name)
+        })
+        .await
+        .context("PVCAM initialization task panicked")?
     }
 
     #[cfg(feature = "pvcam_hardware")]

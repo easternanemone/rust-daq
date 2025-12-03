@@ -94,7 +94,14 @@ impl HDF5Writer {
         loop {
             interval.tick().await;
 
-            if let Err(e) = self.flush_to_disk() {
+            #[cfg(feature = "storage_hdf5")]
+            if let Err(e) = self.flush_to_disk().await {
+                eprintln!("HDF5 flush error: {}", e);
+                // Continue running even on error
+            }
+
+            #[cfg(not(feature = "storage_hdf5"))]
+            if let Err(e) = self.flush_to_disk().await {
                 eprintln!("HDF5 flush error: {}", e);
                 // Continue running even on error
             }
@@ -107,10 +114,7 @@ impl HDF5Writer {
     /// and writes structured datasets to HDF5.
     /// Non-blocking if no new data is available.
     #[cfg(feature = "storage_hdf5")]
-    fn flush_to_disk(&self) -> Result<()> {
-        use hdf5::File;
-        use prost::Message;
-
+    async fn flush_to_disk(&self) -> Result<()> {
         // Check if there's new data by comparing write_head to our last read position
         let current_write_head = self.ring_buffer.write_head();
         let last_processed = self.last_read_tail.load(Ordering::Acquire);
@@ -120,63 +124,75 @@ impl HDF5Writer {
             return Ok(());
         }
 
-        // Read snapshot from ring buffer
+        // Read snapshot from ring buffer (fast, non-blocking)
         let snapshot = self.ring_buffer.read_snapshot();
         if snapshot.is_empty() {
             return Ok(());
         }
 
-        // Open or create HDF5 file
-        let file = if self.output_path.exists() {
-            File::open_rw(&self.output_path)?
-        } else {
-            File::create(&self.output_path)?
-        };
-
-        // Create measurements group if it doesn't exist
-        let measurements = if file.group("measurements").is_ok() {
-            file.group("measurements")?
-        } else {
-            file.create_group("measurements")?
-        };
-
-        // Create batch group with unique name
+        // Clone data needed for blocking task
+        let output_path = self.output_path.clone();
         let batch_id = self.batch_counter.fetch_add(1, Ordering::SeqCst);
-        let batch_name = format!("batch_{:06}", batch_id);
-        let batch_group = measurements.create_group(&batch_name)?;
 
-        // Decode and write Protobuf ScanProgress messages
-        // Returns bytes successfully processed to handle partial messages
-        #[cfg(feature = "networking")]
-        let bytes_processed = {
-            self.write_protobuf_to_hdf5(&batch_group, &snapshot)?
-        };
+        // Wrap all HDF5 operations in spawn_blocking to prevent executor stalls
+        let bytes_processed = tokio::task::spawn_blocking(move || -> Result<usize> {
+            use hdf5::File;
+            use prost::Message;
 
-        #[cfg(not(feature = "networking"))]
-        let bytes_processed = {
-            // Fallback: Write raw bytes when networking feature is disabled
+            // Open or create HDF5 file
+            let file = if output_path.exists() {
+                File::open_rw(&output_path)?
+            } else {
+                File::create(&output_path)?
+            };
+
+            // Create measurements group if it doesn't exist
+            let measurements = if file.group("measurements").is_ok() {
+                file.group("measurements")?
+            } else {
+                file.create_group("measurements")?
+            };
+
+            // Create batch group with unique name
+            let batch_name = format!("batch_{:06}", batch_id);
+            let batch_group = measurements.create_group(&batch_name)?;
+
+            // Decode and write Protobuf ScanProgress messages
+            // Returns bytes successfully processed to handle partial messages
+            #[cfg(feature = "networking")]
+            let bytes_processed = {
+                Self::write_protobuf_to_hdf5_blocking(&batch_group, &snapshot)?
+            };
+
+            #[cfg(not(feature = "networking"))]
+            let bytes_processed = {
+                // Fallback: Write raw bytes when networking feature is disabled
+                batch_group
+                    .new_dataset::<u8>()
+                    .create("raw_data", snapshot.len())?
+                    .write(&snapshot)?;
+                snapshot.len()
+            };
+
+            // Add metadata
             batch_group
-                .new_dataset::<u8>()
-                .create("raw_data", snapshot.len())?
-                .write(&snapshot)?;
-            snapshot.len()
-        };
+                .new_attr::<u64>()
+                .create("ring_tail")?
+                .write_scalar(&current_write_head)?;
 
-        // Add metadata
-        batch_group
-            .new_attr::<u64>()
-            .create("ring_tail")?
-            .write_scalar(&current_write_head)?;
+            batch_group
+                .new_attr::<u64>()
+                .create("timestamp_ns")?
+                .write_scalar(
+                    &std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64,
+                )?;
 
-        batch_group
-            .new_attr::<u64>()
-            .create("timestamp_ns")?
-            .write_scalar(
-                &std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64,
-            )?;
+            Ok(bytes_processed)
+        })
+        .await??;
 
         // Only advance by bytes actually processed (to preserve partial messages)
         let new_tail = last_processed + bytes_processed as u64;
@@ -197,8 +213,10 @@ impl HDF5Writer {
     /// - /point_indices (u32 array)
     /// - /axis_positions/<device_id> (f64 arrays)
     /// - /data/<device_id> (f64 arrays)
+    ///
+    /// NOTE: This is a blocking synchronous method called from within spawn_blocking
     #[cfg(all(feature = "storage_hdf5", feature = "networking"))]
-    fn write_protobuf_to_hdf5(&self, group: &hdf5::Group, data: &[u8]) -> Result<usize> {
+    fn write_protobuf_to_hdf5_blocking(group: &hdf5::Group, data: &[u8]) -> Result<usize> {
         use crate::grpc::ScanProgress;
         use prost::Message;
         use std::collections::HashMap;
@@ -315,10 +333,7 @@ impl HDF5Writer {
     /// Fallback implementation when HDF5 feature is disabled
     /// Writes scan data as CSV for basic persistence
     #[cfg(not(feature = "storage_hdf5"))]
-    fn flush_to_disk(&self) -> Result<()> {
-        use std::fs::OpenOptions;
-        use std::io::Write;
-
+    async fn flush_to_disk(&self) -> Result<()> {
         // Check if there's new data
         let current_write_head = self.ring_buffer.write_head();
         let last_processed = self.last_read_tail.load(Ordering::Acquire);
@@ -332,21 +347,33 @@ impl HDF5Writer {
             return Ok(());
         }
 
-        // Write raw bytes to a binary file as fallback
-        // This preserves the Protobuf-encoded ScanProgress data
+        // Clone data for blocking task
         let fallback_path = self.output_path.with_extension("bin");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&fallback_path)?;
-        
-        // Write length-prefixed message (allows decoding multiple messages)
-        let len = snapshot.len() as u32;
-        file.write_all(&len.to_le_bytes())?;
-        file.write_all(&snapshot)?;
+        let snapshot_len = snapshot.len();
+
+        // Wrap file I/O in spawn_blocking
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+
+            // Write raw bytes to a binary file as fallback
+            // This preserves the Protobuf-encoded ScanProgress data
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&fallback_path)?;
+            
+            // Write length-prefixed message (allows decoding multiple messages)
+            let len = snapshot_len as u32;
+            file.write_all(&len.to_le_bytes())?;
+            file.write_all(&snapshot)?;
+
+            Ok(())
+        })
+        .await??;
 
         // Advance tail to prevent buffer overflow
-        self.ring_buffer.advance_tail(snapshot.len() as u64);
+        self.ring_buffer.advance_tail(snapshot_len as u64);
         self.last_read_tail.store(current_write_head, Ordering::Release);
 
         Ok(())
@@ -371,103 +398,113 @@ impl HDF5Writer {
     ///
     /// Returns error if HDF5 file operations fail
     #[cfg(feature = "storage_hdf5")]
-    pub fn write_manifest(&self, manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
-        use hdf5::File;
+    pub async fn write_manifest(&self, manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
+        // Clone manifest for move into blocking task
+        let manifest = manifest.clone();
+        let output_path = self.output_path.clone();
 
-        // Open or create HDF5 file
-        let file = if self.output_path.exists() {
-            File::open_rw(&self.output_path)?
-        } else {
-            File::create(&self.output_path)?
-        };
+        // Wrap all HDF5 operations in spawn_blocking to prevent executor stalls
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            use hdf5::File;
 
-        // Create manifest group if it doesn't exist
-        let manifest_group = if file.group("manifest").is_ok() {
-            file.group("manifest")?
-        } else {
-            file.create_group("manifest")?
-        };
-
-        // Write basic manifest attributes
-        manifest_group
-            .new_attr::<u64>()
-            .create("timestamp_ns")?
-            .write_scalar(&manifest.timestamp_ns)?;
-
-        manifest_group
-            .new_attr::<hdf5::types::VarLenUnicode>()
-            .create("run_uid")?
-            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.run_uid.as_str()))?;
-
-        manifest_group
-            .new_attr::<hdf5::types::VarLenUnicode>()
-            .create("plan_type")?
-            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_type.as_str()))?;
-
-        manifest_group
-            .new_attr::<hdf5::types::VarLenUnicode>()
-            .create("plan_name")?
-            .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_name.as_str()))?;
-
-        // Create parameters subgroup
-        let params_group = if manifest_group.group("parameters").is_ok() {
-            manifest_group.group("parameters")?
-        } else {
-            manifest_group.create_group("parameters")?
-        };
-
-        // Write device parameters as JSON attributes
-        for (device_id, params) in &manifest.parameters {
-            let device_group = if params_group.group(device_id).is_ok() {
-                params_group.group(device_id)?
+            // Open or create HDF5 file
+            let file = if output_path.exists() {
+                File::open_rw(&output_path)?
             } else {
-                params_group.create_group(device_id)?
+                File::create(&output_path)?
             };
 
-            for (param_name, param_value) in params {
-                // Serialize JSON value to string for HDF5 storage
-                let json_str = serde_json::to_string(param_value)?;
-                device_group
-                    .new_attr::<hdf5::types::VarLenUnicode>()
-                    .create(param_name)?
-                    .write_scalar(&hdf5::types::VarLenUnicode::from(json_str.as_str()))?;
+            // Create manifest group if it doesn't exist
+            let manifest_group = if file.group("manifest").is_ok() {
+                file.group("manifest")?
+            } else {
+                file.create_group("manifest")?
+            };
+
+            // Write basic manifest attributes
+            manifest_group
+                .new_attr::<u64>()
+                .create("timestamp_ns")?
+                .write_scalar(&manifest.timestamp_ns)?;
+
+            manifest_group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create("run_uid")?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.run_uid.as_str()))?;
+
+            manifest_group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create("plan_type")?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_type.as_str()))?;
+
+            manifest_group
+                .new_attr::<hdf5::types::VarLenUnicode>()
+                .create("plan_name")?
+                .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.plan_name.as_str()))?;
+
+            // Create parameters subgroup
+            let params_group = if manifest_group.group("parameters").is_ok() {
+                manifest_group.group("parameters")?
+            } else {
+                manifest_group.create_group("parameters")?
+            };
+
+            // Write device parameters as JSON attributes
+            for (device_id, params) in &manifest.parameters {
+                let device_group = if params_group.group(device_id).is_ok() {
+                    params_group.group(device_id)?
+                } else {
+                    params_group.create_group(device_id)?
+                };
+
+                for (param_name, param_value) in params {
+                    // Serialize JSON value to string for HDF5 storage
+                    let json_str = serde_json::to_string(param_value)?;
+                    device_group
+                        .new_attr::<hdf5::types::VarLenUnicode>()
+                        .create(param_name)?
+                        .write_scalar(&hdf5::types::VarLenUnicode::from(json_str.as_str()))?;
+                }
             }
-        }
 
-        // Create system_info subgroup
-        let system_group = if manifest_group.group("system").is_ok() {
-            manifest_group.group("system")?
-        } else {
-            manifest_group.create_group("system")?
-        };
+            // Create system_info subgroup
+            let system_group = if manifest_group.group("system").is_ok() {
+                manifest_group.group("system")?
+            } else {
+                manifest_group.create_group("system")?
+            };
 
-        for (key, value) in &manifest.system_info {
-            system_group
-                .new_attr::<hdf5::types::VarLenUnicode>()
-                .create(key)?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
-        }
+            for (key, value) in &manifest.system_info {
+                system_group
+                    .new_attr::<hdf5::types::VarLenUnicode>()
+                    .create(key)?
+                    .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+            }
 
-        // Create metadata subgroup
-        let metadata_group = if manifest_group.group("metadata").is_ok() {
-            manifest_group.group("metadata")?
-        } else {
-            manifest_group.create_group("metadata")?
-        };
+            // Create metadata subgroup
+            let metadata_group = if manifest_group.group("metadata").is_ok() {
+                manifest_group.group("metadata")?
+            } else {
+                manifest_group.create_group("metadata")?
+            };
 
-        for (key, value) in &manifest.metadata {
-            metadata_group
-                .new_attr::<hdf5::types::VarLenUnicode>()
-                .create(key)?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
-        }
+            for (key, value) in &manifest.metadata {
+                metadata_group
+                    .new_attr::<hdf5::types::VarLenUnicode>()
+                    .create(key)?
+                    .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+            }
+
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
 
     /// No-op when storage_hdf5 feature is disabled
     #[cfg(not(feature = "storage_hdf5"))]
-    pub fn write_manifest(&self, _manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
+    pub async fn write_manifest(&self, _manifest: &crate::experiment::document::ExperimentManifest) -> Result<()> {
         // Gracefully degrade when HDF5 not available
         Ok(())
     }
@@ -575,7 +612,7 @@ mod tests {
         let writer = HDF5Writer::new(hdf5_temp.path(), ring.clone()).unwrap();
 
         // Flush with no data should not error
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
         assert_eq!(writer.batch_count(), 0);
     }
 
@@ -597,7 +634,7 @@ mod tests {
             let mut interval = interval(Duration::from_millis(100));
             for _ in 0..5 {
                 interval.tick().await;
-                let _ = writer.flush_to_disk();
+                let _ = writer.flush_to_disk().await;
             }
         });
 
@@ -621,7 +658,7 @@ mod tests {
         ring.write(b"HDF5 test data").unwrap();
 
         // Flush to disk
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify file was created
         assert!(hdf5_path.exists(), "HDF5 file should be created");
@@ -661,7 +698,7 @@ mod tests {
         ring.write_arrow_batch(&batch).unwrap();
 
         // Flush to HDF5
-        writer.flush_to_disk().unwrap();
+        writer.flush_to_disk().await.unwrap();
 
         // Verify file created and contains data
         assert!(hdf5_path.exists());

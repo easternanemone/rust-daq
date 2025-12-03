@@ -36,6 +36,7 @@ use rust_daq::hardware::mock::{MockCamera, MockStage};
 use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::signal;
 
 #[cfg(feature = "networking")]
 use rust_daq::grpc::proto::*;
@@ -211,7 +212,7 @@ async fn start_daemon(port: u16, hardware_config: Option<PathBuf>, lab_hardware:
 
     // Phase 4: Data Plane - Ring Buffer + HDF5 Writer (optional)
     #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
-    let ring_buffer = {
+    let (ring_buffer, writer_handle) = {
         use rust_daq::data::hdf5_writer::HDF5Writer;
         use rust_daq::data::ring_buffer::RingBuffer;
         use std::path::Path;
@@ -227,16 +228,21 @@ async fn start_daemon(port: u16, hardware_config: Option<PathBuf>, lab_hardware:
 
         // Start background HDF5 writer
         let writer = HDF5Writer::new(Path::new("experiment_data.h5"), ring_buffer.clone())?;
+        let writer_arc = Arc::new(writer);
+        let writer_clone = writer_arc.clone();
 
-        tokio::spawn(async move {
-            writer.run().await;
+        let handle = tokio::spawn(async move {
+            writer_clone.run().await;
         });
 
         println!("✅ Data plane ready");
         println!();
 
-        Some(ring_buffer)
+        (Some(ring_buffer), Some((writer_arc, handle)))
     };
+
+    #[cfg(not(all(feature = "storage_hdf5", feature = "storage_arrow")))]
+    let _ring_buffer: Option<Arc<rust_daq::data::ring_buffer::RingBuffer>> = None;
 
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]
@@ -284,11 +290,40 @@ async fn start_daemon(port: u16, hardware_config: Option<PathBuf>, lab_hardware:
         println!("📡 Daemon running - Press Ctrl+C to stop");
         println!();
 
-        start_server_with_hardware(addr, registry)
-            .await
-            .map_err(|e| anyhow::anyhow!("gRPC server error: {}", e))?;
+        // Setup graceful shutdown handler
+        let shutdown_signal = async {
+            signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+            println!("\n🛑 Shutdown signal received, cleaning up...");
+        };
 
-        println!("\n👋 Daemon shutting down...");
+        // Race server against shutdown signal
+        tokio::select! {
+            result = start_server_with_hardware(addr, registry) => {
+                if let Err(e) = result {
+                    eprintln!("❌ gRPC server error: {}", e);
+                }
+            }
+            _ = shutdown_signal => {
+                println!("   Initiating graceful shutdown...");
+            }
+        }
+
+        // Perform cleanup
+        #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
+        if let Some((writer, handle)) = writer_handle {
+            println!("   Flushing HDF5 writer...");
+            // Final flush to ensure all data is written
+            if let Err(e) = writer.flush_to_disk() {
+                eprintln!("   Warning: HDF5 flush error during shutdown: {}", e);
+            }
+            // Abort the background writer task
+            handle.abort();
+            println!("   ✓ HDF5 writer flushed and stopped");
+        }
+
+        println!("👋 Daemon shutdown complete");
         Ok(())
     }
 
@@ -302,8 +337,24 @@ async fn start_daemon(port: u16, hardware_config: Option<PathBuf>, lab_hardware:
         println!("   Rebuild with: cargo build --features networking");
         println!();
         println!("   Keeping daemon alive for data plane... Press Ctrl+C to stop");
+        
         tokio::signal::ctrl_c().await?;
-        println!("\n👋 Daemon shutting down...");
+        
+        println!("\n🛑 Shutdown signal received, cleaning up...");
+        
+        #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
+        if let Some((writer, handle)) = writer_handle {
+            println!("   Flushing HDF5 writer...");
+            // Final flush to ensure all data is written
+            if let Err(e) = writer.flush_to_disk() {
+                eprintln!("   Warning: HDF5 flush error during shutdown: {}", e);
+            }
+            // Abort the background writer task
+            handle.abort();
+            println!("   ✓ HDF5 writer flushed and stopped");
+        }
+        
+        println!("👋 Daemon shutdown complete");
         Ok(())
     }
 }
