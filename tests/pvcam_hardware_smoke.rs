@@ -28,7 +28,7 @@
 
 #![cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
 
-use rust_daq::hardware::capabilities::ExposureControl;
+use rust_daq::hardware::capabilities::{ExposureControl, FrameProducer};
 use rust_daq::hardware::pvcam::PvcamDriver;
 use std::env;
 use std::time::Duration;
@@ -77,12 +77,11 @@ async fn pvcam_smoke_test() {
     println!("[2/5] Querying camera info...");
     let info = camera.get_camera_info().await.expect("Failed to get camera info");
     println!("  Chip: {}", info.chip_name);
-    println!("  Sensor: {}x{}", info.sensor_width, info.sensor_height);
-    println!("  Serial: {}", info.serial_number);
+    println!("  Sensor: {}x{}", info.sensor_size.0, info.sensor_size.1);
 
     // Validate sensor dimensions (basic sanity check)
-    assert!(info.sensor_width > 0, "Sensor width must be positive");
-    assert!(info.sensor_height > 0, "Sensor height must be positive");
+    assert!(info.sensor_size.0 > 0, "Sensor width must be positive");
+    assert!(info.sensor_size.1 > 0, "Sensor height must be positive");
 
     // Step 3: Set short exposure
     println!("[3/5] Setting exposure to 10ms...");
@@ -101,8 +100,8 @@ async fn pvcam_smoke_test() {
     println!("[4/5] Acquiring single frame...");
     let start = std::time::Instant::now();
 
-    // Start continuous acquisition for single frame
-    camera.start_continuous().await.expect("Failed to start acquisition");
+    // Start stream acquisition for single frame
+    camera.start_stream().await.expect("Failed to start acquisition");
 
     // Subscribe to frame broadcasts and wait for a frame
     let mut rx = camera.subscribe_frames();
@@ -129,7 +128,7 @@ async fn pvcam_smoke_test() {
 
     // Step 5: Stop and cleanup
     println!("[5/5] Stopping acquisition...");
-    camera.stop_continuous().await.expect("Failed to stop acquisition");
+    camera.stop_stream().await.expect("Failed to stop acquisition");
 
     // Calculate simple statistics on frame data
     let sum: u64 = frame.buffer.iter().map(|&v| v as u64).sum();
