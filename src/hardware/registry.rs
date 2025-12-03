@@ -73,7 +73,8 @@
 //! ```
 
 use crate::hardware::capabilities::{
-    ExposureControl, FrameProducer, Movable, Readable, Settable, Stageable, Triggerable,
+    ExposureControl, FrameProducer, Movable, Parameterized, Readable, Settable, Stageable,
+    Triggerable,
 };
 use crate::observable::ParameterSet; // NEW: For parameter registry
 #[cfg(feature = "instrument_spectra_physics")]
@@ -323,11 +324,11 @@ struct RegisteredDevice {
     settable: Option<Arc<dyn Settable>>,
     /// Stageable implementation (if supported) - Bluesky-style lifecycle (bd-7aq6)
     stageable: Option<Arc<dyn Stageable>>,
-    /// Parameter registry (if device implements Parameterized)
+    /// Parameterized implementation (if supported) - parameter registry access
     /// 
     /// Enables generic code to enumerate and subscribe to device parameters.
     /// Populated during device registration if driver implements Parameterized trait.
-    parameters: Option<ParameterSet>,
+    parameterized: Option<Arc<dyn Parameterized>>,
     /// ShutterControl implementation (if supported) - laser shutter
     #[cfg(feature = "instrument_spectra_physics")]
     shutter_control: Option<Arc<dyn ShutterControl>>,
@@ -337,7 +338,7 @@ struct RegisteredDevice {
     /// WavelengthTunable implementation (if supported) - tunable laser wavelength (bd-pwjo)
     #[cfg(feature = "instrument_spectra_physics")]
     wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
-    /// Capability metadata
+    /// Device metadata (units, ranges, etc.)
     metadata: DeviceMetadata,
 }
 
@@ -563,9 +564,8 @@ impl DeviceRegistry {
     /// }
     /// ```
     pub fn get_parameters(&self, device_id: &str) -> Option<&ParameterSet> {
-        self.devices
-            .get(device_id)
-            .and_then(|d| d.parameters.as_ref())
+        let device = self.devices.get(device_id)?;
+        device.parameterized.as_ref().map(|p| p.parameters())
     }
 
     #[cfg(feature = "instrument_spectra_physics")]
@@ -620,14 +620,14 @@ impl DeviceRegistry {
                 ));
                 Ok(RegisteredDevice {
                     config,
-                    movable: Some(driver),
+                    movable: Some(driver.clone()),
                     readable: None,
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -648,13 +648,13 @@ impl DeviceRegistry {
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
-                    readable: Some(driver),
+                    readable: Some(driver.clone()),
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -680,7 +680,7 @@ impl DeviceRegistry {
                     exposure_control: Some(driver.clone()),
                     settable: None,
                     stageable: Some(driver.clone()),
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -690,7 +690,6 @@ impl DeviceRegistry {
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
-                        bits_per_pixel: Some(16), // Mock frames are u16
                         ..Default::default()
                     },
                 })
@@ -714,7 +713,7 @@ impl DeviceRegistry {
                     exposure_control: Some(driver.clone()),
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -760,14 +759,14 @@ impl DeviceRegistry {
                 let driver = Arc::new(crate::hardware::ell14::Ell14Driver::with_shared_port(shared_port, &address));
                 Ok(RegisteredDevice {
                     config,
-                    movable: Some(driver),
+                    movable: Some(driver.clone()),
                     readable: None,
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -791,13 +790,13 @@ impl DeviceRegistry {
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
-                    readable: Some(driver),
+                    readable: Some(driver.clone()),
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -823,7 +822,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: Some(driver.clone()),
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -842,14 +841,14 @@ impl DeviceRegistry {
                 let driver = Arc::new(crate::hardware::esp300::Esp300Driver::new(&port, axis)?);
                 Ok(RegisteredDevice {
                     config,
-                    movable: Some(driver),
+                    movable: Some(driver.clone()),
                     readable: None,
                     triggerable: None,
                     frame_producer: None,
                     exposure_control: None,
                     settable: None,
                     stageable: None,
-                    parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+                    parameterized: Some(driver),
                     #[cfg(feature = "instrument_spectra_physics")]
                     shutter_control: None,
                     #[cfg(feature = "instrument_spectra_physics")]
@@ -1003,7 +1002,7 @@ impl DeviceRegistry {
             exposure_control: None,
             settable: None,
             stageable: None,
-            parameters: None, // TODO: Populate from Parameterized trait (bd-dili)
+            parameterized: None, // TODO: Populate from Parameterized trait (bd-dili)
             #[cfg(feature = "instrument_spectra_physics")]
             shutter_control: None,
             #[cfg(feature = "instrument_spectra_physics")]
