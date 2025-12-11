@@ -8,14 +8,14 @@ The gRPC API provides a network interface for remote control of the DAQ system h
 
 **COMPLETED:**
 1. Added gRPC dependencies (tonic, prost, tokio-stream)
-2. Created Protocol Buffer definition (`src/network/proto/daq.proto`)
+2. Created Protocol Buffer definition (`crates/daq-proto/proto/daq.proto`)
 3. Created build configuration for proto compilation
 4. Integrated proto module into network module
 5. Verified successful code generation
 
 ## Proto File Structure
 
-**Location:** `/Users/briansquires/code/rust-daq/src/network/proto/daq.proto`
+**Location:** `/Users/briansquires/code/rust-daq/crates/daq-proto/proto/daq.proto`
 
 The proto definition includes:
 
@@ -69,7 +69,7 @@ The proto definition includes:
 
 ## Generated Rust Modules
 
-**Build Output:** `/Users/briansquires/code/rust-daq/target/debug/build/rust_daq-*/out/daq.rs`
+**Build Output:** Proto code is generated in `crates/daq-proto/` via `tonic-build` during cargo build.
 
 The `tonic-build` tool generates approximately 35KB of Rust code including:
 
@@ -88,20 +88,18 @@ The `tonic-build` tool generates approximately 35KB of Rust code including:
 
 ## Module Accessibility
 
-The proto module is integrated into the library via `src/network/mod.rs`:
+The proto module is re-exported through `daq-proto` crate and accessible via `rust-daq`:
 
 ```rust
-pub mod proto {
+// In crates/daq-proto/src/lib.rs
+pub mod daq {
     tonic::include_proto!("daq");
 }
 
-// Re-exported for convenience
-pub use proto::control_service_server::{ControlService, ControlServiceServer};
-pub use proto::control_service_client::ControlServiceClient;
-pub use proto::{
-    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StartResponse,
-    StatusRequest, StopRequest, StopResponse, SystemStatus, UploadRequest, UploadResponse,
-};
+// Re-exported in crates/rust-daq/src/grpc/mod.rs
+pub mod proto {
+    pub use daq_proto::daq::*;
+}
 ```
 
 ## Build Verification
@@ -125,7 +123,7 @@ cargo build --lib
 
 ## Acceptance Criteria - COMPLETED
 
-- [x] `src/network/proto/daq.proto` defines complete API
+- [x] `crates/daq-proto/proto/daq.proto` defines complete API
 - [x] `build.rs` successfully compiles proto files
 - [x] `cargo build` generates Rust code from proto
 - [x] Module `network::proto` is accessible
@@ -145,10 +143,12 @@ tonic-build = "0.10"
 
 ## Files Created/Modified
 
-**Created:**
-- `/Users/briansquires/code/rust-daq/src/network/proto/daq.proto` - Protocol definition
-- `/Users/briansquires/code/rust-daq/build.rs` - Build script with proto compilation
+**Proto Crate (crates/daq-proto/):**
+- `proto/daq.proto` - Protocol definition
+- `proto/health.proto` - Health check service
+- `build.rs` - Proto compilation with tonic-build
+- `src/lib.rs` - Module exports
+- `src/convert.rs` - Domain type conversions
 
-**Modified:**
-- `/Users/briansquires/code/rust-daq/Cargo.toml` - Added dependencies
-- `/Users/briansquires/code/rust-daq/src/network/mod.rs` - Added proto module and exports
+**Runtime Crate (crates/rust-daq/):**
+- `src/grpc/mod.rs` - Re-exports proto types from daq-proto

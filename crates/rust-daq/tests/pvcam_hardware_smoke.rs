@@ -71,7 +71,8 @@ async fn pvcam_smoke_test() {
 
     // Step 1: Initialize camera
     println!("\n[1/5] Initializing camera...");
-    let camera = PvcamDriver::new(&camera_name)
+    let camera = PvcamDriver::new_async(camera_name.clone())
+        .await
         .expect("Failed to create PVCAM driver - check SDK installation and camera connection");
 
     // Step 2: Verify camera info

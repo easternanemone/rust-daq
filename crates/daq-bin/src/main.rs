@@ -38,8 +38,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
 
+use daq_proto::daq::*;
 #[cfg(feature = "networking")]
-use rust_daq::grpc::proto::*;
+use daq_server::grpc::start_server_with_hardware;
 #[cfg(feature = "networking")]
 use std::collections::HashMap;
 
@@ -137,12 +138,35 @@ enum ClientCommands {
         #[arg(long, default_value = "http://localhost:50051")]
         addr: String,
     },
+
+    /// Move a device to an absolute position
+    Move {
+        /// Device ID
+        device_id: String,
+        /// Target position
+        value: f64,
+        /// Wait for completion
+        #[arg(long, default_value = "true")]
+        wait: bool,
+        /// Daemon address
+        #[arg(long, default_value = "http://localhost:50051")]
+        addr: String,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("🚀 rust-daq - Headless DAQ System");
     println!("Architecture: Headless-First + Scriptable (v5)");
+    #[cfg(feature = "networking")]
+    println!("DEBUG: Feature networking ENABLED");
+    #[cfg(not(feature = "networking"))]
+    println!("DEBUG: Feature networking DISABLED");
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     println!();
 
     let cli = Cli::parse();
@@ -211,8 +235,8 @@ async fn start_daemon(
     hardware_config: Option<PathBuf>,
     lab_hardware: bool,
 ) -> Result<()> {
-    use rust_daq::health::sys_monitor::SystemMetricsCollector;
-    use rust_daq::health::{HealthMonitorConfig, SystemHealthMonitor};
+    use daq_server::health::sys_monitor::SystemMetricsCollector;
+    use daq_server::health::{HealthMonitorConfig, SystemHealthMonitor};
 
     println!("🌐 Starting Headless DAQ Daemon");
     println!("   Architecture: V5 (Headless-First + Scriptable)");
@@ -266,7 +290,7 @@ async fn start_daemon(
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]
     {
-        use rust_daq::grpc::start_server_with_hardware;
+        // use daq_server::grpc::start_server_with_hardware; // Imported at top level
         use rust_daq::hardware::registry::{
             create_lab_registry, create_mock_registry, create_registry_from_file,
         };
@@ -401,7 +425,7 @@ async fn start_daemon(
 
 #[cfg(feature = "networking")]
 async fn handle_client_command(cmd: ClientCommands) -> Result<()> {
-    use rust_daq::grpc::proto::control_service_client::ControlServiceClient;
+    use daq_proto::daq::control_service_client::ControlServiceClient;
 
     match cmd {
         ClientCommands::Upload { script, name, addr } => {
@@ -518,6 +542,32 @@ async fn handle_client_command(cmd: ClientCommands) -> Result<()> {
             while let Some(data) = stream.message().await? {
                 println!("[{}] {} = {}", data.timestamp_ns, data.channel, data.value);
             }
+            Ok(())
+        }
+
+        ClientCommands::Move {
+            device_id,
+            value,
+            wait,
+            addr,
+        } => {
+            use daq_proto::daq::hardware_service_client::HardwareServiceClient;
+
+            println!(
+                "🔄 Moving device {} to {} on daemon at {}",
+                device_id, value, addr
+            );
+            let mut client = HardwareServiceClient::connect(addr).await?;
+            let _response = client
+                .move_absolute(MoveRequest {
+                    device_id,
+                    value,
+                    wait_for_completion: Some(wait),
+                    timeout_ms: Some(30000),
+                })
+                .await?;
+
+            println!("✅ Move command accepted");
             Ok(())
         }
     }

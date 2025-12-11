@@ -198,6 +198,18 @@ impl Default for Roi {
     }
 }
 
+impl Roi {
+    /// Calculate area in pixels
+    pub fn area(&self) -> u32 {
+        self.width * self.height
+    }
+
+    /// Check if ROI is valid for given sensor size
+    pub fn is_valid_for(&self, sensor_width: u32, sensor_height: u32) -> bool {
+        self.x + self.width <= sensor_width && self.y + self.height <= sensor_height
+    }
+}
+
 /// Image metadata (exposure, gain, etc.)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImageMetadata {
@@ -236,6 +248,20 @@ pub struct ImageMetadata {
     /// `None` if ROI matches full sensor area. Useful for reconstructing position in full frame.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roi_origin: Option<(u32, u32)>,
+}
+
+impl Default for ImageMetadata {
+    fn default() -> Self {
+        Self {
+            exposure_ms: None,
+            gain: None,
+            binning: None,
+            temperature_c: None,
+            hardware_timestamp_us: None,
+            readout_ms: None,
+            roi_origin: None,
+        }
+    }
 }
 
 /// Represents spectrum data from FFT or other frequency analysis.
@@ -749,6 +775,7 @@ pub struct ArrowBatches {
 ///
 /// Kept for backwards compatibility during migration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(deprecated)]
 pub enum Data {
     /// Scalar measurement (traditional DataPoint)
     Scalar(DataPoint),
@@ -758,6 +785,7 @@ pub enum Data {
     Image(ImageData),
 }
 
+#[allow(deprecated)]
 impl Data {
     /// Returns the timestamp of this measurement.
     pub fn timestamp(&self) -> DateTime<Utc> {

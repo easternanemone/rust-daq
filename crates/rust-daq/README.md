@@ -12,6 +12,15 @@ A high-performance, headless-first data acquisition (DAQ) system written in Rust
 - **Script-Driven Automation**: Rhai scripting for experiment control
 - **Remote Control**: Full gRPC API for network-transparent operation
 
+## Crate Layout
+
+- `crates/daq-core/` — Domain types, parameters/observables, error handling, and module domain types (`modules.rs`).
+- `crates/daq-proto/` — Protobuf definitions in `proto/` plus tonic build and domain↔proto converters in `src/convert.rs`.
+- `crates/rust-daq/` — Runtime façade that wires hardware, storage, scripting, and gRPC; re-exports hardware from `daq-hardware`.
+- `crates/daq-hardware/` — Capability traits and hardware drivers (ell14, esp300, pvcam, maitai, newport_1830c).
+- `crates/daq-bin/` — Binaries/CLI entrypoints for the headless daemon and optional GUI frontends.
+- `crates/daq-examples/` — Example binaries and integration scenarios.
+
 ## Architecture
 
 ```
@@ -47,6 +56,8 @@ A high-performance, headless-first data acquisition (DAQ) system written in Rust
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+Protocol definitions now live in `crates/daq-proto/` (see `proto/` for `.proto` files and `src/convert.rs` for domain↔proto mappings). Module domain types reside in `crates/daq-core/src/modules.rs` and can be enabled via the `modules` feature without requiring `networking`.
+
 ## Quick Start
 
 ### Build
@@ -60,7 +71,14 @@ cargo build --all-features
 
 # Build the egui desktop GUI (requires networking feature)
 cargo build --features networking --bin rust_daq_gui_egui
+
+# Build with module system (now independent of networking)
+cargo build --features modules
+# Modules + networking if you need gRPC module control
+cargo build --features "modules,networking"
 ```
+
+**Feature profiles:** see `docs/architecture/FEATURE_MATRIX.md` for recommended feature groups and build recipes.
 
 ### Run
 

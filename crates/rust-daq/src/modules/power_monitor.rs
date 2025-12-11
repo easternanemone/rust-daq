@@ -37,11 +37,11 @@
 //! - `statistics` - Computed stats: `{mean, std, min, max, count}`
 
 use super::{Module, ModuleContext};
-use crate::grpc::proto::{
-    ModuleEventSeverity, ModuleParameter, ModuleRole, ModuleState, ModuleTypeInfo,
-};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use daq_core::modules::{
+    ModuleEventSeverity, ModuleParameter, ModuleRole, ModuleState, ModuleTypeInfo,
+};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -179,7 +179,7 @@ impl Default for PowerMonitor {
     fn default() -> Self {
         Self {
             config: PowerMonitorConfig::default(),
-            state: ModuleState::ModuleCreated,
+            state: ModuleState::Created,
             running: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             task_handle: None,
@@ -330,7 +330,7 @@ impl Module for PowerMonitor {
             }
         }
 
-        self.state = ModuleState::ModuleConfigured;
+        self.state = ModuleState::Configured;
         Ok(warnings)
     }
 
@@ -354,7 +354,7 @@ impl Module for PowerMonitor {
     }
 
     async fn start(&mut self, ctx: ModuleContext) -> Result<()> {
-        if self.state == ModuleState::ModuleRunning {
+        if self.state == ModuleState::Running {
             return Err(anyhow!("Module is already running"));
         }
 
@@ -365,7 +365,7 @@ impl Module for PowerMonitor {
 
         self.running.store(true, Ordering::SeqCst);
         self.paused.store(false, Ordering::SeqCst);
-        self.state = ModuleState::ModuleRunning;
+        self.state = ModuleState::Running;
 
         let config = self.config.clone();
         let running = Arc::clone(&self.running);
@@ -382,29 +382,29 @@ impl Module for PowerMonitor {
     }
 
     async fn pause(&mut self) -> Result<()> {
-        if self.state != ModuleState::ModuleRunning {
+        if self.state != ModuleState::Running {
             return Err(anyhow!("Module is not running"));
         }
 
         self.paused.store(true, Ordering::SeqCst);
-        self.state = ModuleState::ModulePaused;
+        self.state = ModuleState::Paused;
         info!("PowerMonitor paused");
         Ok(())
     }
 
     async fn resume(&mut self) -> Result<()> {
-        if self.state != ModuleState::ModulePaused {
+        if self.state != ModuleState::Paused {
             return Err(anyhow!("Module is not paused"));
         }
 
         self.paused.store(false, Ordering::SeqCst);
-        self.state = ModuleState::ModuleRunning;
+        self.state = ModuleState::Running;
         info!("PowerMonitor resumed");
         Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
-        if self.state != ModuleState::ModuleRunning && self.state != ModuleState::ModulePaused {
+        if self.state != ModuleState::Running && self.state != ModuleState::Paused {
             return Err(anyhow!("Module is not running"));
         }
 
@@ -418,7 +418,7 @@ impl Module for PowerMonitor {
                 .ok();
         }
 
-        self.state = ModuleState::ModuleStopped;
+        self.state = ModuleState::Stopped;
         info!("PowerMonitor stopped");
         Ok(())
     }

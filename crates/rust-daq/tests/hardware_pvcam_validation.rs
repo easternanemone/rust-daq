@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-#![cfg(feature = "instrument_photometrics")]
+#![cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
 //! PVCAM Camera Hardware Validation Test Suite
 //!
 //! Comprehensive validation tests for Photometrics PVCAM camera driver.
@@ -64,11 +64,14 @@
 //!   -- --test-threads=1
 //! ```
 
-use rust_daq::hardware::capabilities::{ExposureControl, Triggerable};
+use rust_daq::hardware::capabilities::{
+    ExposureControl, Frame, FrameProducer, Readable, Triggerable,
+};
 use rust_daq::hardware::pvcam::{
     CameraInfo, CentroidsConfig, CentroidsMode, GainMode, PPFeature, PPParam, PvcamDriver,
     SpeedMode,
 };
+use rust_daq::hardware::registry::Capability;
 use rust_daq::hardware::Roi;
 use std::time::Instant;
 
@@ -129,7 +132,8 @@ fn expected_height() -> u32 {
 /// Test 1: Validate Prime BSI camera dimensions
 #[test]
 fn test_prime_bsi_dimensions() {
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to create Prime BSI camera");
+    let camera = tokio_test::block_on(PvcamDriver::new_async("PrimeBSI".to_string()))
+        .expect("Failed to create Prime BSI camera");
 
     // Prime BSI: 2048 x 2048 pixel sensor
     let roi = tokio_test::block_on(camera.roi());
@@ -144,7 +148,8 @@ fn test_prime_bsi_dimensions() {
 #[test]
 #[cfg(feature = "prime_95b_tests")]
 fn test_prime_95b_dimensions() {
-    let camera = PvcamDriver::new("Prime95B").expect("Failed to create Prime 95B camera");
+    let camera = tokio_test::block_on(PvcamDriver::new_async("Prime95B".to_string()))
+        .expect("Failed to create Prime 95B camera");
 
     // Prime 95B: 1200 x 1200 pixel sensor
     let roi = tokio_test::block_on(camera.roi());
@@ -158,7 +163,8 @@ fn test_prime_95b_dimensions() {
 /// Test 3: Validate binning factors
 #[test]
 fn test_binning_validation() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = tokio_test::block_on(PvcamDriver::new_async(default_camera_name().to_string()))
+        .expect("Failed to create camera");
 
     // Valid binning: 1, 2, 4, 8
     let valid_bins = vec![1, 2, 4, 8];
@@ -178,7 +184,8 @@ fn test_binning_validation() {
 /// Test 4: Validate ROI bounds checking
 #[test]
 fn test_roi_bounds_validation() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = tokio_test::block_on(PvcamDriver::new_async(default_camera_name().to_string()))
+        .expect("Failed to create camera");
     let width = expected_width();
     let height = expected_height();
 
@@ -222,7 +229,8 @@ fn test_roi_bounds_validation() {
 /// Test 5: Frame size calculation with binning
 #[test]
 fn test_frame_size_with_binning() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = tokio_test::block_on(PvcamDriver::new_async(default_camera_name().to_string()))
+        .expect("Failed to create camera");
 
     // Set 2x2 binning
     tokio_test::block_on(camera.set_binning(2, 2)).expect("Failed to set binning");
@@ -242,7 +250,9 @@ fn test_frame_size_with_binning() {
 /// Test 6: Create default camera instance
 #[tokio::test]
 async fn test_create_default_camera() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
     let roi = camera.roi().await;
     assert_eq!(roi.width, expected_width());
     assert_eq!(roi.height, expected_height());
@@ -251,7 +261,9 @@ async fn test_create_default_camera() {
 /// Test 7: Create Prime BSI camera instance explicitly
 #[tokio::test]
 async fn test_create_prime_bsi() {
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to create Prime BSI camera");
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
+        .await
+        .expect("Failed to create Prime BSI camera");
     let roi = camera.roi().await;
     assert_eq!(roi.width, PRIME_BSI_WIDTH);
     assert_eq!(roi.height, PRIME_BSI_HEIGHT);
@@ -261,7 +273,9 @@ async fn test_create_prime_bsi() {
 #[tokio::test]
 #[cfg(feature = "prime_95b_tests")]
 async fn test_create_prime_95b() {
-    let camera = PvcamDriver::new("Prime95B").expect("Failed to create Prime 95B camera");
+    let camera = PvcamDriver::new_async("Prime95B".to_string())
+        .await
+        .expect("Failed to create Prime 95B camera");
     let roi = camera.roi().await;
     assert_eq!(roi.width, PRIME_95B_WIDTH);
     assert_eq!(roi.height, PRIME_95B_HEIGHT);
@@ -270,7 +284,9 @@ async fn test_create_prime_95b() {
 /// Test 9: Set and get exposure time
 #[tokio::test]
 async fn test_exposure_control() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     // Set exposure to 50ms
     camera
@@ -298,7 +314,9 @@ async fn test_exposure_control() {
 /// Test 10: Set and get full sensor ROI
 #[tokio::test]
 async fn test_roi_full_sensor() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     let roi = Roi {
         x: 0,
@@ -319,7 +337,9 @@ async fn test_roi_full_sensor() {
 /// Test 11: Set and get quarter sensor ROI
 #[tokio::test]
 async fn test_roi_quarter_sensor() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     let w = expected_width();
     let h = expected_height();
@@ -344,7 +364,9 @@ async fn test_roi_quarter_sensor() {
 /// Test 12: Set and get 1x1 binning (no binning)
 #[tokio::test]
 async fn test_binning_1x1() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     camera
         .set_binning(1, 1)
@@ -357,7 +379,9 @@ async fn test_binning_1x1() {
 /// Test 13: Set and get 2x2 binning
 #[tokio::test]
 async fn test_binning_2x2() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     camera
         .set_binning(2, 2)
@@ -370,7 +394,9 @@ async fn test_binning_2x2() {
 /// Test 14: Set and get 4x4 binning
 #[tokio::test]
 async fn test_binning_4x4() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     camera
         .set_binning(4, 4)
@@ -383,7 +409,9 @@ async fn test_binning_4x4() {
 /// Test 15: Invalid binning factor should fail
 #[tokio::test]
 async fn test_invalid_binning() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     // 3x3 binning is invalid (must be 1, 2, 4, or 8)
     let result = camera.set_binning(3, 3).await;
@@ -393,7 +421,9 @@ async fn test_invalid_binning() {
 /// Test 16: ROI exceeding sensor bounds should fail
 #[tokio::test]
 async fn test_invalid_roi_exceeds_sensor() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     // ROI exceeds sensor
     let invalid_roi = Roi {
@@ -410,7 +440,9 @@ async fn test_invalid_roi_exceeds_sensor() {
 /// Test 17: Acquire single frame
 #[tokio::test]
 async fn test_acquire_single_frame() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     camera
         .set_exposure_ms(10.0)
@@ -433,7 +465,7 @@ async fn test_acquire_single_frame() {
         "Frame height should match sensor"
     );
     assert_eq!(
-        frame.buffer.len(),
+        frame.data.len(),
         (expected_width() * expected_height()) as usize,
         "Frame buffer size should be width * height"
     );
@@ -442,7 +474,9 @@ async fn test_acquire_single_frame() {
 /// Test 18: Frame data pattern validation
 #[tokio::test]
 async fn test_frame_data_pattern() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     let frame = camera
         .acquire_frame()
@@ -450,7 +484,7 @@ async fn test_frame_data_pattern() {
         .expect("Failed to acquire frame");
 
     // In mock mode, frame should contain non-zero data (test pattern)
-    let non_zero_pixels = frame.buffer.iter().filter(|&&p| p != 0).count();
+    let non_zero_pixels = frame.data.iter().filter(|&&p| p != 0).count();
     assert!(
         non_zero_pixels > 0,
         "Mock frame should contain non-zero pixel data"
@@ -460,7 +494,9 @@ async fn test_frame_data_pattern() {
 /// Test 19: Arm and disarm triggering
 #[tokio::test]
 async fn test_arm_disarm_trigger() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     // Arm for triggering
     camera.arm().await.expect("Failed to arm camera");
@@ -472,7 +508,9 @@ async fn test_arm_disarm_trigger() {
 /// Test 20: Multiple frame acquisition
 #[tokio::test]
 async fn test_multiple_frames() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     camera
         .set_exposure_ms(5.0)
@@ -493,7 +531,9 @@ async fn test_multiple_frames() {
 /// Test 21: Rapid acquisition rate test
 #[tokio::test]
 async fn test_rapid_acquisition() {
-    let camera = PvcamDriver::new(default_camera_name()).expect("Failed to create camera");
+    let camera = PvcamDriver::new_async(default_camera_name().to_string())
+        .await
+        .expect("Failed to create camera");
 
     // Short exposure for high frame rate
     camera
@@ -535,7 +575,9 @@ async fn test_rapid_acquisition() {
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_initialization() {
     // This test requires PVCAM SDK and physical camera
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open hardware camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open hardware camera");
 
     // Verify camera properties
     let roi = camera.roi().await;
@@ -555,7 +597,9 @@ async fn test_hardware_initialization() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_frame_acquisition() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     camera
         .set_exposure_ms(100.0)
@@ -570,13 +614,13 @@ async fn test_hardware_frame_acquisition() {
     // Verify frame properties
     assert!(frame.width > 0);
     assert!(frame.height > 0);
-    assert_eq!(frame.buffer.len(), (frame.width * frame.height) as usize);
+    assert_eq!(frame.data.len(), (frame.width * frame.height) as usize);
 
     println!(
         "Acquired frame: {}x{}, {} pixels",
         frame.width,
         frame.height,
-        frame.buffer.len()
+        frame.data.len()
     );
 }
 
@@ -584,7 +628,9 @@ async fn test_hardware_frame_acquisition() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_roi() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Set quarter-sensor ROI
     let full_roi = camera.roi().await;
@@ -611,7 +657,9 @@ async fn test_hardware_roi() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_binning() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Set 2x2 binning
     camera
@@ -634,7 +682,9 @@ async fn test_hardware_binning() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_exposure_accuracy() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let exposure_times = vec![10.0, 50.0, 100.0, 500.0]; // milliseconds
 
@@ -669,7 +719,9 @@ async fn test_hardware_exposure_accuracy() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_pixel_uniformity() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Uniform illumination test: standard deviation should be low
     camera
@@ -683,16 +735,16 @@ async fn test_hardware_pixel_uniformity() {
         .expect("Failed to acquire frame");
 
     // Calculate statistics
-    let mean: f64 = frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
+    let mean: f64 = frame.data.iter().map(|&p| p as f64).sum::<f64>() / frame.data.len() as f64;
     let variance: f64 = frame
-        .buffer
+        .data
         .iter()
         .map(|&p| {
             let diff = p as f64 - mean;
             diff * diff
         })
         .sum::<f64>()
-        / frame.buffer.len() as f64;
+        / frame.data.len() as f64;
     let std_dev = variance.sqrt();
 
     // With uniform illumination, std_dev should be <5% of mean
@@ -715,7 +767,9 @@ async fn test_hardware_pixel_uniformity() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_dark_noise() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Dark frame test: mean should be near zero, low variance
     camera
@@ -729,7 +783,7 @@ async fn test_hardware_dark_noise() {
         .expect("Failed to acquire frame");
 
     // Calculate dark current statistics
-    let mean: f64 = frame.buffer.iter().map(|&p| p as f64).sum::<f64>() / frame.buffer.len() as f64;
+    let mean: f64 = frame.data.iter().map(|&p| p as f64).sum::<f64>() / frame.data.len() as f64;
 
     println!("Dark frame mean: {:.1} ADU", mean);
 
@@ -748,7 +802,9 @@ async fn test_hardware_dark_noise() {
 async fn test_hardware_triggered_acquisition() {
     use std::time::Duration;
 
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     camera
         .set_exposure_ms(50.0)
@@ -781,7 +837,9 @@ async fn test_hardware_triggered_acquisition() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_temperature() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let temp = camera
         .get_temperature()
@@ -802,7 +860,9 @@ async fn test_hardware_get_temperature() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_chip_name() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let name = camera
         .get_chip_name()
@@ -819,7 +879,9 @@ async fn test_hardware_get_chip_name() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_bit_depth() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let depth = camera
         .get_bit_depth()
@@ -836,7 +898,9 @@ async fn test_hardware_get_bit_depth() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_readout_time() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let time_us = camera
         .get_readout_time_us()
@@ -861,7 +925,9 @@ async fn test_hardware_get_readout_time() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_pixel_size() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let (pix_w, pix_h) = camera
         .get_pixel_size_nm()
@@ -894,7 +960,9 @@ async fn test_hardware_get_pixel_size() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_gain_name() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let name = camera
         .get_gain_name()
@@ -912,7 +980,9 @@ async fn test_hardware_get_gain_name() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_speed_name() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     match camera.get_speed_name().await {
         Ok(name) => {
@@ -934,7 +1004,9 @@ async fn test_hardware_get_speed_name() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_gain_index() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let idx = camera
         .get_gain_index()
@@ -951,7 +1023,9 @@ async fn test_hardware_get_gain_index() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_speed_index() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let idx = camera
         .get_speed_index()
@@ -968,7 +1042,9 @@ async fn test_hardware_get_speed_index() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_camera_info() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let info = camera
         .get_camera_info()
@@ -1012,7 +1088,9 @@ async fn test_hardware_get_camera_info() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_list_gain_modes() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let modes = camera
         .list_gain_modes()
@@ -1043,7 +1121,9 @@ async fn test_hardware_list_gain_modes() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_list_speed_modes() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let modes = camera
         .list_speed_modes()
@@ -1074,7 +1154,9 @@ async fn test_hardware_list_speed_modes() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_gain() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let gain = camera.get_gain().await.expect("Failed to get gain mode");
 
@@ -1095,7 +1177,9 @@ async fn test_hardware_get_gain() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_speed() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let speed = camera.get_speed().await.expect("Failed to get speed mode");
 
@@ -1116,7 +1200,9 @@ async fn test_hardware_get_speed() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_set_gain_index() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Get available gain modes
     let modes = camera
@@ -1160,7 +1246,9 @@ async fn test_hardware_set_gain_index() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_set_speed_index() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Get available speed modes
     let modes = camera
@@ -1211,7 +1299,9 @@ async fn test_hardware_set_speed_index() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_temperature_setpoint() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let setpoint = camera
         .get_temperature_setpoint()
@@ -1232,7 +1322,9 @@ async fn test_hardware_get_temperature_setpoint() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_temperature_vs_setpoint() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let current = camera
         .get_temperature()
@@ -1264,7 +1356,9 @@ async fn test_hardware_temperature_vs_setpoint() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_fan_speed() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let speed = camera
         .get_fan_speed()
@@ -1280,7 +1374,9 @@ async fn test_hardware_get_fan_speed() {
 async fn test_hardware_set_fan_speed() {
     use rust_daq::hardware::pvcam::FanSpeed;
 
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Save original fan speed
     let original_speed = camera
@@ -1324,7 +1420,9 @@ async fn test_hardware_set_fan_speed() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_list_pp_features() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let features = camera
         .list_pp_features()
@@ -1345,7 +1443,9 @@ async fn test_hardware_list_pp_features() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_pp_params() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let features = camera
         .list_pp_features()
@@ -1375,7 +1475,9 @@ async fn test_hardware_get_pp_params() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_get_set_pp_param() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let features = camera
         .list_pp_features()
@@ -1427,7 +1529,9 @@ async fn test_hardware_get_set_pp_param() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_reset_pp_features() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     match camera.reset_pp_features().await {
         Ok(()) => println!("PP features reset to defaults successfully"),
@@ -1443,7 +1547,9 @@ async fn test_hardware_reset_pp_features() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_smart_streaming_available() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_smart_streaming_available()
@@ -1457,7 +1563,9 @@ async fn test_hardware_smart_streaming_available() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_smart_streaming_max_entries() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_smart_streaming_available()
@@ -1482,7 +1590,9 @@ async fn test_hardware_smart_streaming_max_entries() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_smart_streaming_enable_disable() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_smart_streaming_available()
@@ -1532,7 +1642,9 @@ async fn test_hardware_smart_streaming_enable_disable() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_smart_streaming_set_exposures() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_smart_streaming_available()
@@ -1583,7 +1695,9 @@ async fn test_hardware_smart_streaming_set_exposures() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_centroids_available() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     match camera.is_centroids_available().await {
         Ok(available) => {
@@ -1599,7 +1713,9 @@ async fn test_hardware_centroids_available() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_centroids_enable_disable() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_centroids_available()
@@ -1647,7 +1763,9 @@ async fn test_hardware_centroids_enable_disable() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_centroids_mode() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_centroids_available()
@@ -1694,7 +1812,9 @@ async fn test_hardware_centroids_mode() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_centroids_config() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     let available = camera
         .is_centroids_available()
@@ -1792,7 +1912,9 @@ async fn test_hardware_centroids_config() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_prime_enhance() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Check availability
     let available = camera
@@ -1883,7 +2005,9 @@ async fn test_hardware_prime_enhance() {
 #[tokio::test]
 #[cfg_attr(not(feature = "hardware_tests"), ignore)]
 async fn test_hardware_frame_processing() {
-    let camera = PvcamDriver::new("PMCam").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PMCam".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Check rotation availability
     let rot_available = camera

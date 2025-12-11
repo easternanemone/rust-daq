@@ -4,10 +4,13 @@
 
 #![cfg(feature = "networking")]
 
-use rust_daq::grpc::{
-    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StartResponse, StatusRequest,
-    StopRequest, StopResponse, SystemStatus, UploadRequest, UploadResponse,
+use daq_proto::daq::{
+    ArmRequest, DeviceStateRequest, GetParameterRequest, ListDevicesRequest, MeasurementRequest,
+    MoveRequest, ParameterDescriptor, SetParameterRequest, StartRequest, StartStreamRequest,
+    StopRequest, StopStreamRequest, TriggerRequest, UploadRequest,
 };
+use daq_server::grpc::server::DaqServer;
+use daq_server::grpc::{ControlService, HardwareService};
 use std::collections::HashMap;
 
 #[test]

@@ -1,3 +1,4 @@
+#![cfg(feature = "gui_egui")]
 #![cfg(not(target_arch = "wasm32"))]
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;

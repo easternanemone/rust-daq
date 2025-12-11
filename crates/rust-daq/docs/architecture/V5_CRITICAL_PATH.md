@@ -95,22 +95,9 @@ pub trait Parameterized {
 
 ---
 
-## Remaining Work (P2+)
+## Historical Follow-ups (tracked in bd)
 
-### TODO: Documentation & Examples
-- [ ] Update all examples to use Parameter<T> pattern
-- [ ] Create developer guide for new drivers
-- [ ] Document Parameterized trait implementation pattern
-
-### TODO: Advanced Features
-- [ ] bd-dqic: Ring buffer tap mechanism for live visualization
-- [ ] bd-ej44: Automatic experiment manifest injection to HDF5
-- [ ] bd-pauy: Enhanced health monitoring alerts
-
-### TODO: Performance Optimization
-- [ ] Profile lock contention under 10 kHz load
-- [ ] Consider priority queues for critical operations
-- [ ] Benchmark Parameter<T> overhead vs raw state
+All follow-up work was moved to bd; this document is purely historical and carries no open TODOs. Relevant backlog items live in bd (e.g., bd-dqic ring buffer taps, bd-ej44 experiment manifests, bd-pauy health alerts, documentation/tests tasks).
 
 ## Dependency Graph (Historical)
 
@@ -138,9 +125,9 @@ The V5 architecture is now complete:
 ## Remaining Arc<RwLock Usage (Acceptable)
 
 Some internal state management still uses Arc<RwLock>:
-- `src/hardware/mock.rs` - Internal frame buffer state (not exposed to Parameter system)
-- `src/hardware/registry.rs` - Device registry collection
-- `src/scripting/plugin/hot_reload.rs` - Plugin hot-reload state
+- `crates/rust-daq/src/hardware/mock.rs` - Internal frame buffer state (not exposed to Parameter system)
+- `crates/rust-daq/src/hardware/registry.rs` - Device registry collection
+- `crates/rust-daq/src/scripting/` - Script engine internal state
 
 These are intentional architectural choices, not Split Brain violations.
 

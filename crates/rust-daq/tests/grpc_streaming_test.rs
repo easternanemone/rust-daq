@@ -6,9 +6,11 @@
 #[cfg(feature = "networking")]
 mod streaming_tests {
     use chrono::Utc;
+    use daq_proto::daq::MeasurementRequest;
+    use daq_server::grpc::ControlService;
+    use daq_server::DaqServer;
     use rust_daq::core::Measurement;
-    use rust_daq::grpc::proto::MeasurementRequest;
-    use rust_daq::grpc::{ControlService, DaqServer};
+
     use tokio_stream::StreamExt;
     use tonic::Request;
 

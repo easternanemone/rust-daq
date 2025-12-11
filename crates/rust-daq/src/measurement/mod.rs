@@ -38,7 +38,7 @@
 //! ```
 
 use anyhow::Result;
-use async_trait::async_trait;
+
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 

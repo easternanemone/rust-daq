@@ -128,7 +128,7 @@ fn render_float(
         response = ui.add(
             egui::Slider::new(&mut state.float_value, min..=max)
                 .text(&param.units)
-                .clamp_to_range(true),
+                .clamping(egui::SliderClamping::Always),
         );
     } else {
         // Use drag value for unbounded ranges

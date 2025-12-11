@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 async fn test_streaming_start_stop() {
     println!("=== Test: Streaming Start/Stop ===");
 
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Set reasonable exposure for streaming
     camera
@@ -53,7 +55,9 @@ async fn test_streaming_start_stop() {
 async fn test_streaming_frame_delivery() {
     println!("=== Test: Streaming Frame Delivery ===");
 
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Set 10ms exposure (~100 FPS max)
     camera
@@ -127,7 +131,9 @@ async fn test_streaming_frame_delivery() {
 async fn test_streaming_backpressure() {
     println!("=== Test: Streaming Backpressure ===");
 
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
+        .await
+        .expect("Failed to open camera");
 
     // Fast exposure to stress the buffer
     camera
@@ -173,7 +179,9 @@ async fn test_streaming_backpressure() {
 async fn test_streaming_stability() {
     println!("=== Test: Streaming Stability (10 seconds) ===");
 
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
+        .await
+        .expect("Failed to open camera");
 
     camera
         .set_exposure_ms(33.0) // ~30 FPS
@@ -248,7 +256,9 @@ async fn test_streaming_stability() {
 async fn test_streaming_rapid_cycling() {
     println!("=== Test: Rapid Start/Stop Cycling ===");
 
-    let camera = PvcamDriver::new("PrimeBSI").expect("Failed to open camera");
+    let camera = PvcamDriver::new_async("PrimeBSI")
+        .await
+        .expect("Failed to open camera");
 
     camera
         .set_exposure_ms(10.0)

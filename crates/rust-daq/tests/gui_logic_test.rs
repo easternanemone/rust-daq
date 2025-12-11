@@ -1,3 +1,4 @@
+#![cfg(feature = "gui_egui")]
 #![cfg(not(target_arch = "wasm32"))]
 use rust_daq::gui::{
     app::DaqGuiApp,

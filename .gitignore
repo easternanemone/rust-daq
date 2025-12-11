@@ -1,4 +1,6 @@
 /target/
+**/target/
+*.bin
 
 # Gemini-Flow
 .gemini-flow/cache/

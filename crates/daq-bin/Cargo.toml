@@ -9,11 +9,16 @@ path = "src/main.rs"
 
 [dependencies]
 rust_daq = { path = "../rust-daq", features = ["server", "all_hardware", "instrument_serial", "modules", "storage_csv"] }
+daq-server = { path = "../daq-server" }
+daq-proto = { path = "../daq-proto" }
 anyhow = "1.0"
 clap = { version = "4.5.4", features = ["derive"] }
 tokio = { version = "1.36", features = ["full"] }
 mimalloc = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [features]
 default = ["networking"]
 networking = []
+storage_hdf5 = ["rust_daq/storage_hdf5"]
+storage_arrow = ["rust_daq/storage_arrow"]

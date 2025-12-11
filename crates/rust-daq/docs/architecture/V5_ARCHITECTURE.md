@@ -1,27 +1,28 @@
 # V5 Architecture - Headless-First & Capability-Based Design
 
-**Last Updated**: 2025-12-06
+**Last Updated**: 2025-12-10
 **Status**: ✅ FULLY IMPLEMENTED
 **Architecture Coordinator**: Gemini
 
 > **TRANSITION COMPLETE**: As of 2025-12-06, the V5 transition is effectively complete.
 > Legacy V1-V4 code has been removed. ScriptHost is deprecated in favor of RhaiEngine.
-> Remaining work focuses on documentation consolidation and final API polishing.
+> Phase 2 refactoring (daq-proto extraction, modules decoupling) completed 2025-12-10.
 
 ## Executive Summary
 
 The rust-daq V5 architecture represents a complete paradigm shift from monolithic desktop applications to a headless-first, capability-based distributed system. The architecture successfully eliminates the "Quintuple-Core Schism" (V1/V2/V3/V4 fragmentation) through aggressive cleanup and standardization on atomic capability traits.
 
-### Key Achievements (As of 2025-12-06)
+### Key Achievements (As of 2025-12-10)
 
 - ✅ **COMPLETE**: V1/V2/V3/V4 legacy code eliminated
-- ✅ **COMPLETE**: Unified capability trait system operational (`src/hardware/capabilities.rs`)
-- ✅ **COMPLETE**: V5 hardware drivers in `src/hardware/` (7 driver types: Mock, ELL14, ESP300, PVCAM, MaiTai, Newport1830C, capabilities)
+- ✅ **COMPLETE**: Unified capability trait system (`crates/daq-hardware/src/capabilities.rs`)
+- ✅ **COMPLETE**: V5 hardware drivers in `crates/rust-daq/src/hardware/` (7 driver types)
 - ✅ **COMPLETE**: gRPC remote control (Phase 3)
-- ✅ **COMPLETE**: Rhai scripting engine (`RhaiEngine` in `src/scripting/rhai_engine.rs`)
-- ✅ **COMPLETE**: HDF5 storage layer (`src/data/hdf5_writer.rs`)
-- ✅ **COMPLETE**: ScriptHost deprecated (use RhaiEngine directly)
-- 🔄 **IN PROGRESS**: Documentation consolidation and final cleanup
+- ✅ **COMPLETE**: Rhai scripting engine (`crates/rust-daq/src/scripting/rhai_engine.rs`)
+- ✅ **COMPLETE**: HDF5 storage layer (`crates/rust-daq/src/data/hdf5_writer.rs`)
+- ✅ **COMPLETE**: Proto extraction to `crates/daq-proto/`
+- ✅ **COMPLETE**: Modules decoupled from networking (`modules = []`)
+- 🔄 **IN PROGRESS**: Phase 3 crate extraction (daq-hardware, daq-storage, daq-scripting)
 
 ## Architectural Principles
 
@@ -29,7 +30,7 @@ The rust-daq V5 architecture represents a complete paradigm shift from monolithi
 
 **Philosophy**: Hardware capabilities are atomic, composable traits rather than monolithic interfaces.
 
-**Core Traits** (`src/hardware/capabilities.rs`):
+**Core Traits** (`crates/daq-hardware/src/capabilities.rs`):
 
 ```rust
 // Atomic capability traits - each trait does ONE thing
@@ -143,7 +144,7 @@ where
 
 **Philosophy**: Experiment logic should be modifiable without recompiling Rust.
 
-**Rhai Integration** (`src/scripting/rhai_engine.rs`):
+**Rhai Integration** (`crates/rust-daq/src/scripting/rhai_engine.rs`):
 
 > **Note**: `ScriptHost` in `src/scripting/engine.rs` is **DEPRECATED**.
 > Use `RhaiEngine` directly for all new code.
@@ -164,7 +165,7 @@ for i in 0..100 {
 - Sandboxed execution (no filesystem access)
 - Type-safe bindings (async→sync bridge)
 
-**Bindings Layer** (`src/scripting/bindings.rs`):
+**Bindings Layer** (`crates/rust-daq/src/scripting/bindings.rs`):
 - Wraps async Rust hardware methods for sync Rhai
 - Uses `tokio::task::block_in_place` for thread safety
 - Exposes simplified API (move_abs, trigger, read, etc.)
@@ -186,7 +187,7 @@ for i in 0..100 {
   - Scientists get standard `.h5` files
   - No Arrow exposure in user-facing APIs
 
-**Implementation** (`src/data/ring_buffer.rs`, `src/data/hdf5_writer.rs`):
+**Implementation** (`crates/rust-daq/src/data/ring_buffer.rs`, `crates/rust-daq/src/data/hdf5_writer.rs`):
 ```rust
 // Ring buffer header (#[repr(C)] for cross-language compat)
 struct RingBufferHeader {
@@ -224,7 +225,7 @@ service ControlService {
 }
 ```
 
-**Server Implementation** (`src/grpc/server.rs`):
+**Server Implementation** (`crates/rust-daq/src/grpc/server.rs`):
 - Tonic-based async gRPC server
 - WebSocket streaming for real-time telemetry
 - HTTP/2 multiplexing for data streams
@@ -234,7 +235,7 @@ service ControlService {
 
 ### Layer 1: Hardware Abstraction
 
-**Directory**: `src/hardware/`
+**Directory**: `crates/rust-daq/src/hardware/`
 
 **Components**:
 - `capabilities.rs` - Atomic trait definitions (Movable, Readable, etc.)
@@ -279,7 +280,7 @@ impl Movable for Esp300Driver {
 
 ### Layer 2: Scripting Engine
 
-**Directory**: `src/scripting/`
+**Directory**: `crates/rust-daq/src/scripting/`
 
 **Components**:
 - `rhai_engine.rs` - Primary Rhai scripting engine (use this)
@@ -311,7 +312,7 @@ fn register_hardware_bindings(engine: &mut Engine, hardware: Arc<dyn Movable>) {
 
 ### Layer 3: Network/gRPC Server
 
-**Directory**: `src/grpc/`
+**Directory**: `crates/rust-daq/src/grpc/`
 
 **Components**:
 - `server.rs` - DaqServer implementation
@@ -333,7 +334,7 @@ fn register_hardware_bindings(engine: &mut Engine, hardware: Arc<dyn Movable>) {
 
 ### Layer 4: Data Plane
 
-**Directory**: `src/data/`
+**Directory**: `crates/rust-daq/src/data/`
 
 **Components**:
 - `ring_buffer.rs` - Memory-mapped circular buffer
@@ -372,11 +373,11 @@ for batch in reader:
 
 **Correct Dependency Flow**:
 ```
-Hardware (src/hardware/)
+Hardware (crates/rust-daq/src/hardware/)
     ↓ produces
 Scalar/FrameRef (simple types)
     ↓ consumed by
-Data Plane (src/data/)
+Data Plane (crates/rust-daq/src/data/)
     ↓ formats as
 Arrow → Parquet/HDF5
 ```
@@ -414,7 +415,7 @@ impl PvcamCamera {
 
 **CRITICAL RULE**: Scripts MUST work with multiple backend engines (Rhai/Python/Lua).
 
-**Abstraction Layer** (`src/scripting/script_engine.rs`):
+**Abstraction Layer** (`crates/rust-daq/src/scripting/script_engine.rs`):
 ```rust
 pub trait ScriptEngine {
     fn execute(&self, code: &str) -> Result<Value>;
@@ -463,16 +464,16 @@ pub struct ExperimentRunner {
 ### Active V5 Components
 
 **Fully Operational**:
-- src/hardware/capabilities.rs (382 lines) - Capability traits
-- src/hardware/mock.rs (353 lines) - Reference implementations
-- src/scripting/engine.rs (112 lines) - Rhai engine
-- src/scripting/bindings.rs (267 lines) - Hardware bindings
+- crates/daq-hardware/src/capabilities.rs (382 lines) - Capability traits
+- crates/daq-hardware/src/mock.rs (353 lines) - Reference implementations
+- crates/rust-daq/src/scripting/engine.rs (112 lines) - Rhai engine
+- crates/rust-daq/src/scripting/bindings.rs (267 lines) - Hardware bindings
 - src/main.rs (run & daemon modes) - CLI
-- src/grpc/server.rs (331 lines) - gRPC server
+- crates/rust-daq/src/grpc/server.rs (331 lines) - gRPC server
 - proto/daq.proto (6 RPC methods) - API definition
 - clients/python/daq_client.py (266 lines) - Python client
-- src/data/ring_buffer.rs (541 lines) - Ring buffer
-- src/data/hdf5_writer.rs (381 lines) - HDF5 writer
+- crates/rust-daq/src/data/ring_buffer.rs (541 lines) - Ring buffer
+- crates/rust-daq/src/data/hdf5_writer.rs (381 lines) - HDF5 writer
 
 ### Remaining V3 Fragments (Low Priority)
 
@@ -580,7 +581,7 @@ impl Movable for Esp300Driver {
 
 ### Unit Tests
 
-- Mock hardware implementations (src/hardware/mock.rs)
+- Mock hardware implementations (crates/rust-daq/src/hardware/mock.rs)
 - Capability trait compliance tests
 - Rhai bindings validation
 - Ring buffer correctness

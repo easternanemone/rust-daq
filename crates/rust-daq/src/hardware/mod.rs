@@ -52,47 +52,41 @@
 //!
 //! See `tests/hardware_serial_tests.rs` for comprehensive integration tests.
 
-pub mod capabilities;
-pub mod mock;
-pub mod registry;
+// Re-export capabilities, registry, resource_pool
+pub use daq_hardware::drivers::mock;
+pub use daq_hardware::{capabilities, registry, resource_pool};
+
 #[cfg(feature = "tokio_serial")]
-pub mod resource_pool;
+pub use daq_hardware::plugin;
 
-// Plugin system for YAML-defined instrument drivers
-#[cfg(feature = "tokio_serial")]
-pub mod plugin;
+// Common capability imports
+// pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable}; (Removed duplicate)
 
-// Mock serial port for testing (always available)
-pub mod mock_serial;
-
-// =============================================================================
 // Real Hardware Drivers
-// =============================================================================
-
-// Thorlabs Elliptec rotation mount
 #[cfg(feature = "instrument_thorlabs")]
-pub mod ell14;
+pub use daq_hardware::drivers::ell14;
 
-// Newport ESP300 multi-axis motion controller
 #[cfg(feature = "instrument_newport")]
-pub mod esp300;
+pub use daq_hardware::drivers::esp300;
 
-// Photometrics PVCAM cameras (Prime BSI, Prime 95B)
-#[cfg(feature = "instrument_photometrics")]
-pub mod pvcam;
+#[cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+pub use daq_hardware::drivers::pvcam;
 
-// Spectra-Physics MaiTai Ti:Sapphire laser
 #[cfg(feature = "instrument_spectra_physics")]
-pub mod maitai;
+pub use daq_hardware::drivers::maitai;
 
-// Newport 1830-C optical power meter
 #[cfg(feature = "instrument_newport_power_meter")]
-pub mod newport_1830c;
+pub use daq_hardware::drivers::newport_1830c;
+
+// Configure daq-hardware mock serial for tests
+/// Mock serial port support for testing without hardware
+#[cfg(feature = "instrument_serial")]
+pub mod mock_serial {
+    pub use daq_hardware::drivers::mock_serial::*;
+}
 
 // Re-export core capability traits
 pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable};
-
-use std::sync::Arc;
 
 // =============================================================================
 // Data Types
@@ -100,91 +94,8 @@ use std::sync::Arc;
 
 /// Thread-safe frame reference for camera/image data
 ///
-/// This struct provides shared access to frame buffer data using reference counting.
-/// The data is automatically freed when all references are dropped.
-///
-/// # Thread Safety
-/// Uses `Arc<[u8]>` internally for safe shared ownership across threads.
-/// No manual lifetime management required - the Arc handles it automatically.
-///
-/// # Example
-/// ```rust,ignore
-/// let data: Vec<u8> = vec![0u8; 1024 * 1024];
-/// let frame = FrameRef::new(1024, 1024, data, 1024);
-///
-/// // Access pixel at (x, y)
-/// let offset = y * frame.stride + x;
-/// let pixel = frame.as_slice()[offset];
-///
-/// // Safe to clone and share across threads
-/// let frame2 = frame.clone();
-/// ```
-#[derive(Debug, Clone)]
-pub struct FrameRef {
-    /// Frame width in pixels
-    pub width: u32,
-
-    /// Frame height in pixels
-    pub height: u32,
-
-    /// Shared reference to pixel data (row-major order)
-    ///
-    /// Data format depends on camera (typically u8 or u16 per pixel).
-    /// For multi-byte pixels, assume little-endian.
-    data: Arc<[u8]>,
-
-    /// Number of bytes per row (may include padding)
-    ///
-    /// For images without padding: stride = width * bytes_per_pixel
-    /// For padded images: stride >= width * bytes_per_pixel
-    pub stride: usize,
-}
-
-// Note: No manual Send/Sync needed - Arc<[u8]> is automatically Send+Sync
-
-impl FrameRef {
-    /// Create a new frame reference from owned data
-    ///
-    /// The data is moved into an Arc for shared ownership.
-    pub fn new(width: u32, height: u32, data: Vec<u8>, stride: usize) -> Self {
-        Self {
-            width,
-            height,
-            data: data.into(),
-            stride,
-        }
-    }
-
-    /// Create a new frame reference from an existing Arc
-    ///
-    /// Useful when the data is already in an Arc (e.g., from a ring buffer).
-    pub fn from_arc(width: u32, height: u32, data: Arc<[u8]>, stride: usize) -> Self {
-        Self {
-            width,
-            height,
-            data,
-            stride,
-        }
-    }
-
-    /// Get pixel data as slice
-    ///
-    /// Returns a reference to the underlying pixel data.
-    /// The slice is valid as long as any FrameRef to this data exists.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.data
-    }
-
-    /// Calculate total bytes in frame
-    pub fn total_bytes(&self) -> usize {
-        self.height as usize * self.stride
-    }
-
-    /// Get the Arc for efficient cloning without copying data
-    pub fn data_arc(&self) -> Arc<[u8]> {
-        Arc::clone(&self.data)
-    }
-}
+/// Uses daq_core::data types for interoperability.
+pub use daq_core::data::{Frame, FrameRef};
 
 // =============================================================================
 // Useful Types Migrated from core_v3
@@ -194,88 +105,6 @@ impl FrameRef {
 ///
 /// Defines a rectangular crop region within sensor area.
 /// Used by cameras that support ROI to reduce readout time and data volume.
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct Roi {
-    /// Left edge of ROI (pixels from left of sensor)
-    pub x: u32,
+pub use daq_core::core::Roi;
 
-    /// Top edge of ROI (pixels from top of sensor)
-    pub y: u32,
-
-    /// Width of ROI in pixels
-    pub width: u32,
-
-    /// Height of ROI in pixels
-    pub height: u32,
-}
-
-impl Default for Roi {
-    fn default() -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            width: 1024,
-            height: 1024,
-        }
-    }
-}
-
-impl Roi {
-    /// Calculate area in pixels
-    pub fn area(&self) -> u32 {
-        self.width * self.height
-    }
-
-    /// Check if ROI is valid for given sensor size
-    pub fn is_valid_for(&self, sensor_width: u32, sensor_height: u32) -> bool {
-        self.x + self.width <= sensor_width && self.y + self.height <= sensor_height
-    }
-}
-
-/// Owned frame data from camera acquisition
-///
-/// Unlike FrameRef (zero-copy), this struct owns the pixel data.
-/// Used by camera drivers that return owned buffers (e.g., PVCAM).
-#[derive(Clone, Debug)]
-pub struct Frame {
-    /// Frame width in pixels
-    pub width: u32,
-
-    /// Frame height in pixels
-    pub height: u32,
-
-    /// Pixel data buffer (u16 values for scientific cameras)
-    ///
-    /// Data is stored in row-major order (scan line by line).
-    /// Length should equal width * height.
-    pub buffer: Vec<u16>,
-}
-
-impl Frame {
-    /// Create a new frame with given dimensions and buffer
-    pub fn new(width: u32, height: u32, buffer: Vec<u16>) -> Self {
-        Self {
-            width,
-            height,
-            buffer,
-        }
-    }
-
-    /// Get pixel value at (x, y)
-    pub fn get_pixel(&self, x: u32, y: u32) -> Option<u16> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        let index = (y * self.width + x) as usize;
-        self.buffer.get(index).copied()
-    }
-
-    /// Calculate mean pixel value
-    pub fn mean(&self) -> f64 {
-        if self.buffer.is_empty() {
-            return 0.0;
-        }
-        let sum: u64 = self.buffer.iter().map(|&v| v as u64).sum();
-        sum as f64 / self.buffer.len() as f64
-    }
-}
+// Frame struct removed (using daq_core::data::Frame)

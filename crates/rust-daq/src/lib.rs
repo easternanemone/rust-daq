@@ -38,12 +38,12 @@
 pub mod config;
 
 pub use daq_core::core;
-use std::borrow;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod data; // Re-enabled for ring buffer implementation (Phase 4J: bd-q2we)
 pub use daq_core::error;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod error_recovery;
+// error_recovery moved to daq-core
 pub mod measurement;
 pub mod metadata;
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,7 +56,8 @@ pub use daq_core::parameter;
 
 // V5 Headless-First Architecture (bd-oq51)
 #[cfg(not(target_arch = "wasm32"))]
-pub mod experiment; // Phase 4: RunEngine experiment orchestration (bd-73yh)
+pub use daq_experiment as experiment;
+
 // pub mod app; // Removed (legacy)
 #[cfg(feature = "gui_egui")]
 pub mod gui;
@@ -69,26 +70,18 @@ pub mod log_capture;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modules;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod scripting;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod grpc; // gRPC server & protobuf types
+pub use daq_scripting as scripting;
 #[cfg(target_arch = "wasm32")]
 pub mod grpc {
-    // Re-export generated modules for WASM (if build script generated them)
-    // Note: We need a way to include the generated files without the full 'tonic' server stack
-    // Usually tonic::include_proto! works if tonic-build was used.
-    // We might need to manually include them or use a subset of grpc module.
-    // For now, let's try assuming include_proto works with limited tonic deps.
-    pub mod daq {
-        tonic::include_proto!("daq");
-    }
-    pub use daq::*; // Re-export generated types to crate::grpc scope
-    // Explicitly re-export service clients if they are in submodules
-    pub use daq::hardware_service_client::HardwareServiceClient;
+    // Re-export generated types from daq-proto for WASM
+    // This avoids needing to compile protos in the WASM build script
+    pub use daq_proto::daq::*;
+
+    // Explicitly re-export service clients if expected by consumer code
+    pub use daq_proto::daq::hardware_service_client::HardwareServiceClient;
 }
 #[cfg(not(target_arch = "wasm32"))]
-pub mod health;
-
+// pub mod health; // moved to daq-server
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]

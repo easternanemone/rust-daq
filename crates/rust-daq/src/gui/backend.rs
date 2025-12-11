@@ -21,19 +21,20 @@ use tonic_web_wasm_client::Client as WasmClient;
 // struct WasmClient;
 use tracing::{debug, error, info, warn};
 
-use crate::grpc::{
-    DeviceInfo as ProtoDeviceInfo, DeviceStateSubscribeRequest, HardwareServiceClient,
-    ListDevicesRequest, ListParametersRequest, MoveRequest, ReadValueRequest, SetParameterRequest,
-    ParameterDescriptor as ProtoParameterDescriptor,
+use daq_proto::daq::hardware_service_client::HardwareServiceClient;
+use daq_proto::daq::{
+    DeviceInfo as ProtoDeviceInfo, DeviceStateSubscribeRequest, ListDevicesRequest,
+    ListParametersRequest, MoveRequest, ParameterDescriptor as ProtoParameterDescriptor,
+    ReadValueRequest, SetParameterRequest,
 };
 
-use futures::StreamExt;
-use super::platform;
 use super::channels::BackendHandle;
+use super::platform;
 use super::types::{
     BackendCommand, BackendEvent, BackendMetrics, ConnectionStatus, DeviceInfo,
     DeviceStateSnapshot, ParameterDescriptor, ParameterType,
 };
+use futures::StreamExt;
 
 /// Statistics tracked by the backend.
 #[derive(Debug, Default)]
@@ -49,10 +50,6 @@ type ClientType = Channel;
 
 #[cfg(target_arch = "wasm32")]
 type ClientType = WasmClient;
-
-
-
-
 
 /// Backend state machine.
 pub struct Backend {
@@ -118,6 +115,10 @@ impl Backend {
 
     /// Process a command from the UI. Returns false if shutdown requested.
     async fn process_command(&mut self, cmd: BackendCommand) -> bool {
+        // Trace command reception
+        if let BackendCommand::Connect { .. } = cmd {
+            log::error!("Debug: Backend received Connect command [LOG]");
+        }
         match cmd {
             BackendCommand::Connect { address } => {
                 self.connect(&address).await;
@@ -213,25 +214,31 @@ impl Backend {
         }
 
         #[cfg(target_arch = "wasm32")]
+        #[cfg(target_arch = "wasm32")]
         {
+            log::error!("Debug: Starting WASM connect to {} [LOG]", addr);
             let client = WasmClient::new(addr);
+            log::error!("Debug: WasmClient created [LOG]");
             self.client = Some(HardwareServiceClient::new(client));
             self.send_connection_status(ConnectionStatus::Connected);
-            info!("Connected to daemon (WASM)");
+            log::error!("Debug: Connected to daemon (WASM) [LOG]");
             self.refresh_devices().await;
+            log::error!("Debug: refresh_devices completed [LOG]");
         }
     }
 
     /// Disconnect from the daemon.
     async fn disconnect(&mut self) {
         info!("Disconnecting from daemon");
-        
+
         // Stop any running state stream first
         self.stop_state_stream().await;
-        
+
         self.client = None;
         #[cfg(not(target_arch = "wasm32"))]
-        { self.endpoint = None; }
+        {
+            self.endpoint = None;
+        }
         self.send_connection_status(ConnectionStatus::Disconnected);
 
         // Clear state
@@ -250,12 +257,23 @@ impl Backend {
         debug!("Refreshing device list");
         let start = Instant::now();
 
-        match client
-            .list_devices(ListDevicesRequest {
-                capability_filter: None,
-            })
-            .await
-        {
+        let rpc_call = client.list_devices(ListDevicesRequest {
+            capability_filter: None,
+        });
+
+        log::error!("Debug: Waiting for response from list_devices... [LOG]");
+        let response = tokio::select! {
+            res = rpc_call => {
+                log::error!("Debug: list_devices returned response (or error) [LOG]");
+                res
+            },
+            _ = platform::sleep(Duration::from_secs(5)) => {
+                log::error!("Debug: list_devices timed out (5s) [LOG]");
+                Err(tonic::Status::deadline_exceeded("Timeout waiting for list_devices"))
+            }
+        };
+
+        match response {
             Ok(response) => {
                 let elapsed = start.elapsed();
                 debug!("Device list received in {:?}", elapsed);
@@ -283,7 +301,8 @@ impl Backend {
                 }
                 self.handle.update_state(state);
 
-                self.handle.send_event(BackendEvent::DevicesRefreshed { devices });
+                self.handle
+                    .send_event(BackendEvent::DevicesRefreshed { devices });
             }
             Err(e) => {
                 error!("Failed to refresh devices: {}", e);
@@ -496,8 +515,14 @@ impl Backend {
             return;
         };
 
-        info!("Starting state stream for {} devices", 
-            if device_ids.is_empty() { "all".to_string() } else { device_ids.len().to_string() });
+        info!(
+            "Starting state stream for {} devices",
+            if device_ids.is_empty() {
+                "all".to_string()
+            } else {
+                device_ids.len().to_string()
+            }
+        );
 
         // Create stop channel
         let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
@@ -505,7 +530,7 @@ impl Backend {
 
         // Clone what we need for the task
         let event_tx = self.handle.event_tx.clone();
-        let state_tx = self.handle.state_tx.clone();  // Use watch channel for state updates
+        let state_tx = self.handle.state_tx.clone(); // Use watch channel for state updates
         let stats = self.stats.clone();
 
         // Spawn the streaming task
@@ -527,11 +552,11 @@ impl Backend {
                     Ok(response) => {
                         // Reset backoff on success
                         backoff_ms = 100;
-                        
+
                         let _ = event_tx.try_send(BackendEvent::StateStreamStarted);
-                        
+
                         let mut stream = response.into_inner();
-                        
+
                         loop {
                             tokio::select! {
                                 // Check for stop signal
@@ -620,7 +645,8 @@ impl Backend {
 
     /// Send connection status to UI via state snapshot.
     fn send_connection_status(&self, status: ConnectionStatus) {
-        self.handle.send_event(BackendEvent::ConnectionChanged { status });
+        self.handle
+            .send_event(BackendEvent::ConnectionChanged { status });
     }
 
     /// Update and send metrics to UI.
@@ -693,7 +719,6 @@ fn proto_to_parameter_descriptor(proto: ProtoParameterDescriptor) -> ParameterDe
 /// Spawn the backend in a dedicated thread with its own tokio runtime.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_backend(handle: BackendHandle) -> std::thread::JoinHandle<()> {
-
     std::thread::Builder::new()
         .name("gui-backend".to_string())
         .spawn(move || {
@@ -712,8 +737,12 @@ pub fn spawn_backend(handle: BackendHandle) -> std::thread::JoinHandle<()> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn spawn_backend(handle: BackendHandle) {
+    log::error!("Debug: spawn_backend called (backend.rs) [LOG]");
     wasm_bindgen_futures::spawn_local(async move {
+        log::error!("Debug: spawn_backend async block started (backend.rs) [LOG]");
         let backend = Backend::new(handle);
+        log::error!("Debug: Backend created (backend.rs) [LOG]");
         backend.run().await;
+        log::error!("Debug: Backend run finished (unexpected) (backend.rs) [LOG]");
     });
 }

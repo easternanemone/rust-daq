@@ -1,27 +1,37 @@
 # V5 Implementation Status
 
-**Last Updated**: 2025-12-07
-**Status**: ✅ CORE COMPLETE - Entering Production Readiness Phase
+**Last Updated**: 2025-12-10
+**Status**: ✅ CORE COMPLETE - Phase 2 Refactoring Complete
 
 ## Executive Summary
 
 The V5 architecture is **functionally complete**. All critical infrastructure (Parameter<T> system, driver migration, gRPC services, health monitoring) is operational. The PVCAM driver has been fully updated with reactive parameters for temperature, fan speed, gain index, and speed index. All 61 hardware tests pass.
 
+**Phase 2 Complete (2025-12-10)**:
+- `daq-proto` crate extracted with proto files and domain conversions
+- Module domain types moved to `daq-core/src/modules.rs`
+- `modules` feature decoupled from `networking` feature
+
 ---
 
-## Completed Features (as of 2025-12-06)
+## Completed Features (as of 2025-12-10)
 
 ### Core Architecture
 - ✅ **Reactive Parameter System** (bd-bkjy)
   - `Parameter<T>` with async hardware callbacks via `BoxFuture<'static, Result<()>>`
   - `Observable<T>` base primitive with watch channel notifications
   - Composition pattern: Parameter composes Observable internally
-  - Located: `src/parameter/mod.rs`, `src/observable/mod.rs`
+  - Located: `crates/daq-core/src/parameter.rs`, `crates/daq-core/src/observable.rs`
 
 - ✅ **Parameterized Trait** (bd-9clg)
   - Central parameter registry pattern
   - 9 implementations across driver files
   - Enables gRPC parameter enumeration and preset snapshots
+
+- ✅ **Proto Extraction** (bd-37tw.4)
+  - Proto files in `crates/daq-proto/proto/`
+  - Domain↔proto conversions in `crates/daq-proto/src/convert.rs`
+  - Module types decoupled from networking (bd-37tw.6)
 
 ### Hardware Layer
 - ✅ **Driver Migration to Parameters** (bd-l0a2)
@@ -32,7 +42,7 @@ The V5 architecture is **functionally complete**. All critical infrastructure (P
     - `MaiTai` - Spectra-Physics laser
     - `Newport1830C` - Power meter
   - Mock drivers follow V5 pattern (MockCamera, MockStage)
-  - Located: `src/hardware/`
+  - Located: `crates/rust-daq/src/hardware/` (being extracted to `crates/daq-hardware/`)
 
 - ✅ **Capability Traits** (bd-oq51)
   - `Movable` - Position control
@@ -41,13 +51,17 @@ The V5 architecture is **functionally complete**. All critical infrastructure (P
   - `FrameProducer` - Image acquisition
   - `ExposureControl` - Camera exposure
   - `Parameterized` - Parameter tree exposure
-  - Located: `src/hardware/capabilities.rs`
+  - Located: `crates/daq-hardware/src/capabilities.rs`
 
 ### gRPC Services
 - ✅ **Module Compilation Fixed** (bd-gmwv)
   - Feature-gated with `#[cfg(feature = "networking")]`
   - Health service with real system metrics
-  - Located: `src/grpc/`
+  - Located: `crates/rust-daq/src/grpc/`
+
+- ✅ **Proto Types Extracted** (bd-37tw.4)
+  - Proto definitions: `crates/daq-proto/proto/daq.proto`
+  - Re-exported via `crates/rust-daq/src/grpc/mod.rs`
 
 - ✅ **Parameter Tree Exposure** (bd-chje)
   - Parameters accessible via gRPC RPCs
@@ -62,23 +76,23 @@ The V5 architecture is **functionally complete**. All critical infrastructure (P
   - `SystemMetricsCollector` for CPU/RAM via `sysinfo` crate
   - Device registry heartbeats
   - Dual gRPC health services
-  - Located: `src/health/sys_monitor.rs`
+  - Located: `crates/rust-daq/src/health/`
 
 ### Data Pipeline
 - ✅ **Tap Registry** (bd-s4z3)
   - Dynamic tap management for live data streams
   - Backpressure handling
-  - Located: `src/data/`
+  - Located: `crates/rust-daq/src/data/`
 
 - ✅ **Ring Buffer** (bd-q2we)
   - Lock-free atomic operations
   - Memory-mapped for cross-process access
-  - Located: `src/data/ring_buffer.rs`
+  - Located: `crates/rust-daq/src/data/ring_buffer.rs`
 
 - ✅ **HDF5 Writer** (bd-wmq2)
   - Background Arrow→HDF5 translation
   - Non-blocking flush
-  - Located: `src/data/hdf5_writer.rs`
+  - Located: `crates/rust-daq/src/data/hdf5_writer.rs`
 
 ### Configuration
 - ✅ **Config Type Refactoring** (bd-ou6y.7)
@@ -90,26 +104,35 @@ The V5 architecture is **functionally complete**. All critical infrastructure (P
 - ✅ **RhaiEngine** (bd-pabc)
   - Primary scripting interface
   - 10,000 operation safety limit
-  - Located: `src/scripting/rhai_engine.rs`
+  - Located: `crates/rust-daq/src/scripting/rhai_engine.rs`
 
 - ✅ **ScriptHost Deprecated**
   - Legacy V4 wrapper retained for compatibility
   - All new code should use RhaiEngine
-  - Located: `src/scripting/engine.rs` (deprecated)
+  - Located: `crates/rust-daq/src/scripting/engine.rs` (deprecated)
 
 ---
 
 ## Current Codebase State
 
+### Workspace Crate Structure
+```
+crates/
+├── daq-core/        # Domain types, parameters, observables
+├── daq-proto/       # Proto definitions and conversions
+├── daq-hardware/    # Hardware drivers (in progress - Phase 3)
+├── rust-daq/        # Runtime façade, gRPC, GUI, scripting
+└── daq-bin/         # CLI entrypoints
+```
+
 ### Files Using Parameter<T>
 ```
-src/hardware/maitai.rs
-src/hardware/newport_1830c.rs
-src/hardware/pvcam.rs
-src/hardware/esp300.rs
-src/hardware/ell14.rs
-src/hardware/mock.rs
-src/hardware/capabilities.rs
+crates/rust-daq/src/hardware/maitai.rs
+crates/rust-daq/src/hardware/newport_1830c.rs
+crates/rust-daq/src/hardware/pvcam.rs
+crates/rust-daq/src/hardware/esp300.rs
+crates/rust-daq/src/hardware/ell14.rs
+crates/rust-daq/src/hardware/mock.rs
 ```
 
 ### Files Implementing Parameterized Trait
@@ -117,9 +140,8 @@ src/hardware/capabilities.rs
 
 ### Remaining Arc<RwLock Usage (Intentional)
 ```
-src/hardware/mock.rs        - Internal frame buffer (not exposed)
-src/hardware/registry.rs    - Device registry collection
-src/scripting/plugin/hot_reload.rs - Plugin hot-reload state
+crates/rust-daq/src/hardware/mock.rs        - Internal frame buffer (not exposed)
+crates/rust-daq/src/hardware/registry.rs    - Device registry collection
 ```
 These are architectural choices, not Split Brain violations.
 

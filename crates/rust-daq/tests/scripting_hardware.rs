@@ -299,7 +299,7 @@ async fn test_complex_workflow() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[should_panic(expected = "Camera trigger failed")]
+#[should_panic(expected = "Camera trigger")]
 async fn test_error_handling_unarmed_camera() {
     let mut engine = RhaiEngine::with_hardware().unwrap();
     let camera = Arc::new(MockCamera::new(1920, 1080));

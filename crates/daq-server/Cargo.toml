@@ -1,0 +1,60 @@
+[package]
+name = "daq-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.36", features = ["full"] }
+tonic = "0.10"
+prost = "0.12"
+async-trait = "0.1"
+futures = "0.3"
+tracing = "0.1"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "4.0"
+anyhow = "1.0"
+
+daq-core = { path = "../daq-core" }
+daq-hardware = { path = "../daq-hardware" }
+daq-storage = { path = "../daq-storage" }
+daq-scripting = { path = "../daq-scripting" }
+daq-proto = { path = "../daq-proto" }
+
+tokio-serial = { version = "5.4", optional = true }
+serialport = { version = "4.3.0", optional = true }
+hdf5 = { version = "0.8.1", optional = true }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+sha2 = "0.10"
+tower-http = { version = "0.4", features = ["cors", "trace"], optional = true }
+tonic-web = { version = "0.10", optional = true }
+sysinfo = "0.37.2"
+
+[features]
+default = ["modules", "server", "networking"]
+tokio_serial = ["dep:tokio-serial", "daq-hardware/tokio_serial"]
+storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
+server = ["dep:tonic-web", "dep:tower-http"]
+modules = []
+networking = []
+
+# Hardware drivers
+instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
+instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
+instrument_photometrics = ["tokio_serial"]
+instrument_spectra_physics = ["tokio_serial", "daq-hardware/driver-spectra-physics"]
+instrument_newport_power_meter = ["tokio_serial"]
+
+all_hardware = [
+    "instrument_thorlabs",
+    "instrument_newport",
+    "instrument_photometrics",
+    "instrument_spectra_physics",
+    "instrument_newport_power_meter",
+]
+
+[dev-dependencies]
+tempfile = "3.10"

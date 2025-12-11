@@ -31,34 +31,26 @@
 // pub mod iir_filter;
 // pub mod processor;
 // pub mod registry;
+// Storage components (moved to daq-storage)
+// These are re-exported for backwards compatibility and convenience
+pub use daq_storage::hdf5_writer;
+pub use daq_storage::ring_buffer;
+pub use daq_storage::ring_buffer_reader;
+pub use daq_storage::tap_registry;
 // pub mod storage_factory;
 // pub mod trigger;
 
-/// Background HDF5 writer - The Mullet Strategy backend
-///
-/// **CANONICAL HDF5 IMPLEMENTATION** - This is the ONLY HDF5 writer in the codebase.
 ///
 /// Flushes [`ring_buffer::RingBuffer`] data to HDF5 files at 1 Hz without blocking
 /// hardware loops. Converts Arrow IPC to HDF5 format for compatibility with
 /// Python/MATLAB/Igor analysis tools.
-pub mod hdf5_writer;
+// pub mod hdf5_writer;
 
 /// Memory-mapped ring buffer for high-throughput data
 ///
 /// Stores Arrow IPC format data in `/dev/shm` for fast writes (10k+ writes/sec).
 /// Works in tandem with [`hdf5_writer`] to implement The Mullet Strategy.
-pub mod ring_buffer;
-
-/// Helper utility for reading frames from ring buffer taps
-///
-/// Provides convenient API for clients to receive and deserialize frames sent
-/// via [`ring_buffer::RingBuffer::register_tap()`]. Useful for live data
-/// visualization and remote monitoring.
-pub mod ring_buffer_reader;
-
-/// Live data tap registry and backpressure handling
-pub mod tap_registry;
-
-// Re-export main types for convenience
+// pub mod ring_buffer;
+// Re-export specific types for convenience
 pub use ring_buffer::RingBuffer;
 pub use ring_buffer_reader::{ReaderStats, RingBufferReader};

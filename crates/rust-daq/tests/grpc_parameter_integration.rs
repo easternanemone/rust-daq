@@ -16,11 +16,13 @@
 #![cfg(feature = "networking")]
 
 use anyhow::Result;
-use rust_daq::grpc::proto::{
-    hardware_service_server::HardwareService, GetParameterRequest, SetParameterRequest,
-    StreamParameterChangesRequest,
+use daq_proto::daq::hardware_service_server::HardwareService;
+use daq_proto::daq::{
+    DeviceStateRequest, GetParameterRequest, ListParametersRequest, ParameterDescriptor,
+    ParameterValue, SetParameterRequest, StreamParameterChangesRequest,
 };
-use rust_daq::grpc::HardwareServiceImpl;
+use daq_server::grpc::hardware_service::HardwareServiceImpl;
+use daq_server::grpc::server::DaqServer;
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -156,7 +158,9 @@ async fn test_maitai_parameter_integration() -> Result<()> {
         use std::os::unix::io::AsRawFd;
 
         // Create pseudo-terminal pair
-        let (master, slave) = nix::pty::openpty(None, None).expect("Failed to create pty");
+        let pty = nix::pty::openpty(None, None).expect("Failed to create pty");
+        let master = pty.master;
+        let slave = pty.slave;
 
         // Get slave path
         let slave_path = nix::unistd::ttyname(slave.as_raw_fd()).expect("Failed to get slave path");

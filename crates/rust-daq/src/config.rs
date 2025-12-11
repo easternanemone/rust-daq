@@ -88,6 +88,7 @@ pub struct InstrumentConfig {
 }
 
 #[deprecated(note = "Use InstrumentConfig instead")]
+/// Instrument configuration V3
 pub type InstrumentConfigV3 = InstrumentConfig;
 
 /// Top-level application configuration.

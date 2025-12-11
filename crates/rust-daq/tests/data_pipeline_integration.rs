@@ -83,7 +83,7 @@ fn create_test_spectrum(name: &str, n_bins: usize) -> Measurement {
 
 /// Create an image measurement for testing
 #[allow(dead_code)]
-fn create_test_image(name: &str, width: u32, height: u32) -> Measurement {
+fn _create_test_image(name: &str, width: u32, height: u32) -> Measurement {
     use rust_daq::core::{ImageMetadata, PixelBuffer};
 
     let pixel_count = (width * height) as usize;

@@ -1,11 +1,11 @@
+#![allow(missing_docs)]
 use eframe::{egui, App, Frame};
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use egui_plot::{Line, Plot, PlotImage, PlotPoint as EguiPlotPoint, PlotPoints};
 
 use crate::gui::{
@@ -26,8 +26,8 @@ pub struct DeviceRow {
     pub last_updated: Option<Instant>,
     pub error: Option<String>,
     /// Device state fields from streaming
-    pub state_fields: std::collections::HashMap<String, String>,
-    /// Parameter descriptors for dynamic control panels
+    pub state_fields: HashMap<String, String>,
+    /// Parameter descriptors
     pub parameters: Vec<ParameterDescriptor>,
 }
 
@@ -42,26 +42,20 @@ impl From<DeviceInfo> for DeviceRow {
             last_units: String::new(),
             last_updated: None,
             error: None,
-            state_fields: std::collections::HashMap::new(),
+            state_fields: HashMap::new(),
             parameters: Vec::new(),
         }
     }
 }
 
-/// Identifiers for dockable tabs
-#[derive(Clone, Debug)]
-pub enum Tab {
-    DeviceList,
-    DeviceDetails,
-    Plot,
-    Image,
-    Log,
-}
-
 /// Main GUI application state.
 pub struct DaqGuiApp {
-    /// Address input for daemon connection
-    pub daemon_addr: String,
+    /// Unique ID for the app instance
+    pub id: String,
+    /// Human readable name
+    pub name: String,
+    /// Connection URL (direct or proxy)
+    pub url: String,
     /// Current connection status
     pub connection_status: ConnectionStatus,
     /// Status message for display
@@ -79,27 +73,45 @@ pub struct DaqGuiApp {
     pub _backend_handle: Option<()>,
     /// Whether state streaming is active
     pub is_streaming: bool,
-    /// Currently selected device ID for detail panel
-    pub selected_device_id: Option<String>,
-    /// Parameter edit states for immediate-mode widgets
-    pub param_edit_states: std::collections::HashMap<String, ParameterEditState>,
 
-    /// Docking state
-    pub dock_state: DockState<Tab>,
+    /// Currently selected device ID (for plot/image highlighting)
+    pub selected_device_id: Option<String>,
+
+    /// Set of devices with open control windows
+    pub open_devices: HashSet<String>,
+
+    /// Parameter edit states for immediate-mode widgets
+    pub param_edit_states: HashMap<String, ParameterEditState>,
 
     /// Data history for plotting. Map device_id -> Vec of [time, value]
-    pub history: std::collections::HashMap<String, Vec<[f64; 2]>>,
+    pub history: HashMap<String, Vec<[f64; 2]>>,
     /// Application start time for relative plotting
     pub start_time: Instant,
     /// Latest image data and texture for each device
-    pub images: std::collections::HashMap<String, (egui::ColorImage, Option<egui::TextureHandle>)>,
+    pub images: HashMap<String, (egui::ColorImage, Option<egui::TextureHandle>)>,
+
+    /// Application logs
+    pub logs: Vec<(String, String)>, // (timestamp, message)
+
+    /// Style initialization check
+    pub style_initialized: bool,
+
+    /// Auto-connect flag
+    pub first_frame: bool,
 }
 
 impl DaqGuiApp {
     pub fn new() -> Self {
-        // Create channels and spawn backend
         let (channels, backend_handle) = create_channels();
+        #[cfg(not(target_arch = "wasm32"))]
         let backend_thread = spawn_backend(backend_handle);
+        #[cfg(target_arch = "wasm32")]
+        let backend_thread = {
+            log::error!("Debug: About to call spawn_backend from app::new");
+            let t = spawn_backend(backend_handle);
+            log::error!("Debug: spawn_backend returned in app::new");
+            t
+        };
 
         Self::init(channels, Some(backend_thread))
     }
@@ -114,40 +126,44 @@ impl DaqGuiApp {
         #[cfg(not(target_arch = "wasm32"))] backend_thread: Option<std::thread::JoinHandle<()>>,
         #[cfg(target_arch = "wasm32")] backend_thread: Option<()>,
     ) -> Self {
-        // Create default dock layout
-        let mut dock_state = DockState::new(vec![Tab::DeviceList]);
+        log::info!("App Init Starting");
 
-        {
-            let surface = dock_state.main_surface_mut();
-
-            // Split: Left (Devices 25%), Center (Plot 50%), Right (Details 25%)
-            let root = NodeIndex::root();
-            let [_left, rest] = surface.split_left(root, 0.25, vec![Tab::DeviceList]);
-            let [center, right] = surface.split_left(rest, 0.66, vec![Tab::Plot]);
-            let [_center, _right] = surface.split_below(right, 0.5, vec![Tab::DeviceDetails]);
-
-            // Add Image tab stacked with Plot
-            surface.split_right(center, 0.5, vec![Tab::Image]);
-
-            // Add Log at bottom of center
-            surface.split_below(center, 0.75, vec![Tab::Log]);
-        }
+        #[cfg(target_arch = "wasm32")]
+        let url = "http://127.0.0.1:8080".to_string(); // Use proxy
+        #[cfg(not(target_arch = "wasm32"))]
+        let url = "http://127.0.0.1:50051".to_string();
 
         Self {
-            daemon_addr: "127.0.0.1:50051".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Rust DAQ GUI".to_string(),
             connection_status: ConnectionStatus::Disconnected,
-            status_line: String::from("Not connected. Enter daemon address and click Connect."),
+            url,
+            status_line: "Ready".to_string(),
             devices: Vec::new(),
             channels,
             last_update: Instant::now(),
             _backend_handle: backend_thread,
             is_streaming: false,
             selected_device_id: None,
-            param_edit_states: std::collections::HashMap::new(),
-            dock_state,
-            history: std::collections::HashMap::new(),
+            open_devices: HashSet::new(),
+            param_edit_states: HashMap::new(),
+            history: HashMap::new(),
             start_time: Instant::now(),
-            images: std::collections::HashMap::new(),
+            images: HashMap::new(),
+            logs: Vec::new(),
+            style_initialized: false,
+            first_frame: true,
+        }
+    }
+
+    /// Add a log message
+    pub fn log(&mut self, msg: String) {
+        let timestamp = chrono::Utc::now().format("%H:%M:%S").to_string();
+        self.logs.push((timestamp, msg));
+
+        // Keep logs bounded
+        if self.logs.len() > 1000 {
+            self.logs.remove(0);
         }
     }
 
@@ -156,8 +172,31 @@ impl DaqGuiApp {
         for event in self.channels.drain_events() {
             match event {
                 BackendEvent::DevicesRefreshed { devices } => {
-                    self.devices = devices.into_iter().map(DeviceRow::from).collect();
-                    self.status_line = format!("Loaded {} devices", self.devices.len());
+                    // Preserve existing state rows if possible
+                    let new_rows: Vec<DeviceRow> = devices
+                        .into_iter()
+                        .map(|d| {
+                            if let Some(existing) = self.devices.iter().find(|old| old.id == d.id) {
+                                let mut row = DeviceRow::from(d);
+                                row.state_fields = existing.state_fields.clone();
+                                row.last_value = existing.last_value;
+                                row.last_units = existing.last_units.clone();
+                                row.last_updated = existing.last_updated;
+                                // Preserve params if we have them so windows don't flicker empty
+                                if !existing.parameters.is_empty() {
+                                    row.parameters = existing.parameters.clone();
+                                }
+                                row
+                            } else {
+                                DeviceRow::from(d)
+                            }
+                        })
+                        .collect();
+
+                    self.devices = new_rows;
+                    let msg = format!("Loaded {} devices", self.devices.len());
+                    self.status_line = msg.clone();
+                    self.log(msg);
 
                     // Auto-start state streaming after devices are loaded
                     if !self.is_streaming {
@@ -193,25 +232,38 @@ impl DaqGuiApp {
                 }
                 BackendEvent::StateStreamStarted => {
                     self.is_streaming = true;
-                    self.status_line = format!("{} (streaming)", self.status_line);
+                    let msg = format!("{} (streaming)", self.status_line);
+                    self.status_line = msg.clone();
+                    self.log("State stream started".to_string());
                 }
                 BackendEvent::StateStreamStopped => {
                     self.is_streaming = false;
+                    self.log("State stream stopped".to_string());
                 }
                 BackendEvent::ParametersFetched {
                     device_id,
                     parameters,
                 } => {
+                    let mut log_msg = None;
                     if let Some(row) = self.devices.iter_mut().find(|d| d.id == device_id) {
                         row.parameters = parameters;
+                        log_msg = Some(format!(
+                            "Fetched {} parameters for {}",
+                            row.parameters.len(),
+                            row.name
+                        ));
+                    }
+                    if let Some(msg) = log_msg {
+                        self.log(msg);
                     }
                 }
                 BackendEvent::Error { message } => {
                     self.status_line = format!("Error: {}", message);
+                    self.log(format!("ERROR: {}", message));
                 }
                 BackendEvent::ConnectionChanged { status } => {
                     self.connection_status = status.clone();
-                    self.status_line = match &status {
+                    let msg = match &status {
                         ConnectionStatus::Disconnected => "Disconnected".to_string(),
                         ConnectionStatus::Connecting => "Connecting...".to_string(),
                         ConnectionStatus::Connected => "Connected".to_string(),
@@ -222,6 +274,8 @@ impl DaqGuiApp {
                             format!("Connection failed: {}", reason)
                         }
                     };
+                    self.status_line = msg.clone();
+                    self.log(format!("Connection status: {}", msg));
 
                     // Reset streaming state on disconnect
                     if matches!(
@@ -293,25 +347,78 @@ impl DaqGuiApp {
         self.last_update = Instant::now();
     }
 
+    /// Apply a modern dark theme to the egui context.
+    fn apply_style(ctx: &egui::Context) {
+        let mut visuals = egui::Visuals::dark();
+        let bg_color = egui::Color32::from_rgb(24, 25, 38);
+        let panel_color = egui::Color32::from_rgb(30, 32, 48);
+        let widget_bg = egui::Color32::from_rgb(45, 48, 69);
+        let accent = egui::Color32::from_rgb(138, 173, 244);
+        let text_primary = egui::Color32::from_rgb(202, 211, 245);
+        let text_secondary = egui::Color32::from_rgb(165, 173, 203);
+        let error_color = egui::Color32::from_rgb(237, 135, 150);
+
+        visuals.window_fill = panel_color;
+        visuals.panel_fill = panel_color;
+        visuals.faint_bg_color = widget_bg;
+        visuals.extreme_bg_color = bg_color;
+
+        visuals.widgets.noninteractive.weak_bg_fill = panel_color;
+        visuals.widgets.noninteractive.bg_fill = panel_color;
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, bg_color);
+        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_primary);
+        visuals.widgets.noninteractive.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.inactive.weak_bg_fill = widget_bg;
+        visuals.widgets.inactive.bg_fill = widget_bg;
+        visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_secondary);
+
+        visuals.widgets.hovered.weak_bg_fill = accent.linear_multiply(0.2);
+        visuals.widgets.hovered.bg_fill = accent.linear_multiply(0.2);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent);
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, text_primary);
+        visuals.widgets.hovered.rounding = egui::Rounding::same(6.0);
+
+        visuals.widgets.active.bg_fill = accent.linear_multiply(0.4);
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent);
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        visuals.widgets.active.rounding = egui::Rounding::same(6.0);
+
+        visuals.selection.bg_fill = accent.linear_multiply(0.3);
+        visuals.selection.stroke = egui::Stroke::new(1.0, accent);
+
+        visuals.hyperlink_color = accent;
+        visuals.error_fg_color = error_color;
+        visuals.warn_fg_color = egui::Color32::from_rgb(245, 169, 127);
+
+        ctx.set_visuals(visuals);
+
+        let mut style = (*ctx.style()).clone();
+        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        style.spacing.window_margin = egui::Margin::same(8.0);
+        style.spacing.button_padding = egui::vec2(8.0, 5.0);
+        style.visuals.resize_corner_size = 12.0;
+        ctx.set_style(style);
+    }
+
     /// Main UI rendering logic (independent of eframe::Frame).
     pub fn ui(&mut self, ctx: &egui::Context) {
-        // Check for UI starvation
+        Self::apply_style(ctx);
         self.check_starvation();
-
-        // Process backend events (non-blocking)
         self.process_backend_events();
-
-        // Sync device state from watch channel (non-blocking, always latest)
         self.sync_device_state();
 
-        // Top panel with connection controls
+        // ---------------------------------------------------------------------
+        // Top Panel: Connection Controls
+        // ---------------------------------------------------------------------
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.heading("rust-daq Control Panel");
-            ui.add_space(4.0);
-
             ui.horizontal(|ui| {
-                ui.label("Daemon:");
-                let addr_response = ui.text_edit_singleline(&mut self.daemon_addr);
+                ui.heading("rust-daq");
+                ui.separator();
+
+                ui.label("Daemon Address:");
+                let addr_response = ui.text_edit_singleline(&mut self.url);
 
                 let is_connected = matches!(self.connection_status, ConnectionStatus::Connected);
                 let is_connecting = matches!(
@@ -323,7 +430,7 @@ impl DaqGuiApp {
                     if ui.button("Disconnect").clicked() {
                         self.channels.send_command(BackendCommand::Disconnect);
                     }
-                    if ui.button("Refresh").clicked() {
+                    if ui.button("Refresh Devices").clicked() {
                         self.channels.send_command(BackendCommand::RefreshDevices);
                         self.status_line = "Refreshing devices...".to_string();
                     }
@@ -334,13 +441,13 @@ impl DaqGuiApp {
                         || (addr_response.lost_focus()
                             && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
-                        let address = self.daemon_addr.clone();
+                        let address = self.url.clone();
                         self.channels
                             .send_command(BackendCommand::Connect { address });
                     }
                 }
 
-                // Connection status indicator
+                // Status Indicator
                 let status_color = match &self.connection_status {
                     ConnectionStatus::Connected => egui::Color32::GREEN,
                     ConnectionStatus::Connecting | ConnectionStatus::Reconnecting { .. } => {
@@ -350,298 +457,401 @@ impl DaqGuiApp {
                     ConnectionStatus::Failed { .. } => egui::Color32::RED,
                 };
                 ui.colored_label(status_color, "●");
-            });
-
-            ui.label(&self.status_line);
-        });
-
-        // Bottom panel with metrics
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            let metrics = self.channels.get_metrics();
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Frames dropped: {} | Stream restarts: {}",
-                    metrics.frames_dropped, metrics.stream_restarts
-                ));
+                ui.label(&self.status_line);
             });
         });
 
-        // Tab viewer logic
-        struct DaqTabViewer<'a> {
-            app: &'a mut DaqGuiApp,
-        }
+        // ---------------------------------------------------------------------
+        // Bottom Panel: Logs
+        // ---------------------------------------------------------------------
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .resizable(true)
+            .min_height(100.0)
+            .show(ctx, |ui| {
+                ui.heading("Log");
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for (ts, msg) in &self.logs {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(ts).weak().monospace());
+                                ui.label(egui::RichText::new(msg).monospace());
+                            });
+                        }
+                    });
+            });
 
-        impl<'a> egui_dock::TabViewer for DaqTabViewer<'a> {
-            type Tab = Tab;
+        // ---------------------------------------------------------------------
+        // Left Panel: Device List
+        // ---------------------------------------------------------------------
+        egui::SidePanel::left("left_panel")
+            .resizable(true)
+            .default_width(280.0)
+            .show(ctx, |ui| {
+                ui.heading("Devices");
+                ui.add_space(4.0);
+                self.ui_device_list(ui);
 
-            fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-                match tab {
-                    Tab::DeviceList => "Devices".into(),
-                    Tab::DeviceDetails => "Details".into(),
-                    Tab::Plot => "Plot".into(),
-                    Tab::Image => "Camera".into(),
-                    Tab::Log => "Sys Log".into(),
+                ui.add_space(20.0);
+                let metrics = self.channels.get_metrics();
+                ui.separator();
+                ui.small("Backend Metrics:");
+                ui.small(format!("Frame Time: {:.2}ms", metrics.ui_frame_ms));
+                ui.small(format!("Dropped Frames: {}", metrics.frames_dropped));
+                ui.small(format!("Streams Restarted: {}", metrics.stream_restarts));
+            });
+
+        // ---------------------------------------------------------------------
+        // Central Panel: Plots & Images
+        // ---------------------------------------------------------------------
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // If we have a selected device, show its plot
+            // If it's a camera, show image
+            if let Some(id) = &self.selected_device_id {
+                if let Some((image, texture_opt)) = self.images.get_mut(id) {
+                    let texture = texture_opt.get_or_insert_with(|| {
+                        ui.ctx().load_texture(
+                            format!("img_{}", id),
+                            image.clone(),
+                            egui::TextureOptions::NEAREST,
+                        )
+                    });
+                    let texture_id = texture.id();
+                    let size = texture.size_vec2();
+                    Plot::new("camera_image_center")
+                        .view_aspect(1.0)
+                        .data_aspect(1.0)
+                        .show(ui, |plot_ui| {
+                            plot_ui.image(PlotImage::new(
+                                texture_id,
+                                EguiPlotPoint::new(0.0, 0.0),
+                                size,
+                            ))
+                        });
+                } else if let Some(data) = self.history.get(id) {
+                    Plot::new("device_plot_center")
+                        .view_aspect(2.0)
+                        .show(ui, |plot_ui| {
+                            plot_ui.line(Line::new(PlotPoints::from(data.clone())))
+                        });
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.label("No data available for selected device.")
+                    });
                 }
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Select a device to view plots. Open device controls from the list.")
+                });
+            }
+        });
+
+        // ---------------------------------------------------------------------
+        // Floating Windows for Device Controls
+        // ---------------------------------------------------------------------
+        // Clone to avoid borrow checker issues while iterating and modifying app state
+        let open_ids: Vec<String> = self.open_devices.iter().cloned().collect();
+        let mut closed_ids = Vec::new();
+
+        for device_id in open_ids {
+            let mut is_open = true;
+            if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
+                // Use the device struct to render connection details
+                let name = device.name.clone();
+
+                egui::Window::new(&name)
+                    .id(egui::Id::new(&device_id))
+                    .open(&mut is_open)
+                    .resizable(true)
+                    .default_size([300.0, 400.0])
+                    .show(ctx, |ui| {
+                        Self::ui_device_window_content(
+                            ui,
+                            device,
+                            &mut self.param_edit_states,
+                            &mut self.channels,
+                        );
+                    });
             }
 
-            fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-                match tab {
-                    Tab::DeviceList => self.app.ui_device_list(ui),
-                    Tab::DeviceDetails => self.app.ui_device_details(ui),
-                    Tab::Plot => self.app.ui_plot(ui),
-                    Tab::Image => self.app.ui_image(ui),
-                    Tab::Log => self.app.ui_log(ui),
-                }
+            if !is_open {
+                closed_ids.push(device_id);
             }
         }
 
-        // Render DockArea
-        let mut viewer = DaqTabViewer { app: self };
-        let mut dock_state = std::mem::replace(&mut viewer.app.dock_state, DockState::new(vec![]));
+        for id in closed_ids {
+            self.open_devices.remove(&id);
+        }
 
-        DockArea::new(&mut dock_state)
-            .style(Style::from_egui(ctx.style().as_ref()))
-            .show(ctx, &mut viewer);
-
-        viewer.app.dock_state = dock_state;
-
-        // Request repaint at ~30fps for smooth updates
         ctx.request_repaint_after(std::time::Duration::from_millis(33));
     }
 
     fn ui_device_list(&mut self, ui: &mut egui::Ui) {
-        if !matches!(self.connection_status, ConnectionStatus::Connected) {
-            ui.centered_and_justified(|ui| {
-                ui.label("Connect to see devices");
-            });
-            return;
-        }
-
         if self.devices.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("No devices found.");
-            });
+            ui.label("No devices found.");
             return;
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("device_grid")
+            egui::Grid::new("device_grid_list")
                 .striped(true)
                 .min_col_width(80.0)
                 .show(ui, |ui| {
-                    ui.strong("Name");
+                    ui.strong("Device");
                     ui.strong("Value");
+                    ui.strong("Controls");
                     ui.end_row();
 
-                    let device_data: Vec<_> = self
-                        .devices
-                        .iter()
-                        .map(|d| {
-                            (
-                                d.id.clone(),
-                                d.name.clone(),
-                                d.last_value,
-                                d.last_units.clone(),
-                                d.last_updated,
-                            )
-                        })
-                        .collect();
+                    // Collect data needed for rendering to avoid fighting borrow checker
+                    // We need mutable access to send commands, but iterating self.devices borrows self.
+                    // However, we can iterate self.devices for display and use channels which is in self.
+                    // Splitting borrows is hard here, so we'll index or use a collected view.
 
-                    for (id, name, last_value, last_units, last_updated) in device_data {
-                        let is_selected = self.selected_device_id.as_ref() == Some(&id);
+                    let device_ids: Vec<String> =
+                        self.devices.iter().map(|d| d.id.clone()).collect();
 
-                        if is_selected {
-                            ui.visuals_mut().override_text_color = Some(egui::Color32::LIGHT_BLUE);
-                        }
+                    for id in device_ids {
+                        if let Some(device) = self.devices.iter_mut().find(|d| d.id == id) {
+                            let is_selected = self.selected_device_id.as_ref() == Some(&id);
+                            let is_open = self.open_devices.contains(&id);
 
-                        // Selectable label for the name
-                        if ui.selectable_label(is_selected, &name).clicked() {
-                            if is_selected {
-                                self.selected_device_id = None;
-                            } else {
-                                self.selected_device_id = Some(id.clone());
-                                self.channels.send_command(BackendCommand::FetchParameters {
-                                    device_id: id.clone(),
-                                });
+                            // Name (Click to select for Plot)
+                            if ui.selectable_label(is_selected, &device.name).clicked() {
+                                // Toggle selection
+                                if is_selected {
+                                    self.selected_device_id = None;
+                                } else {
+                                    self.selected_device_id = Some(id.clone());
+                                    // Also fetch params when selected, just in case
+                                    self.channels.send_command(BackendCommand::FetchParameters {
+                                        device_id: id.clone(),
+                                    });
+                                }
                             }
-                        }
 
-                        // Value
-                        if let Some(v) = last_value {
-                            let age = last_updated.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-                            let color = if age < 5 {
-                                egui::Color32::GREEN
+                            // Value
+                            if let Some(v) = device.last_value {
+                                ui.label(format!("{:.4} {}", v, device.last_units));
                             } else {
-                                egui::Color32::GRAY
-                            };
-                            ui.colored_label(color, format!("{:.4} {}", v, last_units));
-                        } else {
-                            ui.label("-");
-                        }
+                                ui.label("-");
+                            }
 
-                        // Reset color
-                        if is_selected {
-                            ui.visuals_mut().override_text_color = None;
-                        }
+                            // Open/Close Control Window
+                            if ui.selectable_label(is_open, "Control").clicked() {
+                                if is_open {
+                                    self.open_devices.remove(&id);
+                                } else {
+                                    self.open_devices.insert(id.clone());
+                                    // Ensure we have parameters
+                                    self.channels.send_command(BackendCommand::FetchParameters {
+                                        device_id: id.clone(),
+                                    });
+                                }
+                            }
 
-                        ui.end_row();
+                            ui.end_row();
+                        }
                     }
                 });
         });
     }
 
-    fn ui_device_details(&mut self, ui: &mut egui::Ui) {
-        let selected_id = match &self.selected_device_id {
-            Some(id) => id.clone(),
-            None => {
-                ui.centered_and_justified(|ui| ui.label("No device selected"));
-                return;
-            }
-        };
-
-        let device_data = self.devices.iter().find(|d| d.id == selected_id).map(|d| {
-            (
-                d.name.clone(),
-                d.driver_type.clone(),
-                d.capabilities.clone(),
-                d.parameters.clone(),
-                d.state_fields.clone(),
-            )
-        });
-
-        if let Some((name, driver_type, capabilities, parameters, state_fields)) = device_data {
-            ui.heading(&name);
-            ui.horizontal(|ui| {
-                ui.label(format!("Type: {}", driver_type));
-                ui.separator();
-                ui.label(format!("Caps: {}", capabilities.join(",")));
-            });
+    fn ui_device_window_content(
+        ui: &mut egui::Ui,
+        device: &mut DeviceRow,
+        states: &mut HashMap<String, ParameterEditState>,
+        channels: &mut UiChannels,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&device.driver_type).weak());
             ui.separator();
+            ui.label(format!("Caps: {}", device.capabilities.join(", ")));
+        });
+        ui.separator();
 
-            // Parameters
-            if parameters.is_empty() {
-                ui.label("No parameters.");
-                if ui.button("Fetch").clicked() {
-                    self.channels.send_command(BackendCommand::FetchParameters {
-                        device_id: selected_id.clone(),
-                    });
-                }
-            } else {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::Grid::new("param_grid_details")
-                        .striped(true)
-                        .num_columns(3)
-                        .show(ui, |ui| {
-                            for param in &parameters {
-                                ui.label(&param.name).on_hover_text(&param.description);
+        // 1. Motion Controls (Top Priority)
+        if device.capabilities.contains(&"Movable".to_string()) {
+            ui.heading("Motion");
+            egui::Grid::new(format!("motion_{}", device.id))
+                .striped(true)
+                .show(ui, |ui| {
+                    // Absolute
+                    ui.label("Absolute:");
+                    let abs_key = format!("{}:abs_move", device.id);
+                    let state = states.entry(abs_key).or_default();
 
-                                let state_key = format!("{}:{}", param.device_id, param.name);
-                                let state = self.param_edit_states.entry(state_key).or_default();
-
-                                match parameter_widget(ui, param, state) {
-                                    WidgetResult::Committed(value) => {
-                                        self.channels.send_command(BackendCommand::SetParameter {
-                                            device_id: param.device_id.clone(),
-                                            name: param.name.clone(),
-                                            value,
-                                        });
-                                        state.reset();
-                                    }
-                                    _ => {}
-                                }
-
-                                if !param.writable {
-                                    ui.label("🔒");
-                                } else {
-                                    ui.label("");
-                                }
-                                ui.end_row();
+                    // Init from current pos if just opened
+                    if !state.initialized {
+                        if let Some(pos_str) = device.state_fields.get("position") {
+                            if let Ok(v) = pos_str.parse::<f64>() {
+                                state.float_value = v;
                             }
+                        }
+                        state.initialized = true;
+                    }
+
+                    ui.add(egui::DragValue::new(&mut state.float_value).speed(0.1));
+                    if ui.button("Go").clicked() {
+                        channels.send_command(BackendCommand::MoveAbsolute {
+                            device_id: device.id.clone(),
+                            position: state.float_value,
                         });
+                    }
+                    ui.end_row();
+
+                    // Relative
+                    ui.label("Relative:");
+                    let rel_key = format!("{}:rel_move", device.id);
+                    let rel_state = states.entry(rel_key).or_default();
+                    ui.add(egui::DragValue::new(&mut rel_state.float_value).speed(0.1));
+
+                    if ui.button("-").clicked() {
+                        channels.send_command(BackendCommand::MoveRelative {
+                            device_id: device.id.clone(),
+                            distance: -rel_state.float_value,
+                        });
+                    }
+                    if ui.button("+").clicked() {
+                        channels.send_command(BackendCommand::MoveRelative {
+                            device_id: device.id.clone(),
+                            distance: rel_state.float_value,
+                        });
+                    }
+                    ui.end_row();
+                });
+            ui.separator();
+        }
+
+        // 2. Parameters (Tree View)
+        ui.horizontal(|ui| {
+            ui.heading("Parameters");
+            if ui.button("↻").clicked() {
+                channels.send_command(BackendCommand::FetchParameters {
+                    device_id: device.id.clone(),
                 });
             }
+        });
 
-            // State
-            if !state_fields.is_empty() {
-                ui.separator();
-                ui.heading("State");
-                egui::Grid::new("state_grid_details")
+        if device.parameters.is_empty() {
+            ui.label("No parameters available.");
+        } else {
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    // Organize parameters into a tree structure based on dot notation
+                    // e.g. "laser.diode.current" -> Root -> laser -> diode -> current
+
+                    // Optimization: Pre-sort or cache this structure if it gets too slow (unlikely for <100 params)
+                    // For now, straightforward immediate rendering.
+
+                    // We'll separate "root" params (no dots) from grouped params
+                    let mut root_params = Vec::new();
+                    let mut groups: HashMap<String, Vec<&ParameterDescriptor>> = HashMap::new();
+
+                    for param in &device.parameters {
+                        if let Some((group, _)) = param.name.split_once('.') {
+                            // Simple 1-level grouping for now to handle "laser.power"
+                            // Supporting arbitrary depth text recursion in immediate mode is tricky without a recursive helper
+                            groups.entry(group.to_string()).or_default().push(param);
+                        } else {
+                            root_params.push(param);
+                        }
+                    }
+
+                    if !root_params.is_empty() {
+                        // Render root params
+                        egui::Grid::new(format!("grid_root_{}", device.id))
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for param in root_params {
+                                    render_param_row(ui, param, states, channels);
+                                }
+                            });
+                    }
+
+                    // Render groups in alphabetical order
+                    let mut sorted_groups: Vec<_> = groups.keys().collect();
+                    sorted_groups.sort();
+
+                    for group in sorted_groups {
+                        if let Some(params) = groups.get(group) {
+                            egui::CollapsingHeader::new(group)
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    egui::Grid::new(format!("grid_{}_{}", device.id, group))
+                                        .striped(true)
+                                        .show(ui, |ui| {
+                                            for param in params {
+                                                render_param_row(ui, param, states, channels);
+                                            }
+                                        });
+                                });
+                        }
+                    }
+                });
+        }
+
+        // 3. Raw State Fields (Debug/Info)
+        if !device.state_fields.is_empty() {
+            ui.separator();
+            ui.collapsing("State Details", |ui| {
+                egui::Grid::new(format!("state_{}", device.id))
                     .striped(true)
                     .show(ui, |ui| {
-                        for (k, v) in &state_fields {
+                        for (k, v) in &device.state_fields {
                             ui.label(k);
                             ui.label(v);
                             ui.end_row();
                         }
                     });
-            }
-        } else {
-            ui.label("Device not found.");
-        }
-    }
-
-    fn ui_plot(&mut self, ui: &mut egui::Ui) {
-        let selected_id = match &self.selected_device_id {
-            Some(id) => id,
-            None => {
-                ui.centered_and_justified(|ui| ui.label("Select a device to plot"));
-                return;
-            }
-        };
-
-        if let Some(data) = self.history.get(selected_id) {
-            let line = Line::new(PlotPoints::from(data.clone()));
-            Plot::new("device_plot")
-                .view_aspect(2.0)
-                .show(ui, |plot_ui| plot_ui.line(line));
-        } else {
-            ui.centered_and_justified(|ui| ui.label("No data for selected device"));
-        }
-    }
-
-    fn ui_log(&mut self, ui: &mut egui::Ui) {
-        ui.label(&self.status_line);
-        // Could add a scroll area with history here
-    }
-
-    fn ui_image(&mut self, ui: &mut egui::Ui) {
-        let selected_id = match &self.selected_device_id {
-            Some(id) => id,
-            None => {
-                ui.centered_and_justified(|ui| ui.label("Select a camera to view"));
-                return;
-            }
-        };
-
-        if let Some((image, texture_opt)) = self.images.get_mut(selected_id) {
-            // Load texture if needed
-            let texture = texture_opt.get_or_insert_with(|| {
-                ui.ctx().load_texture(
-                    format!("img_{}", selected_id),
-                    image.clone(),
-                    egui::TextureOptions::NEAREST,
-                )
             });
-
-            let size = texture.size_vec2();
-            Plot::new("camera_image")
-                .view_aspect(1.0)
-                .data_aspect(1.0)
-                .show(ui, |plot_ui| {
-                    plot_ui.image(PlotImage::new(
-                        texture,
-                        egui_plot::PlotPoint::new(0.0, 0.0),
-                        size,
-                    ))
-                });
-        } else {
-            ui.centered_and_justified(|ui| ui.label("No image signal"));
         }
     }
 }
 
+// Helper to render a single parameter row
+fn render_param_row(
+    ui: &mut egui::Ui,
+    param: &ParameterDescriptor,
+    states: &mut HashMap<String, ParameterEditState>,
+    channels: &mut UiChannels,
+) {
+    ui.label(&param.name).on_hover_text(&param.description);
+
+    let state_key = format!("{}:{}", param.device_id, param.name);
+    let state = states.entry(state_key).or_default();
+
+    match parameter_widget(ui, param, state) {
+        WidgetResult::Committed(value) => {
+            channels.send_command(BackendCommand::SetParameter {
+                device_id: param.device_id.clone(),
+                name: param.name.clone(),
+                value,
+            });
+            state.reset();
+        }
+        _ => {}
+    }
+
+    if !param.writable {
+        ui.label("🔒");
+    } else {
+        ui.label("");
+    }
+    ui.end_row();
+}
+
 impl App for DaqGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        // Auto-connect on first frame for debugging
+        if self.first_frame {
+            log::info!("Auto-connecting on first frame...");
+            self.first_frame = false;
+            let address = self.url.clone();
+            self.channels
+                .send_command(BackendCommand::Connect { address });
+        }
+
         self.ui(ctx);
     }
 }

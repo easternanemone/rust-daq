@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! UI-specific data types (lightweight DTOs separate from proto types).
 //!
 //! These types are optimized for UI rendering and avoid the overhead of

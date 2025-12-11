@@ -37,6 +37,12 @@ must_use_candidate = "warn"
 # tokio replaced below with correct features
 
 daq-core = { path = "../daq-core" }
+daq-proto = { path = "../daq-proto" }
+daq-hardware = { path = "../daq-hardware", default-features = false }
+daq-storage = { path = "../daq-storage", default-features = false }
+daq-server = { path = "../daq-server" }
+daq-scripting = { path = "../daq-scripting" }
+daq-experiment = { path = "../daq-experiment" }
 
 # Memory Allocator (Microsoft Rust Guidelines: M-MIMALLOC-APPS)
 # mimalloc removed (moved to daq-bin)
@@ -47,8 +53,8 @@ daq-core = { path = "../daq-core" }
 egui = { version = "0.30", optional = true }
 eframe = { version = "0.30", features = ["persistence"], optional = true }
 egui_plot = { version = "0.30", optional = true }
-egui_dock = { version = "0.15", optional = true }
 egui_extras = { version = "0.30", optional = true }
+egui_tiles = "0.11"
 
 # Data Handling
 ringbuf = "0.3.3"
@@ -81,8 +87,6 @@ anyhow = "1.0.82"
 thiserror = "1.0.59"
 
 # Scripting
-rhai = { version = "1.19", features = ["sync"] }
-pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
 
 # Logging
 log = "0.4.21"
@@ -103,8 +107,7 @@ futures = "0.3.30"
 # tonic = { version = "0.10", default-features = false, features = ["prost", "codegen"] }
 # prost = "0.12"
 tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
-tonic-web = { version = "0.10", optional = true }
-tower-http = { version = "0.4", features = ["cors"], optional = true }
+# tonic-web and tower-http moved to daq-server
 
 # Instrument Communication (Native only)
 # serialport, tokio-serial, pvcam-sys, visa-rs moved to target specific block
@@ -125,10 +128,11 @@ once_cell = { version = "1.21.3", features = ["std"] }
 notify = { version = "7", optional = true } # File watching for hot-reload
 sysinfo = "0.37.2"
 
+
 [build-dependencies]
 flatbuffers = "24.3.25"
 flatc-rust = "0.2"
-tonic-build = "0.10"
+tonic-build = "0.11"
 
 [dev-dependencies]
 egui_kittest = "0.30"
@@ -139,6 +143,7 @@ serial_test = "3.1.1"
 tokio-test = "0.4"
 tracing-test = "0.2"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+nix = { version = "0.29", features = ["term"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hostname = "0.4"
@@ -148,7 +153,7 @@ tonic = { version = "0.10", default-features = false, features = ["transport", "
 prost = "0.12"
 serialport = { version = "4.3.0", optional = true }
 tokio-serial = { version = "5.4", optional = true }
-pvcam-sys = { path = "pvcam-sys", optional = true }
+# pvcam-sys = { path = "pvcam-sys", optional = true }
 visa-rs = { version = "0.5", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -172,6 +177,12 @@ web-time = "1.1"
 # NOTE: Phase 1 (bd-61) migrated to actor-based state management
 # For rollback instructions, see ROLLBACK_ACTOR.md
 default = ["storage_csv", "instrument_serial"]
+
+# High-level Profiles (Simplification bd-37tw.5)
+backend = ["server", "modules", "all_hardware", "storage_csv"]
+frontend = ["gui_egui", "networking"]
+cli = ["all_hardware", "storage_csv", "scripting_python"]
+
 full = ["storage_csv", "storage_arrow", "storage_matlab", "storage_netcdf", "instrument_serial", "modules", "server", "all_hardware"]
 
 # NOTE: storage_hdf5 requires a native HDF5 installation (e.g., libhdf5-dev). It is
@@ -179,25 +190,26 @@ full = ["storage_csv", "storage_arrow", "storage_matlab", "storage_netcdf", "ins
 # toolchains working. Enable explicitly with `--features storage_hdf5` when available.
 
 # Storage backends
+# Storage backends
 storage_csv = ["dep:csv"]
-storage_hdf5 = ["dep:hdf5"]
-storage_arrow = ["dep:arrow"]
+storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
+storage_arrow = ["dep:arrow", "daq-storage/storage_arrow"]
 storage_matlab = ["dep:matrw"]
 storage_netcdf = ["dep:netcdf"]
 
 # Legacy instrument support
-instrument_serial = ["dep:serialport"]
+instrument_serial = ["dep:serialport", "daq-hardware/serial"]
 instrument_visa = ["dep:visa-rs"]
 
 # V5+ Serial communication (safe async for laboratory devices)
-tokio_serial = ["dep:tokio-serial", "instrument_serial"]
+tokio_serial = ["dep:tokio-serial", "instrument_serial", "daq-hardware/tokio_serial"]
 
 # V5 Hardware drivers (async, capability-based)
 # Serial drivers now use tokio-serial
-instrument_thorlabs = ["tokio_serial"]
-instrument_newport = ["tokio_serial"]
+instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
+instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
 instrument_photometrics = ["tokio_serial"]
-instrument_spectra_physics = ["tokio_serial"]
+instrument_spectra_physics = ["tokio_serial", "daq-hardware/driver-spectra-physics"]
 instrument_newport_power_meter = ["tokio_serial"]
 
 # Convenience feature to enable all V5 hardware drivers
@@ -211,15 +223,15 @@ all_hardware = [
 
 # Phase 2 (bd-63): Networking layer with FlatBuffers protocol
 networking = []
-server = ["networking", "dep:tonic-web", "dep:tower-http", "tokio/full"]
-gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_dock", "dep:egui_extras"]
+server = ["networking", "tokio/full"]
+gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_extras"]
 
 # Phase 3B (bd-c0ai): Module system with runtime instrument assignment
 # Requires networking for gRPC proto types used in module context
-modules = ["networking"]
+modules = []
 
 # PVCAM SDK integration (requires PVCAM SDK installed)
-pvcam_hardware = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
+pvcam_hardware = ["daq-hardware/driver_pvcam"]
 hardware_tests = []
 
 # Camera model for tests (default: Prime BSI 2048x2048)
@@ -227,7 +239,7 @@ hardware_tests = []
 prime_95b_tests = []
 
 # Python scripting backend
-scripting_python = ["dep:pyo3"]
+scripting_python = ["daq-scripting/python"]
 
 # Plugin hot-reload (development only)
 # Watches plugin directories for changes and reloads without restart

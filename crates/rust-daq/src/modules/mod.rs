@@ -28,13 +28,13 @@ pub mod document;
 pub mod power_monitor;
 pub mod run_engine;
 
-use crate::grpc::proto::{
-    ModuleDataPoint, ModuleEvent, ModuleEventSeverity, ModuleState, ModuleTypeInfo,
-};
 use crate::hardware::capabilities::Readable;
 use crate::hardware::registry::DeviceRegistry;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use daq_core::modules::{
+    ModuleDataPoint, ModuleEvent, ModuleEventSeverity, ModuleState, ModuleTypeInfo,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -308,8 +308,11 @@ pub struct ModuleInstance {
 
     /// Runtime statistics
     pub start_time_ns: Option<u64>,
+    /// Number of events emitted
     pub events_emitted: u64,
+    /// Number of data points produced
     pub data_points_produced: u64,
+    /// Last error message, if any
     pub error_message: Option<String>,
 }
 
@@ -562,7 +565,7 @@ impl ModuleRegistry {
     pub async fn delete_module(&mut self, module_id: &str, force: bool) -> Result<()> {
         if let Some(instance) = self.instances.get(module_id) {
             let state = instance.state();
-            if state == ModuleState::ModuleRunning && !force {
+            if state == ModuleState::Running && !force {
                 return Err(anyhow!(
                     "Module is running. Stop it first or use force=true"
                 ));
@@ -573,7 +576,7 @@ impl ModuleRegistry {
 
         // Stop if running
         if let Some(instance) = self.instances.get_mut(module_id) {
-            if instance.state() == ModuleState::ModuleRunning {
+            if instance.state() == ModuleState::Running {
                 instance.stop().await?;
             }
         }
@@ -609,7 +612,7 @@ impl ModuleRegistry {
             .get_mut(module_id)
             .ok_or_else(|| anyhow!("Module not found: {}", module_id))?;
 
-        if instance.state() == ModuleState::ModuleRunning {
+        if instance.state() == ModuleState::Running {
             return Err(anyhow!("Cannot configure a running module"));
         }
 
@@ -689,7 +692,7 @@ impl ModuleRegistry {
             .get_mut(module_id)
             .ok_or_else(|| anyhow!("Module not found: {}", module_id))?;
 
-        if instance.state() == ModuleState::ModuleRunning {
+        if instance.state() == ModuleState::Running {
             return Err(anyhow!("Cannot unassign device from a running module"));
         }
 

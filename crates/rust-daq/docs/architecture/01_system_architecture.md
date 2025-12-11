@@ -1,11 +1,13 @@
 # Headless-First & Scriptable Architecture - Complete Specification
 
-**Status**: ✅ V5 COMPLETE (V1/V2/V3/V4 Removed)
-**Date**: 2025-11-18 (Original), 2025-12-07 (Updated)
+**Status**: ✅ V5 CORE COMPLETE (Phases 1-3 Done, Phase 4 In Progress)
+**Date**: 2025-11-18 (Original), 2025-12-10 (Updated)
 **Master Epic**: bd-oq51
 
-> **Note**: This document describes the completed V5 architecture. All phases have been
-> implemented. V1/V2/V3/V4 code has been removed from the codebase.
+> **Note**: This document describes the V5 architecture implementation roadmap.
+> Phases 1-3 (Core Clean-Out, Scripting Engine, Network Layer) are complete.
+> Phase 4 (Data Plane) has remaining work tracked in bd issues.
+> V1/V2/V3/V4 code has been removed from the codebase.
 
 ## Executive Summary
 
@@ -113,75 +115,70 @@ fn scan<T: Movable, C: Triggerable>(stage: T, camera: C) {
 
 ## Implementation Roadmap (4 Phases)
 
-### Phase 1: Core Clean-Out (Weeks 1-2)
+### Phase 1: Core Clean-Out (Weeks 1-2) ✅ COMPLETE
 **Objective**: Delete V1/V2/V4, stabilize on capability-based architecture.
 
 **Epic**: bd-9s4c (Phase 1: Core Clean-Out)
 
 **Tasks**:
-- **Task A** (bd-9si6): The Reaper - Delete Legacy Architectures
-  - Remove src/app_actor.rs, v4-daq/, crates/daq-core/
-  - Remove Kameo dependency
-  - **Errors Fixed**: 50%+ reduction (from 87 to < 45)
+- **Task A** (bd-9si6): The Reaper - Delete Legacy Architectures ✅
+  - Removed legacy code, Kameo dependency
+  - **Status**: Complete
 
-- **Task B** (bd-bm03): Trait Consolidation - Define Atomic Capabilities
-  - Create src/hardware/capabilities.rs
+- **Task B** (bd-bm03): Trait Consolidation - Define Atomic Capabilities ✅
+  - Created capability traits in `crates/daq-hardware/src/capabilities.rs`
   - Define: `Movable`, `Triggerable`, `FrameProducer`, `Readable`
-  - Migrate from V3 traits
+  - **Status**: Complete
 
-- **Task C** (bd-wsaw): Mock Driver Implementation
-  - Implement MockStage, MockCamera
+- **Task C** (bd-wsaw): Mock Driver Implementation ✅
+  - Implemented MockStage, MockCamera
   - Use tokio::time::sleep (not blocking)
-  - Comprehensive async tests
+  - **Status**: Complete
 
-**Success Criteria**: Project compiles with < 50 errors, capability traits defined.
+**Success Criteria**: ✅ Achieved
 
-### Phase 2: Scripting Engine (Weeks 3-4)
+### Phase 2: Scripting Engine (Weeks 3-4) ✅ COMPLETE
 **Objective**: Run hardware loops without recompiling Rust.
 
 **Epic**: bd-z3l8 (Phase 2: Scripting Engine)
 
 **Tasks**:
-- **Task D** (bd-jypq): Rhai Setup and Integration
-  - Add rhai dependency
-  - Create ScriptHost wrapper
+- **Task D** (bd-jypq): Rhai Setup and Integration ✅
+  - RhaiEngine in `crates/rust-daq/src/scripting/rhai_engine.rs`
   - Safety callback (10k operation limit)
+  - **Status**: Complete
 
-- **Task E** (bd-m9bs): Hardware Bindings for Rhai
-  - Bridge async Rust ↔ sync Rhai (tokio::task::block_in_place)
-  - Expose: move_abs(), trigger(), sleep()
-  - Register StageHandle, CameraHandle types
+- **Task E** (bd-m9bs): Hardware Bindings for Rhai ✅
+  - Bridge async Rust ↔ sync Rhai
+  - Hardware handles registered
+  - **Status**: Complete
 
-- **Task F** (bd-hiu6): CLI Rewrite for Script Execution
-  - `rust-daq run experiment.rhai`
-  - `rust-daq daemon --port 50051`
-  - Example scripts in examples/
+- **Task F** (bd-hiu6): CLI Rewrite for Script Execution ✅
+  - CLI in `crates/daq-bin/`
+  - **Status**: Complete
 
-**Success Criteria**: Scientist can write .rhai script, execute without recompiling.
+**Success Criteria**: ✅ Achieved
 
-### Phase 3: Network Layer (Weeks 5-6)
+### Phase 3: Network Layer (Weeks 5-6) ✅ COMPLETE
 **Objective**: Separate UI from Core with gRPC communication.
 
 **Epic**: bd-679l (Phase 3: Network Layer)
 
 **Tasks**:
-- **Task G** (bd-3z3z): API Definition with Protocol Buffers
-  - Create src/network/proto/daq.proto
+- **Task G** (bd-3z3z): API Definition with Protocol Buffers ✅
+  - Proto files in `crates/daq-proto/proto/daq.proto`
   - Define ControlService (Upload/Start/StreamStatus)
-  - Configure tonic-build
+  - **Status**: Complete
 
-- **Task H** (bd-8gsx): gRPC Server Implementation
-  - Implement ControlService trait
-  - Upload script validation
-  - Background script execution
-  - WebSocket streaming (100ms updates)
+- **Task H** (bd-8gsx): gRPC Server Implementation ✅
+  - Services in `crates/rust-daq/src/grpc/`
+  - **Status**: Complete
 
-- **Task I** (bd-2kon): Client Prototype (Python)
-  - clients/python/daq_client.py
-  - grpcio integration
-  - End-to-end remote script execution
+- **Task I** (bd-2kon): Client Prototype (Python) ✅
+  - Python client in `crates/rust-daq/clients/python/`
+  - **Status**: Complete
 
-**Success Criteria**: Python client uploads script, monitors remotely.
+**Success Criteria**: ✅ Achieved
 
 ### Phase 4: Data Plane (Weeks 7+)
 **Objective**: High-performance zero-copy data streaming.

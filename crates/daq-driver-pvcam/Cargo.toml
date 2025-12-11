@@ -1,0 +1,20 @@
+[package]
+name = "daq-driver-pvcam"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+daq-core = { path = "../daq-core" }
+# daq-hardware = { path = "../daq-hardware" } # Removed to break cycle
+pvcam-sys = { path = "pvcam-sys", optional = true }
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "time"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+futures = "0.3" 
+
+[features]
+default = ["mock"]
+mock = []
+pvcam_hardware = ["dep:pvcam-sys"]

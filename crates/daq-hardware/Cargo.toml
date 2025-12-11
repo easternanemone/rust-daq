@@ -1,0 +1,65 @@
+[package]
+name = "daq-hardware"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+daq-core = { path = "../daq-core" }
+async-trait = "0.1.79"
+anyhow = "1.0.82"
+thiserror = "1.0.59"
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+serde_json = "1.0"
+regex = "1.0.8"
+strfmt = "0.2.5"
+futures = "0.3.30"
+log = "0.4.21"
+rhai = { version = "1.19", features = ["sync"] }
+serde_yaml = "0.9"
+dirs = "5.0"
+rand = "0.8.5"
+toml = "0.9.8"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.36", features = ["sync", "time", "macros", "fs", "io-util"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.36", features = ["sync", "time", "macros", "io-util"] }
+
+[dependencies.serialport]
+version = "4.3.0"
+optional = true
+
+[dependencies.tokio-serial]
+version = "5.4"
+optional = true
+
+# pvcam-sys = { path = "../rust-daq/pvcam-sys", optional = true } # Removed
+
+[dependencies.daq-driver-pvcam]
+path = "../daq-driver-pvcam"
+optional = true
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[dependencies.notify]
+version = "6.1"
+optional = true
+
+[features]
+default = ["tokio_serial", "serial"]
+serial = ["dep:serialport"]
+tokio_serial = ["dep:tokio-serial", "serial"]
+driver-thorlabs = ["tokio_serial"]
+driver-newport = ["tokio_serial"]
+driver-spectra-physics = ["tokio_serial"]
+full = ["driver-thorlabs", "driver-newport", "driver-spectra-physics", "instrument_photometrics", "simulator"]
+# pvcam_hardware = ["dep:pvcam-sys"]
+driver_pvcam = ["dep:daq-driver-pvcam"]
+# Alias for backward compatibility
+pvcam_hardware = ["driver_pvcam"]
+instrument_photometrics = []
+simulator = []
+plugins_hot_reload = ["dep:notify"]
