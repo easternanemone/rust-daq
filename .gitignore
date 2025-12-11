@@ -41,6 +41,12 @@ check_output.txt
 test_compile_output.txt
 .beads-backup*/
 
+# Build/debug logs (temporary working files)
+build_errors*.txt
+check_log.txt
+features_dump.txt
+tokio_features.txt
+tree*.txt
 
 # Removed Windows wrapper files per user request
 hive-mind-prompt-*.txt
