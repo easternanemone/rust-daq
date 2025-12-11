@@ -134,3 +134,4 @@ docs/MORPH_*.md
 .node_modules
 .jules
 .tmp
+AGENTS.md
