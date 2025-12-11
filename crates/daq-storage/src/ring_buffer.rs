@@ -1253,11 +1253,4 @@ mod tests {
     }
 }
 
-#[async_trait]
-impl MeasurementSink for RingBuffer {
-    type Input = Vec<u8>;
 
-    async fn send(&mut self, input: Self::Input) -> Result<()> {
-        self.write(&input)
-    }
-}

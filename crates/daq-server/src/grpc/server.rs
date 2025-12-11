@@ -194,7 +194,6 @@ impl DaqServer {
     }
 }
 
-#[cfg(feature = "storage_hdf5")]
 fn encode_measurement_frame(measurement: &Measurement) -> Result<Vec<u8>, bincode::Error> {
     let payload = bincode::serialize(measurement)?;
     let mut frame = Vec::with_capacity(4 + payload.len());
@@ -741,6 +740,10 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+use daq_core::pipeline::{MeasurementSource, MeasurementSink, Tee}; // Added import
+
+// ... (existing imports)
+
 /// Start the DAQ gRPC server with hardware control (bd-4x6q)
 ///
 /// This version includes both the ControlService for script management
@@ -837,56 +840,101 @@ pub async fn start_server_with_hardware(
         }
     }
 
+    // Initialize control server WITHOUT internal RingBuffer logic (we wire it manually)
+    #[cfg(feature = "storage_hdf5")]
+    let control_server = DaqServer::new(None);
+    #[cfg(not(feature = "storage_hdf5"))]
     let control_server = DaqServer::new();
 
-    // Wire Pipelines (bd-37tw.7)
-    // Connect measurement sources to the server's data bus
+    // Setup Reliable Sink (RingBuffer Writer)
+    let reliable_sink_tx = if let Some(ref rb) = ring_buffer {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Measurement>(512);
+        let rb_clone = rb.clone();
+        
+        // Spawn writer task
+        tokio::spawn(async move {
+            while let Some(measurement) = rx.recv().await {
+                if let Ok(frame) = encode_measurement_frame(&measurement) {
+                    if let Err(e) = rb_clone.write(&frame) {
+                        tracing::error!(error = %e, "Failed to write measurement to ring buffer");
+                    }
+                }
+                // Yield to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+        Some(tx)
+    } else {
+        None
+    };
+
+    // Wire Pipelines (bd-37tw.7 - Tee-based)
+    // Connect measurement sources to Tee -> (RingBuffer, Server Broadcast)
     {
         let reg_lock = registry.read().await;
         for info in reg_lock.list_devices() {
             if let Some(source) = reg_lock.get_measurement_source_frame(&info.id) {
                 println!("  - Wiring pipeline for device: {}", info.id);
-                match source.subscribe().await {
-                    Ok(mut rx) => {
-                        let tx = control_server.data_sender();
-                        let device_id = info.id.clone();
-                        tokio::spawn(async move {
-                            while let Ok(frame) = rx.recv().await {
-                                // Convert Frame to Measurement::Image
-                                let buffer = match frame.bit_depth {
-                                    16 => {
-                                        if let Some(slice) = frame.as_u16_slice() {
-                                            daq_core::core::PixelBuffer::U16(slice.to_vec())
-                                        } else {
-                                            // Fallback to raw bytes if alignment fails
-                                            daq_core::core::PixelBuffer::U8(frame.data.clone())
-                                        }
-                                    }
-                                    8 => daq_core::core::PixelBuffer::U8(frame.data.clone()),
-                                    _ => daq_core::core::PixelBuffer::U8(frame.data.clone()), // Fallback
-                                };
+                
+                // 1. Create channel for Source output (Arc<Frame>)
+                let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(16);
+                
+                // 2. Register source output
+                if let Err(e) = source.register_output(frame_tx).await {
+                    eprintln!("Failed to register output for {}: {}", info.id, e);
+                    continue;
+                }
 
-                                let measurement = daq_core::core::Measurement::Image {
-                                    name: device_id.clone(),
-                                    width: frame.width,
-                                    height: frame.height,
-                                    buffer,
-                                    unit: "counts".to_string(),
-                                    metadata: daq_core::core::ImageMetadata::default(),
-                                    timestamp: chrono::Utc::now(),
-                                };
+                // 3. Create channel for Measurement (Tee Input)
+                let (meas_tx, meas_rx) = tokio::sync::mpsc::channel(16);
+                let device_id = info.id.clone();
 
-                                if let Err(_) = tx.send(measurement) {
-                                    break; // Server likely shutting down
+                // 4. Spawn Converter Task (Frame -> Measurement)
+                tokio::spawn(async move {
+                    while let Some(frame) = frame_rx.recv().await {
+                        let buffer = match frame.bit_depth {
+                            16 => {
+                                if let Some(slice) = frame.as_u16_slice() {
+                                    daq_core::core::PixelBuffer::U16(slice.to_vec())
+                                } else {
+                                    daq_core::core::PixelBuffer::U8(frame.data.clone())
                                 }
                             }
-                        });
+                            _ => daq_core::core::PixelBuffer::U8(frame.data.clone()),
+                        };
+
+                        let measurement = daq_core::core::Measurement::Image {
+                            name: device_id.clone(),
+                            width: frame.width,
+                            height: frame.height,
+                            buffer,
+                            unit: "counts".to_string(),
+                            metadata: daq_core::core::ImageMetadata::default(),
+                            timestamp: chrono::Utc::now(),
+                        };
+
+                        if meas_tx.send(measurement).await.is_err() {
+                            break; // Downstream closed
+                        }
                     }
-                    Err(e) => eprintln!("Failed to subscribe to {}: {}", info.id, e),
+                });
+
+                // 5. Create Tee
+                let mut tee = Tee::new((*control_server.data_sender()).clone()); // Lossy output (Server Bus)
+                
+                // 6. Connect Reliable Output (if RingBuffer is present)
+                if let Some(ref rb_tx) = reliable_sink_tx {
+                    tee.connect_reliable(rb_tx.clone());
+                }
+
+                // 7. Start Tee (Consume Measurement Stream)
+                if let Err(e) = tee.register_input(meas_rx) {
+                    eprintln!("Failed to register Tee input for {}: {}", info.id, e);
                 }
             }
         }
     }
+
     let run_engine_server = RunEngineServiceImpl::new();
     let hardware_server = HardwareServiceImpl::new(registry.clone());
     let module_server = ModuleServiceImpl::new(registry.clone());

@@ -484,7 +484,7 @@ struct RegisteredDevice {
     /// FrameProducer implementation (if supported)
     frame_producer: Option<Arc<dyn FrameProducer>>,
     /// MeasurementSource implementation (if supported)
-    source_frame: Option<Arc<dyn MeasurementSource<Output = Arc<Frame>>>>,
+    source_frame: Option<Arc<dyn MeasurementSource<Output = Arc<Frame>, Error = anyhow::Error>>>,
     /// ExposureControl implementation (if supported)
     exposure_control: Option<Arc<dyn ExposureControl>>,
     /// Settable implementation (if supported) - observable parameters
@@ -719,7 +719,7 @@ impl DeviceRegistry {
     pub fn get_measurement_source_frame(
         &self,
         id: &str,
-    ) -> Option<Arc<dyn MeasurementSource<Output = Arc<Frame>>>> {
+    ) -> Option<Arc<dyn MeasurementSource<Output = Arc<Frame>, Error = anyhow::Error>>> {
         self.devices.get(id).and_then(|d| d.source_frame.clone())
     }
 

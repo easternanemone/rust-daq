@@ -224,6 +224,8 @@ pub struct MockCamera {
     params: ParameterSet,
     /// Broadcast channel for frame streaming
     frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
+    /// Reliable channel for lossless data transmission (optional)
+    reliable_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Arc<Frame>>>>>,
     #[allow(dead_code)]
     streaming_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     streaming_flag: Arc<AtomicBool>,
@@ -244,6 +246,8 @@ impl MockCamera {
         let armed_flag = Arc::new(AtomicBool::new(false));
         let staged_flag = Arc::new(AtomicBool::new(false));
         let streaming_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>> =
+            Arc::new(Mutex::new(None));
+        let reliable_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Arc<Frame>>>>> =
             Arc::new(Mutex::new(None));
 
         // Create exposure parameter with validation and metadata
@@ -279,6 +283,7 @@ impl MockCamera {
             let frame_tx_write = frame_tx.clone();
             let frame_count_write = frame_count.clone();
             let streaming_task_write = streaming_task.clone();
+            let reliable_tx_write = reliable_tx.clone();
             let resolution = (width, height);
 
             streaming.connect_to_hardware_write(move |enable| {
@@ -286,6 +291,7 @@ impl MockCamera {
                 let frame_tx = frame_tx_write.clone();
                 let frame_count = frame_count_write.clone();
                 let streaming_task = streaming_task_write.clone();
+                let reliable_tx = reliable_tx_write.clone();
 
                 Box::pin(async move {
                     if enable {
@@ -297,6 +303,7 @@ impl MockCamera {
                         let mut handle_guard = streaming_task.lock().await;
                         let flag_for_task = streaming_flag.clone();
                         let tx = frame_tx.clone();
+                        let reliable_tx_for_task = reliable_tx.lock().await.clone();
                         let res = resolution;
                         let count = frame_count.clone();
 
@@ -309,6 +316,13 @@ impl MockCamera {
                                     .collect();
 
                                 let frame = Arc::new(Frame::from_u16(w, h, &buffer));
+                                
+                                // Reliable Path
+                                if let Some(ref r_tx) = reliable_tx_for_task {
+                                    let _ = r_tx.send(frame.clone()).await;
+                                }
+
+                                // Lossy Path
                                 let _ = tx.send(frame);
 
                                 sleep(Duration::from_millis(33)).await; // ~30fps
@@ -386,6 +400,7 @@ impl MockCamera {
             exposure_s: exposure,
             params,
             frame_tx,
+            reliable_tx,
             streaming_task,
             streaming_flag,
             armed_flag,
@@ -515,9 +530,12 @@ impl FrameProducer for MockCamera {
 #[async_trait]
 impl daq_core::pipeline::MeasurementSource for MockCamera {
     type Output = Arc<Frame>;
+    type Error = anyhow::Error;
 
-    async fn subscribe(&self) -> Result<tokio::sync::broadcast::Receiver<Self::Output>> {
-        Ok(self.frame_tx.subscribe())
+    async fn register_output(&self, tx: tokio::sync::mpsc::Sender<Self::Output>) -> Result<(), Self::Error> {
+        let mut reliable = self.reliable_tx.lock().await;
+        *reliable = Some(tx);
+        Ok(())
     }
 }
 
