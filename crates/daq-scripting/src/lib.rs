@@ -7,6 +7,7 @@ pub mod traits;
 #[cfg(feature = "python")]
 pub mod pyo3_engine;
 
+pub use bindings::{CameraHandle, StageHandle};
 pub use rhai_engine::RhaiEngine;
 pub use traits::{ScriptEngine, ScriptError, ScriptValue};
 

@@ -130,3 +130,7 @@ docker-compose.yml
 docs/HYBRID_SEARCH_SETUP.md
 docs/MORPH_*.md
 .docker-data/
+.claude
+.node_modules
+.jules
+.tmp

@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use rust_daq::data::ring_buffer::RingBuffer;
-use rust_daq::grpc::DaqServer;
+use daq_server::grpc::DaqServer;
 
 #[tokio::test]
 async fn daq_server_new_smoke() {

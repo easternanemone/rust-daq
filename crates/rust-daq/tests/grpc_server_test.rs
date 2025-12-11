@@ -5,7 +5,7 @@
 #![cfg(feature = "networking")]
 
 use daq_server::grpc::server::DaqServer;
-use rust_daq::grpc::{ControlService, StartRequest, StatusRequest, UploadRequest};
+use daq_server::grpc::{ControlService, StartRequest, StatusRequest, UploadRequest};
 use std::collections::HashMap;
 use tonic::Request;
 

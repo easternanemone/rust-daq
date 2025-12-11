@@ -5,12 +5,9 @@
 #![cfg(feature = "networking")]
 
 use daq_proto::daq::{
-    ArmRequest, DeviceStateRequest, GetParameterRequest, ListDevicesRequest, MeasurementRequest,
-    MoveRequest, ParameterDescriptor, SetParameterRequest, StartRequest, StartStreamRequest,
-    StopRequest, StopStreamRequest, TriggerRequest, UploadRequest,
+    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StatusRequest, StopRequest,
+    SystemStatus, UploadRequest,
 };
-use daq_server::grpc::server::DaqServer;
-use daq_server::grpc::{ControlService, HardwareService};
 use std::collections::HashMap;
 
 #[test]
