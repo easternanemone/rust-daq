@@ -271,6 +271,8 @@ pub struct PvcamDriver {
     /// Trigger frame buffer - holds the frame during triggered acquisition
     #[cfg(feature = "pvcam_hardware")]
     trigger_frame: Arc<Mutex<Option<Vec<u16>>>>,
+    /// Reliable channel for lossless data transmission (optional)
+    reliable_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<std::sync::Arc<Frame>>>>>,
     /// Parameter registry for observable parameters
     params: ParameterSet,
 }
@@ -574,6 +576,7 @@ impl PvcamDriver {
             poll_handle: Arc::new(Mutex::new(None)),
             circ_buffer: Arc::new(Mutex::new(None)),
             trigger_frame: Arc::new(Mutex::new(None)),
+            reliable_tx: Arc::new(Mutex::new(None)),
             params,
         })
     }
@@ -675,6 +678,7 @@ impl PvcamDriver {
             speed_index: speed_index_param,
             frame_count: Arc::new(AtomicU64::new(0)),
             frame_tx,
+            reliable_tx: Arc::new(Mutex::new(None)),
             params,
         })
     }
@@ -3272,14 +3276,7 @@ impl Drop for PvcamDriver {
     }
 }
 
-#[async_trait]
-impl MeasurementSource for PvcamDriver {
-    type Output = Arc<Frame>;
 
-    async fn subscribe(&self) -> Result<tokio::sync::broadcast::Receiver<Self::Output>> {
-        Ok(self.subscribe_frames())
-    }
-}
 
 #[async_trait]
 impl FrameProducer for PvcamDriver {
@@ -3293,6 +3290,9 @@ impl FrameProducer for PvcamDriver {
 
         // Reset frame counter
         self.frame_count.store(0, Ordering::SeqCst);
+
+        // Get reliable sender if registered
+        let reliable_tx = self.reliable_tx.lock().await.clone();
 
         #[cfg(feature = "pvcam_hardware")]
         {
@@ -3374,6 +3374,7 @@ impl FrameProducer for PvcamDriver {
                     h,
                     streaming,
                     frame_tx,
+                    reliable_tx,
                     frame_count,
                     frame_pixels,
                     width,
@@ -3422,9 +3423,20 @@ impl FrameProducer for PvcamDriver {
                     }
 
                     let frame = Frame::from_u16(binned_width, binned_height, &pixels);
+                    let frame_arc = std::sync::Arc::new(frame);
+
+                    // Reliable Path (Async Backpressure)
+                    if let Some(ref tx) = reliable_tx {
+                        // We use blocking send here to simulate backpressure if we were in a blocking context,
+                        // but since we are in an async task, we should use await.
+                        // However, to keep parity with hardware loop behavior (backpressure), we await capacity.
+                        if let Err(_) = tx.send(frame_arc.clone()).await {
+                            // Receiver dropped
+                        }
+                    }
 
                     // Send frame wrapped in Arc (non-blocking, drop if no subscribers)
-                    let _ = frame_tx.send(std::sync::Arc::new(frame));
+                    let _ = frame_tx.send(frame_arc);
                 }
             });
         }
@@ -3486,6 +3498,21 @@ impl FrameProducer for PvcamDriver {
 
     fn frame_count(&self) -> u64 {
         self.frame_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl MeasurementSource for PvcamDriver {
+    type Output = std::sync::Arc<Frame>;
+    type Error = anyhow::Error;
+
+    async fn register_output(
+        &mut self,
+        tx: tokio::sync::mpsc::Sender<Self::Output>,
+    ) -> Result<(), Self::Error> {
+        let mut reliable = self.reliable_tx.lock().await;
+        *reliable = Some(tx);
+        Ok(())
     }
 }
 
