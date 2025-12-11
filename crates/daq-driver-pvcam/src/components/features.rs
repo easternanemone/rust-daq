@@ -10,6 +10,121 @@ use pvcam_sys::*;
 #[cfg(feature = "pvcam_hardware")]
 use crate::components::connection::get_pvcam_error;
 
+// =============================================================================
+// Data Structures
+// =============================================================================
+
+/// Comprehensive camera information
+#[derive(Debug, Clone)]
+pub struct CameraInfo {
+    pub chip_name: String,
+    pub temperature_c: f64,
+    pub bit_depth: u16,
+    pub readout_time_us: f64,
+    pub pixel_size_nm: (u32, u32),
+    pub sensor_size: (u32, u32),
+    pub gain_name: String,
+    pub speed_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GainMode {
+    pub index: u16,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpeedMode {
+    pub index: u16,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanSpeed {
+    High,
+    Medium,
+    Low,
+    Off,
+}
+
+impl FanSpeed {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => FanSpeed::High,
+            1 => FanSpeed::Medium,
+            2 => FanSpeed::Low,
+            3 => FanSpeed::Off,
+            _ => FanSpeed::High,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            FanSpeed::High => 0,
+            FanSpeed::Medium => 1,
+            FanSpeed::Low => 2,
+            FanSpeed::Off => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PPFeature {
+    pub index: u16,
+    pub id: u16,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PPParam {
+    pub index: u16,
+    pub id: u16,
+    pub name: String,
+    pub value: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CentroidsMode {
+    Locate,
+    Track,
+    Blob,
+}
+
+impl CentroidsMode {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => CentroidsMode::Locate,
+            1 => CentroidsMode::Track,
+            2 => CentroidsMode::Blob,
+            _ => CentroidsMode::Locate,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            CentroidsMode::Locate => 0,
+            CentroidsMode::Track => 1,
+            CentroidsMode::Blob => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CentroidsConfig {
+    pub mode: CentroidsMode,
+    pub radius: u16,
+    pub max_count: u16,
+    pub threshold: u32,
+}
+
+// =============================================================================
+// Feature Logic
+// =============================================================================
+
 pub struct PvcamFeatures;
 
 impl PvcamFeatures {
