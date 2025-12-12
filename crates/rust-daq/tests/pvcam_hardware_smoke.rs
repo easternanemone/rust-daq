@@ -30,6 +30,7 @@
 #![cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
 
 use rust_daq::hardware::capabilities::FrameProducer;
+use rust_daq::hardware::ExposureControl;
 use rust_daq::hardware::pvcam::PvcamDriver;
 use std::env;
 
