@@ -13,11 +13,13 @@ anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 futures = "0.3" 
+arrow = { version = "56", optional = true }
 
 [features]
 default = ["mock"]
 mock = []
 pvcam_hardware = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
+arrow_tap = ["arrow"]
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }

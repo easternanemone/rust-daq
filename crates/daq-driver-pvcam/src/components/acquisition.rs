@@ -23,6 +23,8 @@ pub struct PvcamAcquisition {
     pub frame_count: Arc<AtomicU64>,
     pub frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
     pub reliable_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Arc<Frame>>>>>,
+    #[cfg(feature = "arrow_tap")]
+    pub arrow_tap: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>>>>,
     
     #[cfg(feature = "pvcam_hardware")]
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -40,6 +42,8 @@ impl PvcamAcquisition {
             frame_count: Arc::new(AtomicU64::new(0)),
             frame_tx,
             reliable_tx: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "arrow_tap")]
+            arrow_tap: Arc::new(Mutex::new(None)),
             
             #[cfg(feature = "pvcam_hardware")]
             poll_handle: Arc::new(Mutex::new(None)),
@@ -48,6 +52,12 @@ impl PvcamAcquisition {
             #[cfg(feature = "pvcam_hardware")]
             trigger_frame: Arc::new(Mutex::new(None)),
         }
+    }
+
+    #[cfg(feature = "arrow_tap")]
+    pub async fn set_arrow_tap(&self, tx: tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>) {
+        let mut guard = self.arrow_tap.lock().await;
+        *guard = Some(tx);
     }
 
     /// Start streaming frames
@@ -67,6 +77,8 @@ impl PvcamAcquisition {
         self.streaming.set(true).await?;
         self.frame_count.store(0, Ordering::SeqCst);
         let reliable_tx = self.reliable_tx.lock().await.clone();
+        #[cfg(feature = "arrow_tap")]
+        let _arrow_tap = self.arrow_tap.lock().await.clone();
 
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = conn.handle() {
@@ -127,6 +139,8 @@ impl PvcamAcquisition {
             let frame_count = self.frame_count.clone();
             let width = binned_width;
             let height = binned_height;
+            #[cfg(feature = "arrow_tap")]
+            let arrow_tap = _arrow_tap.clone();
 
             let poll_handle = tokio::task::spawn_blocking(move || {
                 Self::poll_loop_hardware(
@@ -134,6 +148,8 @@ impl PvcamAcquisition {
                     streaming,
                     frame_tx,
                     reliable_tx,
+                    #[cfg(feature = "arrow_tap")]
+                    arrow_tap,
                     frame_count,
                     frame_pixels,
                     width,
@@ -249,6 +265,8 @@ impl PvcamAcquisition {
         streaming: Parameter<bool>,
         frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
         reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>,
+        #[cfg(feature = "arrow_tap")]
+        arrow_tap: Option<tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>>,
         frame_count: Arc<AtomicU64>,
         frame_pixels: usize,
         width: u32,
@@ -276,7 +294,9 @@ impl PvcamAcquisition {
                                 frame_ptr as *const u8,
                                 frame_pixels * std::mem::size_of::<u16>(),
                             );
-                            let pixel_bytes = bytes.to_vec();
+                            let pixel_bytes: Vec<u8> = bytes.to_vec();
+                            #[cfg(feature = "arrow_tap")]
+                            let pixel_bytes_for_arrow = pixel_bytes.clone();
                             // SAFETY: frame_ptr came from pl_exp_get_oldest_frame on this handle; unlocking returns it to PVCAM.
                             pl_exp_unlock_oldest_frame(hcam);
 
@@ -287,7 +307,15 @@ impl PvcamAcquisition {
                             if let Some(ref tx) = reliable_tx {
                                 let _ = tx.blocking_send(frame_arc.clone());
                             }
-                            let _ = frame_tx.send(frame_arc);
+                            let _ = frame_tx.send(frame_arc.clone());
+                            #[cfg(feature = "arrow_tap")]
+                            if let Some(ref tap) = arrow_tap {
+                                use arrow::array::{PrimitiveArray, UInt16Type};
+                                use arrow::buffer::Buffer;
+                                let buffer = Buffer::from(pixel_bytes_for_arrow);
+                                let arr = Arc::new(PrimitiveArray::<UInt16Type>::new(Arc::new(buffer), None));
+                                let _ = tap.blocking_send(arr);
+                            }
                             no_frame_count = 0;
                         } else {
                             std::thread::sleep(Duration::from_millis(1));
