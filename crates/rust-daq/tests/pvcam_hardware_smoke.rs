@@ -74,36 +74,33 @@ async fn pvcam_smoke_test() {
         .await
         .expect("Failed to create PVCAM driver - check SDK installation and camera connection");
 
-    // Step 2: Verify camera info
-    println!("[2/5] Querying camera info...");
-    let info = camera
-        .get_camera_info()
-        .await
-        .expect("Failed to get camera info");
-    println!("  Chip: {}", info.chip_name);
-    println!("  Sensor: {}x{}", info.sensor_size.0, info.sensor_size.1);
+    // Step 2: Verify camera resolution (basic introspection available today)
+    println!("[2/5] Querying camera resolution...");
+    let (sensor_width, sensor_height) = camera.resolution();
+    println!("  Sensor: {}x{}", sensor_width, sensor_height);
 
     // Validate sensor dimensions (basic sanity check)
-    assert!(info.sensor_size.0 > 0, "Sensor width must be positive");
-    assert!(info.sensor_size.1 > 0, "Sensor height must be positive");
+    assert!(sensor_width > 0, "Sensor width must be positive");
+    assert!(sensor_height > 0, "Sensor height must be positive");
 
     // Step 3: Set short exposure
     println!("[3/5] Setting exposure to 10ms...");
     camera
-        .set_exposure_ms(10.0)
+        .set_exposure(0.010)
         .await
-        .expect("Failed to set exposure");
+        .expect("Failed to set exposure (s)");
     let exposure = camera
-        .get_exposure_ms()
+        .get_exposure()
         .await
-        .expect("Failed to query exposure");
-    println!("  Exposure: {} ms", exposure);
+        .expect("Failed to query exposure (s)");
+    let exposure_ms = exposure * 1000.0;
+    println!("  Exposure: {:.3} ms", exposure_ms);
 
     // Allow some tolerance for camera rounding
     assert!(
-        (exposure - 10.0).abs() < 1.0,
+        (exposure_ms - 10.0).abs() < 1.0,
         "Exposure should be approximately 10ms, got {}ms",
-        exposure
+        exposure_ms
     );
 
     // Step 4: Acquire single frame (one-shot path)
