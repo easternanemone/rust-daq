@@ -1460,7 +1460,7 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
     }
 
     // Prime BSI Camera (PVCAM)
-    #[cfg(feature = "pvcam")]
+    #[cfg(feature = "driver_pvcam")]
     if let Err(e) = registry
         .register(DeviceConfig {
             id: "camera".into(),
