@@ -130,13 +130,12 @@ pub fn validate_driver_config(driver: &DriverType) -> Result<()> {
             }
         }
 
-        /*
+        #[cfg(feature = "driver_pvcam")]
         DriverType::Pvcam { camera_name } => {
             if camera_name.is_empty() {
                 anyhow::bail!("PVCAM camera name cannot be empty");
             }
         }
-        */
         #[cfg(feature = "tokio_serial")]
         DriverType::Plugin { plugin_id, address } => {
             if plugin_id.is_empty() {
