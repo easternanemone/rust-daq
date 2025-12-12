@@ -54,6 +54,18 @@ impl Frame {
         }
     }
 
+    /// Create a frame from raw byte data with explicit bit depth.
+    ///
+    /// The caller must ensure the buffer length matches the expected size for the bit depth.
+    pub fn from_bytes(width: u32, height: u32, bit_depth: u32, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            bit_depth,
+            data,
+        }
+    }
+
     /// Get pixel value at (x, y) as u32 (handling bit depth conversion).
     pub fn get(&self, x: u32, y: u32) -> Option<u32> {
         if x >= self.width || y >= self.height {

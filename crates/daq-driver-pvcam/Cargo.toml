@@ -18,3 +18,11 @@ futures = "0.3"
 default = ["mock"]
 mock = []
 pvcam_hardware = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+arrow = "56"
+
+[[bench]]
+name = "arrow_tap"
+harness = false

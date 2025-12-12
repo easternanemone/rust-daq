@@ -272,12 +272,15 @@ impl PvcamAcquisition {
                         let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
                         // SAFETY: frame_ptr is an out pointer; call fills with valid frame address while locked.
                         if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) != 0 && !frame_ptr.is_null() {
-                            let src = std::slice::from_raw_parts(frame_ptr as *const u16, frame_pixels);
-                            let pixels = src.to_vec();
+                            let bytes = std::slice::from_raw_parts(
+                                frame_ptr as *const u8,
+                                frame_pixels * std::mem::size_of::<u16>(),
+                            );
+                            let pixel_bytes = bytes.to_vec();
                             // SAFETY: frame_ptr came from pl_exp_get_oldest_frame on this handle; unlocking returns it to PVCAM.
                             pl_exp_unlock_oldest_frame(hcam);
 
-                            let frame = Frame::from_u16(width, height, &pixels);
+                            let frame = Frame::from_bytes(width, height, 16, pixel_bytes);
                             frame_count.fetch_add(1, Ordering::SeqCst);
                             let frame_arc = Arc::new(frame);
 
