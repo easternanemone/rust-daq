@@ -11,6 +11,7 @@ use daq_core::parameter::Parameter;
 use crate::components::connection::PvcamConnection;
 use daq_core::core::Roi;
 use std::time::Duration;
+use tokio::time::timeout;
 
 #[cfg(feature = "pvcam_hardware")]
 use pvcam_sys::*;
@@ -22,7 +23,6 @@ pub struct PvcamAcquisition {
     pub frame_count: Arc<AtomicU64>,
     pub frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
     pub reliable_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Arc<Frame>>>>>,
-    pub single_rx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<Arc<Frame>>>>>,
     
     #[cfg(feature = "pvcam_hardware")]
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -40,7 +40,6 @@ impl PvcamAcquisition {
             frame_count: Arc::new(AtomicU64::new(0)),
             frame_tx,
             reliable_tx: Arc::new(Mutex::new(None)),
-            single_rx: Arc::new(Mutex::new(None)),
             
             #[cfg(feature = "pvcam_hardware")]
             poll_handle: Arc::new(Mutex::new(None)),
@@ -152,6 +151,26 @@ impl PvcamAcquisition {
         }
 
         Ok(())
+    }
+
+    /// Acquire a single frame by starting the stream, grabbing one frame, then stopping.
+    pub async fn acquire_single_frame(
+        &self,
+        conn: &PvcamConnection,
+        roi: Roi,
+        binning: (u16, u16),
+        exposure_ms: f64,
+    ) -> Result<Frame> {
+        let mut rx = self.frame_tx.subscribe();
+        self.start_stream(conn, roi, binning, exposure_ms).await?;
+
+        let frame = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .map_err(|_| anyhow!("Timed out waiting for frame"))?
+            .map_err(|e| anyhow!("Frame channel closed: {e}"))?;
+
+        let _ = self.stop_stream(conn).await;
+        Ok((*frame).clone())
     }
 
     async fn start_mock_stream(

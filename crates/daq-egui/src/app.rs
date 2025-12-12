@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use crate::client::DaqClient;
-use crate::panels::{ConnectionPanel, DevicesPanel, ScriptsPanel, ScansPanel};
+use crate::panels::{ConnectionPanel, DevicesPanel, ScriptsPanel, ScansPanel, StoragePanel, ModulesPanel};
 
 /// Connection state to the DAQ daemon
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +33,8 @@ pub struct DaqApp {
     devices_panel: DevicesPanel,
     scripts_panel: ScriptsPanel,
     scans_panel: ScansPanel,
+    storage_panel: StoragePanel,
+    modules_panel: ModulesPanel,
     
     /// Tokio runtime for async operations
     runtime: tokio::runtime::Runtime,
@@ -72,6 +74,8 @@ impl DaqApp {
             devices_panel: DevicesPanel::default(),
             scripts_panel: ScriptsPanel::default(),
             scans_panel: ScansPanel::default(),
+            storage_panel: StoragePanel::default(),
+            modules_panel: ModulesPanel::default(),
             runtime,
         }
     }
@@ -122,6 +126,14 @@ impl DaqApp {
                     }
                     if ui.button("Scans").clicked() {
                         self.active_panel = Panel::Scans;
+                        ui.close_menu();
+                    }
+                    if ui.button("Storage").clicked() {
+                        self.active_panel = Panel::Storage;
+                        ui.close_menu();
+                    }
+                    if ui.button("Modules").clicked() {
+                        self.active_panel = Panel::Modules;
                         ui.close_menu();
                     }
                 });
@@ -213,12 +225,10 @@ impl DaqApp {
                     self.scans_panel.ui(ui, self.client.as_mut(), &self.runtime);
                 }
                 Panel::Storage => {
-                    ui.heading("Storage");
-                    ui.label("Storage panel - coming soon");
+                    self.storage_panel.ui(ui, self.client.as_mut(), &self.runtime);
                 }
                 Panel::Modules => {
-                    ui.heading("Modules");
-                    ui.label("Modules panel - coming soon");
+                    self.modules_panel.ui(ui, self.client.as_mut(), &self.runtime);
                 }
             }
         });
