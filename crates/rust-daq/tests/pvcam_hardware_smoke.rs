@@ -29,7 +29,7 @@
 
 #![cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
 
-use rust_daq::hardware::capabilities::{ExposureControl, FrameProducer};
+use rust_daq::hardware::capabilities::FrameProducer;
 use rust_daq::hardware::pvcam::PvcamDriver;
 use std::env;
 use std::time::Duration;
@@ -107,51 +107,44 @@ async fn pvcam_smoke_test() {
         exposure
     );
 
-    // Step 4: Acquire single frame
-    println!("[4/5] Acquiring single frame...");
+    // Step 4: Acquire single frame (one-shot path)
+    println!("[4/5] Acquiring single frame (one-shot)...");
     let start = std::time::Instant::now();
-
-    // Start stream acquisition for single frame
-    camera
-        .start_stream()
+    let frame = camera
+        .acquire_frame()
         .await
-        .expect("Failed to start acquisition");
-
-    // Subscribe to frame broadcasts and wait for a frame
-    let mut rx = camera.subscribe_frames();
-
-    let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("Timeout waiting for frame")
-        .expect("Frame channel closed");
+        .expect("Failed to acquire single frame");
 
     let elapsed = start.elapsed();
     println!("  Frame received in {:?}", elapsed);
     println!("  Frame size: {}x{}", frame.width, frame.height);
-    println!("  Buffer size: {} pixels", frame.buffer.len());
+    let pixels: Vec<u16> = match frame.bit_depth {
+        16 => frame
+            .as_u16_slice()
+            .map(|s| s.to_vec())
+            .unwrap_or_else(|| frame.data.iter().map(|&b| b as u16).collect()),
+        _ => frame.data.iter().map(|&b| b as u16).collect(),
+    };
+
+    println!("  Buffer size: {} pixels", pixels.len());
 
     // Validate frame data
     assert!(frame.width > 0, "Frame width must be positive");
     assert!(frame.height > 0, "Frame height must be positive");
-    assert!(!frame.buffer.is_empty(), "Frame buffer must not be empty");
-    assert_eq!(
-        frame.buffer.len(),
-        (frame.width * frame.height) as usize,
-        "Buffer size must match frame dimensions"
+    assert!(
+        pixels.len() == (frame.width * frame.height) as usize,
+        "Pixel buffer size must match frame dimensions"
     );
 
-    // Step 5: Stop and cleanup
-    println!("[5/5] Stopping acquisition...");
-    camera
-        .stop_stream()
-        .await
-        .expect("Failed to stop acquisition");
+    // Step 5: Ensure streaming is stopped (acquire_frame stops internally)
+    println!("[5/5] Ensuring acquisition stopped...");
+    let _ = camera.stop_stream().await; // best-effort
 
     // Calculate simple statistics on frame data
-    let sum: u64 = frame.buffer.iter().map(|&v| v as u64).sum();
-    let mean = sum as f64 / frame.buffer.len() as f64;
-    let max_val = *frame.buffer.iter().max().unwrap_or(&0);
-    let min_val = *frame.buffer.iter().min().unwrap_or(&0);
+    let sum: u64 = pixels.iter().map(|&v| v as u64).sum();
+    let mean = sum as f64 / pixels.len() as f64;
+    let max_val = *pixels.iter().max().unwrap_or(&0);
+    let min_val = *pixels.iter().min().unwrap_or(&0);
 
     println!("\n=== Frame Statistics ===");
     println!("  Mean: {:.2}", mean);
