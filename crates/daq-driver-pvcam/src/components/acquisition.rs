@@ -305,7 +305,8 @@ impl PvcamAcquisition {
                             // SAFETY: frame_ptr came from pl_exp_get_oldest_frame on this handle; unlocking returns it to PVCAM.
                             pl_exp_unlock_oldest_frame(hcam);
 
-                            let frame = Frame::from_bytes(width, height, 16, pixel_bytes);
+                            // Clone pixel_bytes for Frame since from_bytes takes ownership
+                            let frame = Frame::from_bytes(width, height, 16, pixel_bytes.clone());
                             frame_count.fetch_add(1, Ordering::SeqCst);
                             let frame_arc = Arc::new(frame);
 

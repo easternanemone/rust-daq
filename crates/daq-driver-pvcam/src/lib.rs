@@ -61,7 +61,7 @@ impl PvcamDriver {
             #[cfg(feature = "pvcam_hardware")]
             let name = camera_name.clone();
             move || -> Result<Arc<Mutex<PvcamConnection>>> {
-                let conn = PvcamConnection::new();
+                let mut conn = PvcamConnection::new();
                 #[cfg(feature = "pvcam_hardware")]
                 {
                     conn.initialize()?;
