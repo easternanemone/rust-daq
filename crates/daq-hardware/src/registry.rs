@@ -1459,6 +1459,21 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry> {
         tracing::warn!("ESP300 registration failed (likely powered off): {}", e);
     }
 
+    // Prime BSI Camera (PVCAM)
+    #[cfg(feature = "pvcam")]
+    if let Err(e) = registry
+        .register(DeviceConfig {
+            id: "camera".into(),
+            name: "Teledyne Prime BSI sCMOS".into(),
+            driver: DriverType::Pvcam {
+                camera_name: "PMUSBCam00".into(),
+            },
+        })
+        .await
+    {
+        tracing::warn!("Prime BSI camera registration failed: {}", e);
+    }
+
     Ok(registry)
 }
 

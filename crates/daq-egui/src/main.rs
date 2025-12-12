@@ -2,12 +2,18 @@
 //!
 //! A lightweight GUI for controlling the headless rust-daq daemon via gRPC.
 
+#[cfg(feature = "standalone")]
 mod app;
-mod client;
+#[cfg(feature = "standalone")]
 mod panels;
 
+// Re-export client from lib
+use daq_egui::client;
+
+#[cfg(feature = "standalone")]
 use eframe::egui;
 
+#[cfg(feature = "standalone")]
 fn main() -> eframe::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
@@ -32,4 +38,10 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(Box::new(app::DaqApp::new(cc)))),
     )
+}
+
+#[cfg(not(feature = "standalone"))]
+fn main() {
+    eprintln!("The daq-gui binary requires the 'standalone' feature (enabled by default).");
+    std::process::exit(1);
 }

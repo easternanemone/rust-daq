@@ -1,0 +1,10 @@
+//! DAQ GUI Library
+//!
+//! Shared code between daq-gui (standalone) and daq-rerun (embedded viewer).
+
+pub mod client;
+
+#[cfg(feature = "standalone")]
+pub mod app;
+#[cfg(feature = "standalone")]
+pub mod panels;

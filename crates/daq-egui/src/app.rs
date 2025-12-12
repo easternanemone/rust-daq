@@ -38,6 +38,10 @@ pub struct DaqApp {
     
     /// Tokio runtime for async operations
     runtime: tokio::runtime::Runtime,
+    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+    pvcam_streaming: bool,
+    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+    pvcam_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Available panels in the UI
@@ -77,6 +81,10 @@ impl DaqApp {
             storage_panel: StoragePanel::default(),
             modules_panel: ModulesPanel::default(),
             runtime,
+            #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+            pvcam_streaming: false,
+            #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+            pvcam_task: None,
         }
     }
 
@@ -208,6 +216,33 @@ impl DaqApp {
                     ui.selectable_value(&mut self.active_panel, Panel::Storage, "💾 Storage");
                     ui.selectable_value(&mut self.active_panel, Panel::Modules, "🧩 Modules");
                 });
+                
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Rerun visualization button
+                if ui.button("📈 Open Rerun").clicked() {
+                    // Launch Rerun viewer
+                    let _ = std::process::Command::new("rerun")
+                        .spawn();
+                }
+
+                // PVCAM live view via Rerun
+                #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+                {
+                    ui.add_space(8.0);
+                    let label = if self.pvcam_streaming { "🛑 Stop PVCAM Live" } else { "🎥 PVCAM Live to Rerun" };
+                    if ui.button(label).clicked() {
+                        if self.pvcam_streaming {
+                            if let Some(task) = self.pvcam_task.take() {
+                                task.abort();
+                            }
+                            self.pvcam_streaming = false;
+                        } else {
+                            self.start_pvcam_stream();
+                        }
+                    }
+                }
             });
     }
 
@@ -232,6 +267,71 @@ impl DaqApp {
                 }
             }
         });
+    }
+
+    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+    fn start_pvcam_stream(&mut self) {
+        use rerun::archetypes::Tensor;
+        use rerun::components::TensorData;
+        use rerun::RecordingStreamBuilder;
+        use rust_daq::hardware::pvcam::PvcamDriver;
+
+        let handle = self.runtime.handle().clone();
+        self.pvcam_task = Some(handle.spawn(async move {
+            // Connect PVCAM driver and open rerun stream
+            let driver = match PvcamDriver::new_async("PrimeBSI".to_string()).await {
+                Ok(d) => d,
+                Err(err) => {
+                    eprintln!("PVCAM init failed: {err}");
+                    return;
+                }
+            };
+
+            let mut rx = match driver.subscribe_frames().await {
+                Some(r) => r,
+                None => {
+                    eprintln!("PVCAM frame subscription unavailable");
+                    return;
+                }
+            };
+
+            if let Err(err) = driver.start_stream().await {
+                eprintln!("PVCAM start_stream failed: {err}");
+                return;
+            }
+
+            let rec = match RecordingStreamBuilder::new("PVCAM Live")
+                .connect("127.0.0.1:9876")
+            {
+                Ok(r) => r,
+                Err(err) => {
+                    eprintln!("Failed to connect to rerun viewer: {err}");
+                    let _ = driver.stop_stream().await;
+                    return;
+                }
+            };
+
+            while let Ok(frame_arc) = rx.recv().await {
+                let frame = frame_arc.as_ref();
+                if frame.bit_depth != 16 {
+                    continue;
+                }
+                let td = match TensorData::try_from_rows_cols(
+                    frame.height as usize,
+                    frame.width as usize,
+                    bytemuck::cast_slice::<u8, u16>(&frame.data),
+                ) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let tensor = Tensor::new(td);
+                let _ = rec.log("/pvcam/image", &tensor);
+            }
+
+            let _ = driver.stop_stream().await;
+        }));
+
+        self.pvcam_streaming = true;
     }
 }
 

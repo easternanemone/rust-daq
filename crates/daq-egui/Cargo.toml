@@ -4,19 +4,36 @@ version = "0.1.0"
 edition = "2021"
 description = "egui-based control panel for rust-daq"
 
+[lib]
+name = "daq_egui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "daq-gui"
 path = "src/main.rs"
 
+[[bin]]
+name = "daq-rerun"
+path = "src/main_rerun.rs"
+required-features = ["rerun_viewer"]
+
 [dependencies]
-# egui ecosystem
+# egui ecosystem (used by standalone GUI)
 eframe = { version = "0.31", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
-] }
+], optional = true }
 egui = "0.31"
-egui_extras = { version = "0.31", features = ["all_loaders"] }
+egui_extras = { version = "0.31", features = ["all_loaders"], optional = true }
+
+# Rerun for embedded viewer
+rerun = { version = "0.27.3", default-features = false, features = [
+    "native_viewer",
+    "sdk",
+    "server",
+], optional = true }
+mimalloc = { version = "0.1", optional = true }
 
 # gRPC client
 daq-proto = { path = "../daq-proto" }
@@ -33,4 +50,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
 
 [features]
-default = []
+default = ["standalone"]
+standalone = ["dep:eframe", "dep:egui_extras"]
+rerun_viewer = ["dep:rerun", "dep:mimalloc"]
