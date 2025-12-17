@@ -85,6 +85,10 @@ impl PvcamAcquisition {
             // Hardware path
             let (x_bin, y_bin) = binning;
             
+
+            // PVCAM Best Practices: for reliable frame delivery (especially high FPS/high throughput),
+            // prefer an EOF callback acquisition model over polling loops (bd-ek9n.2).
+
             // Setup region
             let region = unsafe {
                 // SAFETY: rgn_type is POD; zeroed then fully initialized before use.
@@ -119,6 +123,8 @@ impl PvcamAcquisition {
             let binned_width = roi.width / x_bin as u32;
             let binned_height = roi.height / y_bin as u32;
             let frame_pixels = (binned_width * binned_height) as usize;
+            // PVCAM Best Practices: choose a \"reasonably sized\" circular buffer and consider using
+            // the SDK-recommended size via PARAM_FRAME_BUFFER_SIZE rather than a fixed frame count (bd-ek9n.4).
             let buffer_count = 8;
             let mut circ_buf = vec![0u16; frame_pixels * buffer_count];
             let circ_ptr = circ_buf.as_mut_ptr();
@@ -290,6 +296,8 @@ impl PvcamAcquisition {
                 match status {
                     s if s == READOUT_COMPLETE || s == EXPOSURE_IN_PROGRESS => {
                         let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+                        // PVCAM Best Practices: the recommended path is to fetch frames from inside an EOF callback
+                        // (e.g., pl_exp_get_latest_frame_ex) and keep the callback work minimal (bd-ek9n.2).
                         // SAFETY: frame_ptr is an out pointer; call fills with valid frame address while locked.
                         if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) != 0 && !frame_ptr.is_null() {
                             let bytes = std::slice::from_raw_parts(
@@ -305,8 +313,19 @@ impl PvcamAcquisition {
                             // SAFETY: frame_ptr came from pl_exp_get_oldest_frame on this handle; unlocking returns it to PVCAM.
                             pl_exp_unlock_oldest_frame(hcam);
 
-                            // Clone pixel_bytes for Frame since from_bytes takes ownership
+                            // PVCAM Best Practices: avoid frequent memory copying where possible; consider a buffer pool
+
+
+                            // / ownership transfer strategy to reduce per-frame clones, and parallel memcpy for extreme throughput (bd-ek9n.5).
+// Clone pixel_bytes for Frame since from_bytes takes ownership
                             let frame = Frame::from_bytes(width, height, 16, pixel_bytes.clone());
+
+
+
+                            // PVCAM Best Practices: detect lost/skipped frames by tracking FRAME_INFO.FrameNr
+
+
+                            // (or embedded metadata); this polling path does not surface FrameNr currently (bd-ek9n.3).
                             frame_count.fetch_add(1, Ordering::SeqCst);
                             let frame_arc = Arc::new(frame);
 
