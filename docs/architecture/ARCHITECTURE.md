@@ -21,7 +21,7 @@ The project is structured as a Cargo workspace with the following key components
 - **`daq-server`**: Exposes the system functionality over the network using gRPC (`tonic`). Supports web clients via `tonic-web`.
 
 ### The Integrator
-- **`rust-daq`**: The "glue" library. It integrates the core modules and provides high-level application logic. It currently also houses the GUI code (`egui`), making it a heavy dependency.
+- **`rust-daq`**: The integration layer. After bd-232k refactoring (Dec 2025), this crate provides organized re-exports via the `prelude` module and feature-gates optional dependencies (daq-server, daq-scripting). It contains no implementation code, acting as a pure facade. GUI code lives in the separate `daq-egui` crate.
 
 ## Architecture Diagrams
 
@@ -31,13 +31,14 @@ The project is structured as a Cargo workspace with the following key components
 graph TD
     subgraph AppLayer ["Application Layer"]
         Bin["daq-bin"]
-        Glue["rust-daq / GUI"]
+        GUI["daq-egui (GUI)"]
+        Integrator["rust-daq (integration layer)"]
     end
 
     subgraph DomainLayer ["Domain Logic"]
         Exp["daq-experiment"]
-        Server["daq-server"]
-        Script["daq-scripting"]
+        Server["daq-server (optional)"]
+        Script["daq-scripting (optional)"]
     end
 
     subgraph InfraLayer ["Infrastructure"]
@@ -50,14 +51,15 @@ graph TD
         Core["daq-core"]
     end
 
-    Bin --> Glue
+    Bin --> Integrator
     Bin --> Server
-    Glue --> Exp
-    Glue --> Hard
-    Glue --> Store
-    Glue --> Script
-    Glue --> Proto
-    
+    GUI --> Integrator
+    Integrator -.prelude re-exports.-> Exp
+    Integrator -.prelude re-exports.-> Hard
+    Integrator -.prelude re-exports.-> Store
+    Integrator -.prelude re-exports.-> Script
+    Integrator -.prelude re-exports.-> Proto
+
     Exp --> Core
     Server --> Core
     Server --> Proto
@@ -65,8 +67,12 @@ graph TD
     Store --> Core
     Proto --> Core
     Script --> Core
-    
-    Glue --> Core
+
+    Integrator -.prelude re-exports.-> Core
+
+    style Integrator fill:#e1f5ff
+    style Server fill:#fff4e1
+    style Script fill:#fff4e1
 ```
 
 ### Data Flow: Experiment Execution
@@ -107,7 +113,7 @@ sequenceDiagram
 1.  **Capability-Based HAL**: Hardware is not represented by inheritance hierarchies but by what it *can do* (Capabilities). This allows for flexible composition and easier mocking.
 2.  **Bluesky-like Orchestration**: Separation of *what* to do (Plan) from *how* to do it (RunEngine). This enables features like pause/resume, error recovery, and complex scanning logic without tightly coupling to specific hardware.
 3.  **Document-Oriented Data Model**: Data is treated as a stream of self-describing documents (Start -> Descriptor -> Events... -> Stop). This schema-less approach adapts well to varied experiments.
-4.  **Workspace Composition**: Usage of Cargo workspace to enforce modularity, though `rust-daq` remains a large central integrator.
+4.  **Workspace Composition**: Usage of Cargo workspace to enforce modularity. After bd-232k refactoring, `rust-daq` is now a thin integration layer (prelude pattern) rather than a monolithic integrator.
 
 ## Data Pipeline Architecture (The Mullet Strategy)
 
