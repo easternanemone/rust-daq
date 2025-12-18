@@ -22,14 +22,6 @@
 //! Tests are feature-gated to match the actual availability of modules in the crate.
 
 // =============================================================================
-// Core Data Module Exports
-// =============================================================================
-
-#[test]
-
-#[test]
-
-// =============================================================================
 // Hardware Capability Trait Exports
 // =============================================================================
 
@@ -214,7 +206,7 @@ fn verify_newport_1830c_export() {
 // gRPC Services (feature: networking)
 // =============================================================================
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_grpc_server_export() {
     // Verify DaqServer is exported
@@ -222,7 +214,7 @@ fn verify_grpc_server_export() {
     _check_type_exists::<daq_server::grpc::DaqServer>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_hardware_service_export() {
     // Verify HardwareServiceImpl is exported
@@ -230,7 +222,7 @@ fn verify_hardware_service_export() {
     _check_type_exists::<daq_server::grpc::HardwareServiceImpl>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_scan_service_export() {
     // Verify ScanServiceImpl is exported
@@ -238,7 +230,7 @@ fn verify_scan_service_export() {
     _check_type_exists::<daq_server::grpc::ScanServiceImpl>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_storage_service_export() {
     // Verify StorageServiceImpl is exported
@@ -246,7 +238,7 @@ fn verify_storage_service_export() {
     _check_type_exists::<daq_server::grpc::StorageServiceImpl>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_preset_service_export() {
     // Verify PresetServiceImpl is exported
@@ -254,7 +246,7 @@ fn verify_preset_service_export() {
     _check_type_exists::<daq_server::grpc::PresetServiceImpl>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_module_service_export() {
     // Verify ModuleServiceImpl is exported
@@ -263,7 +255,7 @@ fn verify_module_service_export() {
     _check_type_exists::<ModuleServiceImpl>();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_plugin_service_export() {
     // Verify PluginServiceImpl is exported
@@ -275,7 +267,7 @@ fn verify_plugin_service_export() {
 // gRPC Proto Types
 // =============================================================================
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_proto_types_export() {
     // Verify commonly used proto types are re-exported
@@ -346,19 +338,10 @@ fn verify_daq_error_export() {
 }
 
 // =============================================================================
-// Measurement Types
+// Scripting Engine (V5) - Feature-gated
 // =============================================================================
 
-#[test]
-
-#[test]
-
-#[test]
-
-// =============================================================================
-// Scripting Engine (V5)
-// =============================================================================
-
+#[cfg(feature = "scripting")]
 #[test]
 fn verify_rhai_engine_export() {
     // Verify RhaiEngine (concrete type) is exported
@@ -366,6 +349,7 @@ fn verify_rhai_engine_export() {
     _check_type_exists::<rust_daq::scripting::RhaiEngine>();
 }
 
+#[cfg(feature = "scripting")]
 #[test]
 fn verify_script_engine_trait_export() {
     // Verify ScriptEngine trait is exported
@@ -374,6 +358,7 @@ fn verify_script_engine_trait_export() {
     // Can't instantiate trait objects without marker traits
 }
 
+#[cfg(feature = "scripting")]
 #[test]
 fn verify_script_handle_exports() {
     // Verify handle types are exported
@@ -397,21 +382,15 @@ fn verify_complete_public_api() {
     _all_types_accessible();
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 #[test]
 fn verify_complete_grpc_api() {
     // Verify complete gRPC API surface is accessible
 
-    // Server
-    use daq_server::grpc::DaqServer;
-
     // Services
     use daq_proto::daq::module_service_server::ModuleService;
     use daq_server::grpc::ModuleServiceImpl;
-    use daq_server::grpc::{
-        HardwareServiceImpl, PluginServiceImpl, PresetServiceImpl, ScanServiceImpl,
-        StorageServiceImpl,
-    };
+    use daq_server::grpc::HardwareServiceImpl;
 
     // Verify service exports
     fn _check_service_types() {
@@ -423,9 +402,7 @@ fn verify_complete_grpc_api() {
         fn _assert_module_service<T: ModuleService>() {}
         _assert_module_service::<ModuleServiceImpl>();
     }
-
-    // Proto types (sample from each service)
-    use daq_server::grpc::{DeviceInfo, ModuleConfig, PluginInfo, Preset, ScanConfig, StorageConfig};
+    _check_service_types();
 
     fn _all_grpc_types_accessible() {}
     _all_grpc_types_accessible();
