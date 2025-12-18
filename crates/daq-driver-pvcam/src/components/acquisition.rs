@@ -730,10 +730,12 @@ impl PvcamAcquisition {
 
             // Gemini SDK review: Spawn error watcher to handle involuntary stops.
             // This prevents "zombie streaming" where fatal errors leave streaming=true.
+            // NOTE: Use try_recv (non-blocking) + tokio::time::sleep instead of blocking recv_timeout
+            // to avoid blocking the tokio runtime's worker threads.
             tokio::spawn(async move {
-                // Check for errors in a loop (non-blocking recv with timeout)
                 loop {
-                    match error_rx.recv_timeout(Duration::from_millis(100)) {
+                    // Non-blocking check for errors
+                    match error_rx.try_recv() {
                         Ok(err) => {
                             tracing::error!("Acquisition error (involuntary stop): {:?}", err);
                             // Update streaming state to reflect the involuntary stop
@@ -742,13 +744,15 @@ impl PvcamAcquisition {
                             }
                             break;
                         }
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            // Check if streaming stopped normally
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            // No error yet - check if streaming stopped normally
                             if !streaming_for_watcher.get() {
                                 break;
                             }
+                            // Yield to tokio runtime, then check again
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                             // Frame loop ended (channel dropped)
                             break;
                         }
