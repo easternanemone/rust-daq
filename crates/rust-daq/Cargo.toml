@@ -40,8 +40,8 @@ daq-core = { path = "../daq-core" }
 daq-proto = { path = "../daq-proto" }
 daq-hardware = { path = "../daq-hardware", default-features = false }
 daq-storage = { path = "../daq-storage", default-features = false }
-daq-server = { path = "../daq-server" }
-daq-scripting = { path = "../daq-scripting" }
+daq-server = { path = "../daq-server", optional = true }
+daq-scripting = { path = "../daq-scripting", optional = true }
 daq-experiment = { path = "../daq-experiment" }
 
 # Memory Allocator (Microsoft Rust Guidelines: M-MIMALLOC-APPS)
@@ -181,7 +181,7 @@ default = ["storage_csv", "instrument_serial"]
 # High-level Profiles (Simplification bd-37tw.5)
 backend = ["server", "modules", "all_hardware", "storage_csv"]
 frontend = ["gui_egui", "networking"]
-cli = ["all_hardware", "storage_csv", "scripting_python"]
+cli = ["all_hardware", "storage_csv", "scripting", "scripting_python"]
 
 full = ["storage_csv", "storage_arrow", "storage_matlab", "storage_netcdf", "instrument_serial", "modules", "server", "all_hardware"]
 
@@ -223,12 +223,13 @@ all_hardware = [
 
 # Phase 2 (bd-63): Networking layer with FlatBuffers protocol
 networking = []
-server = ["networking", "tokio/full"]
+server = ["networking", "dep:daq-server", "tokio/full"]
+scripting = ["dep:daq-scripting"]
 gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_extras"]
 
 # Phase 3B (bd-c0ai): Module system with runtime instrument assignment
 # Requires networking for gRPC proto types used in module context
-modules = []
+modules = ["scripting"]
 
 # PVCAM SDK integration (requires PVCAM SDK installed)
 # Must propagate pvcam_hardware to daq-hardware which propagates to daq-driver-pvcam

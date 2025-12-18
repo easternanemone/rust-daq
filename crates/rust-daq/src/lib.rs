@@ -105,7 +105,7 @@ pub mod log_capture;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modules;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "scripting"))]
 #[deprecated(
     since = "0.5.0",
     note = "Use `rust_daq::prelude::scripting` instead. Root re-exports will be removed in 0.6.0"

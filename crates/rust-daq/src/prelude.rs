@@ -80,7 +80,7 @@ pub use daq_experiment as experiment;
 // Scripting Integration
 // =============================================================================
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "scripting"))]
 /// Rhai scripting engine integration
 ///
 /// Re-exported from `daq-scripting`.
