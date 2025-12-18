@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-use rust_daq::scripting::{RhaiEngine, ScriptEngine};
+use daq_scripting::{RhaiEngine, ScriptEngine};
 
 #[tokio::test]
 async fn test_simple_script() {

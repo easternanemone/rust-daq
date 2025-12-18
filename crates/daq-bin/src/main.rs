@@ -32,8 +32,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use daq_scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
-use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
@@ -226,7 +226,7 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
         Err(e) => {
             eprintln!();
             eprintln!("❌ Script error: {}", e);
-            Err(e.into())
+            Err(anyhow::Error::from(e))
         }
     }
 }
@@ -257,8 +257,8 @@ async fn start_daemon(
     // Phase 4: Data Plane - Ring Buffer + HDF5 Writer (optional)
     #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
     let (ring_buffer, writer_handle) = {
-        use rust_daq::data::hdf5_writer::HDF5Writer;
-        use rust_daq::data::ring_buffer::RingBuffer;
+        use daq_storage::hdf5_writer::HDF5Writer;
+        use daq_storage::ring_buffer::RingBuffer;
         use std::path::Path;
         use std::sync::Arc;
 
@@ -286,7 +286,7 @@ async fn start_daemon(
     };
 
     #[cfg(not(all(feature = "storage_hdf5", feature = "storage_arrow")))]
-    let _ring_buffer: Option<Arc<rust_daq::data::ring_buffer::RingBuffer>> = None;
+    let _ring_buffer: Option<Arc<daq_storage::ring_buffer::RingBuffer>> = None;
 
     // Phase 3: Start gRPC server
     #[cfg(feature = "networking")]

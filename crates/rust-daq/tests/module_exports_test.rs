@@ -196,7 +196,7 @@ fn verify_esp300_export() {
     _check_type_exists::<rust_daq::hardware::esp300::Esp300Driver>();
 }
 
-#[cfg(feature = "instrument_photometrics")]
+#[cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
 #[test]
 fn verify_pvcam_export() {
     // Verify PVCAM camera is exported
@@ -394,7 +394,7 @@ fn verify_rhai_engine_export() {
 #[test]
 fn verify_script_engine_trait_export() {
     // Verify ScriptEngine trait is exported
-    use rust_daq::scripting::ScriptEngine;
+    use daq_scripting::ScriptEngine;
     fn _check_trait_exists<T: ScriptEngine>() {}
     // Can't instantiate trait objects without marker traits
 }

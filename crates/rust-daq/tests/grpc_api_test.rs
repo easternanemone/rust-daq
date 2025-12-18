@@ -5,8 +5,8 @@
 #![cfg(feature = "networking")]
 
 use daq_proto::daq::{
-    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StatusRequest, StopRequest,
-    SystemStatus, UploadRequest,
+    DataPoint, MeasurementRequest, ScriptStatus, StartRequest, StartResponse, StatusRequest,
+    StopRequest, StopResponse, SystemStatus, UploadRequest, UploadResponse,
 };
 use std::collections::HashMap;
 

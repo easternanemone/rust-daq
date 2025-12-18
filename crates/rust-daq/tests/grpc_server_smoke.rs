@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rust_daq::data::ring_buffer::RingBuffer;
+use daq_storage::ring_buffer::RingBuffer;
 use daq_server::grpc::DaqServer;
 
 #[tokio::test]

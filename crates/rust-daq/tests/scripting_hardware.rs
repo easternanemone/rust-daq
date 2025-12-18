@@ -7,7 +7,7 @@
 
 use rust_daq::hardware::capabilities::{FrameProducer, Movable};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
-use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
+use daq_scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -17,6 +17,7 @@ async fn test_stage_movement_from_script() {
     let stage_handle = StageHandle {
         driver: stage.clone(),
         data_tx: None,
+        soft_limits: SoftLimits::default(),
     };
 
     engine
@@ -47,6 +48,7 @@ async fn test_stage_relative_movement() {
             ScriptValue::new(StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();
@@ -73,6 +75,7 @@ async fn test_stage_wait_settled() {
             ScriptValue::new(StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();
@@ -153,6 +156,7 @@ async fn test_multi_device_script() {
             ScriptValue::new(StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();
@@ -193,6 +197,7 @@ async fn test_scan_with_settle_and_trigger() {
             ScriptValue::new(StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();
@@ -252,6 +257,7 @@ async fn test_complex_workflow() {
             ScriptValue::new(StageHandle {
                 driver: stage.clone(),
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();
@@ -374,6 +380,7 @@ async fn test_safety_limit_respected() {
             ScriptValue::new(StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::default(),
             }),
         )
         .unwrap();

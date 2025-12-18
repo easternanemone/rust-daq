@@ -1,46 +1,68 @@
 //! # Rust DAQ Core Library
 //!
-//! This crate serves as the core library for the `rust_daq` application. It encapsulates all the
+//! This crate serves as the integration layer for the `rust_daq` application. It encapsulates all the
 //! fundamental components required for data acquisition, instrument control, data processing,
 //! and the graphical user interface. By organizing the project as a library, we can share
 //! core logic between different frontends, such as the native GUI application (`main.rs`)
 //! and potential future integrations like Python bindings.
 //!
+//! ## Recommended Usage
+//!
+//! **Use [`prelude`] for convenient imports:**
+//!
+//! ```rust,ignore
+//! use rust_daq::prelude::*;
+//! ```
+//!
+//! The prelude module provides organized re-exports from the entire `rust_daq` ecosystem,
+//! avoiding import ambiguity and making it clear which crate each type comes from.
+//!
 //! ## Crate Structure
 //!
 //! The library is organized into several modules, each with a distinct responsibility:
 //!
-//! - **`app`**: Contains the main `DaqApp` struct, which acts as the central hub of the
-//!   application, managing state, instruments, and data flow.
 //! - **`config`**: Defines the structures for loading and validating application configuration
 //!   from TOML files. See `config::Settings`.
-//! - **`core`**: Provides the fundamental traits and enums for the DAQ system, such as `Instrument`,
-//!   `DataPoint`, and `InstrumentCommand`. This module defines the essential abstractions.
-//! - **`data`**: Includes components for data handling, such as storage writers (e.g., CSV, HDF5)
-//!   and data processors.
-//! - **`error`**: Defines the custom `DaqError` enum for centralized error handling across the
-//!   application.
-//! - **egui Desktop GUI**: The primary GUI is implemented as a separate binary (`rust_daq_gui_egui`)
-//!   that uses `eframe` + `egui` and connects to the daemon over gRPC. It lives in `src/gui_main.rs`.
-//! - **`instrument`**: Contains the concrete implementations of the `Instrument` trait for various
-//!   hardware devices (e.g., mock instruments, VISA-based devices, cameras).
+//! - **`core`**: Re-exported from `daq-core`. Provides fundamental traits and types for the DAQ
+//!   system, such as domain types and essential abstractions.
+//! - **`data`**: Includes components for data handling, such as ring buffers and data processors
+//!   (non-WASM only).
+//! - **`error`**: Re-exported from `daq-core`. Defines the custom `DaqError` enum for centralized
+//!   error handling across the application.
+//! - **`experiment`**: Re-exported from `daq-experiment`. RunEngine and Plan definitions for
+//!   experiment orchestration (non-WASM only).
+//! - **`gui`**: egui-based GUI components (requires `gui_egui` feature).
+//! - **`hardware`**: Re-exported from `daq-hardware`. Hardware Abstraction Layer with capability
+//!   traits and device drivers (non-WASM only).
 //! - **`log_capture`**: Provides a custom `log::Log` implementation to capture log messages for
-//!   display within the GUI.
+//!   display within the GUI (requires `gui_egui` feature, non-WASM only).
+//! - **`measurement`**: Measurement-related functionality (non-WASM only).
 //! - **`metadata`**: Defines structures for capturing and storing experimental metadata.
-//! - **`modules`**: Provides the `Module` trait for implementing experiment-specific workflows
-//!   that orchestrate instruments to accomplish scientific tasks.
-//! - **`session`**: Implements session management for saving and loading the application state.
+//! - **`modules`**: Module management for experiment-specific workflows (non-WASM only).
+//! - **`observable`**: Re-exported from `daq-core`. Observable pattern for reactive state.
+//! - **`parameter`**: Re-exported from `daq-core`. Reactive Parameter<T> system with async hardware
+//!   callbacks. All V5 drivers MUST implement Parameterized trait to expose parameters for gRPC
+//!   control, presets, and experiment metadata. See docs/architecture/ADR_005_REACTIVE_PARAMETERS.md
+//! - **`scripting`**: Re-exported from `daq-scripting`. Rhai scripting engine integration (non-WASM only).
+//! - **`session`**: Implements session management for saving and loading the application state (non-WASM only).
 //! - **`validation`**: A collection of utility functions for validating configuration parameters.
-//! - **`parameter`**: Reactive Parameter<T> system with async hardware callbacks.
-//!   All V5 drivers MUST implement Parameterized trait to expose parameters for
-//!   gRPC control, presets, and experiment metadata. See docs/architecture/ADR_005_REACTIVE_PARAMETERS.md
 
 pub mod config;
+pub mod prelude;
 
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::core` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_core::core;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod data; // Re-enabled for ring buffer implementation (Phase 4J: bd-q2we)
+
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::error` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_core::error;
 #[cfg(not(target_arch = "wasm32"))]
 // error_recovery moved to daq-core
@@ -51,11 +73,24 @@ pub mod session;
 pub mod validation;
 
 // Phase 1: Architectural redesign - New core abstractions
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::observable` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_core::observable;
+
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::parameter` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_core::parameter;
 
 // V5 Headless-First Architecture (bd-oq51)
 #[cfg(not(target_arch = "wasm32"))]
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::experiment` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_experiment as experiment;
 
 // pub mod app; // Removed (legacy)
@@ -69,7 +104,12 @@ pub mod hardware;
 pub mod log_capture;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod modules;
+
 #[cfg(not(target_arch = "wasm32"))]
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `rust_daq::prelude::scripting` instead. Root re-exports will be removed in 0.6.0"
+)]
 pub use daq_scripting as scripting;
 #[cfg(target_arch = "wasm32")]
 pub mod grpc {

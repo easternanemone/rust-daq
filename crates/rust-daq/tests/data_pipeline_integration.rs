@@ -35,7 +35,7 @@
 //! - Ubuntu: `sudo apt-get install libhdf5-dev`
 //! - If HDF5 is not available, those tests will be skipped automatically.
 
-use rust_daq::core::Measurement;
+use daq_core::core::Measurement;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -84,7 +84,7 @@ fn create_test_spectrum(name: &str, n_bins: usize) -> Measurement {
 /// Create an image measurement for testing
 #[allow(dead_code)]
 fn _create_test_image(name: &str, width: u32, height: u32) -> Measurement {
-    use rust_daq::core::{ImageMetadata, PixelBuffer};
+    use daq_core::core::{ImageMetadata, PixelBuffer};
 
     let pixel_count = (width * height) as usize;
     let pixels: Vec<u16> = (0..pixel_count).map(|i| (i % 65536) as u16).collect();
@@ -115,8 +115,8 @@ fn _create_test_image(name: &str, width: u32, height: u32) -> Measurement {
 #[cfg(feature = "storage_hdf5")]
 mod hdf5_tests {
     use super::*;
-    use rust_daq::data::hdf5_writer::HDF5Writer;
-    use rust_daq::data::ring_buffer::RingBuffer;
+    use daq_storage::hdf5_writer::HDF5Writer;
+    use daq_storage::ring_buffer::RingBuffer;
     use std::path::Path;
 
     #[tokio::test]
@@ -315,7 +315,7 @@ mod hdf5_tests {
 
     #[tokio::test]
     async fn test_hdf5_manifest_persistence() {
-        use rust_daq::experiment::document::ExperimentManifest;
+        use daq_experiment::document::ExperimentManifest;
         use std::collections::HashMap;
 
         let temp_dir = TempDir::new().unwrap();
@@ -566,7 +566,7 @@ mod arrow_tests {
 
 mod ringbuffer_tests {
     use super::*;
-    use rust_daq::data::ring_buffer::RingBuffer;
+    use daq_storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_ringbuffer_basic_operations() {
@@ -701,8 +701,8 @@ mod ringbuffer_tests {
 #[cfg(feature = "storage_hdf5")]
 mod ringbuffer_hdf5_integration {
     use super::*;
-    use rust_daq::data::hdf5_writer::HDF5Writer;
-    use rust_daq::data::ring_buffer::RingBuffer;
+    use daq_storage::hdf5_writer::HDF5Writer;
+    use daq_storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_ringbuffer_to_hdf5_flow() {
@@ -828,7 +828,7 @@ mod ringbuffer_hdf5_integration {
 #[cfg(all(test, feature = "storage_arrow"))]
 mod performance_tests {
     use super::*;
-    use rust_daq::data::ring_buffer::RingBuffer;
+    use daq_storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_arrow_batch_creation_performance() {

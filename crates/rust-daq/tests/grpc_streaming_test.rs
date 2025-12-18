@@ -9,7 +9,7 @@ mod streaming_tests {
     use daq_proto::daq::MeasurementRequest;
     use daq_server::grpc::ControlService;
     use daq_server::DaqServer;
-    use rust_daq::core::Measurement;
+    use daq_core::core::Measurement;
 
     use tokio_stream::StreamExt;
     use tonic::Request;

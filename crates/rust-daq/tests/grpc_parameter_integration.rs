@@ -163,13 +163,16 @@ async fn test_maitai_parameter_integration() -> Result<()> {
         let slave = pty.slave;
 
         // Get slave path
-        let slave_path = nix::unistd::ttyname(slave.as_raw_fd()).expect("Failed to get slave path");
+        let slave_path = nix::unistd::ttyname(&slave).expect("Failed to get slave path");
         let slave_path_str = slave_path.to_str().unwrap();
 
         // Spawn background task to handle serial protocol
-        let master_fd = master.as_raw_fd();
+        // bd-d7uw: Use into_raw_fd() to transfer ownership, preventing double-close
+        use std::os::unix::io::IntoRawFd;
+        let master_fd = master.into_raw_fd();
         tokio::spawn(async move {
             use std::os::unix::io::FromRawFd;
+            // SAFETY: master_fd ownership was transferred via into_raw_fd(), so no double-close
             let mut file = unsafe { std::fs::File::from_raw_fd(master_fd) };
 
             loop {
