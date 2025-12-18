@@ -137,18 +137,60 @@ graph LR
 
 ## Code Smells & Recommendations
 
-1.  **The `rust-daq` Monolith**:
-    - **Smell**: The `rust-daq` crate acts as both a library integrator and the home for the GUI. This makes it a very heavy dependency.
-    - **Recommendation**: Split the GUI code into a dedicated `daq-gui` crate. `rust-daq` should strictly be the domain logic integrator or be dissolved if `daq-bin` can compose the modules directly.
+### ✅ RESOLVED: The `rust-daq` Monolith (bd-232k Refactoring)
 
-2.  **Feature Flag Duplication**:
-    - **Smell**: Hardware support features are defined in `daq-hardware` and mirrored/re-exported in `rust-daq` and `daq-server`. This requires keeping `Cargo.toml` files in sync and adds maintenance burden.
-    - **Recommendation**: Centralize feature definitions or use a workspace-level tool to manage them. Consider if `rust-daq` needs to re-export all hardware features or if consumers should depend on `daq-hardware` directly for specific drivers.
+**Previous Smell**: The `rust-daq` crate acted as both a library integrator and the home for implementation code and GUI, making it a very heavy dependency.
 
-3.  **Hub-and-Spoke Dependency**:
-    - **Observation**: `daq-core` is a critical dependency. Any change in `daq-core` triggers a full rebuild of the ecosystem.
-    - **Recommendation**: Keep `daq-core` minimal and stable. Ensure unstable or experimental types are kept in their respective leaf crates until mature.
+**Resolution (bd-232k Epic - Dec 2025)**:
+- GUI was already separated into `daq-egui` crate
+- Removed 6,877 lines of dead implementation code (data/, metadata.rs, session.rs, measurement/, procedures/, gui_main.rs)
+- Transformed `rust-daq` into a thin **integration layer** with:
+  - `prelude` module for organized re-exports
+  - Feature-gated optional dependencies (daq-server, daq-scripting)
+  - No implementation code (pure facade pattern)
+- Root re-exports deprecated (removal in 0.6.0)
+- Documentation: Users should import directly from focused crates or use `rust_daq::prelude::*`
 
-4.  **"Kitchen Sink" Integration**:
-    - **Smell**: `daq-bin` depends on `rust-daq` which pulls in almost everything. This makes `rust_daq` binary heavy.
-    - **Recommendation**: Create specialized binaries (e.g., `daq-cli`, `daq-server-bin`, `daq-gui-bin`) that only pull in the crates they need, rather than a single `daq-bin` with many feature flags.
+**Status**: `rust-daq` is now a clean integration layer as originally recommended.
+
+### ⚠️ PARTIALLY ADDRESSED: Feature Flag Duplication
+
+**Smell**: Hardware support features are defined in `daq-hardware` and mirrored/re-exported in `rust-daq` and `daq-server`. This requires keeping `Cargo.toml` files in sync and adds maintenance burden.
+
+**Progress**:
+- Made `daq-server` and `daq-scripting` optional dependencies with explicit feature flags
+- Created high-level feature profiles (`backend`, `frontend`, `cli`, `full`) to simplify common configurations
+- Reduced duplication by having profiles aggregate lower-level features
+
+**Remaining Work**:
+- Hardware features still mirrored between crates
+- Consider workspace-level feature management tool
+- Evaluate if consumers should depend on `daq-hardware` directly for specific drivers
+
+### ✅ BY DESIGN: Hub-and-Spoke Dependency
+
+**Observation**: `daq-core` is a critical dependency. Any change in `daq-core` triggers a full rebuild of the ecosystem.
+
+**Status**: This is intentional and working as designed.
+- `daq-core` provides common types, traits, and abstractions
+- Kept minimal and stable (Parameter, Observable, capabilities, error types)
+- Experimental types are developed in leaf crates before promotion to core
+- This pattern is standard in Rust ecosystems (tokio-core, serde-core, etc.)
+
+**Recommendation**: Continue keeping `daq-core` minimal and stable. No action needed.
+
+### ⚠️ PARTIALLY ADDRESSED: "Kitchen Sink" Integration
+
+**Previous Smell**: `daq-bin` depends on `rust-daq` which pulls in almost everything. This makes the `rust_daq` binary heavy.
+
+**Progress**:
+- Created high-level feature profiles to control what gets compiled:
+  - `backend` - Server, modules, hardware, CSV storage
+  - `frontend` - GUI (egui) + networking
+  - `cli` - Hardware, CSV storage, Python scripting
+  - `full` - Most features (excludes HDF5 requiring native libs)
+- Made `daq-server` and `daq-scripting` optional to reduce default binary size
+
+**Remaining Work**:
+- Create truly specialized binaries (e.g., `daq-cli`, `daq-server-bin`, `daq-gui-bin`) that only pull in what they need
+- Consider whether `daq-bin` should continue to exist or be replaced by specialized entry points

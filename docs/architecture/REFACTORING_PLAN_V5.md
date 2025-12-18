@@ -4,8 +4,19 @@
 
 This document serves as the architectural blueprint for refactoring the `rust-daq` project from a monolithic crate into a modular, layered system. It is based on a deep analysis of the codebase and architectural patterns observed in the reference `planmeca` repository.
 
-**Status:** Living Document  
+**Status:** Living Document
 **Last Updated:** 2025-12-09
+
+> **⚠️ UPDATE (Dec 2025):** The `bd-232k` epic has completed major portions of this refactoring plan:
+> - ✅ `rust-daq` transformed into thin integration layer (removed 6,877 lines of implementation code)
+> - ✅ Created `prelude` module for organized re-exports
+> - ✅ Made `daq-server` and `daq-scripting` optional dependencies
+> - ✅ GUI separated into `daq-egui` crate
+> - ✅ Dead code removed (data/, metadata.rs, session.rs, measurement/, procedures/, gui_main.rs)
+> - ⚠️ Feature flag duplication partially addressed (high-level profiles created)
+> - ⏳ Remaining work: Further binary specialization
+>
+> See ARCHITECTURE.md "Code Smells & Recommendations" section for current status.
 
 ---
 
