@@ -33,7 +33,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
-use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
+use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
@@ -202,6 +202,7 @@ async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Resu
         ScriptValue::new(StageHandle {
             driver: Arc::new(stage),
             data_tx: None, // No data plane in one-shot script mode
+            soft_limits: SoftLimits::unlimited(),
         }),
     )?;
     engine.set_global(

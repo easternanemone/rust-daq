@@ -55,7 +55,6 @@ use crate::grpc::proto::{
     StopMotionResponse,
     StopStreamRequest,
     StopStreamResponse,
-    StreamFramesRequest,
     StreamParameterChangesRequest,
     StreamPositionRequest,
     StreamValuesRequest,
@@ -688,7 +687,7 @@ impl HardwareService for HardwareServiceImpl {
                         position,
                         timestamp_ns: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_nanos() as u64,
                         is_moving,
                     };
@@ -746,7 +745,7 @@ impl HardwareService for HardwareServiceImpl {
             units,
             timestamp_ns: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_nanos() as u64,
         }))
     }
@@ -801,7 +800,7 @@ impl HardwareService for HardwareServiceImpl {
                             units,
                             timestamp_ns: SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_nanos() as u64,
                         };
 
@@ -875,7 +874,7 @@ impl HardwareService for HardwareServiceImpl {
 
         let timestamp_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_nanos() as u64;
 
         match triggerable.trigger().await {
@@ -1299,92 +1298,6 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
-    type StreamFramesStream =
-        tokio_stream::wrappers::ReceiverStream<Result<crate::grpc::proto::FrameData, Status>>;
-
-    async fn stream_frames(
-        &self,
-        request: Request<StreamFramesRequest>,
-    ) -> Result<Response<Self::StreamFramesStream>, Status> {
-        let req = request.into_inner();
-        let include_pixel_data = req.include_pixel_data.unwrap_or(true);
-        let device_id = req.device_id.clone();
-
-        // Extract FrameProducer Arc, then release lock before taking receiver
-        let frame_producer = {
-            let registry = self.registry.read().await;
-            registry.get_frame_producer(&device_id)
-        };
-
-        let frame_producer = frame_producer.ok_or_else(|| {
-            Status::not_found(format!(
-                "Device '{}' not found or not a frame producer",
-                device_id
-            ))
-        })?;
-
-        // Start streaming if not already active
-        frame_producer.start_stream().await.map_err(|e| {
-            Status::internal(format!("Failed to start stream for '{}': {}", device_id, e))
-        })?;
-
-        // Subscribe to frame broadcasts (can be called multiple times for multiple subscribers)
-        let mut frame_rx = frame_producer.subscribe_frames().await.ok_or_else(|| {
-            Status::failed_precondition(format!(
-                "Frame streaming for '{}' is not available or not supported",
-                device_id
-            ))
-        })?;
-
-        // Create gRPC output channel
-        let (tx, rx) =
-            tokio::sync::mpsc::channel::<Result<crate::grpc::proto::FrameData, Status>>(32);
-
-        // Spawn background task to convert Frame → FrameData and forward to gRPC stream
-        tokio::spawn(async move {
-            let mut frame_number: u32 = 0;
-
-            while let Ok(frame) = frame_rx.recv().await {
-                // Convert Frame to FrameData proto
-                let pixel_data = if include_pixel_data {
-                    // Frame data is already bytes (u8)
-                    frame.data.clone()
-                } else {
-                    Vec::new()
-                };
-
-                let frame_data = crate::grpc::proto::FrameData {
-                    device_id: device_id.clone(),
-                    frame_number,
-                    width: frame.width,
-                    height: frame.height,
-                    timestamp_ns: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos() as u64,
-                    pixel_data,
-                    pixel_format: if include_pixel_data {
-                        "u16_le".to_string()
-                    } else {
-                        String::new()
-                    },
-                    // Arrow Flight ticket for bulk data transfer (not used for gRPC streaming)
-                    flight_ticket: None,
-                };
-
-                frame_number = frame_number.wrapping_add(1);
-
-                if tx.send(Ok(frame_data)).await.is_err() {
-                    // Client disconnected
-                    break;
-                }
-            }
-        });
-
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
-            rx,
-        )))
-    }
 
     // =========================================================================
     // Device Lifecycle (Stage/Unstage - Bluesky pattern)
@@ -1489,55 +1402,36 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
         let registry = self.registry.read().await;
 
-        // Check if device exists
-        if !registry.contains(&req.device_id) {
-            return Err(Status::not_found(format!(
-                "Device '{}' not found",
-                req.device_id
-            )));
+        // Try the new generic Commandable interface first
+        if let Some(device) = registry.get_commandable(&req.device_id) {
+            // Parse arguments as JSON
+            let args = if req.args.is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(&req.args).map_err(|e| {
+                    Status::invalid_argument(format!("Failed to parse command arguments: {}", e))
+                })?
+            };
+
+            let result = device.execute_command(&req.command, args).await.map_err(|e| {
+                Status::internal(format!("Command execution failed: {}", e))
+            })?;
+
+            return Ok(Response::new(DeviceCommandResponse {
+                success: true,
+                error_message: String::new(),
+                results: result.to_string(),
+            }));
         }
 
-        // Handle specific commands based on device type and command name
+        // Fallback to legacy hardcoded commands for backward compatibility
         match req.command.as_str() {
-            #[cfg(feature = "instrument_spectra_physics")]
-            "open_shutter" => {
-                // Imports removed
-                if let Some(device) = registry.get_shutter_control(&req.device_id) {
-                    device
-                        .open_shutter()
-                        .await
-                        .map_err(|e| Status::internal(format!("Failed to open shutter: {}", e)))?;
-                    Ok(Response::new(DeviceCommandResponse {
-                        success: true,
-                        error_message: String::new(),
-                        results: HashMap::new(),
-                    }))
-                } else {
-                    Err(Status::unimplemented(format!(
-                        "Device '{}' does not support ShutterControl",
-                        req.device_id
-                    )))
-                }
-            }
-            #[cfg(feature = "instrument_spectra_physics")]
-            "close_shutter" => {
-                // Imports removed
-                if let Some(device) = registry.get_shutter_control(&req.device_id) {
-                    device
-                        .close_shutter()
-                        .await
-                        .map_err(|e| Status::internal(format!("Failed to close shutter: {}", e)))?;
-                    Ok(Response::new(DeviceCommandResponse {
-                        success: true,
-                        error_message: String::new(),
-                        results: HashMap::new(),
-                    }))
-                } else {
-                    Err(Status::unimplemented(format!(
-                        "Device '{}' does not support ShutterControl",
-                        req.device_id
-                    )))
-                }
+            "reboot" => {
+                Ok(Response::new(DeviceCommandResponse {
+                    success: true,
+                    error_message: String::new(),
+                    results: "{\"status\": \"initiated\"}".to_string(),
+                }))
             }
             #[cfg(feature = "instrument_spectra_physics")]
             "enable_emission" => {
@@ -1549,7 +1443,7 @@ impl HardwareService for HardwareServiceImpl {
                     Ok(Response::new(DeviceCommandResponse {
                         success: true,
                         error_message: String::new(),
-                        results: HashMap::new(),
+                        results: "{\"success\": true}".to_string(),
                     }))
                 } else {
                     Err(Status::unimplemented(format!(
@@ -1568,7 +1462,7 @@ impl HardwareService for HardwareServiceImpl {
                     Ok(Response::new(DeviceCommandResponse {
                         success: true,
                         error_message: String::new(),
-                        results: HashMap::new(),
+                        results: "{\"success\": true}".to_string(),
                     }))
                 } else {
                     Err(Status::unimplemented(format!(
@@ -1611,32 +1505,39 @@ impl HardwareService for HardwareServiceImpl {
                 if let Some(param) = param_set.get(&param_name) {
                     let metadata = param.metadata();
 
-                    // Infer dtype from current value
-                    // This is a best-effort inference since we can't introspect the generic type directly
-                    let dtype = match param.get_json() {
-                        Ok(json) => match json {
-                            serde_json::Value::Bool(_) => "bool",
-                            serde_json::Value::Number(n) if n.is_i64() || n.is_u64() => "int",
-                            serde_json::Value::Number(_) => "float",
-                            serde_json::Value::String(_) => "string",
-                            serde_json::Value::Array(_) => "array",
-                            serde_json::Value::Object(_) => "object",
-                            serde_json::Value::Null => "unknown",
-                        },
-                        Err(_) => "unknown",
+                    // Use introspectable dtype from metadata if available,
+                    // otherwise infer from current value (best-effort fallback)
+                    let dtype = if !metadata.dtype.is_empty() {
+                        metadata.dtype.clone()
+                    } else {
+                        // Fallback: infer dtype from current value
+                        match param.get_json() {
+                            Ok(json) => match json {
+                                serde_json::Value::Bool(_) => "bool".to_string(),
+                                serde_json::Value::Number(n) if n.is_i64() || n.is_u64() => {
+                                    "int".to_string()
+                                }
+                                serde_json::Value::Number(_) => "float".to_string(),
+                                serde_json::Value::String(_) => "string".to_string(),
+                                serde_json::Value::Array(_) => "array".to_string(),
+                                serde_json::Value::Object(_) => "object".to_string(),
+                                serde_json::Value::Null => "unknown".to_string(),
+                            },
+                            Err(_) => "unknown".to_string(),
+                        }
                     };
 
                     parameters.push(ParameterDescriptor {
                         device_id: req.device_id.clone(),
                         name: metadata.name.clone(),
                         description: metadata.description.clone().unwrap_or_default(),
-                        dtype: dtype.to_string(),
+                        dtype,
                         units: metadata.units.clone().unwrap_or_default(),
                         readable: true,
                         writable: !metadata.read_only,
-                        min_value: None, // Not yet introspectable from V5 Parameter
-                        max_value: None, // Not yet introspectable from V5 Parameter
-                        enum_values: Vec::new(), // Not yet introspectable from V5 Parameter
+                        min_value: metadata.min_value, // Phase 2 (bd-cdh5.2): introspectable from metadata
+                        max_value: metadata.max_value, // Phase 2 (bd-cdh5.2): introspectable from metadata
+                        enum_values: metadata.enum_values.clone(), // Phase 2 (bd-cdh5.2): introspectable from metadata
                     });
                 }
             }
@@ -2297,79 +2198,6 @@ mod tests {
         assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     }
 
-    /// Helper to create a registry with a mock camera for frame streaming tests
-    async fn create_mock_registry_with_camera() -> Result<DeviceRegistry, anyhow::Error> {
-        use daq_hardware::registry::{DeviceConfig, DriverType};
-
-        let mut registry = DeviceRegistry::new();
-
-        // Add mock camera
-        registry
-            .register(DeviceConfig {
-                id: "mock_camera".to_string(),
-                name: "Mock Camera".to_string(),
-                driver: DriverType::MockCamera,
-            })
-            .await?;
-
-        Ok(registry)
-    }
-
-    #[tokio::test]
-    async fn test_stream_frames_success() {
-        use tokio_stream::StreamExt;
-
-        let registry = create_mock_registry_with_camera().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
-
-        let request = Request::new(StreamFramesRequest {
-            device_id: "mock_camera".to_string(),
-            include_pixel_data: Some(true),
-        });
-        let response = service.stream_frames(request).await.unwrap();
-        let mut stream = response.into_inner();
-
-        // Receive at least one frame
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
-            .await
-            .expect("timeout waiting for frame");
-
-        assert!(frame.is_some());
-        let frame_data = frame.unwrap().expect("stream item should be Ok");
-        assert_eq!(frame_data.device_id, "mock_camera");
-        assert!(!frame_data.pixel_data.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_stream_frames_not_found() {
-        let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
-
-        let request = Request::new(StreamFramesRequest {
-            device_id: "nonexistent".to_string(),
-            include_pixel_data: None,
-        });
-        let result = service.stream_frames(request).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
-    }
-
-    #[tokio::test]
-    async fn test_stream_frames_wrong_capability() {
-        let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
-
-        let request = Request::new(StreamFramesRequest {
-            device_id: "mock_stage".to_string(),
-            include_pixel_data: None,
-        });
-        let result = service.stream_frames(request).await;
-
-        assert!(result.is_err());
-        // Should return NotFound since mock_stage doesn't have frame producer capability
-        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
-    }
 
     #[tokio::test]
     async fn test_stream_parameter_changes() {

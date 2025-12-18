@@ -44,6 +44,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
+// Unix-specific imports for file permissions (bd-jnfu.16)
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use crate::tap_registry::TapRegistry;
 
 #[cfg(feature = "storage_arrow")]
@@ -167,14 +171,31 @@ impl std::fmt::Debug for RingBuffer {
     }
 }
 
-// SAFETY: RingBuffer owns its mmap and only exposes raw pointers internally. All
-// pointer dereferences are guarded by bounds checks and atomic ordering, so the
-// type can be safely sent to other threads.
+// SAFETY: RingBuffer can be safely sent to other threads because:
+// 1. It owns its mmap (MmapMut) which is itself Send
+// 2. Raw pointers (header, data_ptr) point into the mmap and remain valid
+//    as long as the mmap exists - they are derived from mmap.as_mut_ptr()
+// 3. All pointer dereferences are guarded by:
+//    - Bounds checks (capacity validation, debug_assert! in hot paths)
+//    - Atomic ordering (Acquire/Release for cross-thread visibility)
+// 4. The TapRegistry is wrapped in Arc and is itself Send+Sync
 unsafe impl Send for RingBuffer {}
 
-// SAFETY: Concurrent readers use Acquire ordering, and writers serialize through
-// `write_lock` and publish with Release ordering. These invariants make shared
-// access across threads safe.
+// SAFETY: RingBuffer can be safely shared across threads because:
+// 1. Write operations are serialized through `write_lock` (std::sync::Mutex)
+// 2. Readers use Acquire ordering on atomic loads to see published writes
+// 3. Writers use Release ordering after memcpy to publish data
+// 4. The seqlock pattern (write_epoch) ensures readers detect concurrent writes:
+//    - Writers increment epoch (odd) before writing, (even) after
+//    - Readers check epoch before and after read, retry if changed or odd
+// 5. Memory ordering: Release on write_head/epoch ensures prior memcpy is visible
+//    to readers who Acquire load these values
+// 6. The TapRegistry uses internal synchronization (RwLock)
+//
+// INVARIANTS that must be maintained:
+// - write_lock MUST be held during any write to the data region
+// - write_epoch MUST be incremented before and after memcpy with proper ordering
+// - Capacity bounds MUST be validated before any pointer arithmetic
 unsafe impl Sync for RingBuffer {}
 
 impl RingBuffer {
@@ -201,6 +222,11 @@ impl RingBuffer {
         // Create or open the backing file
         let mut opts = OpenOptions::new();
         opts.read(true).write(true).create(true);
+
+        // Set restrictive permissions on Unix to prevent data leakage (bd-jnfu.16)
+        // Ring buffer files in /tmp or /dev/shm would otherwise be world-readable
+        #[cfg(unix)]
+        opts.mode(0o600); // Owner read/write only
 
         let is_new_file = !path.exists();
 
@@ -291,6 +317,10 @@ impl RingBuffer {
     ///
     /// # Returns
     /// A `RingBuffer` instance attached to the existing buffer
+    ///
+    /// # Safety
+    /// This function validates the file size and magic number BEFORE accessing
+    /// header fields to prevent undefined behavior from corrupted files.
     pub fn open(path: &Path) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
@@ -298,31 +328,69 @@ impl RingBuffer {
             .open(path)
             .with_context(|| format!("Failed to open ring buffer file: {:?}", path))?;
 
+        // CRITICAL: Validate file size BEFORE memory mapping to prevent
+        // accessing invalid memory if the file was truncated or corrupted
+        let file_size = file
+            .metadata()
+            .context("Failed to get file metadata")?
+            .len() as usize;
+
+        if file_size < HEADER_SIZE {
+            return Err(anyhow!(
+                "Ring buffer file too small: {} bytes, minimum {} bytes required for header",
+                file_size,
+                HEADER_SIZE
+            ));
+        }
+
         // Create memory mapping
-        // SAFETY: Opening existing file created by create()
+        // SAFETY: We verified file_size >= HEADER_SIZE, so the mmap will be at least
+        // HEADER_SIZE bytes and header access will be within bounds
         let mut mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
                 .context("Failed to map ring buffer file")?
         };
-        debug_assert!(mmap.len() >= HEADER_SIZE, "existing ring buffer too small");
 
-        // Validate header
-        // SAFETY: File was created with create(), header is valid
+        // Double-check mmap size matches file size (defensive programming)
+        if mmap.len() < HEADER_SIZE {
+            return Err(anyhow!(
+                "Memory map too small: {} bytes, expected at least {} bytes",
+                mmap.len(),
+                HEADER_SIZE
+            ));
+        }
+
+        // SAFETY: We verified mmap.len() >= HEADER_SIZE above, so casting to
+        // RingBufferHeader pointer and accessing magic/capacity is safe
         let header = mmap.as_mut_ptr() as *mut RingBufferHeader;
         let (magic, capacity) = unsafe { ((*header).magic, (*header).capacity_bytes) };
 
+        // Validate magic number to detect corrupted files
         if magic != MAGIC {
             return Err(anyhow!(
-                "Invalid ring buffer magic number: expected 0x{:016X}, got 0x{:016X}",
+                "Invalid ring buffer magic number: expected 0x{:016X}, got 0x{:016X}. \
+                 File may be corrupted or not a valid ring buffer.",
                 MAGIC,
                 magic
             ));
         }
 
-        debug_assert!(HEADER_SIZE <= mmap.len());
-        debug_assert!(capacity as usize <= mmap.len().saturating_sub(HEADER_SIZE));
-        // SAFETY: mmap size validated, offset HEADER_SIZE is within bounds
+        // Validate that file size matches expected size (header + capacity)
+        let expected_size = HEADER_SIZE + capacity as usize;
+        if file_size != expected_size {
+            return Err(anyhow!(
+                "Ring buffer file size mismatch: file is {} bytes but header indicates \
+                 {} bytes capacity (expected {} total bytes). File may be truncated or corrupted.",
+                file_size,
+                capacity,
+                expected_size
+            ));
+        }
+
+        // SAFETY: We verified mmap.len() == expected_size == HEADER_SIZE + capacity,
+        // so data_ptr = mmap + HEADER_SIZE is within bounds and points to a region
+        // of exactly 'capacity' bytes
         let data_ptr = unsafe { mmap.as_mut_ptr().add(HEADER_SIZE) };
 
         Ok(Self {
@@ -534,19 +602,44 @@ impl RingBuffer {
     /// # Note
     /// This method will retry automatically if a concurrent write is detected.
     /// If the writer crashes mid-write (leaving epoch odd), this will timeout
-    /// after MAX_RETRY_DURATION_MS and return an empty Vec.
+    /// after 500ms (configurable via DAQ_RINGBUFFER_TIMEOUT_MS) and return an empty Vec.
+    ///
+    /// # Performance (bd-jnfu.8)
+    /// Uses exponential backoff to reduce CPU usage during contention:
+    /// - Retries 0-9: spin_loop() for sub-microsecond latency
+    /// - Retries 10+: sleep with progressive backoff (10µs, 100µs, 1ms, 10ms)
+    /// This significantly reduces CPU usage compared to pure spin-waiting while
+    /// maintaining low latency for the common fast-path case.
+    ///
+    /// # Async Warning (bd-jnfu.14)
+    /// This method uses `std::thread::sleep()` during backoff, which BLOCKS the
+    /// calling thread. When calling from async contexts (Tokio tasks), wrap this
+    /// call in `tokio::task::spawn_blocking()` to avoid stalling the runtime:
+    ///
+    /// ```ignore
+    /// let ring_buffer = ring_buffer.clone();
+    /// let snapshot = tokio::task::spawn_blocking(move || ring_buffer.read_snapshot())
+    ///     .await
+    ///     .expect("blocking task panicked");
+    /// ```
     pub fn read_snapshot(&self) -> Vec<u8> {
-        const MAX_RETRIES: usize = 100;
-        const MAX_RETRY_DURATION_MS: u128 = 100; // 100ms timeout for crashed writer detection
+        const MAX_RETRIES: usize = 500;
+        // Configurable timeout via DAQ_RINGBUFFER_TIMEOUT_MS (default: 500ms)
+        // Increased from 100ms to handle high-throughput camera streaming
+        let timeout_ms: u128 = std::env::var("DAQ_RINGBUFFER_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(500);
 
         let start_time = Instant::now();
 
         for retry in 0..MAX_RETRIES {
             // Check for timeout (handles crashed writer scenario where epoch stays odd)
-            if start_time.elapsed().as_millis() > MAX_RETRY_DURATION_MS {
-                tracing::error!(
-                    "read_snapshot timed out after {}ms - possible crashed writer (epoch stuck odd)",
-                    MAX_RETRY_DURATION_MS
+            if start_time.elapsed().as_millis() > timeout_ms {
+                tracing::warn!(
+                    "read_snapshot timed out after {}ms - high write contention or crashed writer (epoch stuck odd). \
+                     Set DAQ_RINGBUFFER_TIMEOUT_MS to increase timeout for high-throughput streaming.",
+                    timeout_ms
                 );
                 return Vec::new();
             }
@@ -558,15 +651,10 @@ impl RingBuffer {
                 // Load epoch BEFORE read (must be even = no write in progress)
                 let epoch_before = (*self.header).write_epoch.load(Ordering::Acquire);
 
-                // If epoch is odd, a write is in progress - brief spin then retry
+                // If epoch is odd, a write is in progress - backoff and retry
+                // bd-jnfu.8: Use progressive backoff to reduce CPU during contention
                 if epoch_before % 2 != 0 {
-                    // Exponential backoff for odd epoch (write in progress)
-                    if retry < 10 {
-                        std::hint::spin_loop();
-                    } else {
-                        // After 10 fast retries, yield to OS scheduler
-                        std::thread::yield_now();
-                    }
+                    Self::backoff_sleep(retry);
                     continue;
                 }
 
@@ -628,11 +716,8 @@ impl RingBuffer {
                 }
 
                 // Epoch changed - a write occurred during our read, retry with backoff
-                if retry < 10 {
-                    std::hint::spin_loop();
-                } else {
-                    std::thread::yield_now();
-                }
+                // bd-jnfu.8: Use progressive backoff to reduce CPU during contention
+                Self::backoff_sleep(retry);
             }
         }
 
@@ -642,6 +727,30 @@ impl RingBuffer {
             MAX_RETRIES
         );
         Vec::new()
+    }
+
+    /// Progressive backoff sleep to reduce CPU usage during contention (bd-jnfu.8)
+    ///
+    /// Uses a tiered approach:
+    /// - Retries 0-9: spin_loop() for sub-microsecond latency (fast path)
+    /// - Retries 10-19: sleep 10µs (short waits for transient contention)
+    /// - Retries 20-49: sleep 100µs (medium waits)
+    /// - Retries 50-99: sleep 1ms (longer waits for sustained contention)
+    /// - Retries 100+: sleep 10ms (yield heavily for pathological cases)
+    ///
+    /// This significantly reduces CPU usage compared to pure spin-waiting
+    /// while maintaining low latency for the common case.
+    #[inline]
+    fn backoff_sleep(retry: usize) {
+        use std::time::Duration;
+
+        match retry {
+            0..=9 => std::hint::spin_loop(),
+            10..=19 => std::thread::sleep(Duration::from_micros(10)),
+            20..=49 => std::thread::sleep(Duration::from_micros(100)),
+            50..=99 => std::thread::sleep(Duration::from_millis(1)),
+            _ => std::thread::sleep(Duration::from_millis(10)),
+        }
     }
 
     /// Get the memory address of the data region for external mapping (Python/C++).
@@ -1031,6 +1140,9 @@ mod tests {
 
     #[test]
     fn test_read_snapshot_times_out_on_stuck_epoch() {
+        // Use a short timeout for testing (100ms instead of default 500ms)
+        std::env::set_var("DAQ_RINGBUFFER_TIMEOUT_MS", "100");
+
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("stuck_epoch.buf");
 
@@ -1042,6 +1154,9 @@ mod tests {
         let start = Instant::now();
         let snapshot = rb.read_snapshot();
         let elapsed = start.elapsed();
+
+        // Restore default timeout
+        std::env::remove_var("DAQ_RINGBUFFER_TIMEOUT_MS");
 
         assert!(snapshot.is_empty());
         assert!(elapsed < Duration::from_millis(200));
@@ -1244,5 +1359,90 @@ mod tests {
         let result = rb.unregister_tap("nonexistent");
         assert!(result.is_ok());
         assert!(!result.unwrap());
+    }
+
+    /// Test that open() rejects files that are too small to contain a header.
+    /// Regression test for bd-jnfu.1 (ring buffer safety audit).
+    #[test]
+    fn test_open_rejects_truncated_file() {
+        use std::fs::File;
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("truncated.buf");
+
+        // Create a file that's smaller than HEADER_SIZE (128 bytes)
+        let mut file = File::create(&path).unwrap();
+        file.write_all(&[0u8; 64]).unwrap(); // Only 64 bytes
+        drop(file);
+
+        // open() should fail with a descriptive error
+        let result = RingBuffer::open(&path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("too small") || err_msg.contains("minimum"),
+            "Error should mention file is too small: {}",
+            err_msg
+        );
+    }
+
+    /// Test that open() rejects files with invalid magic number.
+    /// Regression test for bd-jnfu.1 (ring buffer safety audit).
+    #[test]
+    fn test_open_rejects_invalid_magic() {
+        use std::fs::File;
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("bad_magic.buf");
+
+        // Create a file with enough bytes but wrong magic
+        let mut file = File::create(&path).unwrap();
+        let bad_data = vec![0xFFu8; 256]; // 256 bytes of 0xFF
+        file.write_all(&bad_data).unwrap();
+        drop(file);
+
+        // open() should fail with magic number error
+        let result = RingBuffer::open(&path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("magic") || err_msg.contains("Invalid"),
+            "Error should mention invalid magic: {}",
+            err_msg
+        );
+    }
+
+    /// Test that open() rejects files where size doesn't match header capacity.
+    /// Regression test for bd-jnfu.1 (ring buffer safety audit).
+    #[test]
+    fn test_open_rejects_size_mismatch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("size_mismatch.buf");
+
+        // Create a valid ring buffer
+        {
+            let _rb = RingBuffer::create(&path, 1).unwrap(); // 1 MB
+        }
+
+        // Truncate the file to simulate corruption
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap();
+        // Truncate to header + 512KB (should be header + 1MB)
+        file.set_len((HEADER_SIZE + 512 * 1024) as u64).unwrap();
+        drop(file);
+
+        // open() should fail with size mismatch error
+        let result = RingBuffer::open(&path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("mismatch") || err_msg.contains("truncated"),
+            "Error should mention size mismatch: {}",
+            err_msg
+        );
     }
 }

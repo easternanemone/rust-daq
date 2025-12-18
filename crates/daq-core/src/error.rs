@@ -59,17 +59,17 @@ pub type AppResult<T> = std::result::Result<T, DaqError>;
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use rust_daq::error::{DaqError, AppResult};
+/// ```rust,ignore
+/// use daq_core::error::{DaqError, AppResult};
 ///
 /// fn configure_instrument() -> AppResult<()> {
 ///     // Config parsing errors automatically convert to DaqError::Config
 ///     let settings = load_config()?;
-///     
+///
 ///     // Instrument errors wrap device-specific errors
 ///     connect_instrument(&settings)
 ///         .map_err(|e| DaqError::Instrument(e.to_string()))?;
-///     
+///
 ///     Ok(())
 /// }
 /// ```
@@ -106,13 +106,16 @@ pub enum DaqError {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// # use rust_daq::error::DaqError;
-    /// // Config parsed but invalid
-    /// if exposure_seconds < 0.0 {
-    ///     return Err(DaqError::Configuration(
-    ///         "exposure_seconds must be positive".into()
-    ///     ));
+    /// ```rust
+    /// use daq_core::error::DaqError;
+    ///
+    /// fn validate_exposure(exposure_seconds: f64) -> Result<(), DaqError> {
+    ///     if exposure_seconds < 0.0 {
+    ///         return Err(DaqError::Configuration(
+    ///             "exposure_seconds must be positive".into()
+    ///         ));
+    ///     }
+    ///     Ok(())
     /// }
     /// ```
     #[error("Configuration validation error: {0}")]
@@ -167,13 +170,18 @@ pub enum DaqError {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// # use rust_daq::error::DaqError;
-    /// // Camera reported internal error
-    /// if status_code == CAMERA_FAULT {
-    ///     return Err(DaqError::Instrument(
-    ///         format!("Camera fault code: {:#x}", status_code)
-    ///     ));
+    /// ```rust
+    /// use daq_core::error::DaqError;
+    ///
+    /// const CAMERA_FAULT: u32 = 0x01;
+    ///
+    /// fn check_camera_status(status_code: u32) -> Result<(), DaqError> {
+    ///     if status_code == CAMERA_FAULT {
+    ///         return Err(DaqError::Instrument(
+    ///             format!("Camera fault code: {:#x}", status_code)
+    ///         ));
+    ///     }
+    ///     Ok(())
     /// }
     /// ```
     #[error("Instrument error: {0}")]
@@ -245,12 +253,15 @@ pub enum DaqError {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// # use rust_daq::error::DaqError;
-    /// // Power meter doesn't support frame acquisition
-    /// return Err(DaqError::ModuleOperationNotSupported(
-    ///     "Power meters do not produce frames".into()
-    /// ));
+    /// ```rust
+    /// use daq_core::error::DaqError;
+    ///
+    /// fn acquire_frame_from_power_meter() -> Result<(), DaqError> {
+    ///     // Power meter doesn't support frame acquisition
+    ///     Err(DaqError::ModuleOperationNotSupported(
+    ///         "Power meters do not produce frames".into()
+    ///     ))
+    /// }
     /// ```
     #[error("Module does not support operation: {0}")]
     ModuleOperationNotSupported(String),

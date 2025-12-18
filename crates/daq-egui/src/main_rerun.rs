@@ -5,7 +5,9 @@
 
 #[cfg(feature = "rerun_viewer")]
 mod rerun_app {
-    use rerun::external::{eframe, egui, re_viewer, re_log, re_crash_handler, re_memory, re_grpc_server, tokio};
+    use rerun::external::{eframe, egui, re_viewer, re_log, re_crash_handler, re_memory, tokio};
+    use rerun::external::re_grpc_client;
+    use rerun::external::re_uri::ProxyUri;
     use daq_egui::client::DaqClient;
 
     // Use Rerun's memory tracking allocator
@@ -16,6 +18,7 @@ mod rerun_app {
     /// DAQ Control state shared with the viewer
     pub struct DaqControlState {
         pub daemon_address: String,
+        pub rerun_url: String,
         pub connection_status: String,
         pub devices: Vec<DeviceInfo>,
         pub selected_device: Option<usize>,
@@ -31,6 +34,7 @@ mod rerun_app {
         pub driver: String,
         pub is_movable: bool,
         pub is_readable: bool,
+        pub is_frame_producer: bool,
         pub position: Option<f64>,
         pub reading: Option<f64>,
     }
@@ -38,7 +42,10 @@ mod rerun_app {
     impl Default for DaqControlState {
         fn default() -> Self {
             Self {
-                daemon_address: "http://127.0.0.1:50051".to_string(),
+                daemon_address: std::env::var("DAQ_DAEMON_URL")
+                    .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
+                rerun_url: std::env::var("RERUN_URL")
+                    .unwrap_or_else(|_| "rerun+http://127.0.0.1:9876/proxy".to_string()),
                 connection_status: "Disconnected".to_string(),
                 devices: Vec::new(),
                 selected_device: None,
@@ -59,7 +66,7 @@ mod rerun_app {
 
     impl DaqRerunApp {
         pub fn new(
-            cc: &eframe::CreationContext<'_>,
+            _cc: &eframe::CreationContext<'_>,
             rerun_app: re_viewer::App,
         ) -> Self {
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -116,6 +123,7 @@ mod rerun_app {
                         driver: d.driver_type,
                         is_movable: d.is_movable,
                         is_readable: d.is_readable,
+                        is_frame_producer: d.is_frame_producer,
                         position: state.as_ref().and_then(|s| s.position),
                         reading: state.as_ref().and_then(|s| s.last_reading),
                     });
@@ -166,10 +174,10 @@ mod rerun_app {
 
         fn read_device(&mut self, device_id: &str) {
             let Some(client) = &mut self.client else { return };
-            
+
             let mut client = client.clone();
             let device_id = device_id.to_string();
-            
+
             match self.runtime.block_on(client.read_value(&device_id)) {
                 Ok(response) if response.success => {
                     self.daq_state.status_message = Some(format!("{}: {:.4} {}", device_id, response.value, response.units));
@@ -186,23 +194,69 @@ mod rerun_app {
             }
         }
 
+        fn start_stream(&mut self, device_id: &str, frame_count: Option<u32>) {
+            let Some(client) = &mut self.client else { return };
+
+            let mut client = client.clone();
+            let device_id = device_id.to_string();
+
+            match self.runtime.block_on(client.start_stream(&device_id, frame_count)) {
+                Ok(response) if response.success => {
+                    let msg = if let Some(n) = frame_count {
+                        format!("Started streaming {} frames from {}", n, device_id)
+                    } else {
+                        format!("Started streaming from {}", device_id)
+                    };
+                    self.daq_state.status_message = Some(msg);
+                    self.daq_state.error_message = None;
+                }
+                Ok(response) => {
+                    self.daq_state.error_message = Some(response.error_message);
+                }
+                Err(e) => {
+                    self.daq_state.error_message = Some(e.to_string());
+                }
+            }
+        }
+
+        fn stop_stream(&mut self, device_id: &str) {
+            let Some(client) = &mut self.client else { return };
+
+            let mut client = client.clone();
+            let device_id = device_id.to_string();
+
+            match self.runtime.block_on(client.stop_stream(&device_id)) {
+                Ok(response) if response.success => {
+                    self.daq_state.status_message = Some(format!("Stopped streaming from {} ({} frames captured)", device_id, response.frames_captured));
+                    self.daq_state.error_message = None;
+                }
+                Ok(_response) => {
+                    self.daq_state.error_message = Some("Failed to stop stream".to_string());
+                }
+                Err(e) => {
+                    self.daq_state.error_message = Some(e.to_string());
+                }
+            }
+        }
+
         /// Render DAQ control panel
         fn daq_control_panel(&mut self, ui: &mut egui::Ui) {
             ui.heading("DAQ Control");
-            
+
             // Connection
             ui.group(|ui| {
+                ui.label("Control Plane (gRPC):");
                 ui.horizontal(|ui| {
                     ui.label("Daemon:");
                     ui.text_edit_singleline(&mut self.daq_state.daemon_address);
                 });
-                
+
                 ui.horizontal(|ui| {
                     let connected = self.client.is_some();
                     let status_color = if connected { egui::Color32::GREEN } else { egui::Color32::GRAY };
                     ui.colored_label(status_color, "●");
                     ui.label(&self.daq_state.connection_status);
-                    
+
                     if connected {
                         if ui.button("Disconnect").clicked() {
                             self.disconnect();
@@ -213,6 +267,14 @@ mod rerun_app {
                         }
                     }
                 });
+
+                ui.separator();
+                ui.label("Data Plane (Rerun):");
+                ui.horizontal(|ui| {
+                    ui.label("Rerun URL:");
+                    ui.text_edit_singleline(&mut self.daq_state.rerun_url);
+                });
+                ui.small("Note: Rerun connection established at startup. Restart to change.");
             });
 
             // Messages
@@ -272,11 +334,28 @@ mod rerun_app {
                                             self.read_device(&device.id);
                                         }
                                     }
+                                    if device.is_frame_producer {
+                                        if ui.small_button("▶ Stream 10").clicked() {
+                                            self.start_stream(&device.id, Some(10));
+                                        }
+                                        if ui.small_button("▶ Stream").clicked() {
+                                            self.start_stream(&device.id, None);
+                                        }
+                                        if ui.small_button("⏹ Stop").clicked() {
+                                            self.stop_stream(&device.id);
+                                        }
+                                    }
                                 });
                             });
                         }
                     });
             }
+
+            // Data visualization info
+            ui.separator();
+            ui.heading("Visualization");
+            ui.small("Camera frames and measurements logged by the daemon");
+            ui.small("appear automatically in the Rerun viewer panel.");
         }
     }
 
@@ -302,25 +381,29 @@ mod rerun_app {
     }
 
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+        // Create tokio runtime BEFORE eframe - required for re_grpc_client and re_viewer
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime");
+
+        // Enter the runtime context so tokio::spawn works from eframe callbacks
+        let _guard = runtime.enter();
+
         let main_thread_token = re_viewer::MainThreadToken::i_promise_i_am_on_the_main_thread();
 
         re_log::setup_logging();
         re_crash_handler::install_crash_handlers(re_viewer::build_info());
 
-        // Create tokio runtime for the gRPC server
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        
-        // Listen for gRPC connections from logging SDKs (including our daemon)
-        // Must be called from within tokio runtime context
-        let (data_rx, _table_rx) = runtime.block_on(async {
-            re_grpc_server::spawn_with_recv(
-                "0.0.0.0:9876".parse().unwrap(),
-                Default::default(),
-                re_grpc_server::shutdown::never(),
-            )
-        });
+        // Parse the daemon's Rerun server URI from env var or use default
+        let rerun_url = std::env::var("RERUN_URL")
+            .unwrap_or_else(|_| "rerun+http://127.0.0.1:9876/proxy".to_string());
+
+        eprintln!("Connecting to Rerun server at: {}", rerun_url);
+
+        // Parse URI - stream creation happens inside eframe callback
+        let uri: ProxyUri = rerun_url.parse()
+            .expect("Invalid Rerun proxy URI");
 
         let mut native_options = re_viewer::native::eframe_options(None);
         native_options.viewport = native_options
@@ -330,9 +413,6 @@ mod rerun_app {
 
         let startup_options = re_viewer::StartupOptions::default();
         let app_env = re_viewer::AppEnvironment::Custom("DAQ Control Panel".to_owned());
-
-        // Keep runtime alive
-        let _runtime_guard = runtime.enter();
 
         eframe::run_native(
             "DAQ Control Panel + Rerun",
@@ -349,8 +429,12 @@ mod rerun_app {
                     None,
                     re_viewer::AsyncRuntimeHandle::from_current_tokio_runtime_or_wasmbindgen()?,
                 );
+
+                // Connect to daemon's Rerun gRPC server
+                // Returns LogReceiver for streaming data from remote daemon
+                let data_rx = re_grpc_client::stream(uri, None);
                 rerun_app.add_log_receiver(data_rx);
-                
+
                 Ok(Box::new(DaqRerunApp::new(cc, rerun_app)))
             }),
         )?;

@@ -209,18 +209,20 @@ impl HDF5Writer {
             return Ok(0);
         }
 
-        // Read snapshot from ring buffer (fast, non-blocking)
-        let snapshot = self.ring_buffer.read_snapshot();
-        if snapshot.is_empty() {
-            return Ok(0);
-        }
-
         // Clone data needed for blocking task
         let output_path = self.output_path.clone();
         let batch_id = self.batch_counter.fetch_add(1, Ordering::SeqCst);
+        let ring_buffer = self.ring_buffer.clone();
 
-        // Wrap all HDF5 operations in spawn_blocking to prevent executor stalls
+        // Wrap ring buffer read AND HDF5 operations in spawn_blocking to prevent
+        // executor stalls. read_snapshot() can block with progressive backoff
+        // during high write contention (bd-jnfu.14).
         let bytes_processed = tokio::task::spawn_blocking(move || -> Result<usize> {
+            // Read snapshot from ring buffer (can block during contention)
+            let snapshot = ring_buffer.read_snapshot();
+            if snapshot.is_empty() {
+                return Ok(0);
+            }
             use hdf5::File;
             use prost::Message;
 
@@ -426,17 +428,20 @@ impl HDF5Writer {
             return Ok(0);
         }
 
-        let snapshot = self.ring_buffer.read_snapshot();
-        if snapshot.is_empty() {
-            return Ok(0);
-        }
-
         // Clone data for blocking task
         let fallback_path = self.output_path.with_extension("bin");
-        let snapshot_len = snapshot.len();
+        let ring_buffer = self.ring_buffer.clone();
 
-        // Wrap file I/O in spawn_blocking
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        // Wrap ring buffer read AND file I/O in spawn_blocking to prevent
+        // executor stalls. read_snapshot() can block with progressive backoff
+        // during high write contention (bd-jnfu.14).
+        let snapshot_len = tokio::task::spawn_blocking(move || -> Result<usize> {
+            // Read snapshot from ring buffer (can block during contention)
+            let snapshot = ring_buffer.read_snapshot();
+            if snapshot.is_empty() {
+                return Ok(0);
+            }
+            let snapshot_len = snapshot.len();
             use std::fs::OpenOptions;
             use std::io::Write;
 
@@ -452,9 +457,14 @@ impl HDF5Writer {
             file.write_all(&len.to_le_bytes())?;
             file.write_all(&snapshot)?;
 
-            Ok(())
+            Ok(snapshot_len)
         })
         .await??;
+
+        // Early return if no data was written
+        if snapshot_len == 0 {
+            return Ok(0);
+        }
 
         // Advance tail to prevent buffer overflow
         self.ring_buffer.advance_tail(snapshot_len as u64);

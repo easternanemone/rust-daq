@@ -395,10 +395,12 @@ impl RunEngine {
 // =============================================================================
 
 /// Get current time in nanoseconds since epoch.
+///
+/// Returns 0 if system clock is before Unix epoch (bd-21yj).
 fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_nanos() as u64
 }
 

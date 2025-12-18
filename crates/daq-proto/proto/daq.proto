@@ -196,7 +196,6 @@ service HardwareService {
   // Frame Streaming (for FrameProducer devices)
   rpc StartStream(StartStreamRequest) returns (StartStreamResponse);
   rpc StopStream(StopStreamRequest) returns (StopStreamResponse);
-  rpc StreamFrames(StreamFramesRequest) returns (stream FrameData);
 
   // Device Lifecycle (Stage/Unstage for safe setup/teardown)
   rpc StageDevice(StageDeviceRequest) returns (StageDeviceResponse);
@@ -546,27 +545,6 @@ message StopStreamResponse {
   uint64 frames_captured = 2;
 }
 
-message StreamFramesRequest {
-  string device_id = 1;
-  optional bool include_pixel_data = 2;  // If false, only metadata
-}
-
-message FrameData {
-  string device_id = 1;
-  uint32 frame_number = 2;
-  uint32 width = 3;
-  uint32 height = 4;
-  uint64 timestamp_ns = 5;
-
-  // Pixel data (optional, can be large)
-  // NOTE: For large frames, prefer Arrow Flight (see FlightTicket)
-  bytes pixel_data = 10;
-  string pixel_format = 11;  // "u16_le", "u8", etc.
-
-  // For bulk data, use Arrow Flight instead of embedding bytes
-  optional FlightTicket flight_ticket = 20;
-}
-
 // Arrow Flight ticket for zero-copy bulk data transfer
 message FlightTicket {
   string endpoint = 1;  // e.g., "localhost:50052"
@@ -603,13 +581,13 @@ message UnstageDeviceResponse {
 message DeviceCommandRequest {
   string device_id = 1;
   string command = 2;           // Device-specific command name
-  map<string, string> args = 3; // Command arguments as strings
+  string args = 3;              // Command arguments as JSON string
 }
 
 message DeviceCommandResponse {
   bool success = 1;
   string error_message = 2;
-  map<string, string> results = 3;
+  string results = 3;           // Command results as JSON string
 }
 
 // --------------------------------------------------------------------------

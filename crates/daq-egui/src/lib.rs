@@ -8,3 +8,5 @@ pub mod client;
 pub mod app;
 #[cfg(feature = "standalone")]
 pub mod panels;
+#[cfg(feature = "standalone")]
+pub mod widgets;

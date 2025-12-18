@@ -1,14 +1,36 @@
 //! PVCAM Connection Management
 //!
 //! Handles SDK initialization, camera opening/closing, and resource cleanup.
+//!
+//! ## SDK Reference Counting (bd-9ou9)
+//!
+//! The PVCAM SDK uses global state: `pl_pvcam_init()` and `pl_pvcam_uninit()` affect
+//! the entire process. To support multiple `PvcamDriver` instances, we use a global
+//! reference counter. The SDK is only uninitialized when the last connection closes.
 
 #[cfg(feature = "pvcam_hardware")]
 use anyhow::{anyhow, Context, Result};
 #[cfg(feature = "pvcam_hardware")]
 use std::ffi::CString;
+#[cfg(feature = "pvcam_hardware")]
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "pvcam_hardware")]
+use std::sync::Mutex;
 
 #[cfg(feature = "pvcam_hardware")]
 use pvcam_sys::*;
+
+/// Global reference counter for PVCAM SDK initialization (bd-9ou9).
+///
+/// The SDK uses global state, so we track how many connections exist.
+/// - When count goes 0 → 1: call pl_pvcam_init()
+/// - When count goes 1 → 0: call pl_pvcam_uninit()
+#[cfg(feature = "pvcam_hardware")]
+static SDK_REF_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Mutex to ensure atomic increment + init and decrement + uninit.
+#[cfg(feature = "pvcam_hardware")]
+static SDK_INIT_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Helper to get PVCAM error string
 #[cfg(feature = "pvcam_hardware")]
@@ -48,18 +70,43 @@ impl PvcamConnection {
     /// Initialize the PVCAM SDK.
     ///
     /// This must be called before opening a camera.
+    ///
+    /// Uses global reference counting (bd-9ou9) to ensure the SDK is only
+    /// initialized once, even with multiple PvcamDriver instances.
     #[cfg(feature = "pvcam_hardware")]
     pub fn initialize(&mut self) -> Result<()> {
         if self.sdk_initialized {
             return Ok(());
         }
 
-        unsafe {
-            // SAFETY: Global PVCAM init; must be called before other SDK functions and is idempotent here.
-            if pl_pvcam_init() == 0 {
-                return Err(anyhow!("Failed to initialize PVCAM SDK: {}", get_pvcam_error()));
+        // Lock to ensure atomic check-and-init.
+        // Recover from poison since we need to manage ref count consistently (bd-vw80).
+        let _guard = match SDK_INIT_MUTEX.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                tracing::warn!("SDK init mutex poisoned during initialize - recovering (bd-vw80)");
+                poisoned.into_inner()
             }
+        };
+
+        // Increment ref count first, then init if we're the first
+        let prev_count = SDK_REF_COUNT.fetch_add(1, Ordering::SeqCst);
+
+        if prev_count == 0 {
+            // We're the first connection - initialize the SDK
+            unsafe {
+                // SAFETY: Global PVCAM init; protected by SDK_INIT_MUTEX.
+                if pl_pvcam_init() == 0 {
+                    // Rollback ref count on failure
+                    SDK_REF_COUNT.fetch_sub(1, Ordering::SeqCst);
+                    return Err(anyhow!("Failed to initialize PVCAM SDK: {}", get_pvcam_error()));
+                }
+            }
+            tracing::info!("PVCAM SDK initialized (ref count: 1)");
+        } else {
+            tracing::debug!("PVCAM SDK already initialized (ref count: {})", prev_count + 1);
         }
+
         self.sdk_initialized = true;
         Ok(())
     }
@@ -124,15 +171,46 @@ impl PvcamConnection {
     }
 
     /// Uninitialize the SDK.
+    ///
+    /// Uses global reference counting (bd-9ou9) to ensure the SDK is only
+    /// uninitialized when the last connection closes.
+    ///
+    /// Recovers from mutex poisoning to ensure ref count is always decremented (bd-vw80).
     #[cfg(feature = "pvcam_hardware")]
     pub fn uninitialize(&mut self) {
         self.close(); // Ensure camera closed first
-        if self.sdk_initialized {
+
+        if !self.sdk_initialized {
+            return;
+        }
+        self.sdk_initialized = false;
+
+        // Lock to ensure atomic check-and-uninit.
+        // Use into_inner() to recover from poison - we MUST decrement ref count (bd-vw80).
+        let _guard = match SDK_INIT_MUTEX.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                tracing::warn!("SDK init mutex poisoned during uninitialize - recovering (bd-vw80)");
+                poisoned.into_inner()
+            }
+        };
+
+        // Decrement ref count, then uninit if we're the last
+        let prev_count = SDK_REF_COUNT.fetch_sub(1, Ordering::SeqCst);
+
+        if prev_count == 1 {
+            // We were the last connection - uninitialize the SDK
             unsafe {
-                // SAFETY: Balanced with pl_pvcam_init; only called once per process here.
+                // SAFETY: Global PVCAM uninit; protected by SDK_INIT_MUTEX and ref count.
                 pl_pvcam_uninit();
             }
-            self.sdk_initialized = false;
+            tracing::info!("PVCAM SDK uninitialized (last connection closed)");
+        } else if prev_count == 0 {
+            // This shouldn't happen - we decremented below zero
+            tracing::error!("PVCAM SDK ref count underflow - this indicates a bug");
+            SDK_REF_COUNT.store(0, Ordering::SeqCst);
+        } else {
+            tracing::debug!("PVCAM SDK still in use (ref count: {})", prev_count - 1);
         }
     }
 

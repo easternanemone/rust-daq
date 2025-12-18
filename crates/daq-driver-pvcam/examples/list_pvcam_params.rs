@@ -2,13 +2,11 @@
 //!
 //! Run with: cargo run --features "pvcam_hardware" --example list_pvcam_params
 
-use anyhow::Result;
-
 #[cfg(feature = "pvcam_hardware")]
 use pvcam_sys::*;
 
 #[cfg(feature = "pvcam_hardware")]
-fn main() -> Result<()> {
+fn main() {
     use std::ffi::CStr;
 
     println!("=== PVCAM Parameter Discovery ===\n");
@@ -17,7 +15,7 @@ fn main() -> Result<()> {
     unsafe {
         if pl_pvcam_init() == 0 {
             eprintln!("Failed to init PVCAM");
-            return Ok(());
+            return;
         }
     }
 
@@ -27,7 +25,7 @@ fn main() -> Result<()> {
         if pl_cam_get_total(&mut total) == 0 || total == 0 {
             eprintln!("No cameras found");
             pl_pvcam_uninit();
-            return Ok(());
+            return;
         }
     }
     println!("Found {} camera(s)\n", total);
@@ -43,11 +41,17 @@ fn main() -> Result<()> {
     let mut hcam: i16 = 0;
     unsafe {
         if pl_cam_open(name_buf.as_mut_ptr(), &mut hcam, 0) == 0 {
-            eprintln!("Failed to open camera");
+            // Get error code
+            let err_code = pl_error_code();
+            let mut err_msg = [0i8; 256];
+            pl_error_message(err_code, err_msg.as_mut_ptr());
+            let err_str = CStr::from_ptr(err_msg.as_ptr()).to_string_lossy();
+            eprintln!("Failed to open camera: Error {} - {}", err_code, err_str);
             pl_pvcam_uninit();
-            return Ok(());
+            return;
         }
     }
+    println!("Camera opened successfully, handle: {}\n", hcam);
 
     // List of parameters to check
     let params: Vec<(&str, u32)> = vec![
@@ -161,10 +165,15 @@ fn main() -> Result<()> {
         // Triggering
         ("PARAM_LAST_MUXED_SIGNAL", PARAM_LAST_MUXED_SIGNAL),
         ("PARAM_TRIGTAB_SIGNAL", PARAM_TRIGTAB_SIGNAL),
-        ("PARAM_TRIGB_MAX_TIMING_MODE", PARAM_TRIGB_MAX_TIMING_MODE),
         ("PARAM_EXP_RES", PARAM_EXP_RES),
         ("PARAM_EXP_RES_INDEX", PARAM_EXP_RES_INDEX),
         ("PARAM_EXP_TIME", PARAM_EXP_TIME),
+
+        // Smart streaming
+        ("PARAM_SMART_STREAM_MODE_ENABLED", PARAM_SMART_STREAM_MODE_ENABLED),
+        ("PARAM_SMART_STREAM_MODE", PARAM_SMART_STREAM_MODE),
+        ("PARAM_SMART_STREAM_EXP_PARAMS", PARAM_SMART_STREAM_EXP_PARAMS),
+        ("PARAM_SMART_STREAM_DLY_PARAMS", PARAM_SMART_STREAM_DLY_PARAMS),
     ];
 
     println!("=== Available Parameters ===\n");
@@ -178,67 +187,25 @@ fn main() -> Result<()> {
             if pl_get_param(hcam, *param_id, ATTR_AVAIL as i16, &mut avail as *mut _ as *mut _) != 0 && avail != 0 {
                 available_count += 1;
 
-                // Try to get value based on type
-                let mut param_type: i16 = 0;
-                if pl_get_param(hcam, *param_id, ATTR_TYPE as i16, &mut param_type as *mut _ as *mut _) != 0 {
-                    match param_type as u32 {
-                        TYPE_INT8 | TYPE_INT16 | TYPE_INT32 => {
-                            let mut val: i32 = 0;
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
-                                println!("[AVAIL] {} = {} (int)", name, val);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        TYPE_UNS8 | TYPE_UNS16 | TYPE_UNS32 => {
-                            let mut val: u32 = 0;
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
-                                println!("[AVAIL] {} = {} (uint)", name, val);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        TYPE_FLT64 => {
-                            let mut val: f64 = 0.0;
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
-                                println!("[AVAIL] {} = {} (float)", name, val);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        TYPE_BOOLEAN => {
-                            let mut val: rs_bool = 0;
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
-                                println!("[AVAIL] {} = {} (bool)", name, val != 0);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        TYPE_CHAR_PTR => {
-                            let mut buf = [0i8; 256];
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, buf.as_mut_ptr() as *mut _) != 0 {
-                                let s = CStr::from_ptr(buf.as_ptr()).to_string_lossy();
-                                println!("[AVAIL] {} = \"{}\" (string)", name, s);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        TYPE_ENUM => {
-                            let mut val: i32 = 0;
-                            let mut count: u32 = 0;
-                            if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
-                                let _ = pl_get_param(hcam, *param_id, ATTR_COUNT as i16, &mut count as *mut _ as *mut _);
-                                println!("[AVAIL] {} = {} (enum, {} choices)", name, val, count);
-                            } else {
-                                println!("[AVAIL] {} (read error)", name);
-                            }
-                        }
-                        _ => {
-                            println!("[AVAIL] {} (type={})", name, param_type);
-                        }
+                // Try to get current value as i32
+                let mut val: i32 = 0;
+                if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, &mut val as *mut _ as *mut _) != 0 {
+                    // Check if it's an enum type
+                    let mut count: u32 = 0;
+                    if pl_get_param(hcam, *param_id, ATTR_COUNT as i16, &mut count as *mut _ as *mut _) != 0 && count > 1 {
+                        println!("[AVAIL] {} = {} (enum, {} choices)", name, val, count);
+                    } else {
+                        println!("[AVAIL] {} = {}", name, val);
                     }
                 } else {
-                    println!("[AVAIL] {} (type unknown)", name);
+                    // Try as string
+                    let mut buf = [0i8; 256];
+                    if pl_get_param(hcam, *param_id, ATTR_CURRENT as i16, buf.as_mut_ptr() as *mut _) != 0 {
+                        let s = CStr::from_ptr(buf.as_ptr()).to_string_lossy();
+                        println!("[AVAIL] {} = \"{}\"", name, s);
+                    } else {
+                        println!("[AVAIL] {} (read error)", name);
+                    }
                 }
             } else {
                 unavailable_count += 1;
@@ -257,8 +224,6 @@ fn main() -> Result<()> {
         pl_cam_close(hcam);
         pl_pvcam_uninit();
     }
-
-    Ok(())
 }
 
 #[cfg(not(feature = "pvcam_hardware"))]

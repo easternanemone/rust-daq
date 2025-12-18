@@ -585,7 +585,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_with_hardware_constructor() {
-        use crate::bindings::StageHandle;
+        use crate::bindings::{SoftLimits, StageHandle};
         use crate::traits::{ScriptEngine, ScriptValue};
         use daq_hardware::drivers::mock::MockStage;
 
@@ -598,6 +598,7 @@ mod tests {
                 ScriptValue::new(StageHandle {
                     driver: Arc::new(MockStage::new()),
                     data_tx: None,
+                    soft_limits: SoftLimits::unlimited(),
                 }),
             )
             .unwrap();

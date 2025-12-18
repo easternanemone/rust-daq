@@ -107,8 +107,8 @@ struct HealthMonitorState {
 /// in headless operation.
 ///
 /// # Example
-/// ```no_run
-/// use rust_daq::health::SystemHealthMonitor;
+/// ```ignore
+/// use daq_core::health::{SystemHealthMonitor, ErrorSeverity};
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -120,7 +120,7 @@ struct HealthMonitorState {
 ///     // Module reports error
 ///     monitor.report_error(
 ///         "camera",
-///         rust_daq::health::ErrorSeverity::Error,
+///         ErrorSeverity::Error,
 ///         "Frame timeout",
 ///         vec![("device_id", "cam0")],
 ///     ).await;

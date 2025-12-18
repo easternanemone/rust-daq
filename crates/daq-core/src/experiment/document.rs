@@ -33,11 +33,13 @@ pub fn new_uid() -> String {
     Uuid::new_v4().to_string()
 }
 
-/// Current timestamp in nanoseconds since Unix epoch
+/// Current timestamp in nanoseconds since Unix epoch.
+///
+/// Returns 0 if system clock is before Unix epoch (bd-21yj).
 pub fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_nanos() as u64
 }
 

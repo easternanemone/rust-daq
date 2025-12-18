@@ -73,8 +73,8 @@
 //! ```
 
 use daq_core::capabilities::{
-    EmissionControl, ExposureControl, FrameProducer, Movable, Parameterized, Readable, Settable,
-    ShutterControl, Stageable, Triggerable, WavelengthTunable,
+    Commandable, EmissionControl, ExposureControl, FrameProducer, Movable, Parameterized, Readable,
+    Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
 };
 use daq_core::data::Frame;
 use daq_core::pipeline::MeasurementSource;
@@ -261,6 +261,8 @@ pub enum Capability {
     WavelengthTunable,
     /// Has emission on/off control (lasers) - bd-pwjo
     EmissionControl,
+    /// Can execute structured JSON commands - bd-cdh5.4
+    Commandable,
     /// Can be staged/unstaged for acquisition sequences (Bluesky pattern) - bd-7aq6
     Stageable,
 }
@@ -483,6 +485,8 @@ struct RegisteredDevice {
     settable: Option<Arc<dyn Settable>>,
     /// Stageable implementation (if supported) - Bluesky-style lifecycle (bd-7aq6)
     stageable: Option<Arc<dyn Stageable>>,
+    /// Commandable implementation (if supported) - structured device commands
+    commandable: Option<Arc<dyn Commandable>>,
     /// Parameterized implementation (if supported) - parameter registry access
     ///
     /// Enables generic code to enumerate and subscribe to device parameters.
@@ -775,6 +779,11 @@ impl DeviceRegistry {
         self.devices.get(id).and_then(|d| d.settable.clone())
     }
 
+    /// Get a device as Commandable (if it supports this capability)
+    pub fn get_commandable(&self, id: &str) -> Option<Arc<dyn Commandable>> {
+        self.devices.get(id).and_then(|d| d.commandable.clone())
+    }
+
     /// Get all devices that support a specific capability
     pub fn devices_with_capability(&self, capability: Capability) -> Vec<DeviceId> {
         self.devices
@@ -808,6 +817,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -836,6 +846,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -863,6 +874,7 @@ impl DeviceRegistry {
                     exposure_control: Some(driver.clone()),
                     settable: None,
                     stageable: Some(driver.clone()),
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -900,6 +912,7 @@ impl DeviceRegistry {
                     exposure_control: Some(driver.clone()),
                     settable: None,
                     stageable: None,
+                    commandable: Some(driver.clone()),
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -951,6 +964,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -982,6 +996,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
@@ -1009,6 +1024,7 @@ impl DeviceRegistry {
                     exposure_control: None,
                     settable: None,
                     stageable: None,
+                    commandable: None,
                     parameterized: Some(driver.clone()),
                     #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: Some(driver.clone()),
@@ -1187,6 +1203,7 @@ impl DeviceRegistry {
             exposure_control: None,
             settable: None,
             stageable: None,
+            commandable: None,
             parameterized: Some(driver.clone()), // bd-plb6: Wire Parameterized for plugin devices
             #[cfg(feature = "driver-spectra-physics")]
             shutter_control: None,

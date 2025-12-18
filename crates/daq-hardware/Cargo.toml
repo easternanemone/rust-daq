@@ -60,8 +60,8 @@ full = ["driver-thorlabs", "driver-newport", "driver-spectra-physics", "instrume
 driver_pvcam = ["dep:daq-driver-pvcam"]
 # Enable PVCAM Arrow tap (passes through to driver feature)
 driver_pvcam_arrow_tap = ["driver_pvcam", "daq-driver-pvcam/arrow_tap"]
-# Alias for backward compatibility
-pvcam_hardware = ["driver_pvcam"]
+# Enable real PVCAM hardware (must propagate to driver crate)
+pvcam_hardware = ["driver_pvcam", "daq-driver-pvcam/pvcam_hardware"]
 instrument_photometrics = []
 simulator = []
 plugins_hot_reload = ["dep:notify"]

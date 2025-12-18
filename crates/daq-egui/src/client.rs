@@ -21,6 +21,11 @@ use daq_proto::daq::{
     // Scan types
     CreateScanRequest, StartScanRequest, StopScanRequest, PauseScanRequest,
     ResumeScanRequest, ScanConfig,
+    // Camera streaming
+    StartStreamRequest, StopStreamRequest,
+    // Parameter types (bd-cdh5.1)
+    ListParametersRequest, GetParameterRequest, SetParameterRequest,
+    DeviceCommandRequest,
 };
 
 /// gRPC client wrapper for the DAQ daemon
@@ -33,6 +38,9 @@ pub struct DaqClient {
     module: ModuleServiceClient<Channel>,
 }
 
+/// Maximum message size for gRPC (16 MB for high-resolution camera frames)
+const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+
 impl DaqClient {
     /// Connect to the DAQ daemon at the given address
     pub async fn connect(address: &str) -> Result<Self> {
@@ -42,7 +50,9 @@ impl DaqClient {
 
         Ok(Self {
             control: ControlServiceClient::new(channel.clone()),
-            hardware: HardwareServiceClient::new(channel.clone()),
+            // Hardware client needs larger message size for camera frame streaming
+            hardware: HardwareServiceClient::new(channel.clone())
+                .max_decoding_message_size(MAX_MESSAGE_SIZE),
             scan: ScanServiceClient::new(channel.clone()),
             storage: StorageServiceClient::new(channel.clone()),
             module: ModuleServiceClient::new(channel),
@@ -285,4 +295,69 @@ impl DaqClient {
         }).await?;
         Ok(response.into_inner())
     }
+
+    /// Start camera stream (frames logged to Rerun)
+    /// If frame_count is None, streams indefinitely until stopped.
+    pub async fn start_stream(&mut self, device_id: &str, frame_count: Option<u32>) -> Result<daq_proto::daq::StartStreamResponse> {
+        let response = self.hardware.start_stream(StartStreamRequest {
+            device_id: device_id.to_string(),
+            frame_count,
+        }).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Stop camera stream
+    pub async fn stop_stream(&mut self, device_id: &str) -> Result<daq_proto::daq::StopStreamResponse> {
+        let response = self.hardware.stop_stream(StopStreamRequest {
+            device_id: device_id.to_string(),
+        }).await?;
+        Ok(response.into_inner())
+    }
+
+    // =========================================================================
+    // Parameter Service (bd-cdh5.1)
+    // =========================================================================
+
+    /// List all parameters for a device
+    pub async fn list_parameters(&mut self, device_id: &str) -> Result<Vec<daq_proto::daq::ParameterDescriptor>> {
+        let response = self.hardware.list_parameters(ListParametersRequest {
+            device_id: device_id.to_string(),
+        }).await?;
+        Ok(response.into_inner().parameters)
+    }
+
+    /// Get a single parameter value
+    pub async fn get_parameter(&mut self, device_id: &str, name: &str) -> Result<daq_proto::daq::ParameterValue> {
+        let response = self.hardware.get_parameter(GetParameterRequest {
+            device_id: device_id.to_string(),
+            parameter_name: name.to_string(),
+        }).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Set a parameter value
+    pub async fn set_parameter(&mut self, device_id: &str, name: &str, value: &str) -> Result<daq_proto::daq::SetParameterResponse> {
+        let response = self.hardware.set_parameter(SetParameterRequest {
+            device_id: device_id.to_string(),
+            parameter_name: name.to_string(),
+            value: value.to_string(),
+        }).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Execute a specialized device command
+    pub async fn execute_device_command(
+        &mut self,
+        device_id: &str,
+        command: &str,
+        args: &str,
+    ) -> Result<daq_proto::daq::DeviceCommandResponse> {
+        let response = self.hardware.execute_device_command(DeviceCommandRequest {
+            device_id: device_id.to_string(),
+            command: command.to_string(),
+            args: args.to_string(),
+        }).await?;
+        Ok(response.into_inner())
+    }
+
 }

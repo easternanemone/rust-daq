@@ -6,6 +6,8 @@
 mod app;
 #[cfg(feature = "standalone")]
 mod panels;
+#[cfg(feature = "standalone")]
+mod widgets;
 
 // Re-export client from lib
 use daq_egui::client;

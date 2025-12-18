@@ -789,6 +789,31 @@ impl<T: Triggerable + FrameProducer> Camera for T {}
 /// }
 /// ```
 
+/// Capability: Generic Command Execution
+///
+/// Devices that can execute specialized commands with structured arguments.
+///
+/// # Contract
+/// - `execute_command()` takes a command name and JSON arguments.
+/// - Returns a JSON object with results.
+#[async_trait]
+pub trait Commandable: Send + Sync {
+    /// Execute a specialized command
+    ///
+    /// # Arguments
+    /// * `command` - Command identifier
+    /// * `args` - Command arguments as a JSON object
+    ///
+    /// # Returns
+    /// - Ok(JSON object) with results
+    /// - Err if command unknown or execution failed
+    async fn execute_command(
+        &self,
+        command: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -231,7 +231,8 @@ gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_extras"]
 modules = []
 
 # PVCAM SDK integration (requires PVCAM SDK installed)
-pvcam_hardware = ["daq-hardware/driver_pvcam"]
+# Must propagate pvcam_hardware to daq-hardware which propagates to daq-driver-pvcam
+pvcam_hardware = ["daq-hardware/pvcam_hardware"]
 hardware_tests = []
 
 # Camera model for tests (default: Prime BSI 2048x2048)
@@ -285,4 +286,8 @@ plugins_hot_reload = ["dep:notify"]
 
 [[bench]]
 name = "parameter_bench"
+harness = false
+
+[[bench]]
+name = "ring_buffer"
 harness = false

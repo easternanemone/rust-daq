@@ -117,6 +117,29 @@ impl FanSpeed {
             FanSpeed::Off => 3,
         }
     }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "High" => FanSpeed::High,
+            "Medium" => FanSpeed::Medium,
+            "Low" => FanSpeed::Low,
+            "Off" => FanSpeed::Off,
+            _ => FanSpeed::High,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FanSpeed::High => "High",
+            FanSpeed::Medium => "Medium",
+            FanSpeed::Low => "Low",
+            FanSpeed::Off => "Off",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["High".into(), "Medium".into(), "Low".into(), "Off".into()]
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +194,186 @@ pub struct CentroidsConfig {
 }
 
 // =============================================================================
+// Smart Streaming Types (bd-0zge)
+// =============================================================================
+
+/// A single entry in a hardware-timed Smart Streaming sequence (bd-0zge)
+///
+/// Smart Streaming allows loading a sequence of varying exposure times
+/// directly onto the camera FPGA, eliminating USB communication jitter
+/// between frames. Useful for HDR imaging and time-lapse with varying exposures.
+#[derive(Debug, Clone, Copy)]
+pub struct SmartStreamEntry {
+    /// Exposure time in milliseconds for this frame
+    pub exposure_ms: u32,
+}
+
+/// Smart Streaming mode options (bd-0zge)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmartStreamMode {
+    /// Exposures only - varying exposure times per frame
+    Exposures,
+    /// Interleaved mode (if supported)
+    Interleaved,
+}
+
+impl SmartStreamMode {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => SmartStreamMode::Exposures,
+            1 => SmartStreamMode::Interleaved,
+            _ => SmartStreamMode::Exposures,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            SmartStreamMode::Exposures => 0,
+            SmartStreamMode::Interleaved => 1,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "Exposures" => SmartStreamMode::Exposures,
+            "Interleaved" => SmartStreamMode::Interleaved,
+            _ => SmartStreamMode::Exposures,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SmartStreamMode::Exposures => "Exposures",
+            SmartStreamMode::Interleaved => "Interleaved",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["Exposures".into(), "Interleaved".into()]
+    }
+}
+
+// =============================================================================
+// Shutter Control Types (bd-e8ah)
+// =============================================================================
+
+/// Shutter open mode settings (bd-e8ah)
+///
+/// Controls the physical shutter behavior or TTL "Expose Out" signal
+/// for triggering external light sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutterMode {
+    /// Normal operation - shutter opens during exposure
+    Normal,
+    /// Shutter always open (for external shutter control)
+    Open,
+    /// Shutter always closed (for dark frames)
+    Closed,
+    /// No shutter installed/disabled
+    None,
+    /// Open before trigger (pre-open mode)
+    PreOpen,
+}
+
+impl ShutterMode {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => ShutterMode::Normal,
+            1 => ShutterMode::Open,
+            2 => ShutterMode::Closed,
+            3 => ShutterMode::None,
+            4 => ShutterMode::PreOpen,
+            _ => ShutterMode::Normal,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            ShutterMode::Normal => 0,
+            ShutterMode::Open => 1,
+            ShutterMode::Closed => 2,
+            ShutterMode::None => 3,
+            ShutterMode::PreOpen => 4,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "Normal" => ShutterMode::Normal,
+            "Open" => ShutterMode::Open,
+            "Closed" => ShutterMode::Closed,
+            "None" => ShutterMode::None,
+            "PreOpen" => ShutterMode::PreOpen,
+            _ => ShutterMode::Normal,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ShutterMode::Normal => "Normal",
+            ShutterMode::Open => "Open",
+            ShutterMode::Closed => "Closed",
+            ShutterMode::None => "None",
+            ShutterMode::PreOpen => "PreOpen",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["Normal".into(), "Open".into(), "Closed".into(), "None".into(), "PreOpen".into()]
+    }
+}
+
+/// Shutter status reported by camera (bd-e8ah)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutterStatus {
+    /// Shutter is closed
+    Closed,
+    /// Shutter is open
+    Open,
+    /// Shutter is opening
+    Opening,
+    /// Shutter is closing
+    Closing,
+    /// Shutter fault detected
+    Fault,
+    /// Status unknown
+    Unknown,
+}
+
+impl ShutterStatus {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => ShutterStatus::Closed,
+            1 => ShutterStatus::Open,
+            2 => ShutterStatus::Opening,
+            3 => ShutterStatus::Closing,
+            4 => ShutterStatus::Fault,
+            _ => ShutterStatus::Unknown,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ShutterStatus::Closed => "Closed",
+            ShutterStatus::Open => "Open",
+            ShutterStatus::Opening => "Opening",
+            ShutterStatus::Closing => "Closing",
+            ShutterStatus::Fault => "Fault",
+            ShutterStatus::Unknown => "Unknown",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["Closed".into(), "Open".into(), "Opening".into(), "Closing".into(), "Fault".into(), "Unknown".into()]
+    }
+}
+
+// =============================================================================
 // Triggering & Exposure Mode Types (bd-iai9)
 // =============================================================================
 
@@ -211,6 +414,31 @@ impl ExposureMode {
             ExposureMode::TriggerFirst => 3,
             ExposureMode::EdgeTrigger => 4,
         }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "Timed" => ExposureMode::Timed,
+            "Strobe" => ExposureMode::Strobe,
+            "Bulb" => ExposureMode::Bulb,
+            "TriggerFirst" => ExposureMode::TriggerFirst,
+            "EdgeTrigger" => ExposureMode::EdgeTrigger,
+            _ => ExposureMode::Timed,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExposureMode::Timed => "Timed",
+            ExposureMode::Strobe => "Strobe",
+            ExposureMode::Bulb => "Bulb",
+            ExposureMode::TriggerFirst => "TriggerFirst",
+            ExposureMode::EdgeTrigger => "EdgeTrigger",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["Timed".into(), "Strobe".into(), "Bulb".into(), "TriggerFirst".into(), "EdgeTrigger".into()]
     }
 }
 
@@ -256,6 +484,176 @@ impl ClearMode {
             ClearMode::PreExposurePostSequence => 5,
         }
     }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "Never" => ClearMode::Never,
+            "PreExposure" => ClearMode::PreExposure,
+            "PreSequence" => ClearMode::PreSequence,
+            "PostSequence" => ClearMode::PostSequence,
+            "PrePostSequence" => ClearMode::PrePostSequence,
+            "PreExposurePostSequence" => ClearMode::PreExposurePostSequence,
+            _ => ClearMode::PreExposure,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClearMode::Never => "Never",
+            ClearMode::PreExposure => "PreExposure",
+            ClearMode::PreSequence => "PreSequence",
+            ClearMode::PostSequence => "PostSequence",
+            ClearMode::PrePostSequence => "PrePostSequence",
+            ClearMode::PreExposurePostSequence => "PreExposurePostSequence",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec![
+            "Never".into(),
+            "PreExposure".into(),
+            "PreSequence".into(),
+            "PostSequence".into(),
+            "PrePostSequence".into(),
+            "PreExposurePostSequence".into(),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExposureResolution {
+    Milliseconds,
+    Microseconds,
+    Seconds,
+}
+
+impl ExposureResolution {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => ExposureResolution::Milliseconds,
+            1 => ExposureResolution::Microseconds,
+            2 => ExposureResolution::Seconds,
+            _ => ExposureResolution::Milliseconds,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            ExposureResolution::Milliseconds => 0,
+            ExposureResolution::Microseconds => 1,
+            ExposureResolution::Seconds => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameRotate {
+    None,
+    Rotate90CW,
+    Rotate180CW,
+    Rotate270CW,
+}
+
+impl FrameRotate {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => FrameRotate::None,
+            1 => FrameRotate::Rotate90CW,
+            2 => FrameRotate::Rotate180CW,
+            3 => FrameRotate::Rotate270CW,
+            _ => FrameRotate::None,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            FrameRotate::None => 0,
+            FrameRotate::Rotate90CW => 1,
+            FrameRotate::Rotate180CW => 2,
+            FrameRotate::Rotate270CW => 3,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "None" => FrameRotate::None,
+            "90 CW" => FrameRotate::Rotate90CW,
+            "180 CW" => FrameRotate::Rotate180CW,
+            "270 CW" => FrameRotate::Rotate270CW,
+            _ => FrameRotate::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FrameRotate::None => "None",
+            FrameRotate::Rotate90CW => "90 CW",
+            FrameRotate::Rotate180CW => "180 CW",
+            FrameRotate::Rotate270CW => "270 CW",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["None".into(), "90 CW".into(), "180 CW".into(), "270 CW".into()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameFlip {
+    None,
+    FlipX,
+    FlipY,
+    FlipXY,
+}
+
+impl FrameFlip {
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn from_pvcam(value: i32) -> Self {
+        match value {
+            0 => FrameFlip::None,
+            1 => FrameFlip::FlipX,
+            2 => FrameFlip::FlipY,
+            3 => FrameFlip::FlipXY,
+            _ => FrameFlip::None,
+        }
+    }
+
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn to_pvcam(self) -> i32 {
+        match self {
+            FrameFlip::None => 0,
+            FrameFlip::FlipX => 1,
+            FrameFlip::FlipY => 2,
+            FrameFlip::FlipXY => 3,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "None" => FrameFlip::None,
+            "X" => FrameFlip::FlipX,
+            "Y" => FrameFlip::FlipY,
+            "XY" => FrameFlip::FlipXY,
+            _ => FrameFlip::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FrameFlip::None => "None",
+            FrameFlip::FlipX => "X",
+            FrameFlip::FlipY => "Y",
+            FrameFlip::FlipXY => "XY",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec!["None".into(), "X".into(), "Y".into(), "XY".into()]
+    }
 }
 
 /// Expose out mode - controls the expose_out signal (bd-iai9)
@@ -295,6 +693,37 @@ impl ExposeOutMode {
             ExposeOutMode::RollingShutter => 3,
             ExposeOutMode::LineOutput => 4,
         }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "FirstRow" => ExposeOutMode::FirstRow,
+            "AllRows" => ExposeOutMode::AllRows,
+            "AnyRow" => ExposeOutMode::AnyRow,
+            "RollingShutter" => ExposeOutMode::RollingShutter,
+            "LineOutput" => ExposeOutMode::LineOutput,
+            _ => ExposeOutMode::FirstRow,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExposeOutMode::FirstRow => "FirstRow",
+            ExposeOutMode::AllRows => "AllRows",
+            ExposeOutMode::AnyRow => "AnyRow",
+            ExposeOutMode::RollingShutter => "RollingShutter",
+            ExposeOutMode::LineOutput => "LineOutput",
+        }
+    }
+
+    pub fn all_choices() -> Vec<String> {
+        vec![
+            "FirstRow".into(),
+            "AllRows".into(),
+            "AnyRow".into(),
+            "RollingShutter".into(),
+            "LineOutput".into(),
+        ]
     }
 }
 
@@ -770,6 +1199,344 @@ impl PvcamFeatures {
     }
 
     // =========================================================================
+    // Exposure Resolution (bd-i2k7.1)
+    // =========================================================================
+
+    /// Get current exposure resolution
+    pub fn get_exposure_resolution(_conn: &PvcamConnection) -> Result<ExposureResolution> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i32 on stack.
+                if pl_get_param(h, PARAM_EXP_RES, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get exposure resolution: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(ExposureResolution::from_pvcam(value));
+        }
+        Ok(ExposureResolution::Milliseconds)
+    }
+
+    /// Set exposure resolution
+    pub fn set_exposure_resolution(_conn: &PvcamConnection, _res: ExposureResolution) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _res.to_pvcam();
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_EXP_RES, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set exposure resolution: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get current exposure resolution index
+    pub fn get_exposure_resolution_index(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u16_param_impl(h, PARAM_EXP_RES_INDEX)
+                .map_err(|e| anyhow!("Failed to get exposure resolution index: {}", e));
+        }
+        Ok(0)
+    }
+
+    /// Set exposure resolution index
+    pub fn set_exposure_resolution_index(_conn: &PvcamConnection, _index: u16) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _index as i32;
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_EXP_RES_INDEX, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set exposure resolution index: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // ADC & Sensor Parameters (bd-i2k7.2, bd-i2k7.3)
+    // =========================================================================
+
+    /// Get current ADC offset (bd-i2k7.2)
+    pub fn get_adc_offset(_conn: &PvcamConnection) -> Result<i16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i16 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i16 on stack.
+                if pl_get_param(h, PARAM_ADC_OFFSET, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get ADC offset: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(value);
+        }
+        Ok(0)
+    }
+
+    /// Set ADC offset (bd-i2k7.2)
+    pub fn set_adc_offset(_conn: &PvcamConnection, _offset: i16) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            unsafe {
+                // SAFETY: h is valid handle; offset pointer valid for duration of call.
+                if pl_set_param(h, PARAM_ADC_OFFSET, &_offset as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set ADC offset: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get full well capacity (bd-i2k7.3)
+    pub fn get_full_well_capacity(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u32_param_impl(h, PARAM_FWELL_CAPACITY)
+                .map_err(|e| anyhow!("Failed to get full well capacity: {}", e));
+        }
+        Ok(60000)
+    }
+
+    // =========================================================================
+    // Optical Black / Scan Parameters (bd-03ny)
+    // =========================================================================
+
+    pub fn get_pre_mask(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u16_param_impl(h, PARAM_PREMASK)
+                .map_err(|e| anyhow!("Failed to get pre-mask: {}", e));
+        }
+        Ok(0)
+    }
+
+    pub fn get_post_mask(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u16_param_impl(h, PARAM_POSTMASK)
+                .map_err(|e| anyhow!("Failed to get post-mask: {}", e));
+        }
+        Ok(0)
+    }
+
+    pub fn get_pre_scan(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u16_param_impl(h, PARAM_PRESCAN)
+                .map_err(|e| anyhow!("Failed to get pre-scan: {}", e));
+        }
+        Ok(0)
+    }
+
+    pub fn get_post_scan(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u16_param_impl(h, PARAM_POSTSCAN)
+                .map_err(|e| anyhow!("Failed to get post-scan: {}", e));
+        }
+        Ok(0)
+    }
+
+    // =========================================================================
+    // Readout Timing (bd-ejx3)
+    // =========================================================================
+
+    /// Get full frame readout time in microseconds (bd-ejx3)
+    ///
+    /// Returns the time required to read out a full frame from the sensor.
+    /// Essential for calculating maximum frame rate and dead time.
+    /// Total Frame Time = Exposure + Readout (in overlapped mode).
+    pub fn get_readout_time_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: f64 = 0.0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable f64 on stack.
+                if pl_get_param(h, PARAM_READOUT_TIME, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get readout time: {}", get_pvcam_error()));
+                }
+            }
+            // PARAM_READOUT_TIME is in nanoseconds (f64)
+            return Ok((value / 1000.0) as u32);
+        }
+        // Mock mode - typical Prime BSI readout time for full frame (15ms)
+        Ok(15000)
+    }
+
+    /// Get clearing time in microseconds (bd-ejx3)
+    ///
+    /// Time required to clear the sensor before an exposure.
+    pub fn get_clearing_time_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i64 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i64 on stack.
+                if pl_get_param(h, PARAM_CLEARING_TIME, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get clearing time: {}", get_pvcam_error()));
+                }
+            }
+            // PARAM_CLEARING_TIME is in nanoseconds (i64)
+            return Ok((value / 1000) as u32);
+        }
+        Ok(1000)
+    }
+
+    /// Get pre-trigger delay in microseconds (bd-ejx3)
+    pub fn get_pre_trigger_delay_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i64 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i64 on stack.
+                if pl_get_param(h, PARAM_PRE_TRIGGER_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get pre-trigger delay: {}", get_pvcam_error()));
+                }
+            }
+            // PARAM_PRE_TRIGGER_DELAY is in nanoseconds (i64)
+            return Ok((value / 1000) as u32);
+        }
+        Ok(0)
+    }
+
+    /// Get post-trigger delay in microseconds (bd-ejx3)
+    pub fn get_post_trigger_delay_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i64 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i64 on stack.
+                if pl_get_param(h, PARAM_POST_TRIGGER_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get post-trigger delay: {}", get_pvcam_error()));
+                }
+            }
+            // PARAM_POST_TRIGGER_DELAY is in nanoseconds (i64)
+            return Ok((value / 1000) as u32);
+        }
+        Ok(0)
+    }
+
+    // =========================================================================
+    // Shutter Control (bd-e8ah)
+    // =========================================================================
+
+    /// Get current shutter status (bd-e8ah)
+    pub fn get_shutter_status(_conn: &PvcamConnection) -> Result<ShutterStatus> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i32 on stack.
+                if pl_get_param(h, PARAM_SHTR_STATUS, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get shutter status: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(ShutterStatus::from_pvcam(value));
+        }
+        Ok(ShutterStatus::Closed)
+    }
+
+    /// Get current shutter open mode (bd-e8ah)
+    pub fn get_shutter_mode(_conn: &PvcamConnection) -> Result<ShutterMode> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i32 on stack.
+                if pl_get_param(h, PARAM_SHTR_OPEN_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get shutter mode: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(ShutterMode::from_pvcam(value));
+        }
+        Ok(ShutterMode::Normal)
+    }
+
+    /// Set shutter open mode (bd-e8ah)
+    ///
+    /// Controls the physical shutter behavior or TTL output signal.
+    pub fn set_shutter_mode(_conn: &PvcamConnection, _mode: ShutterMode) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _mode.to_pvcam();
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_SHTR_OPEN_MODE, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set shutter mode: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get shutter open delay in microseconds (bd-e8ah)
+    pub fn get_shutter_open_delay_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: uns32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable uns32 on stack.
+                if pl_get_param(h, PARAM_SHTR_OPEN_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get shutter open delay: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(value);
+        }
+        Ok(0)
+    }
+
+    /// Get shutter close delay in microseconds (bd-e8ah)
+    pub fn get_shutter_close_delay_us(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: uns32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable uns32 on stack.
+                if pl_get_param(h, PARAM_SHTR_CLOSE_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get shutter close delay: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(value);
+        }
+        Ok(0)
+    }
+
+    /// Set shutter open delay in microseconds (bd-e8ah)
+    pub fn set_shutter_open_delay_us(_conn: &PvcamConnection, _delay_us: u32) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _delay_us as uns32;
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_SHTR_OPEN_DELAY, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set shutter open delay: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Set shutter close delay in microseconds (bd-e8ah)
+    pub fn set_shutter_close_delay_us(_conn: &PvcamConnection, _delay_us: u32) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _delay_us as uns32;
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_SHTR_CLOSE_DELAY, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set shutter close delay: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
     // Post-Processing Infrastructure (bd-we5p)
     // =========================================================================
 
@@ -943,6 +1710,19 @@ impl PvcamFeatures {
         Self::set_pp_param(_conn, _feature_index, 0, if _enabled { 1 } else { 0 })
     }
 
+    /// Reset all post-processing features to defaults
+    pub fn reset_pp_features(_conn: &PvcamConnection) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            unsafe {
+                if pl_pp_reset(h) == 0 {
+                    return Err(anyhow!("Failed to reset PP features: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     // =========================================================================
     // Hardware Binning Support (bd-fqi8)
     // =========================================================================
@@ -1099,6 +1879,210 @@ impl PvcamFeatures {
                 // Set threshold
                 if pl_set_param(h, PARAM_CENTROIDS_THRESHOLD, &_config.threshold as *const _ as *mut _) == 0 {
                     return Err(anyhow!("Failed to set centroids threshold: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // Smart Streaming (bd-0zge)
+    // =========================================================================
+
+    /// Check if Smart Streaming is enabled (bd-0zge)
+    pub fn is_smart_stream_enabled(_conn: &PvcamConnection) -> Result<bool> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: rs_bool = 0;
+            unsafe {
+                // SAFETY: h is valid; value is writable rs_bool on stack.
+                if pl_get_param(h, PARAM_SMART_STREAM_MODE_ENABLED, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Ok(false);
+                }
+            }
+            return Ok(value != 0);
+        }
+        Ok(false)
+    }
+
+    /// Enable or disable Smart Streaming (bd-0zge)
+    ///
+    /// When enabled, the camera will cycle through a pre-configured sequence
+    /// of exposure times without software intervention.
+    pub fn set_smart_stream_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value: rs_bool = if _enabled { 1 } else { 0 };
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_SMART_STREAM_MODE_ENABLED, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set smart stream enabled: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get current Smart Streaming mode (bd-0zge)
+    pub fn get_smart_stream_mode(_conn: &PvcamConnection) -> Result<SmartStreamMode> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i32 on stack.
+                if pl_get_param(h, PARAM_SMART_STREAM_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get smart stream mode: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(SmartStreamMode::from_pvcam(value));
+        }
+        Ok(SmartStreamMode::Exposures)
+    }
+
+    /// Set Smart Streaming mode (bd-0zge)
+    pub fn set_smart_stream_mode(_conn: &PvcamConnection, _mode: SmartStreamMode) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _mode.to_pvcam();
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_SMART_STREAM_MODE, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set smart stream mode: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Upload smart streaming exposure sequence to camera hardware
+    pub fn upload_smart_stream(_conn: &PvcamConnection, _exposures_ms: &[u32]) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let entries = _exposures_ms.len() as u16;
+            let mut ss_struct: *mut smart_stream_type = std::ptr::null_mut();
+            
+            unsafe {
+                if pl_create_smart_stream_struct(&mut ss_struct, entries) == 0 {
+                    return Err(anyhow!("Failed to create smart stream struct: {}", get_pvcam_error()));
+                }
+                
+                // Copy exposures into the struct
+                let params_slice = std::slice::from_raw_parts_mut((*ss_struct).params, entries as usize);
+                params_slice.copy_from_slice(_exposures_ms);
+                
+                // Upload to camera
+                if pl_set_param(h, PARAM_SMART_STREAM_EXP_PARAMS, ss_struct as *mut _) == 0 {
+                    let err = get_pvcam_error();
+                    pl_release_smart_stream_struct(&mut ss_struct);
+                    return Err(anyhow!("Failed to upload smart stream: {}", err));
+                }
+                
+                pl_release_smart_stream_struct(&mut ss_struct);
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // Host-Side Frame Processing (bd-46zc)
+    // =========================================================================
+
+    pub fn get_host_frame_rotate(_conn: &PvcamConnection) -> Result<FrameRotate> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                if pl_get_param(h, PARAM_HOST_FRAME_ROTATE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get host frame rotate: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(FrameRotate::from_pvcam(value));
+        }
+        Ok(FrameRotate::None)
+    }
+
+    pub fn set_host_frame_rotate(_conn: &PvcamConnection, _rotate: FrameRotate) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _rotate.to_pvcam();
+            unsafe {
+                if pl_set_param(h, PARAM_HOST_FRAME_ROTATE, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set host frame rotate: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_host_frame_flip(_conn: &PvcamConnection) -> Result<FrameFlip> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: i32 = 0;
+            unsafe {
+                if pl_get_param(h, PARAM_HOST_FRAME_FLIP, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get host frame flip: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(FrameFlip::from_pvcam(value));
+        }
+        Ok(FrameFlip::None)
+    }
+
+    pub fn set_host_frame_flip(_conn: &PvcamConnection, _flip: FrameFlip) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value = _flip.to_pvcam();
+            unsafe {
+                if pl_set_param(h, PARAM_HOST_FRAME_FLIP, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set host frame flip: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_host_frame_summing_enabled(_conn: &PvcamConnection) -> Result<bool> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let mut value: rs_bool = 0;
+            unsafe {
+                if pl_get_param(h, PARAM_HOST_FRAME_SUMMING_ENABLED, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Ok(false);
+                }
+            }
+            return Ok(value != 0);
+        }
+        Ok(false)
+    }
+
+    pub fn set_host_frame_summing_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            let value: rs_bool = if _enabled { 1 } else { 0 };
+            unsafe {
+                if pl_set_param(h, PARAM_HOST_FRAME_SUMMING_ENABLED, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set host frame summing enabled: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_host_frame_summing_count(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_u32_param_impl(h, PARAM_HOST_FRAME_SUMMING_COUNT)
+                .map_err(|e| anyhow!("Failed to get host frame summing count: {}", e));
+        }
+        Ok(1)
+    }
+
+    pub fn set_host_frame_summing_count(_conn: &PvcamConnection, _count: u32) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            unsafe {
+                if pl_set_param(h, PARAM_HOST_FRAME_SUMMING_COUNT, &_count as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set host frame summing count: {}", get_pvcam_error()));
                 }
             }
         }

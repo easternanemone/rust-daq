@@ -8,16 +8,52 @@
 //! - Type-safe observable values with automatic change notifications
 //! - Multi-subscriber support (UI, logging, other modules)
 //! - Optional validation constraints (min/max/custom)
-//! - Metadata (name, units, description)
+//! - **Introspectable constraints** for GUI rendering (Phase 2: bd-cdh5.2)
+//! - Metadata (name, units, description, dtype)
 //! - Serialization support for snapshots
 //! - Generic parameter access via ParameterBase trait
+//!
+//! # Constraint Types
+//!
+//! ## Basic Constraints (Validation Only)
+//!
+//! Use `with_range()` or `with_validator()` for validation without GUI introspection:
+//!
+//! ```rust,ignore
+//! let threshold = Observable::new("threshold", 100.0)
+//!     .with_range(0.0, 1000.0);  // Validates but not introspectable
+//! ```
+//!
+//! ## Introspectable Constraints (Validation + GUI)
+//!
+//! Use `with_range_introspectable()` or `with_choices_introspectable()` for
+//! constraints that are both validated AND exposed to the GUI via metadata:
+//!
+//! ```rust,ignore
+//! // Float with slider bounds (dtype="float", min_value, max_value set)
+//! let exposure = Observable::new("exposure_ms", 100.0)
+//!     .with_range_introspectable(1.0, 10000.0);
+//!
+//! // Integer with slider bounds (dtype="int", min_value, max_value set)
+//! let gain = Observable::new("gain", 1i64)
+//!     .with_range_introspectable(0, 100);
+//!
+//! // String with enum choices (dtype="enum", enum_values set)
+//! let mode = Observable::new("mode", "auto".to_string())
+//!     .with_choices_introspectable(vec!["auto".into(), "manual".into()]);
+//! ```
+//!
+//! The GUI reads these metadata fields to render appropriate widgets:
+//! - `dtype="float"` or `dtype="int"` with `min_value`/`max_value` → Slider
+//! - `dtype="enum"` with `enum_values` → ComboBox/Dropdown
+//! - No constraints → DragValue or TextEdit
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! let threshold = Observable::new("high_threshold", 100.0)
 //!     .with_units("mW")
-//!     .with_range(0.0, 1000.0);
+//!     .with_range_introspectable(0.0, 1000.0);  // GUI renders as slider
 //!
 //! // Subscribe to changes
 //! let mut rx = threshold.subscribe();
@@ -30,6 +66,21 @@
 //! // Update value (notifies all subscribers)
 //! threshold.set(150.0)?;
 //! ```
+//!
+//! # Design Notes (bd-cdh5.2)
+//!
+//! The introspectable constraint system was added in Phase 2 to support rich GUI
+//! widgets. Key design decisions:
+//!
+//! - **Separate methods**: `with_range()` vs `with_range_introspectable()` to
+//!   maintain backward compatibility and avoid metadata overhead when not needed.
+//! - **f64 storage**: Both f64 and i64 constraints are stored as f64 in metadata.
+//!   Large i64 values (outside ±2^53) may lose precision in GUI hints, but runtime
+//!   validation uses exact values.
+//! - **NaN/Infinity rejection**: `with_range_introspectable()` for f64 rejects
+//!   non-finite values to prevent JSON serialization issues and GUI bugs.
+//! - **dtype="enum"**: Choice parameters use `dtype="enum"` per the proto contract
+//!   (daq.proto:610), not "string".
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -129,17 +180,101 @@ impl<T: Clone + Send + Sync + 'static> Clone for Observable<T> {
     }
 }
 
-/// Metadata for an observable parameter
+/// Metadata for an observable parameter.
+///
+/// Contains both descriptive metadata (name, description, units) and
+/// **introspectable constraint metadata** for GUI rendering (Phase 2: bd-cdh5.2).
+///
+/// # Introspectable Fields
+///
+/// The following fields are populated by `with_range_introspectable()` and
+/// `with_choices_introspectable()` methods, and are passed through gRPC to the
+/// GUI for rendering appropriate widgets:
+///
+/// | Field | Populated By | GUI Widget |
+/// |-------|--------------|------------|
+/// | `dtype="float"`, `min_value`, `max_value` | `Observable<f64>::with_range_introspectable()` | Slider |
+/// | `dtype="int"`, `min_value`, `max_value` | `Observable<i64>::with_range_introspectable()` | Slider |
+/// | `dtype="enum"`, `enum_values` | `Observable<String>::with_choices_introspectable()` | ComboBox |
+///
+/// # Serialization
+///
+/// All introspectable fields use `#[serde(default)]` for backward compatibility.
+/// Existing configurations without these fields will deserialize correctly with
+/// default values (empty string, None, empty Vec).
+///
+/// # Wire Format
+///
+/// These fields map directly to `ParameterDescriptor` in `daq.proto`:
+/// - `dtype` → `ParameterDescriptor.dtype`
+/// - `min_value` → `ParameterDescriptor.min_value`
+/// - `max_value` → `ParameterDescriptor.max_value`
+/// - `enum_values` → `ParameterDescriptor.enum_values`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservableMetadata {
-    /// Parameter name (unique within module)
+    /// Parameter name (unique within module).
+    ///
+    /// Used as the identifier for gRPC operations and GUI labels.
     pub name: String,
-    /// Human-readable description
+
+    /// Human-readable description for tooltips and documentation.
     pub description: Option<String>,
-    /// Physical units (e.g., "mW", "Hz", "mm")
+
+    /// Physical units (e.g., "mW", "Hz", "mm", "°C").
+    ///
+    /// Displayed alongside values in the GUI.
     pub units: Option<String>,
-    /// Whether this parameter is read-only
+
+    /// Whether this parameter is read-only.
+    ///
+    /// Read-only parameters reject `set()` calls and are displayed
+    /// as non-editable in the GUI.
     pub read_only: bool,
+
+    /// Data type hint for GUI widget selection.
+    ///
+    /// Standard values (per daq.proto):
+    /// - `"float"` - Floating-point number (renders as Slider if bounded, DragValue otherwise)
+    /// - `"int"` - Integer (renders as Slider if bounded, DragValue otherwise)
+    /// - `"bool"` - Boolean (renders as Checkbox)
+    /// - `"string"` - Free-form text (renders as TextEdit)
+    /// - `"enum"` - Enumerated choice (renders as ComboBox when `enum_values` is non-empty)
+    ///
+    /// Empty string means dtype is unknown/inferred from value at runtime.
+    #[serde(default)]
+    pub dtype: String,
+
+    /// Minimum value for numeric constraints (introspectable).
+    ///
+    /// Populated by `with_range_introspectable()`. When both `min_value` and
+    /// `max_value` are set, the GUI renders a Slider instead of DragValue.
+    ///
+    /// **Note**: For `i64` parameters, the value is stored as `f64`. Large integers
+    /// outside ±2^53 may lose precision in GUI hints, but runtime validation
+    /// uses exact integer values.
+    #[serde(default)]
+    pub min_value: Option<f64>,
+
+    /// Maximum value for numeric constraints (introspectable).
+    ///
+    /// Populated by `with_range_introspectable()`. When both `min_value` and
+    /// `max_value` are set, the GUI renders a Slider instead of DragValue.
+    ///
+    /// **Note**: For `i64` parameters, the value is stored as `f64`. Large integers
+    /// outside ±2^53 may lose precision in GUI hints, but runtime validation
+    /// uses exact integer values.
+    #[serde(default)]
+    pub max_value: Option<f64>,
+
+    /// Enum values for choice constraints (introspectable).
+    ///
+    /// Populated by `with_choices_introspectable()`. When non-empty, the GUI
+    /// renders a ComboBox/Dropdown with these options.
+    ///
+    /// **Note**: When `enum_values` is non-empty, `dtype` should be `"enum"`
+    /// per the proto contract (daq.proto:610).
+    #[serde(default)]
+    pub enum_values: Vec<String>,
 }
 
 impl<T> Observable<T>
@@ -156,6 +291,10 @@ where
                 description: None,
                 units: None,
                 read_only: false,
+                dtype: String::new(),
+                min_value: None,
+                max_value: None,
+                enum_values: Vec::new(),
             },
             validator: None,
         }
@@ -203,20 +342,39 @@ where
         &self.metadata
     }
 
+    /// Get mutable access to metadata (for constraint population).
+    pub fn metadata_mut(&mut self) -> &mut ObservableMetadata {
+        &mut self.metadata
+    }
+
+    /// Validate a value without setting it.
+    ///
+    /// Returns error if:
+    /// - Parameter is read-only
+    /// - Validation fails
+    ///
+    /// This is useful when you need to validate before performing
+    /// an expensive operation (like hardware write) that shouldn't
+    /// happen if validation will fail.
+    pub fn validate(&self, value: &T) -> Result<()> {
+        if self.metadata.read_only {
+            return Err(anyhow!("Parameter '{}' is read-only", self.metadata.name));
+        }
+
+        if let Some(validator) = &self.validator {
+            validator(value)?;
+        }
+
+        Ok(())
+    }
+
     /// Set a new value, notifying all subscribers.
     ///
     /// Returns error if:
     /// - Parameter is read-only
     /// - Validation fails
     pub fn set(&self, value: T) -> Result<()> {
-        if self.metadata.read_only {
-            return Err(anyhow!("Parameter '{}' is read-only", self.metadata.name));
-        }
-
-        if let Some(validator) = &self.validator {
-            validator(&value)?;
-        }
-
+        self.validate(&value)?;
         self.sender.send_replace(value);
         Ok(())
     }
@@ -349,12 +507,114 @@ impl<T> Observable<T>
 where
     T: Clone + Send + Sync + PartialOrd + Debug + 'static,
 {
-    /// Add min/max range validation.
+    /// Add min/max range validation (validation only, not introspectable).
+    ///
+    /// This method adds a validator that rejects values outside `[min, max]`,
+    /// but does **not** populate the metadata fields (`min_value`, `max_value`,
+    /// `dtype`) used for GUI introspection.
+    ///
+    /// Use [`Observable<f64>::with_range_introspectable()`] or
+    /// [`Observable<i64>::with_range_introspectable()`] if you need the GUI
+    /// to render a Slider with these bounds.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Validation only - GUI won't know about bounds
+    /// let threshold = Observable::new("threshold", 50.0)
+    ///     .with_range(0.0, 100.0);
+    ///
+    /// threshold.set(150.0);  // Error: out of range
+    /// ```
     pub fn with_range(mut self, min: T, max: T) -> Self {
-        let min = min.clone();
-        let max = max.clone();
+        let min_clone = min.clone();
+        let max_clone = max.clone();
         self.validator = Some(Arc::new(move |value: &T| {
-            if value < &min || value > &max {
+            if value < &min_clone || value > &max_clone {
+                Err(anyhow!(
+                    "Value {:?} out of range [{:?}, {:?}]",
+                    value,
+                    min_clone,
+                    max_clone
+                ))
+            } else {
+                Ok(())
+            }
+        }));
+        self
+    }
+}
+
+// =============================================================================
+// Type-Specific Introspectable Extensions (Phase 2: bd-cdh5.2)
+// =============================================================================
+
+impl Observable<f64> {
+    /// Add min/max range validation with introspectable metadata for GUI.
+    ///
+    /// This method:
+    /// 1. Sets `metadata.min_value` and `metadata.max_value` for GUI introspection
+    /// 2. Sets `metadata.dtype = "float"` so the GUI knows the value type
+    /// 3. Adds a validator that rejects values outside `[min, max]`
+    /// 4. Rejects NaN and Infinity values to prevent JSON serialization issues
+    ///
+    /// The GUI reads these metadata fields via gRPC `ListParameters` and renders
+    /// a Slider widget when both `min_value` and `max_value` are set.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum allowed value (inclusive). Must be finite.
+    /// * `max` - Maximum allowed value (inclusive). Must be finite and >= min.
+    ///
+    /// # Panics
+    ///
+    /// Panics at parameter construction time if:
+    /// - `min` or `max` is NaN or Infinity (non-finite)
+    /// - `min > max` (bounds out of order)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // GUI will render this as a Slider from 1.0 to 10000.0
+    /// let exposure = Observable::new("exposure_ms", 100.0)
+    ///     .with_units("ms")
+    ///     .with_range_introspectable(1.0, 10000.0);
+    ///
+    /// exposure.set(500.0)?;           // OK
+    /// exposure.set(0.5)?;             // Error: below min
+    /// exposure.set(f64::NAN)?;        // Error: non-finite
+    /// exposure.set(f64::INFINITY)?;   // Error: non-finite
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`with_range()`](Observable::with_range) - Validation only, no GUI introspection
+    /// - [`ObservableMetadata`] - Documentation of metadata fields
+    pub fn with_range_introspectable(mut self, min: f64, max: f64) -> Self {
+        // Validate bounds are finite and ordered at construction time
+        assert!(
+            min.is_finite() && max.is_finite(),
+            "Range bounds must be finite: min={}, max={}",
+            min,
+            max
+        );
+        assert!(min <= max, "min must be <= max: min={}, max={}", min, max);
+
+        // Populate introspectable metadata for GUI
+        self.metadata.min_value = Some(min);
+        self.metadata.max_value = Some(max);
+        self.metadata.dtype = "float".to_string();
+
+        // Add validator that rejects non-finite and out-of-range values
+        self.validator = Some(Arc::new(move |value: &f64| {
+            // Reject NaN and Infinity to prevent JSON serialization issues
+            if !value.is_finite() {
+                return Err(anyhow!(
+                    "Value must be finite, got {:?}",
+                    value
+                ));
+            }
+            if *value < min || *value > max {
                 Err(anyhow!(
                     "Value {:?} out of range [{:?}, {:?}]",
                     value,
@@ -365,6 +625,181 @@ where
                 Ok(())
             }
         }));
+        self
+    }
+
+    /// Set the dtype for this observable (manual override).
+    ///
+    /// Normally you should use `with_range_introspectable()` which sets
+    /// dtype automatically. This method is for cases where you need to
+    /// set dtype without adding range constraints.
+    pub fn with_dtype(mut self, dtype: impl Into<String>) -> Self {
+        self.metadata.dtype = dtype.into();
+        self
+    }
+}
+
+impl Observable<i64> {
+    /// Add min/max range validation with introspectable metadata for GUI.
+    ///
+    /// This method:
+    /// 1. Sets `metadata.min_value` and `metadata.max_value` for GUI introspection
+    /// 2. Sets `metadata.dtype = "int"` so the GUI knows the value type
+    /// 3. Adds a validator that rejects values outside `[min, max]`
+    ///
+    /// The GUI reads these metadata fields via gRPC `ListParameters` and renders
+    /// a Slider widget when both `min_value` and `max_value` are set.
+    ///
+    /// # Integer Precision Note
+    ///
+    /// The `min_value` and `max_value` metadata fields are stored as `f64` for
+    /// wire format compatibility. Large i64 values outside the range ±2^53
+    /// (~9 quadrillion) may lose precision in the GUI metadata. However, the
+    /// actual validation uses exact i64 comparison, so runtime behavior is correct.
+    ///
+    /// For most hardware parameters (e.g., pixel counts, sensor indices), this
+    /// precision loss is not a concern since values are well within ±2^53.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum allowed value (inclusive)
+    /// * `max` - Maximum allowed value (inclusive). Must be >= min.
+    ///
+    /// # Panics
+    ///
+    /// Panics at parameter construction time if `min > max`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // GUI will render this as a Slider from 0 to 100
+    /// let gain = Observable::new("gain", 1i64)
+    ///     .with_range_introspectable(0, 100);
+    ///
+    /// gain.set(50)?;   // OK
+    /// gain.set(-1)?;   // Error: below min
+    /// gain.set(101)?;  // Error: above max
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`with_range()`](Observable::with_range) - Validation only, no GUI introspection
+    /// - [`ObservableMetadata`] - Documentation of metadata fields
+    pub fn with_range_introspectable(mut self, min: i64, max: i64) -> Self {
+        // Validate bounds ordering at construction time
+        assert!(min <= max, "min must be <= max: min={}, max={}", min, max);
+
+        // Populate introspectable metadata for GUI (stored as f64)
+        self.metadata.min_value = Some(min as f64);
+        self.metadata.max_value = Some(max as f64);
+        self.metadata.dtype = "int".to_string();
+
+        // Add validator using exact i64 comparison
+        self.validator = Some(Arc::new(move |value: &i64| {
+            if *value < min || *value > max {
+                Err(anyhow!(
+                    "Value {:?} out of range [{:?}, {:?}]",
+                    value,
+                    min,
+                    max
+                ))
+            } else {
+                Ok(())
+            }
+        }));
+        self
+    }
+
+    /// Set the dtype for this observable (manual override).
+    ///
+    /// Normally you should use `with_range_introspectable()` which sets
+    /// dtype automatically. This method is for cases where you need to
+    /// set dtype without adding range constraints.
+    pub fn with_dtype(mut self, dtype: impl Into<String>) -> Self {
+        self.metadata.dtype = dtype.into();
+        self
+    }
+}
+
+impl Observable<String> {
+    /// Add choice validation with introspectable metadata for GUI.
+    ///
+    /// This method:
+    /// 1. Sets `metadata.enum_values` with the allowed choices for GUI introspection
+    /// 2. Sets `metadata.dtype = "enum"` per the proto contract (daq.proto:610)
+    /// 3. Adds a validator that rejects values not in the choices list
+    ///
+    /// The GUI reads these metadata fields via gRPC `ListParameters` and renders
+    /// a ComboBox/Dropdown widget when `enum_values` is non-empty.
+    ///
+    /// # Arguments
+    ///
+    /// * `choices` - List of valid string values. The current value should be in this list.
+    ///
+    /// # Proto Contract
+    ///
+    /// Per `daq.proto:610`, parameters with discrete choices should set `dtype = "enum"`,
+    /// not `"string"`. This ensures non-egui clients (e.g., Python, web) can correctly
+    /// identify enum parameters and render appropriate UI controls.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // GUI will render this as a ComboBox with "auto", "manual", "continuous"
+    /// let mode = Observable::new("mode", "auto".to_string())
+    ///     .with_choices_introspectable(vec![
+    ///         "auto".into(),
+    ///         "manual".into(),
+    ///         "continuous".into(),
+    ///     ]);
+    ///
+    /// mode.set("manual".into())?;    // OK
+    /// mode.set("invalid".into())?;   // Error: not in choices
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`ObservableMetadata::enum_values`] - The metadata field populated by this method
+    /// - [`ObservableMetadata::dtype`] - Set to `"enum"` by this method
+    pub fn with_choices_introspectable(mut self, choices: Vec<String>) -> Self {
+        // Populate introspectable metadata for GUI
+        self.metadata.enum_values = choices.clone();
+        self.metadata.dtype = "enum".to_string(); // Per proto contract (daq.proto:610)
+
+        // Add validator that rejects values not in choices
+        self.validator = Some(Arc::new(move |value: &String| {
+            if choices.iter().any(|c| c == value) {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "Value {:?} not in choices {:?}",
+                    value,
+                    choices
+                ))
+            }
+        }));
+        self
+    }
+
+    /// Set the dtype for this observable (manual override).
+    ///
+    /// Normally you should use `with_choices_introspectable()` which sets
+    /// dtype automatically. This method is for cases where you need to
+    /// set dtype without adding choice constraints.
+    pub fn with_dtype(mut self, dtype: impl Into<String>) -> Self {
+        self.metadata.dtype = dtype.into();
+        self
+    }
+}
+
+impl Observable<bool> {
+    /// Set the dtype for this observable (manual override).
+    ///
+    /// Boolean observables typically don't need explicit dtype since the
+    /// GUI can infer the type from the JSON value. This method is provided
+    /// for consistency with other types.
+    pub fn with_dtype(mut self, dtype: impl Into<String>) -> Self {
+        self.metadata.dtype = dtype.into();
         self
     }
 }

@@ -16,7 +16,13 @@
 //! cargo test -p daq-driver-pvcam --features "pvcam_hardware,hardware_tests" -- --nocapture
 //! ```
 
-use daq_driver_pvcam::*;
+// Import all public types from the library root
+use daq_driver_pvcam::{
+    CameraInfo, CentroidsConfig, CentroidsMode, ClearMode, ExposureMode, ExposeOutMode,
+    FanSpeed, GainMode, PPFeature, PPParam, ReadoutPort, ShutterMode, ShutterStatus,
+    SmartStreamEntry, SmartStreamMode, SpeedMode,
+};
+// Import feature functions
 use daq_driver_pvcam::components::features::PvcamFeatures;
 
 // =============================================================================

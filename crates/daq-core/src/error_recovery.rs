@@ -19,7 +19,7 @@ use tokio::time::sleep;
 /// # Example
 ///
 /// ```rust
-/// use rust_daq::error_recovery::RetryPolicy;
+/// use daq_core::error_recovery::RetryPolicy;
 /// use std::time::Duration;
 ///
 /// let policy = RetryPolicy {
@@ -50,7 +50,7 @@ impl Default for RetryPolicy {
     /// # Example
     ///
     /// ```rust
-    /// use rust_daq::error_recovery::RetryPolicy;
+    /// use daq_core::error_recovery::RetryPolicy;
     /// use std::time::Duration;
     ///
     /// let policy = RetryPolicy::default();
@@ -73,7 +73,7 @@ impl Default for RetryPolicy {
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::Recoverable;
+/// use daq_core::error_recovery::Recoverable;
 /// use async_trait::async_trait;
 ///
 /// struct SerialConnection {
@@ -111,7 +111,7 @@ pub trait Recoverable<E> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::Restartable;
+/// use daq_core::error_recovery::Restartable;
 /// use async_trait::async_trait;
 ///
 /// struct Acquisition {
@@ -150,7 +150,7 @@ pub trait Restartable<E> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::Resettable;
+/// use daq_core::error_recovery::Resettable;
 /// use async_trait::async_trait;
 ///
 /// struct LaserController {
@@ -198,7 +198,7 @@ pub trait Resettable<E> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::{handle_recoverable_error, RetryPolicy};
+/// use daq_core::error_recovery::{handle_recoverable_error, RetryPolicy};
 /// use std::time::Duration;
 ///
 /// let mut connection = SerialConnection::new();
@@ -242,7 +242,7 @@ pub async fn handle_recoverable_error<T: Recoverable<DaqError>>(
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::handle_buffer_overflow;
+/// use daq_core::error_recovery::handle_buffer_overflow;
 ///
 /// let mut acquisition = CameraAcquisition::new(camera);
 /// handle_buffer_overflow(&mut acquisition).await?;
@@ -270,7 +270,7 @@ pub async fn handle_buffer_overflow<T: Restartable<DaqError>>(
 /// # Example
 ///
 /// ```rust,ignore
-/// use rust_daq::error_recovery::handle_checksum_error;
+/// use daq_core::error_recovery::handle_checksum_error;
 ///
 /// let mut controller = MotionController::new();
 /// handle_checksum_error(&mut controller).await?;

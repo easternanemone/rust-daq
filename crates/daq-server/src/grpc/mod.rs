@@ -88,7 +88,6 @@ pub use proto::{
     DeviceStateResponse,
     DeviceStateSubscribeRequest,
     DeviceStateUpdate,
-    FrameData,
     GetEmissionRequest,
     GetEmissionResponse,
     GetExposureRequest,
@@ -131,7 +130,6 @@ pub use proto::{
     StopMotionResponse,
     StopStreamRequest,
     StopStreamResponse,
-    StreamFramesRequest,
     StreamValuesRequest,
     ValueUpdate,
 };

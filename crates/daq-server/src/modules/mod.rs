@@ -777,11 +777,13 @@ impl ModuleRegistry {
 // Utility Functions
 // =============================================================================
 
-/// Get current time in nanoseconds since Unix epoch
+/// Get current time in nanoseconds since Unix epoch.
+///
+/// Returns 0 if system clock is before Unix epoch (bd-21yj).
 fn current_time_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_nanos() as u64
 }
 

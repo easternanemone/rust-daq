@@ -12,15 +12,35 @@
 //! - Observable<T> handles: watch channels, subscriptions, validation, metadata
 //! - Parameter<T> adds: hardware write/read callbacks, change listeners
 //!
-//! # Example
+//! # Introspectable Constraints (Phase 2: bd-cdh5.2)
+//!
+//! For GUI-aware constraints that render as Sliders or ComboBoxes, use the
+//! type-specific `with_range_introspectable()` or `with_choices_introspectable()`
+//! methods. These delegate to [`Observable`] and populate metadata fields that
+//! are sent to the GUI via gRPC.
 //!
 //! ```rust,ignore
-//! use rust_daq::parameter::Parameter;
+//! // Float parameter with slider bounds
+//! let exposure = Parameter::new("exposure_ms", 100.0)
+//!     .with_unit("ms")
+//!     .with_range_introspectable(1.0, 10000.0);  // GUI renders as Slider
+//!
+//! // String parameter with enum choices
+//! let fan_speed = Parameter::new("fan_speed", "auto".to_string())
+//!     .with_choices_introspectable(vec!["off".into(), "low".into(), "auto".into()]);
+//! ```
+//!
+//! See [`Observable`] for detailed documentation on introspectable constraints.
+//!
+//! # Basic Example
+//!
+//! ```rust,ignore
+//! use daq_core::parameter::Parameter;
 //! use futures::future::BoxFuture;
 //!
-//! // Create parameter with constraints
+//! // Create parameter with introspectable constraints
 //! let mut exposure = Parameter::new("exposure_ms", 100.0)
-//!     .with_range(1.0, 10000.0)
+//!     .with_range_introspectable(1.0, 10000.0)  // GUI renders as Slider
 //!     .with_unit("ms");
 //!
 //! // Connect to async hardware
@@ -41,6 +61,36 @@
 //!         println!("Exposure changed to: {}", value);
 //!     }
 //! });
+//! ```
+//!
+//! # Data Flow
+//!
+//! ```text
+//! User/Script calls param.set(value)
+//!         │
+//!         ▼
+//! ┌───────────────────────────────────────────────────┐
+//! │ 1. Validate against constraints (BEFORE hardware) │
+//! │    - Range: min <= value <= max                   │
+//! │    - Choices: value in enum_values                │
+//! │    - NaN/Infinity: rejected for f64               │
+//! └───────────────────────────────────────────────────┘
+//!         │ (fails here if invalid)
+//!         ▼
+//! ┌───────────────────────────────────────────────────┐
+//! │ 2. Write to hardware (if hardware_writer set)     │
+//! └───────────────────────────────────────────────────┘
+//!         │ (fails here if hardware error)
+//!         ▼
+//! ┌───────────────────────────────────────────────────┐
+//! │ 3. Update internal value (via Observable)         │
+//! │    - Notifies all watch channel subscribers       │
+//! └───────────────────────────────────────────────────┘
+//!         │
+//!         ▼
+//! ┌───────────────────────────────────────────────────┐
+//! │ 4. Call change listeners (for storage, logging)   │
+//! └───────────────────────────────────────────────────┘
 //! ```
 
 use anyhow::Result;
@@ -150,6 +200,17 @@ where
         self
     }
 
+    /// Set the dtype for this parameter (for GUI introspection).
+    pub fn with_dtype(mut self, dtype: impl Into<String>) -> Self {
+        self.inner.metadata_mut().dtype = dtype.into();
+        self
+    }
+
+    /// Access mutable metadata (internal use for constraint population).
+    pub fn metadata_mut(&mut self) -> &mut crate::observable::ObservableMetadata {
+        self.inner.metadata_mut()
+    }
+
     /// Set discrete choice constraints
     pub fn with_choices(mut self, choices: Vec<T>) -> Self
     where
@@ -254,22 +315,31 @@ where
     /// Set value (validates, writes to hardware if connected, notifies subscribers)
     ///
     /// This is the main method for changing parameter values. It:
-    /// 1. Validates against constraints (via Observable)
+    /// 1. Validates against constraints (via Observable) - BEFORE hardware write
     /// 2. Writes to hardware (if connected)
     /// 3. Updates internal value and notifies subscribers (via Observable)
     /// 4. Calls change listeners
     ///
     /// Returns error if validation fails or hardware write fails.
+    ///
+    /// # Safety
+    /// Validation is performed BEFORE writing to hardware to prevent
+    /// driving the device to an invalid state if validation would fail.
     pub async fn set(&self, value: T) -> Result<()> {
-        // Step 1: Write to hardware if connected (BEFORE Observable update)
+        // Step 1: Validate BEFORE hardware write to prevent invalid device states
+        // This ensures we don't write to hardware if validation will fail
+        self.inner.validate(&value)?;
+
+        // Step 2: Write to hardware if connected (only after validation passes)
         if let Some(writer) = &self.hardware_writer {
             writer(value.clone()).await?;
         }
 
-        // Step 2: Update Observable (validates and notifies subscribers)
-        self.inner.set(value.clone())?;
+        // Step 3: Update Observable (skips validation since already done, notifies subscribers)
+        // Using set_unchecked since we already validated above
+        self.inner.set_unchecked(value.clone());
 
-        // Step 3: Call change listeners (AFTER Observable update)
+        // Step 4: Call change listeners (AFTER Observable update)
         let listeners = self.change_listeners.read().await;
         for listener in listeners.iter() {
             listener(&value);
@@ -370,7 +440,27 @@ where
     }
 
     fn constraints_json(&self) -> serde_json::Value {
-        serde_json::Value::Null // Observable uses validators, not serializable constraints
+        let metadata = self.inner.metadata();
+        let mut constraints = serde_json::Map::new();
+
+        if let Some(min) = metadata.min_value {
+            constraints.insert("min".to_string(), serde_json::json!(min));
+        }
+        if let Some(max) = metadata.max_value {
+            constraints.insert("max".to_string(), serde_json::json!(max));
+        }
+        if !metadata.enum_values.is_empty() {
+            constraints.insert("enum_values".to_string(), serde_json::json!(metadata.enum_values));
+        }
+        if !metadata.dtype.is_empty() {
+            constraints.insert("dtype".to_string(), serde_json::json!(metadata.dtype));
+        }
+
+        if constraints.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Object(constraints)
+        }
     }
 }
 
@@ -603,6 +693,118 @@ where
 }
 
 // =============================================================================
+// Type-specific Parameter Extensions (Introspectable Constraints)
+// =============================================================================
+//
+// These methods delegate to Observable<T> for actual implementation.
+// See observable.rs for detailed documentation on constraint behavior.
+//
+// Phase 2 (bd-cdh5.2): Added to support rich GUI widgets that read constraint
+// metadata via gRPC ListParameters.
+
+impl Parameter<f64> {
+    /// Set numeric range constraints with introspectable metadata for GUI.
+    ///
+    /// Delegates to [`Observable<f64>::with_range_introspectable()`] which:
+    /// - Sets `metadata.min_value` and `metadata.max_value` for GUI introspection
+    /// - Sets `metadata.dtype = "float"`
+    /// - Adds a validator that rejects values outside `[min, max]`
+    /// - Rejects NaN and Infinity values
+    ///
+    /// The GUI renders a Slider widget when both bounds are present.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min` or `max` is non-finite, or if `min > max`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let exposure = Parameter::new("exposure_ms", 100.0)
+    ///     .with_unit("ms")
+    ///     .with_range_introspectable(1.0, 10000.0);  // GUI renders as Slider
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`Observable<f64>::with_range_introspectable()`] - Full documentation
+    /// - [`Parameter::with_range()`] - Validation only, no GUI introspection
+    pub fn with_range_introspectable(mut self, min: f64, max: f64) -> Self {
+        self.inner = self.inner.with_range_introspectable(min, max);
+        self
+    }
+}
+
+impl Parameter<i64> {
+    /// Set numeric range constraints with introspectable metadata for GUI.
+    ///
+    /// Delegates to [`Observable<i64>::with_range_introspectable()`] which:
+    /// - Sets `metadata.min_value` and `metadata.max_value` for GUI introspection
+    /// - Sets `metadata.dtype = "int"`
+    /// - Adds a validator that rejects values outside `[min, max]`
+    ///
+    /// The GUI renders a Slider widget when both bounds are present.
+    ///
+    /// # Integer Precision Note
+    ///
+    /// Large i64 values (outside ±2^53) may lose precision in the GUI metadata
+    /// since they are stored as f64. Runtime validation uses exact i64 values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min > max`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let gain = Parameter::new("gain", 1i64)
+    ///     .with_range_introspectable(0, 100);  // GUI renders as Slider
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`Observable<i64>::with_range_introspectable()`] - Full documentation
+    /// - [`Parameter::with_range()`] - Validation only, no GUI introspection
+    pub fn with_range_introspectable(mut self, min: i64, max: i64) -> Self {
+        self.inner = self.inner.with_range_introspectable(min, max);
+        self
+    }
+}
+
+impl Parameter<String> {
+    /// Set choice constraints with introspectable metadata for GUI.
+    ///
+    /// Delegates to [`Observable<String>::with_choices_introspectable()`] which:
+    /// - Sets `metadata.enum_values` with the allowed choices
+    /// - Sets `metadata.dtype = "enum"` (per proto contract, not "string")
+    /// - Adds a validator that rejects values not in the choices list
+    ///
+    /// The GUI renders a ComboBox/Dropdown widget when `enum_values` is non-empty.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let fan_speed = Parameter::new("fan_speed", "auto".to_string())
+    ///     .with_choices_introspectable(vec![
+    ///         "off".into(),
+    ///         "low".into(),
+    ///         "medium".into(),
+    ///         "high".into(),
+    ///         "auto".into(),
+    ///     ]);  // GUI renders as ComboBox
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`Observable<String>::with_choices_introspectable()`] - Full documentation
+    /// - [`Parameter::with_choices()`] - Validation only, no GUI introspection
+    pub fn with_choices_introspectable(mut self, choices: Vec<String>) -> Self {
+        self.inner = self.inner.with_choices_introspectable(choices);
+        self
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -711,5 +913,93 @@ mod tests {
         assert_eq!(param.description(), Some("Camera exposure time"));
         assert_eq!(param.unit(), Some("ms"));
         assert_eq!(param.get(), 100.0);
+    }
+
+    /// Critical safety test: Validation MUST happen BEFORE hardware write.
+    /// This prevents driving hardware to an invalid state if validation fails.
+    /// Regression test for bd-jnfu.2.
+    #[tokio::test]
+    async fn test_parameter_validates_before_hardware_write() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+        let hardware_write_called = Arc::new(AtomicBool::new(false));
+        let hardware_value = Arc::new(AtomicU64::new(0));
+        let hw_called_clone = hardware_write_called.clone();
+        let hw_val_clone = hardware_value.clone();
+
+        // Create parameter with range validation (0.0 to 100.0)
+        let mut param = Parameter::new("exposure", 50.0).with_range(0.0, 100.0);
+
+        // Connect hardware writer that tracks if it was called
+        param.connect_to_hardware_write(move |val| {
+            let hw_called = hw_called_clone.clone();
+            let hw_val = hw_val_clone.clone();
+            Box::pin(async move {
+                hw_called.store(true, Ordering::SeqCst);
+                hw_val.store(val as u64, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+
+        // Try to set an INVALID value (150.0 is outside range 0-100)
+        let result = param.set(150.0).await;
+
+        // Validation should fail
+        assert!(result.is_err(), "Setting out-of-range value should fail");
+
+        // CRITICAL: Hardware write should NOT have been called
+        assert!(
+            !hardware_write_called.load(Ordering::SeqCst),
+            "Hardware write should NOT be called when validation fails"
+        );
+
+        // Value should remain unchanged
+        assert_eq!(param.get(), 50.0, "Parameter value should not change on failed set");
+
+        // Now try a VALID value
+        hardware_write_called.store(false, Ordering::SeqCst);
+        let result = param.set(75.0).await;
+
+        // Should succeed
+        assert!(result.is_ok(), "Setting valid value should succeed");
+
+        // Hardware should have been written
+        assert!(
+            hardware_write_called.load(Ordering::SeqCst),
+            "Hardware write should be called for valid values"
+        );
+        assert_eq!(hardware_value.load(Ordering::SeqCst), 75);
+        assert_eq!(param.get(), 75.0);
+    }
+
+    /// Test that read-only parameters don't trigger hardware writes
+    #[tokio::test]
+    async fn test_parameter_readonly_no_hardware_write() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let hardware_write_called = Arc::new(AtomicBool::new(false));
+        let hw_called_clone = hardware_write_called.clone();
+
+        let mut param = Parameter::new("readonly_param", 42.0).read_only();
+
+        param.connect_to_hardware_write(move |_val| {
+            let hw_called = hw_called_clone.clone();
+            Box::pin(async move {
+                hw_called.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+
+        // Try to set value on read-only parameter
+        let result = param.set(100.0).await;
+
+        // Should fail
+        assert!(result.is_err());
+
+        // Hardware should NOT have been written
+        assert!(
+            !hardware_write_called.load(Ordering::SeqCst),
+            "Hardware write should NOT be called for read-only parameter"
+        );
     }
 }

@@ -105,6 +105,8 @@ impl DaqServer {
                 let drop_counter = drop_counter.clone();
                 async move {
                     let rb_tx = rb_tx;
+                    // Throttle lag warnings (bd-jnfu.15)
+                    let mut total_lagged: u64 = 0;
                     loop {
                         match data_rx.recv().await {
                             Ok(data_point) => {
@@ -123,11 +125,15 @@ impl DaqServer {
                                 }
                             }
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                                tracing::warn!(
-                                    skipped = skipped,
-                                    "Measurement stream lagged, skipped {} messages",
-                                    skipped
-                                );
+                                // Throttle lag warnings to every 100 events (bd-jnfu.15)
+                                total_lagged += skipped;
+                                if total_lagged % 100 == 0 || skipped > 50 {
+                                    tracing::warn!(
+                                        skipped = total_lagged,
+                                        "Measurement stream lagged, total skipped {} messages",
+                                        total_lagged
+                                    );
+                                }
                             }
                             Err(broadcast::error::RecvError::Closed) => break,
                         }
@@ -521,7 +527,7 @@ impl ControlService for DaqServer {
 
         // Spawn background task to forward hardware measurements to gRPC client
         tokio::spawn(async move {
-            // Setup rate limiting if specified
+            // Setup rate limiting if specified (applied to SEND side, not receive)
             let mut rate_limiter = if max_rate_hz > 0 {
                 Some(tokio::time::interval(std::time::Duration::from_secs_f64(
                     1.0 / max_rate_hz as f64,
@@ -530,26 +536,37 @@ impl ControlService for DaqServer {
                 None
             };
 
-            loop {
-                // Wait for rate limiter if configured
-                if let Some(ref mut limiter) = rate_limiter {
-                    limiter.tick().await;
-                }
+            // Throttle lag warnings to prevent log spam (bd-jnfu.15)
+            let mut last_lag_warning = std::time::Instant::now();
+            let mut total_skipped: u64 = 0;
 
-                // Receive data from hardware broadcast
+            loop {
+                // Receive data from hardware broadcast FIRST (drain to get latest)
+                // This fixes bd-jnfu.15: rate limiting was causing broadcast overflow
                 let data_point = match data_rx.recv().await {
                     Ok(dp) => dp,
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        eprintln!(
-                            "Warning: gRPC client lagged, skipped {} measurements",
-                            skipped
-                        );
+                        // Throttle lag warnings to once per second max (bd-jnfu.15)
+                        total_skipped += skipped;
+                        if last_lag_warning.elapsed() > std::time::Duration::from_secs(1) {
+                            tracing::debug!(
+                                skipped = total_skipped,
+                                "gRPC client lagged behind hardware stream, skipped measurements"
+                            );
+                            total_skipped = 0;
+                            last_lag_warning = std::time::Instant::now();
+                        }
                         continue; // Skip to next measurement
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         break; // Broadcast channel closed, exit task
                     }
                 };
+
+                // Apply rate limiting to SEND side (after receiving latest data)
+                if let Some(ref mut limiter) = rate_limiter {
+                    limiter.tick().await;
+                }
 
                 // Extract channel and value from Measurement for filtering and conversion
                 let (name, value, timestamp_ns) = match &data_point {
@@ -874,83 +891,106 @@ pub async fn start_server_with_hardware(
 
     // Wire Pipelines (bd-37tw.7 - Tee-based)
     // Connect measurement sources to Tee -> (RingBuffer, Server Broadcast)
+    //
+    // SAFETY (bd-jnfu.6): Collect device info and sources while holding lock,
+    // then DROP lock before performing async operations to prevent deadlock/contention.
     {
-        let reg_lock = registry.read().await;
-        for info in reg_lock.list_devices() {
-            if let Some(source) = reg_lock.get_measurement_source_frame(&info.id) {
-                println!("  - Wiring pipeline for device: {}", info.id);
-                
-                // 1. Create channel for Source output (Arc<Frame>)
+        // Phase 1: Collect devices and sources while holding lock (sync only)
+        let devices_to_wire: Vec<_> = {
+            let reg_lock = registry.read().await;
+            reg_lock
+                .list_devices()
+                .into_iter()
+                .filter_map(|info| {
+                    reg_lock
+                        .get_measurement_source_frame(&info.id)
+                        .map(|source| (info.id.clone(), source))
+                })
+                .collect()
+            // Lock is dropped here at end of block
+        };
+
+        // Phase 2: Perform async registration (no lock held)
+        for (device_id, source) in devices_to_wire {
+            println!("  - Wiring pipeline for device: {}", device_id);
+
+            // 1. Create channel for Source output (Arc<Frame>)
             let frame_chan = std::env::var("DAQ_PIPELINE_FRAME_CH")
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(16);
             let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(frame_chan);
-                
-                // 2. Register source output
-                if let Err(e) = source.register_output(frame_tx).await {
-                    eprintln!("Failed to register output for {}: {}", info.id, e);
-                    continue;
-                }
 
-                // 3. Create channel for Measurement (Tee Input)
-                let meas_chan = std::env::var("DAQ_PIPELINE_MEAS_CH")
-                    .ok()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or(16);
-                let (meas_tx, meas_rx) = tokio::sync::mpsc::channel(meas_chan);
-                let device_id = info.id.clone();
+            // 2. Register source output (ASYNC - safe now, no lock held)
+            if let Err(e) = source.register_output(frame_tx).await {
+                eprintln!("Failed to register output for {}: {}", device_id, e);
+                continue;
+            }
 
-                // 4. Spawn Converter Task (Frame -> Measurement)
-                tokio::spawn(async move {
-                    while let Some(frame) = frame_rx.recv().await {
-                        let buffer = match frame.bit_depth {
-                            16 => {
-                                if let Some(slice) = frame.as_u16_slice() {
-                                    daq_core::core::PixelBuffer::U16(slice.to_vec())
-                                } else {
-                                    daq_core::core::PixelBuffer::U8(frame.data.clone())
-                                }
+            // 3. Create channel for Measurement (Tee Input)
+            let meas_chan = std::env::var("DAQ_PIPELINE_MEAS_CH")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(16);
+            let (meas_tx, meas_rx) = tokio::sync::mpsc::channel(meas_chan);
+            let device_id_clone = device_id.clone();
+
+            // 4. Spawn Converter Task (Frame -> Measurement)
+            tokio::spawn(async move {
+                while let Some(frame) = frame_rx.recv().await {
+                    let buffer = match frame.bit_depth {
+                        16 => {
+                            if let Some(slice) = frame.as_u16_slice() {
+                                daq_core::core::PixelBuffer::U16(slice.to_vec())
+                            } else {
+                                daq_core::core::PixelBuffer::U8(frame.data.clone())
                             }
-                            _ => daq_core::core::PixelBuffer::U8(frame.data.clone()),
-                        };
-
-                        let measurement = daq_core::core::Measurement::Image {
-                            name: device_id.clone(),
-                            width: frame.width,
-                            height: frame.height,
-                            buffer,
-                            unit: "counts".to_string(),
-                            metadata: daq_core::core::ImageMetadata::default(),
-                            timestamp: chrono::Utc::now(),
-                        };
-
-                        if meas_tx.send(measurement).await.is_err() {
-                            break; // Downstream closed
                         }
+                        _ => daq_core::core::PixelBuffer::U8(frame.data.clone()),
+                    };
+
+                    let measurement = daq_core::core::Measurement::Image {
+                        name: device_id_clone.clone(),
+                        width: frame.width,
+                        height: frame.height,
+                        buffer,
+                        unit: "counts".to_string(),
+                        metadata: daq_core::core::ImageMetadata::default(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    if meas_tx.send(measurement).await.is_err() {
+                        break; // Downstream closed
                     }
-                });
-
-                // 5. Create Tee
-                let mut tee = Tee::new((*control_server.data_sender()).clone()); // Lossy output (Server Bus)
-                
-                // 6. Connect Reliable Output (if RingBuffer is present)
-                if let Some(ref rb_tx) = reliable_sink_tx {
-                    tee.connect_reliable(rb_tx.clone());
                 }
+            });
 
-                // 7. Start Tee (Consume Measurement Stream)
-                if let Err(e) = tee.register_input(meas_rx) {
-                    eprintln!("Failed to register Tee input for {}: {}", info.id, e);
-                }
+            // 5. Create Tee
+            let mut tee = Tee::new((*control_server.data_sender()).clone()); // Lossy output (Server Bus)
+
+            // 6. Connect Reliable Output (if RingBuffer is present)
+            if let Some(ref rb_tx) = reliable_sink_tx {
+                tee.connect_reliable(rb_tx.clone());
+            }
+
+            // 7. Start Tee (Consume Measurement Stream)
+            if let Err(e) = tee.register_input(meas_rx) {
+                eprintln!("Failed to register Tee input for {}: {}", device_id, e);
             }
         }
     }
 
-    // Setup Rerun Visualization
-    match crate::rerun_sink::RerunSink::new() {
+    // Setup Rerun Visualization (gRPC server mode for remote GUI clients)
+    // Port 9876 is the default Rerun gRPC port
+    // same_machine=false enables higher memory limits for remote clients
+    let rerun_bind = std::env::var("RERUN_BIND").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let rerun_port: u16 = std::env::var("RERUN_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9876);
+    match crate::rerun_sink::RerunSink::new_server(&rerun_bind, rerun_port, false) {
         Ok(rerun) => {
-            println!("  - Rerun Visualization: Active");
+            println!("  - Rerun Visualization: Active (gRPC server on {}:{})", rerun_bind, rerun_port);
 
             // Optional blueprint: default path or override via RERUN_BLUEPRINT
             let blueprint_choice = std::env::var("RERUN_BLUEPRINT")
@@ -1056,9 +1096,11 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(RunEngineServiceServer::new(
             run_engine_server.clone(),
         )))
-        .add_service(tonic_web::enable(HardwareServiceServer::new(
-            hardware_server,
-        )))
+        // HardwareService needs larger message size for camera frame streaming (16 MB)
+        .add_service(tonic_web::enable(
+            HardwareServiceServer::new(hardware_server)
+                .max_encoding_message_size(16 * 1024 * 1024),
+        ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(PluginServiceServer::new(plugin_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))
@@ -1079,9 +1121,11 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(RunEngineServiceServer::new(
             run_engine_server,
         )))
-        .add_service(tonic_web::enable(HardwareServiceServer::new(
-            hardware_server,
-        )))
+        // HardwareService needs larger message size for camera frame streaming (16 MB)
+        .add_service(tonic_web::enable(
+            HardwareServiceServer::new(hardware_server)
+                .max_encoding_message_size(16 * 1024 * 1024),
+        ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))
         .add_service(tonic_web::enable(PresetServiceServer::new(preset_server)))

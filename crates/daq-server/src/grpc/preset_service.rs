@@ -420,6 +420,28 @@ impl PresetServiceImpl {
                     }
                 }
             }
+
+            // 3. Generic parameters (Parameterized devices)
+            if let Some(param_set) = registry.get_parameters(device_id) {
+                if let Some(obj) = config.as_object() {
+                    for (param_name, value) in obj {
+                        // Skip hardcoded fields handled above
+                        if param_name == "position" || param_name == "exposure_ms" {
+                            continue;
+                        }
+
+                        if let Some(parameter) = param_set.get(param_name) {
+                            match parameter.set_json(value.clone()).await {
+                                Ok(_) => applied_count += 1,
+                                Err(e) => errors.push(format!(
+                                    "Failed to set parameter '{}.{}': {}",
+                                    device_id, param_name, e
+                                )),
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         drop(registry);

@@ -110,9 +110,15 @@ impl Frame {
         let (prefix, mid, suffix) = unsafe { self.data.align_to::<u16>() };
 
         if !prefix.is_empty() || !suffix.is_empty() {
-            // Alignment mismatch. If this happens often, we should change storage to `Vec<u16>` or use `Bytes`.
-            // For now, return None.
-            // In practice, allocators usually return aligned memory enough for u16.
+            // Alignment mismatch (bd-hnim). Log this so we know if it happens in production.
+            // In practice, allocators usually return aligned memory enough for u16,
+            // so this should be rare. If it happens often, change storage to Vec<u16>.
+            tracing::warn!(
+                prefix_len = prefix.len(),
+                suffix_len = suffix.len(),
+                data_len = self.data.len(),
+                "Frame::as_u16_slice alignment mismatch - returning None (bd-hnim)"
+            );
             return None;
         }
 

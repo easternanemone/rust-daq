@@ -36,3 +36,8 @@ default = []
 storage_hdf5 = ["dep:hdf5"]
 storage_arrow = ["dep:arrow"]
 networking = []
+
+# Examples that require specific features (bd-jnfu.13)
+[[example]]
+name = "ring_arrow_bench"
+required-features = ["storage_arrow"]

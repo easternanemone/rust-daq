@@ -2,7 +2,6 @@
 
 use eframe::egui;
 use once_cell::sync::Lazy;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::EnvFilter;
@@ -344,15 +343,6 @@ impl DaqApp {
                 ui.label(line);
             }
         });
-    }
-
-    fn poll_logs(&mut self) {
-        if let Ok(mut buf) = UI_LOG_BUFFER.lock() {
-            if !buf.is_empty() {
-                self.log_buffer.extend(buf.drain(..));
-                self.log_dirty = true;
-            }
-        }
     }
 
     #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]

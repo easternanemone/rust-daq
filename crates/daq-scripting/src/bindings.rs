@@ -86,10 +86,73 @@ where
 // Handle Types - Rhai-Compatible Wrappers
 // =============================================================================
 
+/// Soft position limits for stage safety (bd-jnfu.4)
+///
+/// These limits are enforced by the scripting layer BEFORE commands
+/// are sent to hardware, preventing scripts from driving stages to
+/// unsafe positions.
+#[derive(Clone, Debug)]
+pub struct SoftLimits {
+    /// Minimum allowed position (None = no limit)
+    pub min: Option<f64>,
+    /// Maximum allowed position (None = no limit)
+    pub max: Option<f64>,
+}
+
+impl SoftLimits {
+    /// Create unlimited soft limits (no restrictions)
+    pub fn unlimited() -> Self {
+        Self {
+            min: None,
+            max: None,
+        }
+    }
+
+    /// Create soft limits with min and max bounds
+    pub fn new(min: f64, max: f64) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+        }
+    }
+
+    /// Check if a position is within soft limits
+    pub fn validate(&self, position: f64) -> Result<(), String> {
+        if let Some(min) = self.min {
+            if position < min {
+                return Err(format!(
+                    "Position {} is below soft limit minimum {}",
+                    position, min
+                ));
+            }
+        }
+        if let Some(max) = self.max {
+            if position > max {
+                return Err(format!(
+                    "Position {} exceeds soft limit maximum {}",
+                    position, max
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for SoftLimits {
+    fn default() -> Self {
+        Self::unlimited()
+    }
+}
+
 /// Handle to a stage device that can be used in Rhai scripts
 ///
 /// Wraps any device implementing `Movable` trait (stages, actuators, goniometers).
 /// Provides synchronous methods that scripts can call directly.
+///
+/// # Safety (bd-jnfu.4)
+/// Soft limits can be configured to prevent scripts from commanding
+/// hardware to unsafe positions. These are checked BEFORE any hardware
+/// command is issued.
 ///
 /// # Script Example
 /// ```rhai
@@ -108,6 +171,8 @@ pub struct StageHandle {
     pub driver: Arc<dyn Movable>,
     /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
     pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
+    /// Soft position limits (bd-jnfu.4) - validated before hardware commands
+    pub soft_limits: SoftLimits,
 }
 
 /// Handle to a camera device that can be used in Rhai scripts
@@ -164,9 +229,18 @@ pub fn register_hardware(engine: &mut Engine) {
     // =========================================================================
 
     // stage.move_abs(10.0) - Move to absolute position
+    // SAFETY (bd-jnfu.4): Validates against soft limits BEFORE hardware command
     engine.register_fn(
         "move_abs",
         move |stage: &mut StageHandle, pos: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Validate soft limits BEFORE issuing hardware command (bd-jnfu.4)
+            if let Err(e) = stage.soft_limits.validate(pos) {
+                return Err(Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Stage move_abs: soft limit violation: {}", e).into(),
+                    Position::NONE,
+                )));
+            }
+
             run_blocking("Stage move_abs", stage.driver.move_abs(pos))?;
 
             // Send measurement to broadcast channel if sender available
@@ -187,10 +261,30 @@ pub fn register_hardware(engine: &mut Engine) {
     );
 
     // stage.move_rel(5.0) - Move relative distance
+    // SAFETY (bd-jnfu.4): Validates resulting position against soft limits
+    // FIX (bd-jnfu.17): Convert to atomic move_abs to prevent TOCTOU race condition
+    // If position changes between read and move, we still land at a validated position
     engine.register_fn(
         "move_rel",
         move |stage: &mut StageHandle, dist: f64| -> Result<Dynamic, Box<EvalAltResult>> {
-            run_blocking("Stage move_rel", stage.driver.move_rel(dist))?;
+            // Get current position to calculate target, then validate soft limits (bd-jnfu.4)
+            let current_pos = run_blocking("Stage position", stage.driver.position())?;
+            let target_pos = current_pos + dist;
+
+            if let Err(e) = stage.soft_limits.validate(target_pos) {
+                return Err(Box::new(EvalAltResult::ErrorRuntime(
+                    format!(
+                        "Stage move_rel: soft limit violation (current: {}, relative: {}, target: {}): {}",
+                        current_pos, dist, target_pos, e
+                    ).into(),
+                    Position::NONE,
+                )));
+            }
+
+            // Use move_abs instead of move_rel to eliminate TOCTOU race (bd-jnfu.17)
+            // This ensures we move to the validated target position regardless of
+            // any intermediate position changes (e.g., from concurrent controllers)
+            run_blocking("Stage move_abs (atomic from move_rel)", stage.driver.move_abs(target_pos))?;
             Ok(Dynamic::UNIT)
         },
     );
@@ -283,14 +377,28 @@ pub fn register_hardware(engine: &mut Engine) {
     // Mock Hardware Factories - For script testing and demos
     // =========================================================================
 
-    // create_mock_stage() - Create a mock stage for testing
+    // create_mock_stage() - Create a mock stage for testing (unlimited soft limits)
     engine.register_fn("create_mock_stage", || -> StageHandle {
         use daq_hardware::drivers::mock::MockStage;
         StageHandle {
             driver: Arc::new(MockStage::new()),
             data_tx: None,
+            soft_limits: SoftLimits::unlimited(),
         }
     });
+
+    // create_mock_stage_limited(min, max) - Create a mock stage with soft limits (bd-jnfu.4)
+    engine.register_fn(
+        "create_mock_stage_limited",
+        |min: f64, max: f64| -> StageHandle {
+            use daq_hardware::drivers::mock::MockStage;
+            StageHandle {
+                driver: Arc::new(MockStage::new()),
+                data_tx: None,
+                soft_limits: SoftLimits::new(min, max),
+            }
+        },
+    );
 
     // create_mock_camera(width, height) - Create a mock camera for testing
     engine.register_fn(
@@ -315,9 +423,34 @@ pub fn register_hardware(engine: &mut Engine) {
             StageHandle {
                 driver: Arc::new(MockStage::new()),
                 data_tx: None,
+                soft_limits: SoftLimits::unlimited(),
             }
         },
     );
+
+    // =========================================================================
+    // Soft Limit Methods - Query and configure limits from scripts (bd-jnfu.4)
+    // =========================================================================
+
+    // stage.get_soft_limits() - Returns [min, max] or [] if unlimited
+    engine.register_fn("get_soft_limits", |stage: &mut StageHandle| -> Dynamic {
+        let limits = &stage.soft_limits;
+        match (limits.min, limits.max) {
+            (Some(min), Some(max)) => Dynamic::from(vec![
+                Dynamic::from(min),
+                Dynamic::from(max),
+            ]),
+            (Some(min), None) => Dynamic::from(vec![
+                Dynamic::from(min),
+                Dynamic::from(f64::INFINITY),
+            ]),
+            (None, Some(max)) => Dynamic::from(vec![
+                Dynamic::from(f64::NEG_INFINITY),
+                Dynamic::from(max),
+            ]),
+            (None, None) => Dynamic::from(Vec::<Dynamic>::new()),
+        }
+    });
 }
 
 // =============================================================================
@@ -342,6 +475,7 @@ mod tests {
         let handle1 = StageHandle {
             driver: stage.clone(),
             data_tx: None,
+            soft_limits: SoftLimits::unlimited(),
         };
         let handle2 = handle1.clone();
 
@@ -373,6 +507,7 @@ mod tests {
             StageHandle {
                 driver: stage,
                 data_tx: None,
+                soft_limits: SoftLimits::unlimited(),
             },
         );
 
@@ -387,6 +522,42 @@ mod tests {
 
         let result = engine.eval_with_scope::<f64>(&mut scope, script).unwrap();
         assert_eq!(result, 7.0); // 5.0 + 2.0
+    }
+
+    /// Test that soft limits prevent out-of-range moves (bd-jnfu.4)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_soft_limits_enforcement() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        let stage = Arc::new(MockStage::new());
+        let mut scope = Scope::new();
+        scope.push(
+            "stage",
+            StageHandle {
+                driver: stage,
+                data_tx: None,
+                soft_limits: SoftLimits::new(0.0, 100.0), // Limit: 0 to 100
+            },
+        );
+
+        // Valid move should succeed
+        let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_abs(50.0);");
+        assert!(result.is_ok(), "Move within limits should succeed");
+
+        // Move above max should fail
+        let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_abs(150.0);");
+        assert!(result.is_err(), "Move above max should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("soft limit"), "Error should mention soft limit: {}", err);
+
+        // Move below min should fail
+        let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_abs(-10.0);");
+        assert!(result.is_err(), "Move below min should fail");
+
+        // Relative move that would exceed limits should fail
+        let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_rel(60.0);"); // 50 + 60 = 110 > 100
+        assert!(result.is_err(), "Relative move exceeding limits should fail");
     }
 
     #[tokio::test(flavor = "multi_thread")]
