@@ -344,8 +344,9 @@ pub struct PvcamAcquisition {
     trigger_frame: Arc<Mutex<Option<Vec<u16>>>>,
     /// Error sender for signaling involuntary stops from frame loop (Gemini SDK review).
     /// Fatal errors (READOUT_FAILED, etc.) are sent here so the driver can update streaming state.
+    /// Uses tokio::sync::mpsc::unbounded_channel for async-native error watching without polling.
     #[cfg(feature = "pvcam_hardware")]
-    error_tx: Arc<Mutex<Option<std::sync::mpsc::Sender<AcquisitionError>>>>,
+    error_tx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<AcquisitionError>>>>,
     /// Callback context for EOF notifications (bd-ek9n.2).
     /// Pinned to ensure stable address for FFI callback.
     #[cfg(feature = "pvcam_hardware")]
@@ -696,7 +697,9 @@ impl PvcamAcquisition {
 
             // Gemini SDK review: Create error channel for involuntary stop signaling.
             // Fatal errors (READOUT_FAILED, etc.) are sent from frame loop to update streaming state.
-            let (error_tx, error_rx) = std::sync::mpsc::channel::<AcquisitionError>();
+            // Uses tokio unbounded_channel: send() is non-blocking (safe from sync code),
+            // recv() is async-native (no polling needed in watcher task).
+            let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<AcquisitionError>();
             *self.error_tx.lock().await = Some(error_tx.clone());
 
             // Clone streaming parameter for error watcher task
@@ -730,34 +733,18 @@ impl PvcamAcquisition {
 
             // Gemini SDK review: Spawn error watcher to handle involuntary stops.
             // This prevents "zombie streaming" where fatal errors leave streaming=true.
-            // NOTE: Use try_recv (non-blocking) + tokio::time::sleep instead of blocking recv_timeout
-            // to avoid blocking the tokio runtime's worker threads.
+            // Uses tokio::sync::mpsc::unbounded_channel for async-native recv() without polling.
             tokio::spawn(async move {
-                loop {
-                    // Non-blocking check for errors
-                    match error_rx.try_recv() {
-                        Ok(err) => {
-                            tracing::error!("Acquisition error (involuntary stop): {:?}", err);
-                            // Update streaming state to reflect the involuntary stop
-                            if let Err(e) = streaming_for_watcher.set(false).await {
-                                tracing::error!("Failed to update streaming state after error: {}", e);
-                            }
-                            break;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            // No error yet - check if streaming stopped normally
-                            if !streaming_for_watcher.get() {
-                                break;
-                            }
-                            // Yield to tokio runtime, then check again
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            // Frame loop ended (channel dropped)
-                            break;
-                        }
+                // Async recv() suspends the task until a message arrives or channel closes.
+                // No polling loop needed - tokio handles the wake-up efficiently.
+                if let Some(err) = error_rx.recv().await {
+                    tracing::error!("Acquisition error (involuntary stop): {:?}", err);
+                    // Update streaming state to reflect the involuntary stop
+                    if let Err(e) = streaming_for_watcher.set(false).await {
+                        tracing::error!("Failed to update streaming state after error: {}", e);
                     }
                 }
+                // Channel closed (frame loop ended) - task completes naturally
             });
 
             return Ok(());
@@ -903,7 +890,8 @@ impl PvcamAcquisition {
     /// * `expected_frame_bytes` - Expected pixel data size (without metadata)
     /// * `width` - Frame width in pixels
     /// * `height` - Frame height in pixels
-    /// * `error_tx` - Channel to signal fatal errors for involuntary stop handling
+    /// * `error_tx` - Tokio unbounded channel to signal fatal errors for involuntary stop handling.
+    ///                UnboundedSender::send() is non-blocking and safe to call from sync code.
     #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
@@ -925,7 +913,7 @@ impl PvcamAcquisition {
         expected_frame_bytes: usize,
         width: u32,
         height: u32,
-        error_tx: std::sync::mpsc::Sender<AcquisitionError>,
+        error_tx: tokio::sync::mpsc::UnboundedSender<AcquisitionError>,
     ) {
         let mut status: i16 = 0;
         let mut bytes_arrived: uns32 = 0;
