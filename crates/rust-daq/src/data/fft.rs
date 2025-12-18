@@ -36,7 +36,7 @@ pub struct FFTConfig {
 /// # Example
 ///
 /// ```
-/// use rust_daq::core::{DataPoint, DataProcessor};
+/// use daq_core::core::{DataPoint, DataProcessor};
 /// use rust_daq::data::fft::{FFTConfig, FFTProcessor};
 /// use chrono::{Utc, TimeZone};
 /// use std::collections::HashMap;

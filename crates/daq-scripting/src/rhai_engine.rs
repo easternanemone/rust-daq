@@ -24,7 +24,7 @@
 //! # Example: Basic Scripting
 //!
 //! ```rust,ignore
-//! use rust_daq::scripting::{ScriptEngine, RhaiEngine, ScriptValue};
+//! use daq_scripting::{ScriptEngine, RhaiEngine, ScriptValue};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,7 +51,7 @@
 //! # Example: Hardware Control
 //!
 //! ```rust,ignore
-//! use rust_daq::scripting::{ScriptEngine, RhaiEngine, ScriptValue, StageHandle};
+//! use daq_scripting::{ScriptEngine, RhaiEngine, ScriptValue, StageHandle};
 //! use rust_daq::hardware::mock::MockStage;
 //! use std::sync::Arc;
 //!
@@ -167,7 +167,7 @@ impl RhaiEngine {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use rust_daq::scripting::{RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
+    /// use daq_scripting::{RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
     /// use rust_daq::hardware::mock::MockStage;
     /// use std::sync::Arc;
     ///

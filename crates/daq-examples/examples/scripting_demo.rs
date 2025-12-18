@@ -1,7 +1,7 @@
 // Standalone demo of scripting safety features
 // This can be run independently to verify scripting works correctly
 
-use rust_daq::scripting::{RhaiEngine, ScriptEngine};
+use daq_scripting::{RhaiEngine, ScriptEngine};
 
 #[tokio::main]
 async fn main() {

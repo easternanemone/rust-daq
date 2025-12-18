@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use rust_daq::scripting::{ScriptEngine, PyO3Engine};
+//! use daq_scripting::{ScriptEngine, PyO3Engine};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

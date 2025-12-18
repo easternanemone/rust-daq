@@ -8,7 +8,7 @@
 
 use rust_daq::hardware::capabilities::{FrameProducer, Movable};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
-use rust_daq::scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
+use daq_scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, StageHandle};
 use std::sync::Arc;
 
 #[tokio::main(flavor = "multi_thread")]

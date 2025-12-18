@@ -32,7 +32,7 @@ cargo build --features scripting_python
 ## Basic Usage
 
 ```rust
-use rust_daq::scripting::{ScriptEngine, PyO3Engine, ScriptValue};
+use daq_scripting::{ScriptEngine, PyO3Engine, ScriptValue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,7 +61,7 @@ print(f"Result: {result}")
 ## Setting Global Variables
 
 ```rust
-use rust_daq::scripting::{ScriptEngine, PyO3Engine, ScriptValue};
+use daq_scripting::{ScriptEngine, PyO3Engine, ScriptValue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -98,7 +98,7 @@ print(f"Duration: {duration} seconds")
 Validate Python syntax without executing:
 
 ```rust
-use rust_daq::scripting::{ScriptEngine, PyO3Engine};
+use daq_scripting::{ScriptEngine, PyO3Engine};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Data Acquisition Example
 
 ```rust
-use rust_daq::scripting::{ScriptEngine, PyO3Engine, ScriptValue};
+use daq_scripting::{ScriptEngine, PyO3Engine, ScriptValue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -166,7 +166,7 @@ print(f"Range: {min_power:.2f} - {max_power:.2f} mW")
 The PyO3 engine provides detailed error information:
 
 ```rust
-use rust_daq::scripting::{ScriptEngine, PyO3Engine, ScriptError};
+use daq_scripting::{ScriptEngine, PyO3Engine, ScriptError};
 
 #[tokio::main]
 async fn main() {
@@ -209,7 +209,7 @@ The PyO3 engine is thread-safe and can be shared across async tasks:
 ```rust
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use rust_daq::scripting::{ScriptEngine, PyO3Engine, ScriptValue};
+use daq_scripting::{ScriptEngine, PyO3Engine, ScriptValue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

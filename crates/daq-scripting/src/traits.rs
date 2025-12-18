@@ -19,7 +19,7 @@
 //! # Example Usage
 //!
 //! ```rust,ignore
-//! use rust_daq::scripting::{ScriptEngine, RhaiEngine, ScriptValue};
+//! use daq_scripting::{ScriptEngine, RhaiEngine, ScriptValue};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

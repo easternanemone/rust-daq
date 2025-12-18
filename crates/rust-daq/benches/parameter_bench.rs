@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use tokio::runtime::Runtime;
 
-use rust_daq::error::DaqError;
-use rust_daq::parameter::Parameter;
+use daq_core::error::DaqError;
+use daq_core::parameter::Parameter;
 
 fn bench_set_latency(c: &mut Criterion) {
     let mut group = c.benchmark_group("parameter_set");
