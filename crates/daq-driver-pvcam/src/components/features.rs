@@ -1971,7 +1971,10 @@ impl PvcamFeatures {
                 params_slice.copy_from_slice(_exposures_ms);
                 
                 // Upload to camera
-                if pl_set_param(h, PARAM_SMART_STREAM_EXP_PARAMS, ss_struct as *mut _) == 0 {
+                // NOTE: pl_set_param expects the ADDRESS of the value to set. For TYPE_VOID_PTR
+                // params like PARAM_SMART_STREAM_EXP_PARAMS, the "value" is a pointer, so we must
+                // pass &ss_struct (address of the pointer), not ss_struct (the pointer value).
+                if pl_set_param(h, PARAM_SMART_STREAM_EXP_PARAMS, &ss_struct as *const _ as *mut _) == 0 {
                     let err = get_pvcam_error();
                     pl_release_smart_stream_struct(&mut ss_struct);
                     return Err(anyhow!("Failed to upload smart stream: {}", err));

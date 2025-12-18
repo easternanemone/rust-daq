@@ -61,6 +61,8 @@ use tokio::sync::Mutex;
 use daq_core::data::Frame;
 use daq_core::parameter::Parameter;
 use crate::components::connection::PvcamConnection;
+#[cfg(feature = "pvcam_hardware")]
+use crate::components::features::PvcamFeatures;
 use daq_core::core::Roi;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -459,6 +461,18 @@ impl PvcamAcquisition {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = conn.handle() {
             // Hardware path
+
+            // PVCAM Safety: Disable metadata before acquisition (Gemini SDK review finding).
+            // When PARAM_METADATA_ENABLED is true, frame buffers contain header data before pixels,
+            // which corrupts image data if not properly parsed. Until pl_md_frame_decode support
+            // is implemented, force-disable metadata for data integrity.
+            if PvcamFeatures::is_metadata_enabled(conn).unwrap_or(false) {
+                tracing::warn!("Disabling PVCAM metadata for acquisition data integrity");
+                if let Err(e) = PvcamFeatures::set_metadata_enabled(conn, false) {
+                    tracing::error!("Failed to disable metadata: {}. Acquisition may produce corrupt data", e);
+                }
+            }
+
             let (x_bin, y_bin) = binning;
 
             // PVCAM Best Practices: for reliable frame delivery (especially high FPS/high throughput),
