@@ -1,15 +1,21 @@
 use crate::grpc::proto::run_engine_service_server::RunEngineServiceServer;
 use crate::grpc::proto::{
-    DaemonInfoRequest, DaemonInfoResponse, ListExecutionsRequest, ListExecutionsResponse,
+    DaemonInfoRequest, DaemonInfoResponse, SystemStatus,
+};
+#[cfg(feature = "scripting")]
+use crate::grpc::proto::{
+    ListExecutionsRequest, ListExecutionsResponse,
     ListScriptsRequest, ListScriptsResponse, ScriptInfo, ScriptStatus, StartRequest, StartResponse,
-    StatusRequest, StopRequest, StopResponse, SystemStatus,
+    StatusRequest, StopRequest, StopResponse,
     control_service_server::{ControlService, ControlServiceServer},
 };
 use crate::grpc::run_engine_service::RunEngineServiceImpl;
 use daq_core::core::Measurement;
+#[cfg(feature = "scripting")]
 use daq_scripting::ScriptEngine; // Trait import
 // use daq_core::error::DaqError; // Unused
 use daq_proto::daq::{UploadRequest, UploadResponse};
+#[cfg(feature = "scripting")]
 use daq_scripting::RhaiEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,6 +34,7 @@ use uuid::Uuid;
 #[cfg(feature = "storage_hdf5")]
 use daq_storage::hdf5_writer::HDF5Writer;
 
+#[cfg(feature = "scripting")]
 /// Metadata about an uploaded script
 #[derive(Clone, Debug)]
 struct ScriptMetadata {
@@ -36,6 +43,7 @@ struct ScriptMetadata {
     metadata: HashMap<String, String>,
 }
 
+#[cfg(feature = "scripting")]
 /// State of a script execution
 #[derive(Clone, Debug)]
 struct ExecutionState {
@@ -52,10 +60,15 @@ struct ExecutionState {
 
 /// DAQ gRPC server implementation
 pub struct DaqServer {
+    #[cfg(feature = "scripting")]
     script_engine: Arc<RwLock<RhaiEngine>>,
+    #[cfg(feature = "scripting")]
     scripts: Arc<RwLock<HashMap<String, String>>>,
+    #[cfg(feature = "scripting")]
     script_metadata: Arc<RwLock<HashMap<String, ScriptMetadata>>>,
+    #[cfg(feature = "scripting")]
     executions: Arc<RwLock<HashMap<String, ExecutionState>>>,
+    #[cfg(feature = "scripting")]
     /// JoinHandles for running script tasks, keyed by execution_id.
     /// Used for cancellation - calling abort() on the handle stops the script.
     running_tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
@@ -159,13 +172,18 @@ impl DaqServer {
         }
 
         Self {
+            #[cfg(feature = "scripting")]
             script_engine: Arc::new(RwLock::new(
                 RhaiEngine::with_hardware()
                     .expect("failed to initialize RhaiEngine with hardware bindings"),
             )),
+            #[cfg(feature = "scripting")]
             scripts: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             script_metadata: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             executions: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             running_tasks: Arc::new(RwLock::new(HashMap::new())),
             start_time: SystemTime::now(),
             data_tx,
@@ -182,13 +200,18 @@ impl DaqServer {
         let data_tx = Arc::new(data_tx);
 
         Self {
+            #[cfg(feature = "scripting")]
             script_engine: Arc::new(RwLock::new(
                 RhaiEngine::with_hardware()
                     .expect("failed to initialize RhaiEngine with hardware bindings"),
             )),
+            #[cfg(feature = "scripting")]
             scripts: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             script_metadata: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             executions: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "scripting")]
             running_tasks: Arc::new(RwLock::new(HashMap::new())),
             start_time: SystemTime::now(),
             data_tx,
@@ -212,6 +235,7 @@ fn encode_measurement_frame(measurement: &Measurement) -> Result<Vec<u8>, bincod
     Ok(frame)
 }
 
+#[cfg(feature = "scripting")]
 impl std::fmt::Debug for DaqServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DaqServer")
@@ -253,6 +277,16 @@ impl std::fmt::Debug for DaqServer {
     }
 }
 
+#[cfg(not(feature = "scripting"))]
+impl std::fmt::Debug for DaqServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaqServer")
+            .field("start_time", &self.start_time)
+            .field("data_tx", &"<broadcast::Sender>")
+            .finish()
+    }
+}
+
 impl Default for DaqServer {
     #[cfg(feature = "storage_hdf5")]
     fn default() -> Self {
@@ -265,6 +299,7 @@ impl Default for DaqServer {
     }
 }
 
+#[cfg(feature = "scripting")]
 #[tonic::async_trait]
 impl ControlService for DaqServer {
     /// Upload and validate a script
@@ -749,10 +784,14 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
         .allow_headers(Any)
         .allow_methods(Any);
 
-    Server::builder()
+    let mut builder = Server::builder()
         .accept_http1(true)
-        .layer(cors)
-        .add_service(tonic_web::enable(ControlServiceServer::new(server)))
+        .layer(cors);
+
+    #[cfg(feature = "scripting")]
+    let builder = builder.add_service(tonic_web::enable(ControlServiceServer::new(server)));
+
+    builder
         .add_service(tonic_web::enable(HealthServer::new(health_service)))
         .add_service(tonic_web::enable(RunEngineServiceServer::new(run_engine)))
         .serve(addr)
@@ -1083,10 +1122,15 @@ pub async fn start_server_with_hardware(
         .allow_methods(Any);
 
     #[cfg(feature = "tokio_serial")]
-    let server_builder = Server::builder()
+    let mut server_builder = Server::builder()
         .accept_http1(true)
-        .layer(cors.clone())
-        .add_service(tonic_web::enable(ControlServiceServer::new(control_server)))
+        .layer(cors.clone());
+
+    #[cfg(all(feature = "tokio_serial", feature = "scripting"))]
+    let server_builder = server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
+
+    #[cfg(feature = "tokio_serial")]
+    let server_builder = server_builder
         .add_service(tonic_web::enable(HealthServer::new(
             standard_health_service,
         )))
@@ -1108,10 +1152,15 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(StorageServiceServer::new(storage_server)));
 
     #[cfg(not(feature = "tokio_serial"))]
-    let server_builder = Server::builder()
+    let mut server_builder = Server::builder()
         .accept_http1(true)
-        .layer(cors.clone())
-        .add_service(tonic_web::enable(ControlServiceServer::new(control_server)))
+        .layer(cors.clone());
+
+    #[cfg(all(not(feature = "tokio_serial"), feature = "scripting"))]
+    let server_builder = server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
+
+    #[cfg(not(feature = "tokio_serial"))]
+    let server_builder = server_builder
         .add_service(tonic_web::enable(HealthServer::new(
             standard_health_service,
         )))
@@ -1142,6 +1191,7 @@ mod tests {
     use chrono::Utc;
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_upload_valid_script() {
         let server = DaqServer::default();
         let request = Request::new(UploadRequest {
@@ -1159,6 +1209,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_upload_invalid_script() {
         let server = DaqServer::default();
         let request = Request::new(UploadRequest {
@@ -1176,6 +1227,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_start_nonexistent_script() {
         let server = DaqServer::default();
         let request = Request::new(StartRequest {
@@ -1189,6 +1241,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_script_execution_lifecycle() {
         let server = DaqServer::default();
 
@@ -1226,6 +1279,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_stream_measurements_basic() {
         use tokio_stream::StreamExt;
 
@@ -1274,6 +1328,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_stream_measurements_channel_filter() {
         use tokio_stream::StreamExt;
 
@@ -1326,6 +1381,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_stream_measurements_rate_limiting() {
         use std::time::Instant;
         use tokio_stream::StreamExt;
@@ -1382,6 +1438,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "scripting")]
     async fn test_stream_measurements_multiple_clients() {
         use tokio_stream::StreamExt;
 

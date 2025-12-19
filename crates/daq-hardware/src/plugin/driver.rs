@@ -1210,45 +1210,6 @@ impl GenericDriver {
             .collect()
     }
 
-    /// Validates that a script can be parsed by Rhai.
-    ///
-    /// This performs a syntax check on the script without executing it.
-    ///
-    /// # Arguments
-    /// * `script_name` - The name of the scriptable capability to validate
-    ///
-    /// # Returns
-    /// Ok(()) if the script is syntactically valid, Err otherwise.
-    pub fn validate_script(&self, script_name: &str) -> Result<()> {
-        let script_cap = self.get_scriptable(script_name)?;
-
-        // Create a temporary Rhai engine for validation
-        let engine = rhai::Engine::new();
-        engine
-            .compile(&script_cap.script)
-            .map_err(|e| anyhow!("Script '{}' has syntax error: {}", script_name, e))?;
-
-        Ok(())
-    }
-
-    /// Creates a Rhai scope pre-populated with driver context.
-    ///
-    /// This creates a scope with read-only access to driver configuration
-    /// that can be used when executing scripts.
-    ///
-    /// # Returns
-    /// A Rhai Scope containing:
-    /// - `driver_id` - The driver's metadata ID
-    /// - `driver_name` - The driver's display name
-    /// - `is_mocking` - Whether in mock mode
-    pub fn create_script_scope(&self, is_mocking: bool) -> rhai::Scope<'static> {
-        let mut scope = rhai::Scope::new();
-        scope.push_constant("driver_id", self.config.metadata.id.clone());
-        scope.push_constant("driver_name", self.config.metadata.name.clone());
-        scope.push_constant("is_mocking", is_mocking);
-        scope
-    }
-
     // =========================================================================
     // FrameProducer Capability Methods
     // =========================================================================
@@ -1871,48 +1832,6 @@ mod tests {
         // Nonexistent
         let missing = driver.get_scriptable("nonexistent");
         assert!(missing.is_err());
-    }
-
-    #[test]
-    fn test_scriptable_validation() {
-        let mut config = create_test_config();
-        config.capabilities.scriptable = vec![
-            ScriptableCapability {
-                name: "valid".to_string(),
-                description: None,
-                script: "let x = 1 + 2; x".to_string(),
-                timeout_ms: 5000,
-            },
-            ScriptableCapability {
-                name: "invalid".to_string(),
-                description: None,
-                script: "let x = (1 +".to_string(), // Syntax error
-                timeout_ms: 5000,
-            },
-        ];
-
-        let driver = GenericDriver::new_mock(config).unwrap();
-
-        // Valid script should pass validation
-        assert!(driver.validate_script("valid").is_ok());
-
-        // Invalid script should fail validation
-        let result = driver.validate_script("invalid");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("syntax error"));
-    }
-
-    #[test]
-    fn test_script_scope_creation() {
-        let config = create_test_config();
-        let driver = GenericDriver::new_mock(config).unwrap();
-
-        let scope = driver.create_script_scope(true);
-
-        // Scope should contain expected constants
-        assert!(scope.contains("driver_id"));
-        assert!(scope.contains("driver_name"));
-        assert!(scope.contains("is_mocking"));
     }
 
     // =========================================================================

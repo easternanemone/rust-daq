@@ -159,6 +159,30 @@ graph LR
 
 **Status**: `rust-daq` is now a clean integration layer as originally recommended.
 
+### ✅ RESOLVED: Dependency Leaks (bd-sfre Refactoring)
+
+**Previous Smell**: Tight coupling between abstraction layers reduced modularity and blocked future extensibility:
+1. **CRITICAL**: `daq-hardware` → `rhai` (coupled hardware drivers to specific scripting engine)
+2. **HIGH PRIORITY**: `daq-server` → `daq-scripting` (prevented building lean server without scripting)
+
+**Resolution (bd-sfre Epic - Dec 2025)**:
+
+**Issue 1: daq-hardware → rhai**
+- Removed redundant `validate_script()` and `create_script_scope()` methods from `GenericDriver`
+- Deleted rhai dependency from `daq-hardware/Cargo.toml`  - Script validation now handled by `ScriptEngine` trait in `daq-scripting` (backend-agnostic)
+- Hardware drivers now only store scripts (String), not validate/execute them
+- Enables future Lua/Python scripting backends without hardware layer changes
+- Supports microcontroller/embedded deployments (rhai requires std)
+
+**Issue 2: daq-server → daq-scripting**
+- Made `daq-scripting` an optional dependency with explicit `scripting` feature flag
+- Feature-gated `ControlService` trait implementation (includes script + monitoring methods)
+- Scripting remains in default features to preserve current behavior
+- When disabled, ControlService (including `stream_measurements`, `stream_status`) is unavailable
+- Enables "lite" server builds for embedded nodes or data streaming without script execution
+
+**Status**: Both dependency leaks resolved. Hardware and server can now be used independently of scripting engine.
+
 ### ⚠️ PARTIALLY ADDRESSED: Feature Flag Duplication
 
 **Smell**: Hardware support features are defined in `daq-hardware` and mirrored/re-exported in `rust-daq` and `daq-server`. This requires keeping `Cargo.toml` files in sync and adds maintenance burden.

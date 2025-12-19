@@ -19,7 +19,7 @@ anyhow = "1.0"
 daq-core = { path = "../daq-core" }
 daq-hardware = { path = "../daq-hardware" }
 daq-storage = { path = "../daq-storage" }
-daq-scripting = { path = "../daq-scripting" }
+daq-scripting = { path = "../daq-scripting", optional = true }
 daq-proto = { path = "../daq-proto" }
 
 tokio-serial = { version = "5.4", optional = true }
@@ -36,12 +36,13 @@ bincode = "1.3"
 rerun = { version = "0.27.3", features = ["server"] }
 
 [features]
-default = ["modules", "server", "networking"]
+default = ["modules", "server", "networking", "scripting"]
 tokio_serial = ["dep:tokio-serial", "daq-hardware/tokio_serial"]
 storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
 server = ["dep:tonic-web", "dep:tower-http"]
 modules = []
 networking = []
+scripting = ["dep:daq-scripting"]
 
 # Hardware drivers
 instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]

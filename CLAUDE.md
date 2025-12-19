@@ -448,6 +448,7 @@ rust_daq = { path = "../rust-daq", features = ["cli"] }      # includes scriptin
 **System:**
 - `modules` - Module system (depends on `scripting`)
 - `scripting` - Rhai scripting engine integration (optional, makes `daq-scripting` available)
+  - **Note**: Disabling `scripting` also disables `ControlService` in daq-server (includes script execution, `stream_measurements`, `stream_status`)
 - `networking` - gRPC networking layer
 - `server` - gRPC server implementation (optional, includes `networking` and makes `daq-server` available)
 - `gui_egui` - egui-based GUI application
