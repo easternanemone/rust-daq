@@ -7,10 +7,33 @@ A high-performance, headless-first data acquisition (DAQ) system written in Rust
 - **Headless-First Architecture**: Core daemon runs independently of any UI
 - **Capability-Based Hardware Abstraction**: Composable traits for motion, sensing, triggering, and camera control
 - **YAML Plugin System**: Define new instruments without writing code
-- **egui Desktop GUI**: Native Rust/egui control panel (`rust_daq_gui_egui`) that connects to the daemon via gRPC
+- **egui Desktop GUI**: Native Rust/egui control panel (`rust-daq-gui`) that connects to the daemon via gRPC
 - **High-Performance Data Pipeline**: Memory-mapped ring buffers with Arrow IPC and HDF5 persistence
 - **Script-Driven Automation**: Rhai scripting for experiment control
 - **Remote Control**: Full gRPC API for network-transparent operation
+
+## 🚀 Try the Demo (No Hardware Required!)
+
+**Experience rust-daq in 2 minutes** using mock devices:
+
+```bash
+# Quick demo (automated launcher)
+./scripts/demo.sh
+
+# Or manually:
+cargo run --bin rust-daq-daemon -- daemon --hardware-config config/demo.toml &
+cargo run --bin rust-daq-daemon -- run examples/demo_scan.rhai
+```
+
+**Includes:**
+- Mock stage, power meter, and camera
+- Pre-configured example scripts
+- GUI integration support
+- Zero hardware dependencies
+
+📖 **[Full Demo Guide](../../DEMO.md)** | 🎯 **Perfect for**: Evaluation, Learning, Development
+
+---
 
 ## Crate Layout
 
@@ -70,7 +93,7 @@ cargo build
 cargo build --all-features
 
 # Build the egui desktop GUI (requires networking feature)
-cargo build --features networking --bin rust_daq_gui_egui
+cargo build --features networking --bin rust-daq-gui
 
 # Build with module system (now independent of networking)
 cargo build --features modules
@@ -84,13 +107,13 @@ cargo build --features "modules,networking"
 
 ```bash
 # Start the daemon (with networking)
-cargo run --features networking -- daemon --port 50051
+cargo run --bin rust-daq-daemon --features networking -- daemon --port 50051
 
 # Run a Rhai script
-cargo run -- run examples/simple_scan.rhai
+cargo run --bin rust-daq-daemon -- run examples/simple_scan.rhai
 
 # Launch the egui GUI (connects to daemon over gRPC)
-cargo run --features networking --bin rust_daq_gui_egui
+cargo run --features networking --bin rust-daq-gui
 ```
 
 ### Test
@@ -191,8 +214,8 @@ writer.start_background_flush(Duration::from_secs(1));
 
 ## GUI Options
 
-- **egui desktop GUI (recommended)**  
-  The `rust_daq_gui_egui` binary is a native Rust/egui application that connects to the headless daemon over gRPC. It runs on macOS, Linux, and Windows without requiring Node.js or the Tauri toolchain.
+- **egui desktop GUI (recommended)**
+  The `rust-daq-gui` binary is a native Rust/egui application that connects to the headless daemon over gRPC. It runs on macOS, Linux, and Windows without requiring Node.js or the Tauri toolchain.
 
 - **Tauri + React GUI (legacy / optional)**  
   The `gui-tauri/` project provides a richer web‑style UI built with React and Tauri. It is still usable but no longer the primary focus. See `gui-tauri/README.md` if you specifically need a Tauri shell.

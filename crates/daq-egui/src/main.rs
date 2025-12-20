@@ -44,6 +44,6 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(not(feature = "standalone"))]
 fn main() {
-    eprintln!("The daq-gui binary requires the 'standalone' feature (enabled by default).");
+    eprintln!("The rust-daq-gui binary requires the 'standalone' feature (enabled by default).");
     std::process::exit(1);
 }

@@ -2,7 +2,7 @@
 
 The egui front-end ships two binaries:
 
-- `daq-gui` (default): the main control panel.
+- `rust-daq-gui` (default): the main control panel.
 - `daq-rerun` (feature `rerun_viewer`): an egui wrapper that embeds the Rerun viewer and listens for log streams on `0.0.0.0:9876`.
 
 ## PVCAM live view to Rerun
@@ -24,7 +24,7 @@ LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH
 Run the viewer and GUI together:
 ```
 cargo run -p daq-egui --bin daq-rerun --features rerun_viewer &
-cargo run -p daq-egui --bin daq-gui --features "instrument_photometrics,pvcam_hardware,arrow,driver_pvcam_arrow_tap"
+cargo run -p daq-egui --bin rust-daq-gui --features "instrument_photometrics,pvcam_hardware,arrow,driver_pvcam_arrow_tap"
 ```
 
 If the viewer isn't running, the GUI will still attempt to connect; errors are logged to stderr.

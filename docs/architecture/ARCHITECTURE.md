@@ -11,7 +11,7 @@ The project is structured as a Cargo workspace with the following key components
 ### Core & Infrastructure
 - **`daq-core`**: The foundation of the system. Defines common types, traits, capabilities, and data structures used across all other crates. It acts as the "common language" of the ecosystem.
 - **`daq-proto`**: Defines the wire protocols (gRPC/Protobuf) for network communication. Dependencies on `tonic` and `prost`.
-- **`daq-bin`**: The application entry point. Contains the main binary (`rust_daq`) and acts as the composition root, wiring together the other crates based on compile-time features.
+- **`daq-bin`**: The application entry point. Contains the main binary (`rust-daq-daemon`) and acts as the composition root, wiring together the other crates based on compile-time features.
 
 ### Functionality Modules
 - **`daq-hardware`**: Implements the hardware abstraction layer (HAL). It uses a **capability-based** model where devices expose capabilities (e.g., `Move`, `Detect`) rather than concrete types. Contains drivers for specific hardware (Thorlabs, Newport, PVCAM, etc.) managed via feature flags.
@@ -212,7 +212,7 @@ graph LR
 
 ### ⚠️ PARTIALLY ADDRESSED: "Kitchen Sink" Integration
 
-**Previous Smell**: `daq-bin` depends on `rust-daq` which pulls in almost everything. This makes the `rust_daq` binary heavy.
+**Previous Smell**: `daq-bin` depends on `rust-daq` which pulls in almost everything. This makes the `rust-daq-daemon` binary heavy.
 
 **Progress**:
 - Created high-level feature profiles to control what gets compiled:
@@ -223,5 +223,6 @@ graph LR
 - Made `daq-server` and `daq-scripting` optional to reduce default binary size
 
 **Remaining Work**:
-- Create truly specialized binaries (e.g., `daq-cli`, `daq-server-bin`, `daq-gui-bin`) that only pull in what they need
+- Create truly specialized binaries (e.g., `daq-cli`, `daq-server-bin`) that only pull in what they need
 - Consider whether `daq-bin` should continue to exist or be replaced by specialized entry points
+- Note: GUI is already separated into `rust-daq-gui` binary in `daq-egui` crate

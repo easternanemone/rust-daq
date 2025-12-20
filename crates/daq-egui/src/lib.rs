@@ -1,6 +1,6 @@
 //! DAQ GUI Library
 //!
-//! Shared code between daq-gui (standalone) and daq-rerun (embedded viewer).
+//! Shared code between rust-daq-gui (standalone) and daq-rerun (embedded viewer).
 
 pub mod client;
 

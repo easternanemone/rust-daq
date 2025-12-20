@@ -183,8 +183,16 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_script_once(script_path: PathBuf, _config: Option<PathBuf>) -> Result<()> {
+async fn run_script_once(script_path: PathBuf, config: Option<PathBuf>) -> Result<()> {
     println!("📜 Loading script: {}", script_path.display());
+
+    // Warn about ignored config in one-shot mode
+    if config.is_some() {
+        eprintln!("⚠️  Warning: --config flag is ignored in one-shot mode (v0.5.0)");
+        eprintln!("   Config files will be supported in v0.6.0.");
+        eprintln!("   One-shot mode uses hardcoded mock devices.");
+        eprintln!();
+    }
 
     let script_content = tokio::fs::read_to_string(&script_path).await?;
 

@@ -41,7 +41,7 @@ if USE_MOCK {
     stage = create_mock_stage();
     print("  MockStage: Created");
 
-    camera = create_mock_camera(1920, 1080);
+    camera = create_mock_camera(640, 480);
     print("  MockCamera (1920x1080): Created");
 
     // Mock power meter

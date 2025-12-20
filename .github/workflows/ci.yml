@@ -442,13 +442,15 @@ jobs:
           ARTIFACT_NAME="rust-daq-${{ matrix.os }}-${{ github.ref_name }}"
           mkdir -p "$ARTIFACT_DIR"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/release/rust_daq.exe "$ARTIFACT_DIR/"
-            pwsh -Command "Compress-Archive -Path '${ARTIFACT_DIR}/rust_daq.exe' -DestinationPath '${ARTIFACT_DIR}/${ARTIFACT_NAME}.zip' -Force"
-            rm "$ARTIFACT_DIR/rust_daq.exe"
+            cp target/release/rust-daq-daemon.exe "$ARTIFACT_DIR/"
+            cp target/release/rust-daq-gui.exe "$ARTIFACT_DIR/"
+            pwsh -Command "Compress-Archive -Path '${ARTIFACT_DIR}/*.exe' -DestinationPath '${ARTIFACT_DIR}/${ARTIFACT_NAME}.zip' -Force"
+            rm "$ARTIFACT_DIR"/*.exe
           else
-            cp target/release/rust_daq "$ARTIFACT_DIR/"
-            tar -czf "$ARTIFACT_DIR/${ARTIFACT_NAME}.tar.gz" -C "$ARTIFACT_DIR" rust_daq
-            rm "$ARTIFACT_DIR/rust_daq"
+            cp target/release/rust-daq-daemon "$ARTIFACT_DIR/"
+            cp target/release/rust-daq-gui "$ARTIFACT_DIR/"
+            tar -czf "$ARTIFACT_DIR/${ARTIFACT_NAME}.tar.gz" -C "$ARTIFACT_DIR" rust-daq-daemon rust-daq-gui
+            rm "$ARTIFACT_DIR"/rust-daq-daemon "$ARTIFACT_DIR"/rust-daq-gui
           fi
 
       - name: Upload release artifact

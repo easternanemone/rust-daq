@@ -803,7 +803,7 @@ cargo build -p rust_daq -p daq-bin --release \
 
 2. Verify binary links to PVCAM:
    ```bash
-   ldd target/release/rust_daq | grep pvcam
+   ldd target/release/rust-daq-daemon | grep pvcam
    # Should show: libpvcam.so.2 => /opt/pvcam/library/x86_64/libpvcam.so.2
    ```
 

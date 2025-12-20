@@ -2573,6 +2573,7 @@ dependencies = [
  "bincode",
  "chrono",
  "daq-core",
+ "daq-experiment",
  "daq-hardware",
  "daq-proto",
  "daq-scripting",

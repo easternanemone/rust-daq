@@ -130,3 +130,6 @@ axis = 1
 # name = "Mock Camera"
 # [devices.driver]
 # type = "mock_camera"
+# # Optional (defaults to 640x480):
+# width = 640
+# height = 480

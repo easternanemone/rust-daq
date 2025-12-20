@@ -73,9 +73,11 @@
 //! ```
 
 use daq_core::capabilities::{
-    Commandable, EmissionControl, ExposureControl, FrameProducer, Movable, Parameterized, Readable,
-    Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
+	Commandable, ExposureControl, FrameProducer, Movable, Parameterized, Readable, Settable,
+	Stageable, Triggerable,
 };
+#[cfg(feature = "driver-spectra-physics")]
+use daq_core::capabilities::{EmissionControl, ShutterControl, WavelengthTunable};
 use daq_core::data::Frame;
 use daq_core::pipeline::MeasurementSource;
 
@@ -148,10 +150,17 @@ pub fn validate_driver_config(driver: &DriverType) -> Result<()> {
             // Don't validate serial port here as it might be network
         }
 
-        // Mock devices don't need validation
-        DriverType::MockStage { .. }
-        | DriverType::MockPowerMeter { .. }
-        | DriverType::MockCamera => {}
+        // Mock devices don't need validation (except basic sanity checks)
+        DriverType::MockStage { .. } | DriverType::MockPowerMeter { .. } => {}
+        DriverType::MockCamera { width, height } => {
+            if *width == 0 || *height == 0 {
+                anyhow::bail!(
+                    "Invalid MockCamera resolution: {}x{}. Width/height must be > 0",
+                    width,
+                    height
+                );
+            }
+        }
     }
 
     Ok(())
@@ -321,8 +330,15 @@ pub enum DriverType {
         reading: f64,
     },
 
-    /// Mock camera for testing (FrameProducer + Triggerable + ExposureControl)
-    MockCamera,
+	    /// Mock camera for testing (FrameProducer + Triggerable + ExposureControl)
+	    MockCamera {
+	        /// Frame width in pixels
+	        #[serde(default = "default_mock_camera_width")]
+	        width: u32,
+	        /// Frame height in pixels
+	        #[serde(default = "default_mock_camera_height")]
+	        height: u32,
+	    },
 
     /// Photometrics PVCAM camera
     #[cfg(feature = "driver_pvcam")]
@@ -332,18 +348,26 @@ pub enum DriverType {
     },
     /// Plugin-based device loaded from YAML configuration
     #[cfg(feature = "tokio_serial")]
-    Plugin {
-        /// Plugin ID from YAML metadata.id (e.g., "my-sensor-v1")
-        plugin_id: String,
-        /// Connection address (serial port path or TCP "host:port")
-        address: String,
-    },
+	    Plugin {
+	        /// Plugin ID from YAML metadata.id (e.g., "my-sensor-v1")
+	        plugin_id: String,
+	        /// Connection address (serial port path or TCP "host:port")
+	        address: String,
+	    },
+	}
+
+fn default_mock_camera_width() -> u32 {
+	640
+}
+
+fn default_mock_camera_height() -> u32 {
+	480
 }
 
 impl DriverType {
-    /// Get the capabilities this driver type provides
-    pub fn capabilities(&self) -> Vec<Capability> {
-        match self {
+	/// Get the capabilities this driver type provides
+	pub fn capabilities(&self) -> Vec<Capability> {
+		match self {
             #[cfg(feature = "serial")]
             DriverType::Newport1830C { .. } => vec![Capability::Readable],
             #[cfg(feature = "serial")]
@@ -354,7 +378,7 @@ impl DriverType {
             DriverType::Esp300 { .. } => vec![Capability::Movable],
             DriverType::MockStage { .. } => vec![Capability::Movable],
             DriverType::MockPowerMeter { .. } => vec![Capability::Readable],
-            DriverType::MockCamera => vec![
+            DriverType::MockCamera { .. } => vec![
                 Capability::FrameProducer,
                 Capability::Triggerable,
                 Capability::ExposureControl,
@@ -388,7 +412,7 @@ impl DriverType {
             DriverType::Esp300 { .. } => "esp300",
             DriverType::MockStage { .. } => "mock_stage",
             DriverType::MockPowerMeter { .. } => "mock_power_meter",
-            DriverType::MockCamera => "mock_camera",
+            DriverType::MockCamera { .. } => "mock_camera",
             #[cfg(feature = "driver_pvcam")]
             DriverType::Pvcam { .. } => "pvcam",
             #[cfg(feature = "tokio_serial")]
@@ -861,9 +885,8 @@ impl DeviceRegistry {
                 })
             }
 
-            DriverType::MockCamera => {
-                let driver = Arc::new(crate::drivers::mock::MockCamera::default());
-                let (width, height) = driver.resolution();
+            DriverType::MockCamera { width, height } => {
+                let driver = Arc::new(crate::drivers::mock::MockCamera::new(width, height));
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
@@ -1522,6 +1545,17 @@ pub async fn create_mock_registry() -> Result<DeviceRegistry> {
         })
         .await?;
 
+    registry
+        .register(DeviceConfig {
+            id: "mock_camera".into(),
+            name: "Mock Camera".into(),
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
+        })
+        .await?;
+
     Ok(registry)
 }
 
@@ -1531,15 +1565,32 @@ pub async fn create_mock_registry() -> Result<DeviceRegistry> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[tokio::test]
-    async fn test_register_mock_devices() {
-        let registry = create_mock_registry().await.unwrap();
+	#[test]
+	fn test_mock_camera_deserializes_with_default_resolution() {
+		let driver: DriverType = serde_json::from_value(serde_json::json!({
+			"type": "mock_camera"
+		}))
+		.unwrap();
 
-        assert_eq!(registry.len(), 2);
+		match driver {
+			DriverType::MockCamera { width, height } => {
+				assert_eq!(width, 640);
+				assert_eq!(height, 480);
+			}
+			_ => panic!("Expected MockCamera driver"),
+		}
+	}
+
+	#[tokio::test]
+	async fn test_register_mock_devices() {
+		let registry = create_mock_registry().await.unwrap();
+
+        assert_eq!(registry.len(), 3);
         assert!(registry.contains("mock_stage"));
         assert!(registry.contains("mock_power_meter"));
+        assert!(registry.contains("mock_camera"));
     }
 
     #[tokio::test]
@@ -1547,7 +1598,7 @@ mod tests {
         let registry = create_mock_registry().await.unwrap();
         let devices = registry.list_devices();
 
-        assert_eq!(devices.len(), 2);
+        assert_eq!(devices.len(), 3);
 
         let stage = devices.iter().find(|d| d.id == "mock_stage").unwrap();
         assert_eq!(stage.driver_type, "mock_stage");
@@ -1556,6 +1607,12 @@ mod tests {
         let meter = devices.iter().find(|d| d.id == "mock_power_meter").unwrap();
         assert_eq!(meter.driver_type, "mock_power_meter");
         assert!(meter.capabilities.contains(&Capability::Readable));
+
+        let camera = devices.iter().find(|d| d.id == "mock_camera").unwrap();
+        assert_eq!(camera.driver_type, "mock_camera");
+        assert!(camera.capabilities.contains(&Capability::FrameProducer));
+        assert!(camera.capabilities.contains(&Capability::Triggerable));
+        assert!(camera.capabilities.contains(&Capability::ExposureControl));
     }
 
     #[tokio::test]
@@ -1788,7 +1845,11 @@ mod tests {
 
         assert!(validate_driver_config(&DriverType::MockPowerMeter { reading: 1e-6 }).is_ok());
 
-        assert!(validate_driver_config(&DriverType::MockCamera).is_ok());
+        assert!(validate_driver_config(&DriverType::MockCamera {
+            width: 640,
+            height: 480
+        })
+        .is_ok());
     }
 
     #[tokio::test]
@@ -1811,5 +1872,37 @@ mod tests {
 
         // Registry should remain empty
         assert_eq!(registry.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_camera_in_registry() {
+        let registry = create_mock_registry().await.unwrap();
+
+        // Verify mock_camera is registered
+        assert!(registry.contains("mock_camera"));
+
+        // Verify it has the expected capabilities through capability getters
+        let frame_producer = registry.get_frame_producer("mock_camera");
+        assert!(frame_producer.is_some(), "MockCamera should be retrievable as FrameProducer");
+
+        let triggerable = registry.get_triggerable("mock_camera");
+        assert!(triggerable.is_some(), "MockCamera should be retrievable as Triggerable");
+
+        let exposure_control = registry.get_exposure_control("mock_camera");
+        assert!(exposure_control.is_some(), "MockCamera should be retrievable as ExposureControl");
+
+        // Verify device info includes all capabilities
+        let device_info = registry.get_device_info("mock_camera").unwrap();
+        assert!(device_info.capabilities.contains(&Capability::FrameProducer));
+        assert!(device_info.capabilities.contains(&Capability::Triggerable));
+        assert!(device_info.capabilities.contains(&Capability::ExposureControl));
+        assert_eq!(device_info.driver_type, "mock_camera");
+
+        // Test that we can get parameters
+        let params = registry.get_parameters("mock_camera").unwrap();
+        assert!(params.get("exposure_s").is_some());
+        assert!(params.get("armed").is_some());
+        assert!(params.get("streaming").is_some());
+        assert!(params.get("staged").is_some());
     }
 }

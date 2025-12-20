@@ -47,7 +47,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for UiLogMakeWriter {
 static UI_LOG_BUFFER: Lazy<Arc<Mutex<Vec<String>>>> = Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
 use crate::client::DaqClient;
-use crate::panels::{ConnectionPanel, DevicesPanel, ScriptsPanel, ScansPanel, StoragePanel, ModulesPanel};
+use crate::panels::{ConnectionPanel, DevicesPanel, ScriptsPanel, ScansPanel, StoragePanel, ModulesPanel, GettingStartedPanel};
 
 /// Connection state to the DAQ daemon
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +92,7 @@ pub struct DaqApp {
 
     /// Panel states
     connection_panel: ConnectionPanel,
+    getting_started_panel: GettingStartedPanel,
     devices_panel: DevicesPanel,
     scripts_panel: ScriptsPanel,
     scans_panel: ScansPanel,
@@ -118,6 +119,7 @@ pub struct DaqApp {
 /// Available panels in the UI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
+    GettingStarted,
     Devices,
     Scripts,
     Scans,
@@ -162,8 +164,9 @@ impl DaqApp {
             daemon_address: "http://127.0.0.1:50051".to_string(),
             daemon_version: None,
             gui_version: env!("CARGO_PKG_VERSION").to_string(),
-            active_panel: Panel::Devices,
+            active_panel: Panel::GettingStarted,
             connection_panel: ConnectionPanel::default(),
+            getting_started_panel: GettingStartedPanel::default(),
             devices_panel: DevicesPanel::default(),
             scripts_panel: ScriptsPanel::default(),
             scans_panel: ScansPanel::default(),
@@ -237,6 +240,10 @@ impl DaqApp {
                 });
                 
                 ui.menu_button("View", |ui| {
+                    if ui.button("Getting Started").clicked() {
+                        self.active_panel = Panel::GettingStarted;
+                        ui.close_menu();
+                    }
                     if ui.button("Devices").clicked() {
                         self.active_panel = Panel::Devices;
                         ui.close_menu();
@@ -347,6 +354,7 @@ impl DaqApp {
                 ui.separator();
                 
                 ui.vertical(|ui| {
+                    ui.selectable_value(&mut self.active_panel, Panel::GettingStarted, "🚀 Getting Started");
                     ui.selectable_value(&mut self.active_panel, Panel::Devices, "🔧 Devices");
                     ui.selectable_value(&mut self.active_panel, Panel::Scripts, "📜 Scripts");
                     ui.selectable_value(&mut self.active_panel, Panel::Scans, "📊 Scans");
@@ -388,6 +396,9 @@ impl DaqApp {
     fn render_content(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_panel {
+                Panel::GettingStarted => {
+                    self.getting_started_panel.ui(ui);
+                }
                 Panel::Devices => {
                     self.devices_panel.ui(ui, self.client.as_mut(), &self.runtime);
                 }

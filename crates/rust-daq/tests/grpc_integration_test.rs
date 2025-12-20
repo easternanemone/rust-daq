@@ -6,7 +6,7 @@
 //! 2. Registry camera path with MockCamera
 //! 3. Frame count tracking
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 mod camera_integration_tests {
     use daq_proto::daq::hardware_service_server::HardwareService;
     use daq_proto::daq::{
@@ -24,14 +24,17 @@ mod camera_integration_tests {
         let mut registry = DeviceRegistry::new();
 
         // Register MockCamera
-        registry
-            .register(DeviceConfig {
-                id: "test_camera".into(),
-                name: "Test MockCamera".into(),
-                driver: DriverType::MockCamera,
-            })
-            .await
-            .unwrap();
+	        registry
+	            .register(DeviceConfig {
+	                id: "test_camera".into(),
+	                name: "Test MockCamera".into(),
+	                driver: DriverType::MockCamera {
+	                    width: 640,
+	                    height: 480,
+	                },
+	            })
+	            .await
+	            .unwrap();
 
         registry
     }
@@ -275,7 +278,7 @@ mod camera_integration_tests {
     // to support frame streaming, which is tracked in a separate issue.
 }
 
-#[cfg(feature = "networking")]
+#[cfg(feature = "server")]
 mod scan_integration_tests {
     use daq_proto::daq::scan_service_server::ScanService;
     use daq_proto::daq::{

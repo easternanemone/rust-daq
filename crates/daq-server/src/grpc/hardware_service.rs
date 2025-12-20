@@ -1982,7 +1982,13 @@ mod tests {
         let response = service.list_devices(request).await.unwrap();
         let devices = response.into_inner().devices;
 
-        assert_eq!(devices.len(), 2);
+        assert_eq!(devices.len(), 3);
+
+        // Verify expected devices are present
+        let device_ids: Vec<&str> = devices.iter().map(|d| d.id.as_str()).collect();
+        assert!(device_ids.contains(&"mock_stage"));
+        assert!(device_ids.contains(&"mock_power_meter"));
+        assert!(device_ids.contains(&"mock_camera"));
     }
 
     #[tokio::test]

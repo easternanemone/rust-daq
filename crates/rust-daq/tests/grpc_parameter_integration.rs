@@ -11,18 +11,14 @@
 //! 4. Negative tests: invalid parameters, out of range values
 //! 5. Concurrency safety: concurrent reads/writes don't deadlock
 //!
-//! Requires: `--features networking` to compile
+//! Requires: `--features server` to compile
 
-#![cfg(feature = "networking")]
+#![cfg(feature = "server")]
 
 use anyhow::Result;
 use daq_proto::daq::hardware_service_server::HardwareService;
-use daq_proto::daq::{
-    DeviceStateRequest, GetParameterRequest, ListParametersRequest, ParameterDescriptor,
-    ParameterValue, SetParameterRequest, StreamParameterChangesRequest,
-};
+use daq_proto::daq::{GetParameterRequest, SetParameterRequest, StreamParameterChangesRequest};
 use daq_server::grpc::hardware_service::HardwareServiceImpl;
-use daq_server::grpc::server::DaqServer;
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -41,7 +37,10 @@ async fn test_basic_parameter_integration() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -99,7 +98,10 @@ async fn test_parameter_change_notifications() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -244,7 +246,10 @@ async fn test_invalid_parameter_name() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -272,7 +277,10 @@ async fn test_out_of_range_value() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -300,7 +308,10 @@ async fn test_type_mismatch() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -353,7 +364,10 @@ async fn test_concurrent_parameter_access_no_deadlock() -> Result<()> {
         .register(DeviceConfig {
             id: "mock_camera".to_string(),
             name: "Mock Camera".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -431,14 +445,20 @@ async fn test_multiple_devices_parameter_isolation() -> Result<()> {
         .register(DeviceConfig {
             id: "camera1".to_string(),
             name: "Camera 1".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
     registry
         .register(DeviceConfig {
             id: "camera2".to_string(),
             name: "Camera 2".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 
@@ -490,14 +510,20 @@ async fn test_filtered_parameter_notifications() -> Result<()> {
         .register(DeviceConfig {
             id: "camera1".to_string(),
             name: "Camera 1".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
     registry
         .register(DeviceConfig {
             id: "camera2".to_string(),
             name: "Camera 2".to_string(),
-            driver: DriverType::MockCamera,
+            driver: DriverType::MockCamera {
+                width: 640,
+                height: 480,
+            },
         })
         .await?;
 

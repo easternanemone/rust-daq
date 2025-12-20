@@ -22,7 +22,7 @@ pub mod scan_service;
 ///
 /// # Example
 /// ```no_run
-/// use rust_daq::grpc::start_server;
+/// use daq_server::grpc::start_server;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -5,9 +5,9 @@
 This guide covers developing the graphical user interface for the Rust DAQ application using `egui`, a modern immediate-mode GUI framework.  
 In the current V5 **headless-first** architecture:
 
-- The **core DAQ** runs as a standalone daemon (`rust_daq` bin).
+- The **core DAQ** runs as a standalone daemon (`rust-daq-daemon` bin).
 - The daemon exposes control and data over **gRPC** (`ControlService`, `HardwareService`, `ScanService`, etc.).
-- The primary GUI is a native `egui` / `eframe` desktop binary: **`rust_daq_gui_egui`**.
+- The primary GUI is a native `egui` / `eframe` desktop binary: **`rust-daq-gui`**.
 - The GUI talks to the daemon purely as a **gRPC client** – no direct actor wiring or in-process coupling.
 
 ## 1. Core GUI Architecture (Channel-Based)
@@ -58,7 +58,7 @@ The GUI uses a **channel-based message-passing architecture** validated by Codex
             │ gRPC (tonic)
             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    rust_daq daemon                              │
+│                  rust-daq-daemon                                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -373,10 +373,10 @@ fn sync_device_state(&mut self) {
 cargo build --features "networking,gui_egui"
 
 # Run the GUI
-cargo run --features "networking,gui_egui" --bin rust_daq_gui_egui
+cargo run --features "networking,gui_egui" --bin rust-daq-gui
 
 # Run daemon in another terminal
-cargo run --features networking -- daemon --port 50051
+cargo run --bin rust-daq-daemon --features networking -- daemon --port 50051
 ```
 
 ## 7. Module Structure

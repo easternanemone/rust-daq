@@ -51,10 +51,10 @@ cargo clippy --all-targets --all-features
 cargo test --features hardware_tests
 
 # Run Rhai script (headless mode)
-cargo run -- run examples/simple_scan.rhai
+cargo run --bin rust-daq-daemon -- run examples/simple_scan.rhai
 
 # Start gRPC daemon
-cargo run --features networking -- daemon --port 50051
+cargo run --bin rust-daq-daemon --features networking -- daemon --port 50051
 ```
 
 ## Development Tools: Rust Ecosystem Integration

@@ -16,7 +16,7 @@ This document summarizes the analysis of the `rust-daq` framework and the `pytes
         *   "Party in front": Leverages memory-mapped ring buffers for high-throughput (10k+ writes/sec) Arrow IPC writes, optimized for real-time data streaming.
         *   "Business in back": Features a background HDF5 writer for robust persistence, ensuring compatibility with data analysis tools like Python (h5py, pyarrow) and MATLAB.
     *   **Script-Driven Automation**: Supports embedded scripting with Rhai for experiment control and includes `pyo3` integration, suggesting potential for Python scripting directly within or alongside the Rust application.
-    *   **GUI Options**: Primarily offers a native `egui` desktop GUI (`rust_daq_gui_egui`) that connects to the daemon via gRPC. A legacy Tauri + React GUI is also available.
+    *   **GUI Options**: Primarily offers a native `egui` desktop GUI (`rust-daq-gui`) that connects to the daemon via gRPC. A legacy Tauri + React GUI is also available.
 *   **Hardware Interaction**: Achieved through native drivers for specific devices (e.g., Thorlabs, Newport, Photometrics cameras) and an extensible YAML-based plugin system. Supports serial (including async `tokio-serial`), VISA, and specific camera SDKs (e.g., PVCAM) protocols.
 *   **Data Flow**: Raw data moves from hardware instruments into high-speed memory-mapped ring buffers for immediate access (Arrow IPC), then asynchronously written to HDF5 files for long-term storage and cross-platform compatibility.
 

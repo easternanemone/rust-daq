@@ -1,0 +1,68 @@
+# Demo Hardware Configuration for rust-daq
+#
+# This configuration uses mock devices for demonstration and testing.
+# No physical hardware required - perfect for trying out rust-daq!
+#
+# Usage:
+#   rust-daq-daemon daemon --hardware-config config/demo.toml
+#
+# Or use programmatically:
+#   cargo run --bin rust-daq-daemon -- daemon --hardware-config config/demo.toml
+
+# ============================================================================
+# Mock Stage (simulates a linear translation stage)
+# ============================================================================
+
+[[devices]]
+id = "mock_stage"
+name = "Demo Stage (Mock)"
+[devices.driver]
+type = "mock_stage"
+# Simulates starting at 0mm position
+initial_position = 0.0
+
+# ============================================================================
+# Mock Power Meter (simulates an optical power sensor)
+# ============================================================================
+
+[[devices]]
+id = "mock_power_meter"
+name = "Demo Power Meter (Mock)"
+[devices.driver]
+type = "mock_power_meter"
+# Simulates 1 µW reading
+reading = 1.0e-6
+
+# ============================================================================
+# Mock Camera (simulates a scientific camera)
+# ============================================================================
+
+[[devices]]
+id = "mock_camera"
+name = "Demo Camera (Mock)"
+[devices.driver]
+type = "mock_camera"
+# Resolution optimized for smooth demo performance (85% faster than 1920x1080)
+width = 640
+height = 480
+
+# ============================================================================
+# About Mock Devices
+# ============================================================================
+#
+# Mock devices simulate real hardware behavior without requiring physical
+# equipment. They're perfect for:
+#
+# - Learning the rust-daq API
+# - Testing scripts before deploying to hardware
+# - Demonstrating capabilities to stakeholders
+# - Developing features without hardware access
+#
+# Each mock device implements the same capability traits as real hardware:
+#
+# - mock_stage:       Movable (move_abs, move_rel, get_position)
+# - mock_power_meter: Readable (read_value)
+# - mock_camera:      FrameProducer, Triggerable, ExposureControl
+#
+# Scripts written for mock devices work identically with real hardware after
+# updating the configuration.

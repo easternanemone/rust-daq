@@ -15,9 +15,9 @@ use std::sync::Arc;
 async fn main() {
     println!("=== Rhai Hardware Scripting Demo ===\n");
 
-    // Create mock hardware devices
-    let stage = Arc::new(MockStage::new());
-    let camera = Arc::new(MockCamera::new(1920, 1080));
+	// Create mock hardware devices
+	let stage = Arc::new(MockStage::new());
+	let camera = Arc::new(MockCamera::new(640, 480));
 
     // Create engine with hardware bindings
     let mut engine = RhaiEngine::with_hardware().expect("Failed to create engine");

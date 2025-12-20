@@ -9,7 +9,7 @@ name = "daq_egui"
 path = "src/lib.rs"
 
 [[bin]]
-name = "daq-gui"
+name = "rust-daq-gui"
 path = "src/main.rs"
 
 [[bin]]

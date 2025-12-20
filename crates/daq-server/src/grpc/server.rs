@@ -776,7 +776,14 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
     use crate::grpc::proto::health::health_server::HealthServer;
 
     let server = DaqServer::new();
-    let run_engine = RunEngineServiceImpl::new();
+
+    // Create RunEngine with empty registry (bd-w14j.2.2)
+    let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
+        daq_hardware::registry::DeviceRegistry::new()
+    ));
+    let run_engine_instance = std::sync::Arc::new(daq_experiment::RunEngine::new(registry));
+    let run_engine = RunEngineServiceImpl::new(run_engine_instance);
+
     let health_service = HealthServiceImpl::new();
 
     health_service.set_serving_status("", ServingStatus::Serving);
@@ -1068,7 +1075,10 @@ pub async fn start_server_with_hardware(
         }
     }
 
-    let run_engine_server = RunEngineServiceImpl::new();
+    // Create RunEngine from registry (bd-w14j.2.2)
+    let run_engine = std::sync::Arc::new(daq_experiment::RunEngine::new(registry.clone()));
+    let run_engine_server = RunEngineServiceImpl::new(run_engine);
+
     let hardware_server = HardwareServiceImpl::new(registry.clone());
     let module_server = ModuleServiceImpl::new(registry.clone());
 
