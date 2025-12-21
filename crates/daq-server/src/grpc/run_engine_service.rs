@@ -20,15 +20,67 @@ use tonic::{Request, Response, Status};
 /// RunEngine gRPC service implementation.
 ///
 /// Wraps the domain RunEngine and exposes its capabilities over gRPC.
-#[derive(Clone)]
+///
+/// Performance optimization (bd-p3k0): Converts domain documents to proto ONCE
+/// and broadcasts to all clients, avoiding O(N×M) conversions for N clients and M events.
 pub struct RunEngineServiceImpl {
     engine: Arc<RunEngine>,
+    /// Proto document broadcast (converted once, shared across all clients)
+    proto_doc_sender: tokio::sync::broadcast::Sender<Arc<crate::grpc::proto::Document>>,
 }
 
 impl RunEngineServiceImpl {
     /// Construct a new RunEngine service.
+    ///
+    /// Spawns a background task that converts domain documents to proto and broadcasts
+    /// them to all gRPC clients. This ensures O(M) conversions instead of O(N×M).
     pub fn new(engine: Arc<RunEngine>) -> Self {
-        Self { engine }
+        // Create proto document broadcast channel
+        let (proto_doc_sender, _) = tokio::sync::broadcast::channel(1024);
+
+        // Spawn converter task that subscribes to domain stream and broadcasts proto
+        let engine_clone = engine.clone();
+        let proto_sender_clone = proto_doc_sender.clone();
+        tokio::spawn(async move {
+            let mut domain_rx = engine_clone.subscribe();
+            loop {
+                match domain_rx.recv().await {
+                    Ok(domain_doc) => {
+                        // Convert domain → proto (ONCE for all clients)
+                        match domain_to_proto_document(domain_doc) {
+                            Ok(Some(proto_doc)) => {
+                                // Broadcast Arc to avoid cloning the proto doc for each client
+                                let _ = proto_sender_clone.send(Arc::new(proto_doc));
+                            }
+                            Ok(None) => {
+                                // Skip documents that don't convert (e.g., Manifest)
+                            }
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to convert domain document to proto");
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "Converter task lagged, skipped domain documents");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("RunEngine document stream closed, stopping converter task");
+                        break;
+                    }
+                }
+            }
+        });
+
+        Self { engine, proto_doc_sender }
+    }
+}
+
+impl Clone for RunEngineServiceImpl {
+    fn clone(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+            proto_doc_sender: self.proto_doc_sender.clone(),
+        }
     }
 }
 
@@ -205,87 +257,84 @@ impl RunEngineService for RunEngineServiceImpl {
         &self,
         request: Request<StreamDocumentsRequest>,
     ) -> Result<Response<Self::StreamDocumentsStream>, Status> {
-        // Subscribe to document stream from RunEngine
-        let rx = self.engine.subscribe();
+        // Subscribe to proto document broadcast (already converted by background task)
+        // Performance: O(M) conversions instead of O(N×M) for N clients, M events
+        let proto_rx = self.proto_doc_sender.subscribe();
 
         // Extract filters from request
         let req = request.into_inner();
         let run_uid_filter = req.run_uid.filter(|s| !s.is_empty());
-        let doc_types_filter = if req.doc_types.is_empty() {
+
+        // Wrap doc_types filter in Arc to avoid cloning Vec on every document
+        let doc_types_filter: Option<Arc<Vec<i32>>> = if req.doc_types.is_empty() {
             None
         } else {
-            Some(req.doc_types)
+            Some(Arc::new(req.doc_types))
         };
 
         // Maintain descriptor_uid → run_uid mapping for Event filtering
         // Events only have descriptor_uid, need to look up run_uid
-        let descriptor_to_run_map = std::sync::Arc::new(tokio::sync::Mutex::new(
+        let descriptor_to_run_map = Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::<String, String>::new()
         ));
 
-        // Convert broadcast::Receiver to BroadcastStream and map documents
-        // Use filter_map to skip documents that can't be converted (e.g., Manifest)
-        // and apply request filters
-        let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        // Apply client-specific filters to the shared proto stream
+        let stream = BroadcastStream::new(proto_rx).filter_map(move |result| {
             let run_uid_filter = run_uid_filter.clone();
-            let doc_types_filter = doc_types_filter.clone();
+            let doc_types_filter = doc_types_filter.clone(); // Arc clone, cheap
             let descriptor_map = descriptor_to_run_map.clone();
 
             async move {
                 match result {
-                    Ok(domain_doc) => {
-                        // Convert domain document to proto
-                        match domain_to_proto_document(domain_doc) {
-                            Ok(Some(proto_doc)) => {
-                                // Apply run_uid filter
-                                if let Some(ref filter_uid) = run_uid_filter {
-                                    // Extract run_uid from document based on type
-                                    let doc_run_uid = match &proto_doc.payload {
-                                        Some(crate::grpc::proto::document::Payload::Start(s)) => {
-                                            Some(s.run_uid.clone())
-                                        }
-                                        Some(crate::grpc::proto::document::Payload::Stop(s)) => {
-                                            Some(s.run_uid.clone())
-                                        }
-                                        Some(crate::grpc::proto::document::Payload::Descriptor(d)) => {
-                                            // Record descriptor_uid → run_uid mapping
-                                            let mut map = descriptor_map.lock().await;
-                                            map.insert(d.descriptor_uid.clone(), d.run_uid.clone());
-                                            Some(d.run_uid.clone())
-                                        }
-                                        Some(crate::grpc::proto::document::Payload::Event(e)) => {
-                                            // Look up run_uid via descriptor_uid
-                                            let map = descriptor_map.lock().await;
-                                            map.get(&e.descriptor_uid).cloned()
-                                        }
-                                        None => None,
-                                    };
-
-                                    if let Some(uid) = doc_run_uid {
-                                        if uid != *filter_uid {
-                                            return None; // Skip - different run
-                                        }
-                                    } else if matches!(&proto_doc.payload, Some(crate::grpc::proto::document::Payload::Event(_))) {
-                                        // Event with unknown descriptor - drop when filter active
-                                        tracing::debug!(
-                                            "Dropping Event with unknown descriptor_uid (run_uid filter active)"
-                                        );
-                                        return None;
-                                    }
+                    Ok(proto_doc_arc) => {
+                        // Document already converted to proto by background task
+                        // Apply run_uid filter
+                        if let Some(ref filter_uid) = run_uid_filter {
+                            // Extract run_uid from document based on type
+                            let doc_run_uid = match &proto_doc_arc.payload {
+                                Some(crate::grpc::proto::document::Payload::Start(s)) => {
+                                    Some(s.run_uid.clone())
                                 }
-
-                                // Apply doc_types filter
-                                if let Some(ref filter_types) = doc_types_filter {
-                                    if !filter_types.contains(&proto_doc.doc_type) {
-                                        return None; // Skip - type not in filter
-                                    }
+                                Some(crate::grpc::proto::document::Payload::Stop(s)) => {
+                                    Some(s.run_uid.clone())
                                 }
+                                Some(crate::grpc::proto::document::Payload::Descriptor(d)) => {
+                                    // Record descriptor_uid → run_uid mapping
+                                    let mut map = descriptor_map.lock().await;
+                                    map.insert(d.descriptor_uid.clone(), d.run_uid.clone());
+                                    Some(d.run_uid.clone())
+                                }
+                                Some(crate::grpc::proto::document::Payload::Event(e)) => {
+                                    // Look up run_uid via descriptor_uid
+                                    let map = descriptor_map.lock().await;
+                                    map.get(&e.descriptor_uid).cloned()
+                                }
+                                None => None,
+                            };
 
-                                Some(Ok(proto_doc))
+                            if let Some(uid) = doc_run_uid {
+                                if uid != *filter_uid {
+                                    return None; // Skip - different run
+                                }
+                            } else if matches!(&proto_doc_arc.payload, Some(crate::grpc::proto::document::Payload::Event(_))) {
+                                // Event with unknown descriptor - drop when filter active
+                                tracing::debug!(
+                                    "Dropping Event with unknown descriptor_uid (run_uid filter active)"
+                                );
+                                return None;
                             }
-                            Ok(None) => None, // Skip this document (e.g., Manifest)
-                            Err(e) => Some(Err(Status::internal(format!("Document conversion failed: {}", e)))),
                         }
+
+                        // Apply doc_types filter
+                        if let Some(ref filter_types) = doc_types_filter {
+                            if !filter_types.contains(&proto_doc_arc.doc_type) {
+                                return None; // Skip - type not in filter
+                            }
+                        }
+
+                        // Clone the proto doc for this client (Arc::deref + clone)
+                        // This is cheaper than re-converting from domain
+                        Some(Ok((*proto_doc_arc).clone()))
                     }
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                         // Receiver fell behind - log and continue without terminating stream
