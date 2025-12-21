@@ -13,6 +13,7 @@ use crate::grpc::proto::{
 use daq_experiment::run_engine::RunEngine;
 use daq_experiment::Document; // Re-exported from daq_core
 use futures::StreamExt; // For .filter_map() with async
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tonic::{Request, Response, Status};
@@ -23,10 +24,15 @@ use tonic::{Request, Response, Status};
 ///
 /// Performance optimization (bd-p3k0): Converts domain documents to proto ONCE
 /// and broadcasts to all clients, avoiding O(N×M) conversions for N clients and M events.
+///
+/// Observability (bd-f9hn): Tracks active streams and emits structured tracing events
+/// for monitoring document throughput, lag events, and conversion performance.
 pub struct RunEngineServiceImpl {
     engine: Arc<RunEngine>,
     /// Proto document broadcast (converted once, shared across all clients)
     proto_doc_sender: tokio::sync::broadcast::Sender<Arc<crate::grpc::proto::Document>>,
+    /// Active stream count for observability (bd-f9hn)
+    active_streams: Arc<AtomicU64>,
 }
 
 impl RunEngineServiceImpl {
@@ -38,40 +44,84 @@ impl RunEngineServiceImpl {
         // Create proto document broadcast channel
         let (proto_doc_sender, _) = tokio::sync::broadcast::channel(1024);
 
+        // Create observability metrics
+        let active_streams = Arc::new(AtomicU64::new(0));
+
         // Spawn converter task that subscribes to domain stream and broadcasts proto
         let engine_clone = engine.clone();
         let proto_sender_clone = proto_doc_sender.clone();
         tokio::spawn(async move {
             let mut domain_rx = engine_clone.subscribe();
+            let mut total_converted = 0u64;
+
             loop {
                 match domain_rx.recv().await {
                     Ok(domain_doc) => {
                         // Convert domain → proto (ONCE for all clients)
+                        let start = std::time::Instant::now();
                         match domain_to_proto_document(domain_doc) {
                             Ok(Some(proto_doc)) => {
+                                let conversion_micros = start.elapsed().as_micros();
+                                total_converted += 1;
+
                                 // Broadcast Arc to avoid cloning the proto doc for each client
-                                let _ = proto_sender_clone.send(Arc::new(proto_doc));
+                                let subscriber_count = proto_sender_clone.receiver_count();
+                                let send_result = proto_sender_clone.send(Arc::new(proto_doc));
+
+                                // Observability: Log throughput periodically
+                                if total_converted % 1000 == 0 {
+                                    tracing::info!(
+                                        total_converted,
+                                        subscriber_count,
+                                        conversion_micros,
+                                        "Document converter throughput"
+                                    );
+                                }
+
+                                // Warn if no subscribers (documents being dropped)
+                                if send_result.is_err() || subscriber_count == 0 {
+                                    tracing::debug!(
+                                        total_converted,
+                                        "Document broadcast has no subscribers"
+                                    );
+                                }
                             }
                             Ok(None) => {
                                 // Skip documents that don't convert (e.g., Manifest)
+                                tracing::trace!("Skipped non-convertible document (e.g., Manifest)");
                             }
                             Err(e) => {
-                                tracing::error!(error = %e, "Failed to convert domain document to proto");
+                                tracing::error!(
+                                    error = %e,
+                                    total_converted,
+                                    "Failed to convert domain document to proto"
+                                );
                             }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(skipped, "Converter task lagged, skipped domain documents");
+                        tracing::warn!(
+                            skipped,
+                            total_converted,
+                            "Converter task lagged, skipped domain documents"
+                        );
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::info!("RunEngine document stream closed, stopping converter task");
+                        tracing::info!(
+                            total_converted,
+                            "RunEngine document stream closed, stopping converter task"
+                        );
                         break;
                     }
                 }
             }
         });
 
-        Self { engine, proto_doc_sender }
+        Self {
+            engine,
+            proto_doc_sender,
+            active_streams,
+        }
     }
 }
 
@@ -80,6 +130,7 @@ impl Clone for RunEngineServiceImpl {
         Self {
             engine: self.engine.clone(),
             proto_doc_sender: self.proto_doc_sender.clone(),
+            active_streams: self.active_streams.clone(),
         }
     }
 }
@@ -278,15 +329,44 @@ impl RunEngineService for RunEngineServiceImpl {
             std::collections::HashMap::<String, String>::new()
         ));
 
+        // Observability: Track active streams (bd-f9hn)
+        let active_streams = self.active_streams.clone();
+        let stream_count = active_streams.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::info!(
+            active_streams = stream_count,
+            run_uid_filter = ?run_uid_filter,
+            doc_types_filter = ?doc_types_filter,
+            "New document stream client connected"
+        );
+
+        // Metrics: Track filter matches and rejections per client
+        let docs_received = Arc::new(AtomicU64::new(0));
+        let docs_filtered = Arc::new(AtomicU64::new(0));
+        let docs_sent = Arc::new(AtomicU64::new(0));
+        let lag_events = Arc::new(AtomicU64::new(0));
+
+        // Clone metrics for use outside closure
+        let docs_received_outer = docs_received.clone();
+        let docs_sent_outer = docs_sent.clone();
+        let docs_filtered_outer = docs_filtered.clone();
+        let lag_events_outer = lag_events.clone();
+
         // Apply client-specific filters to the shared proto stream
         let stream = BroadcastStream::new(proto_rx).filter_map(move |result| {
             let run_uid_filter = run_uid_filter.clone();
             let doc_types_filter = doc_types_filter.clone(); // Arc clone, cheap
             let descriptor_map = descriptor_to_run_map.clone();
+            let docs_received = docs_received.clone();
+            let docs_filtered = docs_filtered.clone();
+            let docs_sent = docs_sent.clone();
+            let lag_events = lag_events.clone();
 
             async move {
                 match result {
                     Ok(proto_doc_arc) => {
+                        // Observability: Track received documents
+                        let received = docs_received.fetch_add(1, Ordering::Relaxed) + 1;
+
                         // Document already converted to proto by background task
                         // Apply run_uid filter
                         if let Some(ref filter_uid) = run_uid_filter {
@@ -314,10 +394,12 @@ impl RunEngineService for RunEngineServiceImpl {
 
                             if let Some(uid) = doc_run_uid {
                                 if uid != *filter_uid {
+                                    docs_filtered.fetch_add(1, Ordering::Relaxed);
                                     return None; // Skip - different run
                                 }
                             } else if matches!(&proto_doc_arc.payload, Some(crate::grpc::proto::document::Payload::Event(_))) {
                                 // Event with unknown descriptor - drop when filter active
+                                docs_filtered.fetch_add(1, Ordering::Relaxed);
                                 tracing::debug!(
                                     "Dropping Event with unknown descriptor_uid (run_uid filter active)"
                                 );
@@ -328,8 +410,27 @@ impl RunEngineService for RunEngineServiceImpl {
                         // Apply doc_types filter
                         if let Some(ref filter_types) = doc_types_filter {
                             if !filter_types.contains(&proto_doc_arc.doc_type) {
+                                docs_filtered.fetch_add(1, Ordering::Relaxed);
                                 return None; // Skip - type not in filter
                             }
+                        }
+
+                        // Observability: Track sent documents and log periodically
+                        let sent = docs_sent.fetch_add(1, Ordering::Relaxed) + 1;
+                        if sent % 100 == 0 {
+                            let filtered = docs_filtered.load(Ordering::Relaxed);
+                            let filter_rate = if received > 0 {
+                                (sent as f64 / received as f64) * 100.0
+                            } else {
+                                0.0
+                            };
+                            tracing::info!(
+                                docs_received = received,
+                                docs_sent = sent,
+                                docs_filtered = filtered,
+                                filter_match_rate_percent = format!("{:.1}", filter_rate),
+                                "Client stream metrics"
+                            );
                         }
 
                         // Clone the proto doc for this client (Arc::deref + clone)
@@ -338,8 +439,14 @@ impl RunEngineService for RunEngineServiceImpl {
                     }
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                         // Receiver fell behind - log and continue without terminating stream
+                        let lag_count = lag_events.fetch_add(1, Ordering::Relaxed) + 1;
+                        let received = docs_received.load(Ordering::Relaxed);
+                        let sent = docs_sent.load(Ordering::Relaxed);
                         tracing::warn!(
                             skipped,
+                            lag_count,
+                            docs_received = received,
+                            docs_sent = sent,
                             "Document stream lagged: client too slow, skipped messages"
                         );
                         None // Skip, don't terminate
@@ -351,7 +458,61 @@ impl RunEngineService for RunEngineServiceImpl {
             }
         });
 
-        Ok(Response::new(Box::pin(stream)))
+        // Wrap stream to decrement active_streams on drop
+        let active_streams_cleanup = self.active_streams.clone();
+        let wrapped_stream = StreamWithCleanup {
+            inner: Box::pin(stream),
+            active_streams: active_streams_cleanup,
+            docs_received: docs_received_outer,
+            docs_sent: docs_sent_outer,
+            docs_filtered: docs_filtered_outer,
+            lag_events: lag_events_outer,
+        };
+
+        Ok(Response::new(Box::pin(wrapped_stream)))
+    }
+}
+
+/// Wrapper to decrement active_streams counter when stream is dropped
+struct StreamWithCleanup<S> {
+    inner: std::pin::Pin<Box<S>>,
+    active_streams: Arc<AtomicU64>,
+    docs_received: Arc<AtomicU64>,
+    docs_sent: Arc<AtomicU64>,
+    docs_filtered: Arc<AtomicU64>,
+    lag_events: Arc<AtomicU64>,
+}
+
+impl<S> Drop for StreamWithCleanup<S> {
+    fn drop(&mut self) {
+        let remaining = self.active_streams.fetch_sub(1, Ordering::Relaxed) - 1;
+        let received = self.docs_received.load(Ordering::Relaxed);
+        let sent = self.docs_sent.load(Ordering::Relaxed);
+        let filtered = self.docs_filtered.load(Ordering::Relaxed);
+        let lags = self.lag_events.load(Ordering::Relaxed);
+
+        tracing::info!(
+            active_streams = remaining,
+            docs_received = received,
+            docs_sent = sent,
+            docs_filtered = filtered,
+            lag_events = lags,
+            "Document stream client disconnected"
+        );
+    }
+}
+
+impl<S> tokio_stream::Stream for StreamWithCleanup<S>
+where
+    S: tokio_stream::Stream,
+{
+    type Item = S::Item;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
     }
 }
 
