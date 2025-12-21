@@ -14,7 +14,7 @@ use daq_experiment::run_engine::RunEngine;
 use daq_experiment::Document; // Re-exported from daq_core
 use futures::StreamExt; // For .filter_map() with async
 use std::sync::Arc;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tonic::{Request, Response, Status};
 
 /// RunEngine gRPC service implementation.
@@ -287,20 +287,17 @@ impl RunEngineService for RunEngineServiceImpl {
                             Err(e) => Some(Err(Status::internal(format!("Document conversion failed: {}", e)))),
                         }
                     }
-                    Err(e) => {
-                        // Check if this is a Lagged error by examining the error string
-                        let err_str = format!("{:?}", e);
-                        if err_str.contains("Lagged") {
-                            // Receiver fell behind - log and continue without terminating stream
-                            tracing::warn!(
-                                "Document stream lagged: client too slow, skipping messages"
-                            );
-                            None // Skip, don't terminate
-                        } else {
-                            // Other errors (e.g., Closed) - terminate stream
-                            Some(Err(Status::unavailable(format!("Document stream error: {}", e))))
-                        }
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        // Receiver fell behind - log and continue without terminating stream
+                        tracing::warn!(
+                            skipped,
+                            "Document stream lagged: client too slow, skipped messages"
+                        );
+                        None // Skip, don't terminate
                     }
+                    // Note: BroadcastStreamRecvError does not have a Closed variant
+                    // The stream ends with None when the sender is dropped
+                    // This exhaustive match ensures we handle all actual error cases
                 }
             }
         });
