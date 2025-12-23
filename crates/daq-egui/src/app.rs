@@ -174,7 +174,8 @@ impl DaqApp {
         Self {
             client: None,
             connection_state: ConnectionState::Disconnected,
-            daemon_address: "http://127.0.0.1:50051".to_string(),
+            daemon_address: std::env::var("DAQ_DAEMON_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
             daemon_version: None,
             gui_version: env!("CARGO_PKG_VERSION").to_string(),
             active_panel: Panel::GettingStarted,
