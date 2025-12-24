@@ -5,8 +5,6 @@ use daq_driver_pvcam::PvcamDriver;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
     println!("Initializing PVCAM Driver (Hardware Mode)...");
 
     // Attempt to connect to the first available camera
