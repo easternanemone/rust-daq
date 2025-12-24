@@ -47,6 +47,8 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for UiLogMakeWriter {
 static UI_LOG_BUFFER: Lazy<Arc<Mutex<Vec<String>>>> = Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
 use crate::client::DaqClient;
+use crate::connection::{resolve_address, save_to_storage, AddressSource, DaemonAddress};
+use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::panels::{
     DevicesPanel, DocumentViewerPanel, GettingStartedPanel, ModulesPanel,
     PlanRunnerPanel, ScansPanel, ScriptsPanel, StoragePanel,
@@ -54,25 +56,10 @@ use crate::panels::{
     LoggingPanel, ConnectionStatus as LogConnectionStatus,
 };
 
-/// Connection state to the DAQ daemon
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
-}
-
-enum ConnectResult {
-    Connected {
-        client: DaqClient,
-        daemon_version: Option<String>,
-        address: String,
-    },
-    Failed {
-        error: String,
-        address: String,
-    },
+/// Result of a health check sent through the channel.
+enum HealthCheckResult {
+    Success,
+    Failed(String),
 }
 
 /// Main application state
@@ -80,11 +67,17 @@ pub struct DaqApp {
     /// gRPC client (wrapped in Option for lazy initialization)
     client: Option<DaqClient>,
 
-    /// Current connection state
-    connection_state: ConnectionState,
+    /// Connection manager (handles state machine and auto-reconnect)
+    connection: ConnectionManager,
 
-    /// Target daemon address
-    daemon_address: String,
+    /// Validated daemon address (normalized, with source tracking)
+    daemon_address: DaemonAddress,
+
+    /// Text input field for address (may be invalid during editing)
+    address_input: String,
+
+    /// Address validation error (shown in UI)
+    address_error: Option<String>,
 
     /// Daemon version (retrieved via GetDaemonInfo)
     daemon_version: Option<String>,
@@ -111,11 +104,10 @@ pub struct DaqApp {
 
     /// Tokio runtime for async operations
     runtime: tokio::runtime::Runtime,
-    /// Async connect result channel
-    connect_tx: mpsc::Sender<ConnectResult>,
-    connect_rx: mpsc::Receiver<ConnectResult>,
-    /// Whether a connect attempt is in flight
-    connect_pending: bool,
+
+    /// Channel for health check results
+    health_tx: mpsc::Sender<HealthCheckResult>,
+    health_rx: mpsc::Receiver<HealthCheckResult>,
     /// PVCAM live view streaming state (requires rerun_viewer + instrument_photometrics)
     /// Works in mock mode without pvcam_hardware, or with real SDK when pvcam_hardware enabled
     #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
@@ -155,8 +147,6 @@ impl DaqApp {
             .enable_all()
             .build()
             .expect("Failed to create tokio runtime");
-        let (connect_tx, connect_rx) = mpsc::channel(4);
-
         // Install tracing subscriber that also feeds the UI log buffer (only once).
         static SUB_INIT: std::sync::Once = std::sync::Once::new();
         SUB_INIT.call_once(|| {
@@ -171,11 +161,19 @@ impl DaqApp {
                 .try_init();
         });
 
+        // Resolve daemon address from storage, env var, or default
+        let daemon_address = resolve_address(None, cc.storage);
+        let address_input = daemon_address.original().to_string();
+
+        // Create health check channel
+        let (health_tx, health_rx) = mpsc::channel(4);
+
         Self {
             client: None,
-            connection_state: ConnectionState::Disconnected,
-            daemon_address: std::env::var("DAQ_DAEMON_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
+            connection: ConnectionManager::new(),
+            daemon_address,
+            address_input,
+            address_error: None,
             daemon_version: None,
             gui_version: env!("CARGO_PKG_VERSION").to_string(),
             active_panel: Panel::GettingStarted,
@@ -192,9 +190,8 @@ impl DaqApp {
             image_viewer_panel: ImageViewerPanel::new(),
             logging_panel: LoggingPanel::new(),
             runtime,
-            connect_tx,
-            connect_rx,
-            connect_pending: false,
+            health_tx,
+            health_rx,
             #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
             pvcam_streaming: false,
             #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
@@ -204,51 +201,39 @@ impl DaqApp {
 
     /// Attempt to connect to the daemon
     fn connect(&mut self) {
-        if self.connect_pending {
+        if self.connection.is_busy() {
             return;
         }
-        self.connection_state = ConnectionState::Connecting;
-        self.logging_panel.connection_status = LogConnectionStatus::Connecting;
-        self.logging_panel.info("Connection", &format!("Connecting to {}", self.daemon_address));
-        self.connect_pending = true;
-        let address = self.daemon_address.clone();
-        let tx = self.connect_tx.clone();
 
-        self.runtime.spawn(async move {
-            match DaqClient::connect(&address).await {
-                Ok(mut client) => {
-                    let daemon_version = match client.get_daemon_info().await {
-                        Ok(info) => Some(info.version),
-                        Err(_) => None,
-                    };
-                    let _ = tx
-                        .send(ConnectResult::Connected {
-                            client,
-                            daemon_version,
-                            address,
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(ConnectResult::Failed {
-                            error: e.to_string(),
-                            address,
-                        })
-                        .await;
-                }
+        // Validate and normalize the address input
+        match DaemonAddress::parse(&self.address_input, AddressSource::UserInput) {
+            Ok(addr) => {
+                self.daemon_address = addr;
+                self.address_error = None;
             }
-        });
+            Err(e) => {
+                self.address_error = Some(e.to_string());
+                self.logging_panel.error("Connection", &format!("Invalid address: {}", e));
+                return;
+            }
+        }
+
+        self.logging_panel.connection_status = LogConnectionStatus::Connecting;
+        self.logging_panel.info(
+            "Connection",
+            &format!("Connecting to {} ({})", self.daemon_address, self.daemon_address.source().label()),
+        );
+
+        self.connection.connect(self.daemon_address.clone(), &self.runtime);
     }
 
     /// Disconnect from the daemon
     fn disconnect(&mut self) {
         self.client = None;
         self.daemon_version = None;
-        self.connection_state = ConnectionState::Disconnected;
+        self.connection.disconnect();
         self.logging_panel.connection_status = LogConnectionStatus::Disconnected;
         self.logging_panel.info("Connection", "Disconnected from daemon");
-        tracing::info!("Disconnected from daemon");
     }
 
     /// Render the top menu bar
@@ -294,7 +279,7 @@ impl DaqApp {
     /// Render version mismatch warning (if applicable)
     fn render_version_warning(&self, ctx: &egui::Context) {
         // Only show warning if connected and versions don't match
-        if self.connection_state == ConnectionState::Connected {
+        if self.connection.state().is_connected() {
             if let Some(ref daemon_ver) = self.daemon_version {
                 if daemon_ver != &self.gui_version {
                     egui::TopBottomPanel::top("version_warning")
@@ -319,48 +304,96 @@ impl DaqApp {
     fn render_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Connection status indicator
-                let (color, text) = match &self.connection_state {
-                    ConnectionState::Disconnected => (egui::Color32::GRAY, "Disconnected"),
-                    ConnectionState::Connecting => (egui::Color32::YELLOW, "Connecting..."),
-                    ConnectionState::Connected => (egui::Color32::GREEN, "Connected"),
-                    ConnectionState::Error(_) => (egui::Color32::RED, "Error"),
+                // Extract state info upfront to avoid borrow conflicts
+                let state_color = self.connection.state().color();
+                let state_label = self.connection.state().label();
+                let is_connected = self.connection.state().is_connected();
+                let is_connecting = self.connection.state().is_connecting();
+                let is_disconnected = matches!(self.connection.state(), ConnectionState::Disconnected);
+                let error_info = match self.connection.state() {
+                    ConnectionState::Error { message, retriable } => Some((message.clone(), *retriable)),
+                    _ => None,
                 };
-                
-                ui.colored_label(color, "●");
-                ui.label(text);
-                
-                ui.separator();
-                
-                // Address input
-                ui.label("Daemon:");
-                let response = ui.add_sized(
-                    [200.0, 18.0],
-                    egui::TextEdit::singleline(&mut self.daemon_address)
-                        .hint_text("http://127.0.0.1:50051"),
-                );
-                
-                // Connect/Disconnect button
-                match &self.connection_state {
-                    ConnectionState::Disconnected | ConnectionState::Error(_) => {
-                        if ui.button("Connect").clicked() || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                            self.connect();
-                        }
-                    }
-                    ConnectionState::Connected => {
-                        if ui.button("Disconnect").clicked() {
-                            self.disconnect();
-                        }
-                    }
-                    ConnectionState::Connecting => {
-                        ui.spinner();
-                    }
+                let seconds_until_retry = self.connection.seconds_until_retry();
+
+                // Connection status indicator
+                ui.colored_label(state_color, "●");
+                ui.label(state_label);
+
+                // Show reconnect countdown if reconnecting
+                if let Some(secs) = seconds_until_retry {
+                    ui.label(format!("({:.0}s)", secs));
                 }
-                
-                // Show error message if any
-                if let ConnectionState::Error(msg) = &self.connection_state {
+
+                ui.separator();
+
+                // Address input with source indicator
+                ui.label("Daemon:");
+
+                // Show source as tooltip on the label
+                let source_label = format!("[{}]", self.daemon_address.source().label());
+                ui.label(egui::RichText::new(&source_label).small().color(egui::Color32::GRAY))
+                    .on_hover_text(format!("Source: {}", self.daemon_address.source()));
+
+                // Text input - show with error highlight if invalid
+                let text_color = if self.address_error.is_some() {
+                    Some(egui::Color32::RED)
+                } else {
+                    None
+                };
+                let mut text_edit = egui::TextEdit::singleline(&mut self.address_input)
+                    .hint_text("http://127.0.0.1:50051");
+                if let Some(color) = text_color {
+                    text_edit = text_edit.text_color(color);
+                }
+                let response = ui.add_sized([200.0, 18.0], text_edit);
+
+                // Check for Enter key press before potentially consuming response
+                let enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                // Show resolved URL as tooltip when connected
+                if is_connected {
+                    response.on_hover_text(format!("Resolved: {}", self.daemon_address.as_str()));
+                }
+
+                // Connect/Disconnect/Cancel buttons based on state
+                if is_disconnected {
+                    if ui.button("Connect").clicked() || enter_pressed {
+                        self.connect();
+                    }
+                } else if let Some((_, retriable)) = &error_info {
+                    if *retriable {
+                        if ui.button("Retry").clicked() || enter_pressed {
+                            self.connection.retry(self.daemon_address.clone(), &self.runtime);
+                            self.logging_panel.connection_status = LogConnectionStatus::Connecting;
+                        }
+                    } else if ui.button("Connect").clicked() || enter_pressed {
+                        self.connect();
+                    }
+                } else if is_connected {
+                    if ui.button("Disconnect").clicked() {
+                        self.disconnect();
+                    }
+                } else if is_connecting {
+                    if ui.button("Cancel").clicked() {
+                        self.connection.cancel();
+                        self.logging_panel.connection_status = LogConnectionStatus::Disconnected;
+                        self.logging_panel.info("Connection", "Connection attempt cancelled");
+                    }
+                    ui.spinner();
+                }
+
+                // Show validation error
+                if let Some(ref err) = self.address_error {
                     ui.separator();
-                    ui.colored_label(egui::Color32::RED, msg);
+                    ui.colored_label(egui::Color32::RED, err);
+                }
+                // Show connection error with friendly message
+                else if let Some((err_msg, _)) = &error_info {
+                    ui.separator();
+                    let friendly = friendly_error_message(err_msg);
+                    ui.colored_label(egui::Color32::RED, &friendly)
+                        .on_hover_text(format!("Raw error: {}", err_msg)); // Show raw error on hover
                 }
             });
         });
@@ -569,57 +602,125 @@ impl DaqApp {
     }
 
     fn poll_connect_results(&mut self, ctx: &egui::Context) {
-        let mut updated = false;
+        // Poll connection manager for results
+        if let Some((client, daemon_version)) = self.connection.poll(&self.runtime, &self.daemon_address) {
+            self.client = Some(client);
+            self.daemon_version = daemon_version.clone();
+            self.logging_panel.connection_status = LogConnectionStatus::Connected;
+            self.logging_panel.info(
+                "Connection",
+                &format!("Connected to {} ({})", self.daemon_address.as_str(), self.daemon_address.source().label()),
+            );
 
-        while let Ok(result) = self.connect_rx.try_recv() {
-            self.connect_pending = false;
-            match result {
-                ConnectResult::Connected {
-                    client,
-                    daemon_version,
-                    address,
-                } => {
-                    self.client = Some(client);
-                    self.daemon_version = daemon_version.clone();
-                    self.connection_state = ConnectionState::Connected;
-                    self.logging_panel.connection_status = LogConnectionStatus::Connected;
-                    self.logging_panel.info("Connection", &format!("Connected to daemon at {}", address));
-
-                    tracing::info!("Connected to daemon at {}", address);
-                    match daemon_version {
-                        Some(daemon_ver) => {
-                            tracing::info!(
-                                "Daemon version: {}, GUI version: {}",
-                                daemon_ver,
-                                self.gui_version
-                            );
-                            if daemon_ver != self.gui_version {
-                                tracing::warn!(
-                                    "Version mismatch detected! Daemon: {}, GUI: {}. Some features may not work correctly.",
-                                    daemon_ver,
-                                    self.gui_version
-                                );
-                            }
-                        }
-                        None => {
-                            tracing::warn!("Connected but failed to get daemon version");
-                        }
+            // Log version info
+            match daemon_version {
+                Some(ref daemon_ver) => {
+                    tracing::info!(
+                        "Daemon version: {}, GUI version: {}",
+                        daemon_ver,
+                        self.gui_version
+                    );
+                    if daemon_ver != &self.gui_version {
+                        tracing::warn!(
+                            "Version mismatch detected! Daemon: {}, GUI: {}. Some features may not work correctly.",
+                            daemon_ver,
+                            self.gui_version
+                        );
                     }
                 }
-                ConnectResult::Failed { error, address } => {
-                    self.client = None;
-                    self.daemon_version = None;
-                    self.connection_state = ConnectionState::Error(error.clone());
-                    self.logging_panel.connection_status = LogConnectionStatus::Error;
-                    self.logging_panel.error("Connection", &format!("Failed to connect to {}: {}", address, error));
-                    tracing::error!("Failed to connect to {}: {}", address, error);
+                None => {
+                    tracing::warn!("Connected but failed to get daemon version");
                 }
             }
-            updated = true;
         }
 
-        if self.connect_pending || updated {
+        // Update logging panel status based on connection state
+        match self.connection.state() {
+            ConnectionState::Error { .. } => {
+                if self.logging_panel.connection_status != LogConnectionStatus::Error {
+                    self.logging_panel.connection_status = LogConnectionStatus::Error;
+                    if let Some(err) = self.connection.state().error_message() {
+                        self.logging_panel.error(
+                            "Connection",
+                            &format!("Connection failed: {}", err),
+                        );
+                    }
+                }
+            }
+            ConnectionState::Reconnecting { attempt, .. } => {
+                self.logging_panel.connection_status = LogConnectionStatus::Connecting;
+                if let Some(err) = self.connection.state().error_message() {
+                    self.logging_panel.warn(
+                        "Connection",
+                        &format!("Reconnecting (attempt {}): {}", attempt, err),
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        // Request repaint if connection attempt is in progress
+        if self.connection.is_busy() || self.connection.seconds_until_retry().is_some() {
             ctx.request_repaint();
+        }
+    }
+
+    /// Check if a health check should be spawned and spawn it.
+    fn maybe_spawn_health_check(&mut self) {
+        if !self.connection.should_health_check() {
+            return;
+        }
+        if self.client.is_none() {
+            return;
+        }
+
+        // Mark health check as started
+        self.connection.mark_health_check_started();
+
+        // Clone what we need for the async task
+        let mut client = self.client.clone().unwrap();
+        let tx = self.health_tx.clone();
+
+        self.runtime.spawn(async move {
+            match client.health_check().await {
+                Ok(()) => {
+                    let _ = tx.send(HealthCheckResult::Success).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(HealthCheckResult::Failed(e.to_string())).await;
+                }
+            }
+        });
+    }
+
+    /// Poll for health check results.
+    fn poll_health_checks(&mut self) {
+        while let Ok(result) = self.health_rx.try_recv() {
+            match result {
+                HealthCheckResult::Success => {
+                    self.connection.record_health_success();
+                }
+                HealthCheckResult::Failed(error) => {
+                    let should_reconnect = self.connection.record_health_failure(&error);
+
+                    if should_reconnect {
+                        // Clear client - connection is stale
+                        self.client = None;
+                        self.daemon_version = None;
+                        self.logging_panel.connection_status = LogConnectionStatus::Connecting;
+                        self.logging_panel.warn(
+                            "Connection",
+                            &format!("Connection lost ({}), reconnecting...", error),
+                        );
+
+                        // Trigger reconnect
+                        self.connection.trigger_health_reconnect(
+                            self.daemon_address.clone(),
+                            &self.runtime,
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -628,10 +729,20 @@ impl eframe::App for DaqApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_logs();
         self.poll_connect_results(ctx);
+        self.maybe_spawn_health_check();
+        self.poll_health_checks();
         self.render_menu_bar(ctx);
         self.render_version_warning(ctx);
         self.render_status_bar(ctx);
         self.render_nav_panel(ctx);
         self.render_content(ctx);
+    }
+
+    /// Save application state (including successful daemon address) to storage.
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // Only persist the address if we're connected (save known-good addresses)
+        if self.connection.state().is_connected() {
+            save_to_storage(storage, &self.daemon_address);
+        }
     }
 }

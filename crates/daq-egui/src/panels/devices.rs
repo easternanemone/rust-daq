@@ -5,7 +5,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
-use crate::widgets::{ParameterCache, filter_parameters, group_parameters_by_prefix};
+use crate::widgets::{ParameterCache, filter_parameters, group_parameters_by_prefix, offline_notice, OfflineContext};
 
 /// Result of an async parameter load operation
 struct ParamLoadResult {
@@ -293,6 +293,11 @@ impl DevicesPanel {
         self.pending_action = None;
 
         ui.heading("Devices");
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Devices) {
+            return;
+        }
         
         ui.horizontal(|ui| {
             if ui.button("🔄 Refresh").clicked() {

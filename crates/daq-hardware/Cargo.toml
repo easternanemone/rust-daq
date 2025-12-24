@@ -60,6 +60,6 @@ driver_pvcam = ["dep:daq-driver-pvcam"]
 driver_pvcam_arrow_tap = ["driver_pvcam", "daq-driver-pvcam/arrow_tap"]
 # Enable real PVCAM hardware (must propagate to driver crate)
 pvcam_hardware = ["driver_pvcam", "daq-driver-pvcam/pvcam_hardware"]
-instrument_photometrics = []
+instrument_photometrics = ["driver_pvcam"]
 simulator = []
 plugins_hot_reload = ["dep:notify"]

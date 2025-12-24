@@ -967,6 +967,10 @@ impl PvcamAcquisition {
             // Clone streaming parameter for error watcher task
             let streaming_for_watcher = self.streaming.clone();
 
+            // Capture ROI and binning for frame metadata (bd-183h)
+            let roi_x = roi.x;
+            let roi_y = roi.y;
+
             let poll_handle = tokio::task::spawn_blocking(move || {
                 Self::frame_loop_hardware(
                     h,
@@ -989,6 +993,9 @@ impl PvcamAcquisition {
                     height,
                     error_tx,
                     use_metadata,
+                    roi_x,
+                    roi_y,
+                    binning,
                     metadata_tx,
                 );
             });
@@ -1081,7 +1088,19 @@ impl PvcamAcquisition {
                     }
                 }
 
-                let frame = Arc::new(Frame::from_u16(binned_width, binned_height, &pixels));
+                // Populate frame metadata using builder pattern (bd-183h)
+                let ext_metadata = daq_core::data::FrameMetadata {
+                    binning: Some(binning),
+                    ..Default::default()
+                };
+                let frame = Arc::new(
+                    Frame::from_u16(binned_width, binned_height, &pixels)
+                        .with_frame_number(frame_num)
+                        .with_timestamp(Frame::timestamp_now())
+                        .with_exposure(exposure_ms)
+                        .with_roi_offset(roi.x, roi.y)
+                        .with_metadata(ext_metadata)
+                );
                 
                 if let Some(ref tx) = reliable_tx {
                     let _ = tx.send(frame.clone()).await;
@@ -1159,6 +1178,9 @@ impl PvcamAcquisition {
     ///                UnboundedSender::send() is non-blocking and safe to call from sync code.
     /// * `use_metadata` - Whether metadata decoding is enabled (Gemini SDK review)
     /// * `metadata_tx` - Optional channel for decoded hardware timestamps
+    /// * `roi_x` - ROI X offset in sensor coordinates (bd-183h)
+    /// * `roi_y` - ROI Y offset in sensor coordinates (bd-183h)
+    /// * `binning` - Binning factors (x, y) for extended metadata (bd-183h)
     #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
@@ -1182,6 +1204,9 @@ impl PvcamAcquisition {
         height: u32,
         error_tx: tokio::sync::mpsc::UnboundedSender<AcquisitionError>,
         use_metadata: bool,
+        roi_x: u32,
+        roi_y: u32,
+        binning: (u16, u16),
         metadata_tx: Option<tokio::sync::mpsc::Sender<FrameMetadata>>,
     ) {
         let mut status: i16 = 0;
@@ -1405,7 +1430,30 @@ impl PvcamAcquisition {
                     }
 
                     // Create Frame with ownership transfer - no additional copy (bd-ek9n.5)
-                    let frame = Frame::from_bytes(width, height, 16, pixel_data);
+                    // Populate metadata using builder pattern (bd-183h)
+                    let mut frame = Frame::from_bytes(width, height, 16, pixel_data)
+                        .with_frame_number(current_frame_nr as u64)
+                        .with_roi_offset(roi_x, roi_y);
+
+                    // Use hardware timestamps/exposure when available, fall back to software values
+                    if let Some(ref md) = frame_metadata {
+                        frame = frame
+                            .with_timestamp(md.timestamp_bof_ns)
+                            .with_exposure(md.exposure_time_ns as f64 / 1_000_000.0);
+                    } else {
+                        // Software fallback: use system time and configured exposure
+                        frame = frame
+                            .with_timestamp(Frame::timestamp_now())
+                            .with_exposure(exposure_ms);
+                    }
+
+                    // Add extended metadata (bd-183h)
+                    let ext_metadata = daq_core::data::FrameMetadata {
+                        binning: Some(binning),
+                        ..Default::default()
+                    };
+                    frame = frame.with_metadata(ext_metadata);
+
                     frame_count.fetch_add(1, Ordering::Relaxed);
                     let frame_arc = Arc::new(frame);
 

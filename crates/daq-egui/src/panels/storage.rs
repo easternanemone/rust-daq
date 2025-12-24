@@ -5,6 +5,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
+use crate::widgets::{offline_notice, OfflineContext};
 
 /// Pending action for storage panel
 enum PendingAction {
@@ -105,7 +106,12 @@ impl StoragePanel {
         self.pending_action = None;
         
         ui.heading("Storage");
-        
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Storage) {
+            return;
+        }
+
         ui.horizontal(|ui| {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);

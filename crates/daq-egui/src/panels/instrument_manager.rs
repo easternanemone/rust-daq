@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::client::DaqClient;
+use crate::widgets::{offline_notice, OfflineContext};
 use daq_proto::daq::DeviceInfo;
 
 /// Auto-refresh interval (for future auto-refresh feature)
@@ -360,6 +361,11 @@ impl InstrumentManagerPanel {
         }
 
         ui.heading("Instruments");
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Devices) {
+            return;
+        }
 
         // Toolbar
         ui.horizontal(|ui| {

@@ -8,6 +8,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
+use crate::widgets::{offline_notice, OfflineContext};
 
 /// Result types for different async actions
 #[derive(Debug)]
@@ -132,6 +133,11 @@ impl ScriptsPanel {
         }
 
         ui.heading("Scripts");
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Scripts) {
+            return;
+        }
 
         // Toolbar
         let has_client = client.is_some();

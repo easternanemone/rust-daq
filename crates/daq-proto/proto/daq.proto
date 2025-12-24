@@ -567,7 +567,7 @@ message StreamFramesRequest {
   uint32 max_fps = 2;  // Rate limit for GUI rendering (0 = no limit)
 }
 
-// Single frame of image data
+// Single frame of image data (bd-183h: extended metadata)
 message FrameData {
   string device_id = 1;
   uint32 width = 2;
@@ -575,8 +575,21 @@ message FrameData {
   uint32 bit_depth = 4;  // 8, 12, or 16
   bytes data = 5;        // Raw pixel data (row-major, little-endian for >8-bit)
   uint64 frame_number = 6;
-  uint64 timestamp_ns = 7;  // Nanoseconds since epoch
+  uint64 timestamp_ns = 7;  // Driver capture timestamp (nanoseconds since epoch)
   optional double exposure_ms = 8;
+
+  // ROI offset in sensor coordinates (bd-183h)
+  uint32 roi_x = 10;      // X offset (0 = left edge of sensor)
+  uint32 roi_y = 11;      // Y offset (0 = top edge of sensor)
+
+  // Extended metadata (bd-183h)
+  optional double temperature_c = 20;    // Sensor temperature at capture
+  optional string gain_mode = 21;        // e.g., "HDR", "High Sensitivity"
+  optional string readout_speed = 22;    // e.g., "100 MHz"
+  optional string trigger_mode = 23;     // e.g., "Timed", "Trigger First"
+  optional uint32 binning_x = 24;        // Horizontal binning factor
+  optional uint32 binning_y = 25;        // Vertical binning factor
+  map<string, string> metadata = 30;     // Extensible key-value metadata
 }
 
 // Arrow Flight ticket for zero-copy bulk data transfer

@@ -1348,7 +1348,6 @@ impl HardwareService for HardwareServiceImpl {
         let device_id_clone = device_id.clone();
         tokio::spawn(async move {
             let mut last_frame_time = std::time::Instant::now();
-            let mut frame_number: u64 = 0;
 
             loop {
                 match frame_rx.recv().await {
@@ -1361,23 +1360,32 @@ impl HardwareService for HardwareServiceImpl {
                             }
                         }
                         last_frame_time = std::time::Instant::now();
-                        frame_number += 1;
 
-                        // Convert Arc<Frame> to FrameData proto
-                        let timestamp_ns = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_nanos() as u64)
-                            .unwrap_or(0);
-
+                        // Convert Arc<Frame> to FrameData proto (bd-183h: propagate driver metadata)
+                        // Use driver-provided timestamps and frame numbers for accurate timing
                         let frame_data = FrameData {
                             device_id: device_id_clone.clone(),
                             width: frame.width,
                             height: frame.height,
                             bit_depth: frame.bit_depth,
                             data: frame.data.clone(),
-                            frame_number,
-                            timestamp_ns,
-                            exposure_ms: None, // TODO: get from device state
+                            // Use driver-provided frame number and timestamp (bd-183h)
+                            frame_number: frame.frame_number,
+                            timestamp_ns: frame.timestamp_ns,
+                            exposure_ms: frame.exposure_ms,
+                            // ROI offset (bd-183h)
+                            roi_x: frame.roi_x,
+                            roi_y: frame.roi_y,
+                            // Extended metadata (bd-183h)
+                            temperature_c: frame.metadata.as_ref().and_then(|m| m.temperature_c),
+                            gain_mode: frame.metadata.as_ref().and_then(|m| m.gain_mode.clone()),
+                            readout_speed: frame.metadata.as_ref().and_then(|m| m.readout_speed.clone()),
+                            trigger_mode: frame.metadata.as_ref().and_then(|m| m.trigger_mode.clone()),
+                            binning_x: frame.metadata.as_ref().and_then(|m| m.binning.map(|(x, _)| x as u32)),
+                            binning_y: frame.metadata.as_ref().and_then(|m| m.binning.map(|(_, y)| y as u32)),
+                            metadata: frame.metadata.as_ref()
+                                .map(|m| m.extra.clone())
+                                .unwrap_or_default(),
                         };
 
                         if tx.send(Ok(frame_data)).await.is_err() {

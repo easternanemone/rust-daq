@@ -2482,6 +2482,7 @@ dependencies = [
  "tonic 0.10.2",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

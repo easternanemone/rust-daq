@@ -1,4 +1,30 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Extended metadata for frames (bd-183h).
+///
+/// Stored as `Option<Box<FrameMetadata>>` to avoid allocation overhead
+/// for frames that don't need extended metadata.
+#[derive(Debug, Clone, Default)]
+pub struct FrameMetadata {
+    /// Sensor temperature at capture time (Celsius)
+    pub temperature_c: Option<f64>,
+
+    /// Gain mode name (e.g., "HDR", "High Sensitivity")
+    pub gain_mode: Option<String>,
+
+    /// Readout speed (e.g., "100 MHz")
+    pub readout_speed: Option<String>,
+
+    /// Binning (x, y)
+    pub binning: Option<(u16, u16)>,
+
+    /// Trigger mode (e.g., "Timed", "Trigger First")
+    pub trigger_mode: Option<String>,
+
+    /// Extensible key-value metadata for driver-specific properties
+    pub extra: HashMap<String, String>,
+}
 
 /// Represents a single image frame.
 ///
@@ -10,12 +36,20 @@ use std::sync::Arc;
 /// - 12/16-bit images: 2 bytes per pixel, Little Endian.
 ///
 /// Use `as_u16_slice()` to access 16-bit data safely.
+///
+/// # Metadata (bd-183h)
+/// Frames include timing and acquisition metadata for end-to-end traceability:
+/// - `frame_number`: Driver-provided sequence number
+/// - `timestamp_ns`: Capture timestamp from driver (nanoseconds since epoch)
+/// - `exposure_ms`: Exposure time used for this frame
+/// - `roi_x`, `roi_y`: ROI origin offset in sensor coordinates
+/// - `metadata`: Optional extended metadata (temperature, gain, etc.)
 #[derive(Debug, Clone)]
 pub struct Frame {
-    /// Width in pixels
+    /// Width in pixels (of the captured ROI, not full sensor)
     pub width: u32,
 
-    /// Height in pixels
+    /// Height in pixels (of the captured ROI, not full sensor)
     pub height: u32,
 
     /// Bits per pixel (e.g., 8, 12, 16)
@@ -23,12 +57,44 @@ pub struct Frame {
 
     /// Raw pixel data
     pub data: Vec<u8>,
+
+    // === Timing & Identification (bd-183h) ===
+
+    /// Driver-provided frame sequence number (monotonically increasing)
+    pub frame_number: u64,
+
+    /// Capture timestamp from driver (nanoseconds since UNIX epoch)
+    ///
+    /// This is the time when the frame was captured by the camera hardware,
+    /// not when it was received by the server. This enables accurate timing
+    /// analysis without network jitter artifacts.
+    pub timestamp_ns: u64,
+
+    // === Acquisition Parameters (bd-183h) ===
+
+    /// Exposure time used for this frame (milliseconds)
+    pub exposure_ms: Option<f64>,
+
+    /// ROI X offset in sensor coordinates (0 = left edge of sensor)
+    pub roi_x: u32,
+
+    /// ROI Y offset in sensor coordinates (0 = top edge of sensor)
+    pub roi_y: u32,
+
+    // === Extended Metadata (bd-183h) ===
+
+    /// Optional extended metadata (temperature, gain, etc.)
+    ///
+    /// Boxed to avoid allocation overhead for frames without metadata.
+    /// Use `with_metadata()` builder to set.
+    pub metadata: Option<Box<FrameMetadata>>,
 }
 
 impl Frame {
     /// Create a new frame from 16-bit pixel data.
     ///
     /// Copies the data into a byte vector.
+    /// Frame metadata fields default to zero/None; use builder methods to set.
     pub fn from_u16(width: u32, height: u32, pixels: &[u16]) -> Self {
         // Convert u16 pixels to u8 bytes (Little Endian)
         let mut data = Vec::with_capacity(pixels.len() * 2);
@@ -41,29 +107,98 @@ impl Frame {
             height,
             bit_depth: 16,
             data,
+            frame_number: 0,
+            timestamp_ns: 0,
+            exposure_ms: None,
+            roi_x: 0,
+            roi_y: 0,
+            metadata: None,
         }
     }
 
     /// Create a new frame from 8-bit pixel data.
+    ///
+    /// Frame metadata fields default to zero/None; use builder methods to set.
     pub fn from_u8(width: u32, height: u32, data: Vec<u8>) -> Self {
         Self {
             width,
             height,
             bit_depth: 8,
             data,
+            frame_number: 0,
+            timestamp_ns: 0,
+            exposure_ms: None,
+            roi_x: 0,
+            roi_y: 0,
+            metadata: None,
         }
     }
 
     /// Create a frame from raw byte data with explicit bit depth.
     ///
     /// The caller must ensure the buffer length matches the expected size for the bit depth.
+    /// Frame metadata fields default to zero/None; use builder methods to set.
     pub fn from_bytes(width: u32, height: u32, bit_depth: u32, data: Vec<u8>) -> Self {
         Self {
             width,
             height,
             bit_depth,
             data,
+            frame_number: 0,
+            timestamp_ns: 0,
+            exposure_ms: None,
+            roi_x: 0,
+            roi_y: 0,
+            metadata: None,
         }
+    }
+
+    // === Builder Methods (bd-183h) ===
+
+    /// Set frame number (builder pattern).
+    #[must_use]
+    pub fn with_frame_number(mut self, frame_number: u64) -> Self {
+        self.frame_number = frame_number;
+        self
+    }
+
+    /// Set capture timestamp (builder pattern).
+    #[must_use]
+    pub fn with_timestamp(mut self, timestamp_ns: u64) -> Self {
+        self.timestamp_ns = timestamp_ns;
+        self
+    }
+
+    /// Set exposure time in milliseconds (builder pattern).
+    #[must_use]
+    pub fn with_exposure(mut self, exposure_ms: f64) -> Self {
+        self.exposure_ms = Some(exposure_ms);
+        self
+    }
+
+    /// Set ROI origin offset (builder pattern).
+    #[must_use]
+    pub fn with_roi_offset(mut self, roi_x: u32, roi_y: u32) -> Self {
+        self.roi_x = roi_x;
+        self.roi_y = roi_y;
+        self
+    }
+
+    /// Set extended metadata (builder pattern).
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: FrameMetadata) -> Self {
+        self.metadata = Some(Box::new(metadata));
+        self
+    }
+
+    /// Create timestamp from current system time.
+    ///
+    /// Utility for drivers that don't have hardware timestamps.
+    pub fn timestamp_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
     }
 
     /// Get pixel value at (x, y) as u32 (handling bit depth conversion).

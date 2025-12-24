@@ -5,6 +5,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
+use crate::widgets::{offline_notice, OfflineContext};
 use daq_proto::daq::{ScanConfig, AxisConfig};
 
 /// Axis configuration for the wizard
@@ -166,7 +167,12 @@ impl ScansPanel {
         self.pending_action = None;
         
         ui.heading("Scans");
-        
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Experiments) {
+            return;
+        }
+
         ui.horizontal(|ui| {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);

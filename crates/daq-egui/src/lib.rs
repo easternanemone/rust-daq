@@ -3,6 +3,8 @@
 //! Shared code between rust-daq-gui (standalone) and daq-rerun (embedded viewer).
 
 pub mod client;
+pub mod connection;
+pub mod reconnect;
 
 #[cfg(feature = "standalone")]
 pub mod app;

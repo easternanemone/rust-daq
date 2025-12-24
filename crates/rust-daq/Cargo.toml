@@ -175,7 +175,7 @@ tokio_serial = ["dep:tokio-serial", "instrument_serial", "daq-hardware/tokio_ser
 # Serial drivers now use tokio-serial
 instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
 instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
-instrument_photometrics = ["tokio_serial"]
+instrument_photometrics = ["tokio_serial", "daq-hardware/instrument_photometrics"]
 instrument_spectra_physics = ["tokio_serial", "daq-hardware/driver-spectra-physics"]
 instrument_newport_power_meter = ["tokio_serial"]
 

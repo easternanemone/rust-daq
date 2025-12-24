@@ -116,6 +116,52 @@ sequenceDiagram
 3.  **Document-Oriented Data Model**: Data is treated as a stream of self-describing documents (Start -> Descriptor -> Events... -> Stop). This schema-less approach adapts well to varied experiments.
 4.  **Workspace Composition**: Usage of Cargo workspace to enforce modularity. After bd-232k refactoring, `rust-daq` is now a thin integration layer (prelude pattern) rather than a monolithic integrator.
 
+## Client Architecture & Connection Reliability
+
+The GUI (`daq-egui`) connects to the daemon via gRPC. To handle network instability, daemon restarts, and remote deployments, the client implements multi-layered reliability patterns. See [ADR: Connection Reliability](adr-connection-reliability.md) for detailed design.
+
+### Connection State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected
+    Disconnected --> Connecting: connect()
+    Connecting --> Connected: success
+    Connecting --> Reconnecting: failure (retriable)
+    Connecting --> Error: failure (non-retriable)
+    Connected --> Disconnected: disconnect()
+    Connected --> Reconnecting: health_check_failed
+    Reconnecting --> Connected: success
+    Reconnecting --> Error: max_retries
+    Reconnecting --> Disconnected: cancel()
+    Error --> Disconnected: dismiss
+```
+
+### Reliability Layers
+
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| **Transport** | gRPC HTTP/2 keepalives (30s) | Detect dead TCP connections |
+| **Application** | Periodic health checks (30s) | Detect zombie connections |
+| **Recovery** | Exponential backoff with jitter | Prevent thundering herd, smooth recovery |
+| **UX** | Graceful offline degradation | Panels remain responsive when disconnected |
+
+### Key Components
+
+- **`ConnectionManager`** (`reconnect.rs`): Owns connection lifecycle, state machine, reconnect logic
+- **`DaqClient`** (`client.rs`): gRPC wrapper with health_check() and channel tuning
+- **`OfflineNotice`** (`widgets/offline_notice.rs`): Context-aware offline UI widget
+
+### User-Facing Feedback
+
+Connection state is shown in the status bar with color coding:
+- **Green**: Connected (healthy)
+- **Yellow**: Connecting/Reconnecting (in progress)
+- **Red**: Error (non-recoverable)
+- **Gray**: Disconnected (idle)
+
+Error messages are translated from raw gRPC errors to actionable user guidance (e.g., "Connection refused" → "Daemon not running. Start with: cargo run...").
+
 ## Data Pipeline Architecture (The Mullet Strategy)
 
 To resolve the conflict between high-throughput reliable storage and low-latency live visualization, the system implements a **Tee-based Pipeline**:

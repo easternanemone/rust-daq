@@ -5,6 +5,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
+use crate::widgets::{offline_notice, OfflineContext};
 
 /// Pending action for modules panel
 enum PendingAction {
@@ -117,7 +118,12 @@ impl ModulesPanel {
         self.pending_action = None;
         
         ui.heading("Modules");
-        
+
+        // Show offline notice if not connected (bd-j3xz.4.4)
+        if offline_notice(ui, client.is_none(), OfflineContext::Modules) {
+            return;
+        }
+
         ui.horizontal(|ui| {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);

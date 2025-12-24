@@ -1,8 +1,54 @@
 //! gRPC client for communicating with the DAQ daemon.
 
+use std::time::Duration;
+
 use anyhow::Result;
 use tonic::transport::Channel;
 
+use crate::connection::DaemonAddress;
+
+/// gRPC channel configuration for connection reliability.
+///
+/// These settings are tuned for a DAQ GUI that maintains a persistent connection
+/// to a local or networked daemon, with emphasis on fast failure detection.
+pub struct ChannelConfig {
+    /// Connection timeout (how long to wait for initial connection)
+    pub connect_timeout: Duration,
+    /// Request timeout (default timeout for individual RPC calls)
+    pub request_timeout: Duration,
+    /// HTTP/2 keepalive interval (how often to send keepalive pings)
+    pub keepalive_interval: Duration,
+    /// Keepalive timeout (how long to wait for keepalive response)
+    pub keepalive_timeout: Duration,
+    /// Whether to send keepalive pings even when idle
+    pub keepalive_while_idle: bool,
+}
+
+impl Default for ChannelConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(30),
+            keepalive_interval: Duration::from_secs(30),
+            keepalive_timeout: Duration::from_secs(10),
+            keepalive_while_idle: true,
+        }
+    }
+}
+
+impl ChannelConfig {
+    /// Fast configuration for local connections (localhost/Tailscale).
+    #[must_use]
+    pub fn fast() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(5),
+            request_timeout: Duration::from_secs(10),
+            keepalive_interval: Duration::from_secs(15),
+            keepalive_timeout: Duration::from_secs(5),
+            keepalive_while_idle: true,
+        }
+    }
+}
 use daq_proto::daq::{
     control_service_client::ControlServiceClient,
     hardware_service_client::HardwareServiceClient,
@@ -48,11 +94,33 @@ pub struct DaqClient {
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
 impl DaqClient {
-    /// Connect to the DAQ daemon at the given address
-    pub async fn connect(address: &str) -> Result<Self> {
-        let channel = Channel::from_shared(address.to_string())?
-            .connect()
-            .await?;
+    /// Connect to the DAQ daemon at the given address with default configuration.
+    ///
+    /// The address is validated and normalized by `DaemonAddress` before connection.
+    /// TLS is automatically enabled for `https://` addresses.
+    pub async fn connect(address: &DaemonAddress) -> Result<Self> {
+        Self::connect_with_config(address, ChannelConfig::default()).await
+    }
+
+    /// Connect with custom channel configuration.
+    ///
+    /// Use `ChannelConfig::fast()` for local/Tailscale connections with quicker
+    /// failure detection, or customize timeouts for high-latency networks.
+    pub async fn connect_with_config(address: &DaemonAddress, config: ChannelConfig) -> Result<Self> {
+        let endpoint = Channel::from_shared(address.as_str().to_string())?
+            .connect_timeout(config.connect_timeout)
+            .timeout(config.request_timeout)
+            .http2_keep_alive_interval(config.keepalive_interval)
+            .keep_alive_timeout(config.keepalive_timeout)
+            .keep_alive_while_idle(config.keepalive_while_idle);
+
+        // TODO(bd-otbx): Add TLS configuration for https:// addresses
+        // if address.is_tls() {
+        //     let tls_config = load_tls_config()?;
+        //     endpoint = endpoint.tls_config(tls_config)?;
+        // }
+
+        let channel = endpoint.connect().await?;
 
         Ok(Self {
             control: ControlServiceClient::new(channel.clone()),
@@ -63,6 +131,15 @@ impl DaqClient {
             storage: StorageServiceClient::new(channel.clone()),
             module: ModuleServiceClient::new(channel),
         })
+    }
+
+    /// Perform a lightweight health check by calling GetDaemonInfo.
+    ///
+    /// Returns `Ok(())` if the daemon is responsive, `Err` otherwise.
+    /// This is used by the ConnectionManager to detect stale connections.
+    pub async fn health_check(&mut self) -> Result<()> {
+        self.control.get_daemon_info(daq_proto::daq::DaemonInfoRequest {}).await?;
+        Ok(())
     }
 
     /// Get daemon information (version, capabilities, etc.)

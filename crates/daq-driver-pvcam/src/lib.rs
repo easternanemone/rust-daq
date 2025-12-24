@@ -9,22 +9,24 @@ pub mod components;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use daq_core::capabilities::{Commandable, ExposureControl, Frame, FrameProducer, Parameterized, Triggerable};
+use daq_core::capabilities::{
+    Commandable, ExposureControl, Frame, FrameProducer, Parameterized, Triggerable,
+};
 use daq_core::core::Roi;
+use daq_core::error::DaqError;
 use daq_core::observable::ParameterSet;
 use daq_core::parameter::Parameter;
 use daq_core::pipeline::MeasurementSource;
-use daq_core::error::DaqError;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
 // Re-export public types from features component
 pub use crate::components::features::{
-    CameraInfo, CentroidsConfig, CentroidsMode, ClearMode, ExposureMode, ExposureResolution, ExposeOutMode,
-    FanSpeed, FrameFlip, FrameRotate, GainMode, PPFeature, PPParam, ReadoutPort, ShutterMode, ShutterStatus,
-    SmartStreamEntry, SmartStreamMode, SpeedMode,
+    CameraInfo, CentroidsConfig, CentroidsMode, ClearMode, ExposeOutMode, ExposureMode,
+    ExposureResolution, FanSpeed, FrameFlip, FrameRotate, GainMode, PPFeature, PPParam,
+    ReadoutPort, ShutterMode, ShutterStatus, SmartStreamEntry, SmartStreamMode, SpeedMode,
 };
 // Re-export feature functions for direct access
 pub use crate::components::features::PvcamFeatures;
@@ -49,7 +51,7 @@ pub struct PvcamDriver {
     // acquisition must drop BEFORE connection to stop poll thread before SDK uninit
     acquisition: Arc<PvcamAcquisition>,
     connection: Arc<Mutex<PvcamConnection>>,
-    
+
     // Acquisition Parameters
     exposure_ms: Parameter<f64>,
     trigger_mode: Parameter<String>,
@@ -99,9 +101,15 @@ pub struct PvcamDriver {
     host_flip: Parameter<String>,
     host_summing_enabled: Parameter<bool>,
     host_summing_count: Parameter<u32>,
-    
+
+    // Metadata (Info)
+    serial_number: Parameter<String>,
+    firmware_version: Parameter<String>,
+    model_name: Parameter<String>,
+    bit_depth: Parameter<u16>,
+
     params: ParameterSet,
-    
+
     sensor_width: u32,
     sensor_height: u32,
 }
@@ -109,7 +117,10 @@ pub struct PvcamDriver {
 impl PvcamDriver {
     pub async fn new_async(camera_name: String) -> Result<Self> {
         tracing::info!("PvcamDriver::new_async called for camera: {}", camera_name);
-        tracing::info!("pvcam_hardware feature enabled: {}", cfg!(feature = "pvcam_hardware"));
+        tracing::info!(
+            "pvcam_hardware feature enabled: {}",
+            cfg!(feature = "pvcam_hardware")
+        );
 
         // Run initialization in blocking task
         let connection = tokio::task::spawn_blocking({
@@ -135,8 +146,9 @@ impl PvcamDriver {
                 }
                 Ok(Arc::new(Mutex::new(conn)))
             }
-        }).await??;
-        
+        })
+        .await??;
+
         Self::create(camera_name, connection).await
     }
 
@@ -161,8 +173,18 @@ impl PvcamDriver {
                         let mut ser: uns16 = 0;
                         let mut par: uns16 = 0;
                         // SAFETY: hcam is open; ser/par are valid out pointers for current dimensions.
-                        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-                        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+                        pl_get_param(
+                            hcam,
+                            PARAM_SER_SIZE,
+                            ATTR_CURRENT,
+                            &mut ser as *mut _ as *mut _,
+                        );
+                        pl_get_param(
+                            hcam,
+                            PARAM_PAR_SIZE,
+                            ATTR_CURRENT,
+                            &mut par as *mut _ as *mut _,
+                        );
                         if ser > 0 && par > 0 {
                             w = ser as u32;
                             h = par as u32;
@@ -173,34 +195,74 @@ impl PvcamDriver {
             (w, h)
         };
 
+        // Fetch Camera Info for metadata parameters
+        let info = {
+            let conn = connection.lock().await;
+            PvcamFeatures::get_camera_info(&conn).unwrap_or_else(|e| {
+                tracing::warn!("Failed to get camera info: {}", e);
+                CameraInfo {
+                    serial_number: "Unknown".to_string(),
+                    firmware_version: "Unknown".to_string(),
+                    chip_name: "Unknown".to_string(),
+                    temperature_c: 0.0,
+                    bit_depth: 0,
+                    pixel_time_ns: 0,
+                    pixel_size_nm: (0, 0),
+                    sensor_size: (0, 0),
+                    gain_name: "Unknown".to_string(),
+                    speed_name: "Unknown".to_string(),
+                    port_name: "Unknown".to_string(),
+                    gain_index: 0,
+                    speed_index: 0,
+                }
+            })
+        };
+
         let mut params = ParameterSet::new();
-        
+
         // Acquisition Group
         let exposure_ms = Parameter::new("acquisition.exposure_ms", 100.0)
             .with_description("Exposure time")
             .with_unit("ms")
             .with_range(0.1, 60000.0);
-            
-        let trigger_mode = Parameter::new("acquisition.trigger_mode", ExposureMode::Timed.as_str().to_string())
-            .with_description("Trigger mode")
-            .with_choices_introspectable(ExposureMode::all_choices());
 
-        let clear_mode = Parameter::new("acquisition.clear_mode", ClearMode::PreExposure.as_str().to_string())
-            .with_description("CCD clear mode")
-            .with_choices_introspectable(ClearMode::all_choices());
+        let trigger_mode = Parameter::new(
+            "acquisition.trigger_mode",
+            ExposureMode::Timed.as_str().to_string(),
+        )
+        .with_description("Trigger mode")
+        .with_choices_introspectable(ExposureMode::all_choices());
 
-        let expose_out_mode = Parameter::new("acquisition.expose_out_mode", ExposeOutMode::FirstRow.as_str().to_string())
-            .with_description("Expose out signal mode")
-            .with_choices_introspectable(ExposeOutMode::all_choices());
+        let clear_mode = Parameter::new(
+            "acquisition.clear_mode",
+            ClearMode::PreExposure.as_str().to_string(),
+        )
+        .with_description("CCD clear mode")
+        .with_choices_introspectable(ClearMode::all_choices());
 
-        let roi = Parameter::new("acquisition.roi", Roi { x: 0, y: 0, width, height })
-            .with_description("Region of interest");
-            
-        let binning = Parameter::new("acquisition.binning", (1u16, 1u16))
-            .with_description("Binning (x, y)");
-            
-        let armed = Parameter::new("acquisition.armed", false)
-            .with_description("Camera armed for trigger");
+        let expose_out_mode = Parameter::new(
+            "acquisition.expose_out_mode",
+            ExposeOutMode::FirstRow.as_str().to_string(),
+        )
+        .with_description("Expose out signal mode")
+        .with_choices_introspectable(ExposeOutMode::all_choices());
+
+        let roi = Parameter::new(
+            "acquisition.roi",
+            Roi {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+        )
+        .with_description("Region of interest");
+
+        let binning =
+            Parameter::new("acquisition.binning", (1u16, 1u16)).with_description("Binning (x, y)");
+
+        let armed =
+            Parameter::new("acquisition.armed", false).with_description("Camera armed for trigger");
 
         let streaming = Parameter::new("acquisition.streaming", false)
             .with_description("Camera streaming state");
@@ -230,8 +292,7 @@ impl PvcamDriver {
         let gain_mode = Parameter::new("readout.gain_mode", "HDR".to_string())
             .with_description("Gain mode selection");
 
-        let adc_offset = Parameter::new("readout.adc_offset", 0i16)
-            .with_description("ADC offset");
+        let adc_offset = Parameter::new("readout.adc_offset", 0i16).with_description("ADC offset");
 
         let full_well_capacity = Parameter::new("readout.full_well_capacity", 60000u32)
             .with_description("Full well capacity")
@@ -284,10 +345,11 @@ impl PvcamDriver {
             .with_description("Physical shutter mode")
             .with_choices_introspectable(ShutterMode::all_choices());
 
-        let shutter_status = Parameter::new("shutter.status", ShutterStatus::Closed.as_str().to_string())
-            .with_description("Current shutter status")
-            .with_choices_introspectable(ShutterStatus::all_choices())
-            .read_only();
+        let shutter_status =
+            Parameter::new("shutter.status", ShutterStatus::Closed.as_str().to_string())
+                .with_description("Current shutter status")
+                .with_choices_introspectable(ShutterStatus::all_choices())
+                .read_only();
 
         let shutter_open_delay = Parameter::new("shutter.open_delay", 0u32)
             .with_description("Shutter open delay")
@@ -301,21 +363,28 @@ impl PvcamDriver {
         let smart_stream_enabled = Parameter::new("streaming.smart_stream_enabled", false)
             .with_description("Hardware-timed smart streaming");
 
-        let smart_stream_mode = Parameter::new("streaming.smart_stream_mode", SmartStreamMode::Exposures.as_str().to_string())
-            .with_description("Smart streaming mode")
-            .with_choices_introspectable(SmartStreamMode::all_choices());
+        let smart_stream_mode = Parameter::new(
+            "streaming.smart_stream_mode",
+            SmartStreamMode::Exposures.as_str().to_string(),
+        )
+        .with_description("Smart streaming mode")
+        .with_choices_introspectable(SmartStreamMode::all_choices());
 
         let metadata_enabled = Parameter::new("processing.metadata_enabled", false)
             .with_description("Enable per-frame metadata");
 
         // Host-Side Processing Group
-        let host_rotate = Parameter::new("processing.host_rotate", FrameRotate::None.as_str().to_string())
-            .with_description("Host-side frame rotation")
-            .with_choices_introspectable(FrameRotate::all_choices());
+        let host_rotate = Parameter::new(
+            "processing.host_rotate",
+            FrameRotate::None.as_str().to_string(),
+        )
+        .with_description("Host-side frame rotation")
+        .with_choices_introspectable(FrameRotate::all_choices());
 
-        let host_flip = Parameter::new("processing.host_flip", FrameFlip::None.as_str().to_string())
-            .with_description("Host-side frame flip")
-            .with_choices_introspectable(FrameFlip::all_choices());
+        let host_flip =
+            Parameter::new("processing.host_flip", FrameFlip::None.as_str().to_string())
+                .with_description("Host-side frame flip")
+                .with_choices_introspectable(FrameFlip::all_choices());
 
         let host_summing_enabled = Parameter::new("processing.host_summing_enabled", false)
             .with_description("Enable host-side frame summing");
@@ -323,6 +392,23 @@ impl PvcamDriver {
         let host_summing_count = Parameter::new("processing.host_summing_count", 1u32)
             .with_description("Number of frames to sum on host")
             .with_range(1, 1000);
+
+        // Metadata Info Group
+        let serial_number = Parameter::new("info.serial_number", info.serial_number)
+            .with_description("Camera Serial Number")
+            .read_only();
+
+        let firmware_version = Parameter::new("info.firmware_version", info.firmware_version)
+            .with_description("Camera Firmware Version")
+            .read_only();
+
+        let model_name = Parameter::new("info.model_name", info.chip_name)
+            .with_description("Camera Model / Chip Name")
+            .read_only();
+
+        let bit_depth = Parameter::new("info.bit_depth", info.bit_depth)
+            .with_description("ADC Bit Depth")
+            .read_only();
 
         // Register all parameters
         params.register(exposure_ms.clone());
@@ -361,6 +447,10 @@ impl PvcamDriver {
         params.register(host_flip.clone());
         params.register(host_summing_enabled.clone());
         params.register(host_summing_count.clone());
+        params.register(serial_number.clone());
+        params.register(firmware_version.clone());
+        params.register(model_name.clone());
+        params.register(bit_depth.clone());
 
         let acquisition = Arc::new(PvcamAcquisition::new(streaming.clone()));
 
@@ -404,6 +494,10 @@ impl PvcamDriver {
             host_flip,
             host_summing_enabled,
             host_summing_count,
+            serial_number,
+            firmware_version,
+            model_name,
+            bit_depth,
             params,
             sensor_width: width,
             sensor_height: height,
@@ -414,7 +508,7 @@ impl PvcamDriver {
         // Background polling for drift values (temperature, shutter status, readout timing)
         let temperature_param = driver.temperature.clone();
         let shutter_status_param = driver.shutter_status.clone();
-        
+
         let readout_time_param = driver.readout_time_us.clone();
         let clearing_time_param = driver.clearing_time_us.clone();
         let pre_trigger_param = driver.pre_trigger_delay_us.clone();
@@ -428,12 +522,12 @@ impl PvcamDriver {
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 let conn_guard = conn_poll.lock().await;
-                
+
                 // Poll Temperature
                 if let Ok(temp) = PvcamFeatures::get_temperature(&conn_guard) {
                     let _ = temperature_param.set(temp).await;
                 }
-                
+
                 // Poll Shutter Status
                 if let Ok(status) = PvcamFeatures::get_shutter_status(&conn_guard) {
                     let _ = shutter_status_param.set(status.as_str().to_string()).await;
@@ -448,7 +542,7 @@ impl PvcamDriver {
                     let readout_us = val as f64;
                     let _ = frame_time_param.set(exp_ms * 1000.0 + readout_us).await;
                 }
-                
+
                 if let Ok(val) = PvcamFeatures::get_clearing_time_us(&conn_guard) {
                     let _ = clearing_time_param.set(val).await;
                 }
@@ -462,7 +556,7 @@ impl PvcamDriver {
                 }
             }
         });
-        
+
         Ok(driver)
     }
 
@@ -585,7 +679,9 @@ impl PvcamDriver {
                 let streaming = streaming.clone();
                 Box::pin(async move {
                     if streaming.get() {
-                        return Err(DaqError::Instrument("Cannot change ROI while streaming".into()));
+                        return Err(DaqError::Instrument(
+                            "Cannot change ROI while streaming".into(),
+                        ));
                     }
                     Ok(())
                 })
@@ -599,7 +695,9 @@ impl PvcamDriver {
                 let streaming = streaming.clone();
                 Box::pin(async move {
                     if streaming.get() {
-                        return Err(DaqError::Instrument("Cannot change binning while streaming".into()));
+                        return Err(DaqError::Instrument(
+                            "Cannot change binning while streaming".into(),
+                        ));
                     }
                     Ok(())
                 })
@@ -615,7 +713,9 @@ impl PvcamDriver {
                 let streaming = streaming.clone();
                 Box::pin(async move {
                     if streaming.get() {
-                        return Err(DaqError::Instrument("Cannot change readout port while streaming".into()));
+                        return Err(DaqError::Instrument(
+                            "Cannot change readout port while streaming".into(),
+                        ));
                     }
                     let conn_guard = conn.lock().await;
                     let ports = PvcamFeatures::list_readout_ports(&conn_guard)
@@ -624,7 +724,10 @@ impl PvcamDriver {
                         PvcamFeatures::set_readout_port(&conn_guard, port.index)
                             .map_err(|e| DaqError::Instrument(e.to_string()))
                     } else {
-                        Err(DaqError::Instrument(format!("Invalid readout port: {}", name)))
+                        Err(DaqError::Instrument(format!(
+                            "Invalid readout port: {}",
+                            name
+                        )))
                     }
                 })
             }
@@ -639,7 +742,9 @@ impl PvcamDriver {
                 let streaming = streaming.clone();
                 Box::pin(async move {
                     if streaming.get() {
-                        return Err(DaqError::Instrument("Cannot change speed mode while streaming".into()));
+                        return Err(DaqError::Instrument(
+                            "Cannot change speed mode while streaming".into(),
+                        ));
                     }
                     let conn_guard = conn.lock().await;
                     let modes = PvcamFeatures::list_speed_modes(&conn_guard)
@@ -648,7 +753,10 @@ impl PvcamDriver {
                         PvcamFeatures::set_speed_index(&conn_guard, mode.index)
                             .map_err(|e| DaqError::Instrument(e.to_string()))
                     } else {
-                        Err(DaqError::Instrument(format!("Invalid speed mode: {}", name)))
+                        Err(DaqError::Instrument(format!(
+                            "Invalid speed mode: {}",
+                            name
+                        )))
                     }
                 })
             }
@@ -663,7 +771,9 @@ impl PvcamDriver {
                 let streaming = streaming.clone();
                 Box::pin(async move {
                     if streaming.get() {
-                        return Err(DaqError::Instrument("Cannot change gain mode while streaming".into()));
+                        return Err(DaqError::Instrument(
+                            "Cannot change gain mode while streaming".into(),
+                        ));
                     }
                     let conn_guard = conn.lock().await;
                     let modes = PvcamFeatures::list_gain_modes(&conn_guard)
@@ -788,7 +898,14 @@ impl PvcamDriver {
 
     pub async fn acquire_frame(&self) -> Result<Frame> {
         let conn = self.connection.lock().await;
-        self.acquisition.acquire_single_frame(&conn, self.roi.get(), self.binning.get(), self.exposure_ms.get()).await
+        self.acquisition
+            .acquire_single_frame(
+                &conn,
+                self.roi.get(),
+                self.binning.get(),
+                self.exposure_ms.get(),
+            )
+            .await
     }
 
     pub fn resolution(&self) -> (u32, u32) {
@@ -862,12 +979,14 @@ impl Triggerable for PvcamDriver {
 impl FrameProducer for PvcamDriver {
     async fn start_stream(&self) -> Result<()> {
         let conn = self.connection.lock().await;
-        self.acquisition.start_stream(
-            &conn,
-            self.roi.get(),
-            self.binning.get(),
-            self.exposure_ms.get()
-        ).await
+        self.acquisition
+            .start_stream(
+                &conn,
+                self.roi.get(),
+                self.binning.get(),
+                self.exposure_ms.get(),
+            )
+            .await
     }
 
     async fn stop_stream(&self) -> Result<()> {
@@ -897,7 +1016,10 @@ impl MeasurementSource for PvcamDriver {
     type Output = Arc<Frame>;
     type Error = anyhow::Error;
 
-    async fn register_output(&self, tx: tokio::sync::mpsc::Sender<Self::Output>) -> Result<(), Self::Error> {
+    async fn register_output(
+        &self,
+        tx: tokio::sync::mpsc::Sender<Self::Output>,
+    ) -> Result<(), Self::Error> {
         let mut reliable = self.acquisition.reliable_tx.lock().await;
         *reliable = Some(tx);
         Ok(())
@@ -925,14 +1047,16 @@ impl Commandable for PvcamDriver {
                 Ok(serde_json::json!({ "success": true }))
             }
             "upload_smart_stream" => {
-                let exposures = args.get("exposures")
+                let exposures = args
+                    .get("exposures")
                     .and_then(|v| v.as_array())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'exposures' array argument"))?;
-                
-                let exposures_u32: Vec<u32> = exposures.iter()
+
+                let exposures_u32: Vec<u32> = exposures
+                    .iter()
                     .map(|v| v.as_u64().unwrap_or(0) as u32)
                     .collect();
-                
+
                 PvcamFeatures::upload_smart_stream(&conn, &exposures_u32)?;
                 Ok(serde_json::json!({ "success": true, "count": exposures_u32.len() }))
             }
