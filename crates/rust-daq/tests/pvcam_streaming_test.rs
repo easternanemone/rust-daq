@@ -28,16 +28,19 @@ async fn test_streaming_start_stop() {
         .await
         .expect("Failed to open camera");
 
-    // Set reasonable exposure for streaming
+    // Set reasonable exposure for streaming (10ms)
     camera
-        .set_exposure_ms(10.0)
+        .set_exposure(0.010)
         .await
         .expect("Failed to set exposure");
 
     // Start streaming
     println!("Starting stream...");
     camera.start_stream().await.expect("Failed to start stream");
-    assert!(camera.is_streaming(), "Should be streaming after start");
+    assert!(
+        camera.is_streaming().await.unwrap(),
+        "Should be streaming after start"
+    );
 
     // Let it run briefly
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -45,7 +48,10 @@ async fn test_streaming_start_stop() {
     // Stop streaming
     println!("Stopping stream...");
     camera.stop_stream().await.expect("Failed to stop stream");
-    assert!(!camera.is_streaming(), "Should not be streaming after stop");
+    assert!(
+        !camera.is_streaming().await.unwrap(),
+        "Should not be streaming after stop"
+    );
 
     println!("Start/stop test PASSED");
 }
@@ -61,12 +67,15 @@ async fn test_streaming_frame_delivery() {
 
     // Set 10ms exposure (~100 FPS max)
     camera
-        .set_exposure_ms(10.0)
+        .set_exposure(0.010)
         .await
         .expect("Failed to set exposure");
 
     // Subscribe to frame broadcasts (supports multiple subscribers)
-    let mut rx = camera.subscribe_frames();
+    let mut rx = camera
+        .subscribe_frames()
+        .await
+        .expect("Failed to subscribe");
 
     // Start streaming
     camera.start_stream().await.expect("Failed to start stream");
@@ -87,7 +96,7 @@ async fn test_streaming_frame_delivery() {
                         "First frame: {}x{}, {} pixels",
                         frame.width,
                         frame.height,
-                        frame.buffer.len()
+                        frame.data.len()
                     );
                 }
             }
@@ -126,7 +135,7 @@ async fn test_streaming_frame_delivery() {
     println!("Frame delivery test PASSED");
 }
 
-/// Test streaming with buffer backpressure
+/// Test streaming with data backpressure
 #[tokio::test]
 async fn test_streaming_backpressure() {
     println!("=== Test: Streaming Backpressure ===");
@@ -135,14 +144,14 @@ async fn test_streaming_backpressure() {
         .await
         .expect("Failed to open camera");
 
-    // Fast exposure to stress the buffer
+    // Fast exposure to stress the data (5ms)
     camera
-        .set_exposure_ms(5.0)
+        .set_exposure(0.005)
         .await
         .expect("Failed to set exposure");
 
     // Don't take the receiver - let frames queue up
-    // The circular buffer should handle this without stalling
+    // The circular data should handle this without stalling
 
     // Start streaming
     camera.start_stream().await.expect("Failed to start stream");
@@ -152,7 +161,10 @@ async fn test_streaming_backpressure() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Now subscribe and consume
-    let mut rx = camera.subscribe_frames();
+    let mut rx = camera
+        .subscribe_frames()
+        .await
+        .expect("Failed to subscribe");
 
     let mut consumed = 0;
     while let Ok(Ok(_)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
@@ -183,12 +195,16 @@ async fn test_streaming_stability() {
         .await
         .expect("Failed to open camera");
 
+    // 33ms exposure => ~30 FPS
     camera
-        .set_exposure_ms(33.0) // ~30 FPS
+        .set_exposure(0.033) // ~30 FPS
         .await
         .expect("Failed to set exposure");
 
-    let mut rx = camera.subscribe_frames();
+    let mut rx = camera
+        .subscribe_frames()
+        .await
+        .expect("Failed to subscribe");
 
     camera.start_stream().await.expect("Failed to start stream");
 
@@ -206,7 +222,7 @@ async fn test_streaming_stability() {
                 frame_count += 1;
 
                 // Validate frame
-                if frame.buffer.is_empty() {
+                if frame.data.is_empty() {
                     errors += 1;
                     println!("ERROR: Empty frame at count {}", frame_count);
                 }
@@ -256,12 +272,12 @@ async fn test_streaming_stability() {
 async fn test_streaming_rapid_cycling() {
     println!("=== Test: Rapid Start/Stop Cycling ===");
 
-    let camera = PvcamDriver::new_async("PrimeBSI")
+    let camera = PvcamDriver::new_async("PrimeBSI".to_string())
         .await
         .expect("Failed to open camera");
 
     camera
-        .set_exposure_ms(10.0)
+        .set_exposure(0.010)
         .await
         .expect("Failed to set exposure");
 

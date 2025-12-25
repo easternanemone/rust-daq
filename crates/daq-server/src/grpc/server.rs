@@ -1,15 +1,14 @@
 use crate::grpc::proto::run_engine_service_server::RunEngineServiceServer;
-use crate::grpc::proto::{
-    DaemonInfoRequest, DaemonInfoResponse, SystemStatus,
-};
+use crate::grpc::proto::{DaemonInfoRequest, DaemonInfoResponse, SystemStatus};
 #[cfg(feature = "scripting")]
 use crate::grpc::proto::{
-    ListExecutionsRequest, ListExecutionsResponse,
-    ListScriptsRequest, ListScriptsResponse, ScriptInfo, ScriptStatus, StartRequest, StartResponse,
-    StatusRequest, StopRequest, StopResponse,
+    ListExecutionsRequest, ListExecutionsResponse, ListScriptsRequest, ListScriptsResponse,
+    ScriptInfo, ScriptStatus, StartRequest, StartResponse, StatusRequest, StopRequest,
+    StopResponse,
     control_service_server::{ControlService, ControlServiceServer},
 };
 use crate::grpc::run_engine_service::RunEngineServiceImpl;
+use crate::grpc::{PluginServiceImpl, PluginServiceServer};
 use daq_core::core::Measurement;
 #[cfg(feature = "scripting")]
 use daq_core::limits;
@@ -36,7 +35,10 @@ use tonic::{Request, Response, Status};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use uuid::Uuid;
 
-use figment::{Figment, providers::{Env, Format, Serialized, Toml}};
+use figment::{
+    Figment,
+    providers::{Env, Format, Serialized, Toml},
+};
 use http::HeaderValue;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
@@ -138,7 +140,9 @@ impl GrpcSettings {
     }
 }
 
-fn build_tls_config(settings: &GrpcSettings) -> Result<Option<ServerTlsConfig>, Box<dyn std::error::Error>> {
+fn build_tls_config(
+    settings: &GrpcSettings,
+) -> Result<Option<ServerTlsConfig>, Box<dyn std::error::Error>> {
     let (cert_path, key_path) = match (&settings.tls_cert_path, &settings.tls_key_path) {
         (Some(cert), Some(key)) => (cert, key),
         (None, None) => return Ok(None),
@@ -156,14 +160,10 @@ fn build_tls_config(settings: &GrpcSettings) -> Result<Option<ServerTlsConfig>, 
 }
 
 fn build_cors_layer(settings: &GrpcSettings) -> Result<CorsLayer, Box<dyn std::error::Error>> {
-    let mut cors = CorsLayer::new()
-        .allow_headers(Any)
-        .allow_methods(Any);
+    let mut cors = CorsLayer::new().allow_headers(Any).allow_methods(Any);
 
     if settings.allowed_origins.is_empty() {
-        eprintln!(
-            "⚠️  grpc.allowed_origins is empty; gRPC-web requests will be blocked by CORS"
-        );
+        eprintln!("⚠️  grpc.allowed_origins is empty; gRPC-web requests will be blocked by CORS");
         cors = cors.allow_origin(AllowOrigin::list(Vec::<HeaderValue>::new()));
     } else {
         let origins = settings
@@ -355,10 +355,12 @@ impl DaqServer {
 
         Ok(Self {
             #[cfg(feature = "scripting")]
-            script_engine: Arc::new(RwLock::new(
-                RhaiEngine::with_hardware()
-                    .map_err(|e| format!("failed to initialize RhaiEngine with hardware bindings: {}", e))?,
-            )),
+            script_engine: Arc::new(RwLock::new(RhaiEngine::with_hardware().map_err(|e| {
+                format!(
+                    "failed to initialize RhaiEngine with hardware bindings: {}",
+                    e
+                )
+            })?)),
             #[cfg(feature = "scripting")]
             scripts: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(feature = "scripting")]
@@ -383,10 +385,12 @@ impl DaqServer {
 
         Ok(Self {
             #[cfg(feature = "scripting")]
-            script_engine: Arc::new(RwLock::new(
-                RhaiEngine::with_hardware()
-                    .map_err(|e| format!("failed to initialize RhaiEngine with hardware bindings: {}", e))?,
-            )),
+            script_engine: Arc::new(RwLock::new(RhaiEngine::with_hardware().map_err(|e| {
+                format!(
+                    "failed to initialize RhaiEngine with hardware bindings: {}",
+                    e
+                )
+            })?)),
             #[cfg(feature = "scripting")]
             scripts: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(feature = "scripting")]
@@ -985,7 +989,7 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
 
     // Create RunEngine with empty registry (bd-w14j.2.2)
     let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
-        daq_hardware::registry::DeviceRegistry::new()
+        daq_hardware::registry::DeviceRegistry::new(),
     ));
     let run_engine_instance = std::sync::Arc::new(daq_experiment::RunEngine::new(registry));
     let run_engine = RunEngineServiceImpl::new(run_engine_instance);
@@ -1159,7 +1163,7 @@ pub async fn start_server_with_hardware(
     let reliable_sink_tx = if let Some(ref rb) = ring_buffer {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Measurement>(512);
         let rb_clone = rb.clone();
-        
+
         // Spawn writer task
         tokio::spawn(async move {
             while let Some(measurement) = rx.recv().await {
@@ -1278,7 +1282,10 @@ pub async fn start_server_with_hardware(
         .unwrap_or(9876);
     match crate::rerun_sink::RerunSink::new_server(&rerun_bind, rerun_port, false) {
         Ok(rerun) => {
-            println!("  - Rerun Visualization: Active (gRPC server on {}:{})", rerun_bind, rerun_port);
+            println!(
+                "  - Rerun Visualization: Active (gRPC server on {}:{})",
+                rerun_bind, rerun_port
+            );
 
             // Optional blueprint: default path or override via RERUN_BLUEPRINT
             let blueprint_choice = std::env::var("RERUN_BLUEPRINT")
@@ -1289,7 +1296,10 @@ pub async fn start_server_with_hardware(
             );
 
             if skip_blueprint {
-                println!("    - Blueprint: skipped (RERUN_BLUEPRINT={})", blueprint_choice);
+                println!(
+                    "    - Blueprint: skipped (RERUN_BLUEPRINT={})",
+                    blueprint_choice
+                );
             } else {
                 match rerun.load_blueprint_if_exists(&blueprint_choice) {
                     Ok(true) => println!("    - Blueprint: {}", blueprint_choice),
@@ -1398,7 +1408,8 @@ pub async fn start_server_with_hardware(
     }
 
     #[cfg(all(feature = "tokio_serial", feature = "scripting"))]
-    let server_builder = server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
+    let server_builder =
+        server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
 
     #[cfg(feature = "tokio_serial")]
     let server_builder = server_builder
@@ -1413,8 +1424,7 @@ pub async fn start_server_with_hardware(
         )))
         // HardwareService needs larger message size for camera frame streaming (16 MB)
         .add_service(tonic_web::enable(
-            HardwareServiceServer::new(hardware_server)
-                .max_encoding_message_size(16 * 1024 * 1024),
+            HardwareServiceServer::new(hardware_server).max_encoding_message_size(16 * 1024 * 1024),
         ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(PluginServiceServer::new(plugin_server)))
@@ -1440,7 +1450,8 @@ pub async fn start_server_with_hardware(
     }
 
     #[cfg(all(not(feature = "tokio_serial"), feature = "scripting"))]
-    let server_builder = server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
+    let server_builder =
+        server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
 
     #[cfg(not(feature = "tokio_serial"))]
     let server_builder = server_builder
@@ -1455,8 +1466,7 @@ pub async fn start_server_with_hardware(
         )))
         // HardwareService needs larger message size for camera frame streaming (16 MB)
         .add_service(tonic_web::enable(
-            HardwareServiceServer::new(hardware_server)
-                .max_encoding_message_size(16 * 1024 * 1024),
+            HardwareServiceServer::new(hardware_server).max_encoding_message_size(16 * 1024 * 1024),
         ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))

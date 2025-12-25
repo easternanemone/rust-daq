@@ -5,20 +5,21 @@
 //! controls based on plugin YAML definitions.
 
 #[cfg(feature = "tokio_serial")]
-use crate::hardware::plugin::driver::GenericDriver;
 #[cfg(feature = "tokio_serial")]
-use crate::hardware::plugin::registry::PluginFactory;
+use daq_hardware::plugin::driver::GenericDriver;
 #[cfg(feature = "tokio_serial")]
-use crate::hardware::plugin::schema::{DriverType, UiElement};
+use daq_hardware::plugin::registry::PluginFactory;
 #[cfg(feature = "tokio_serial")]
-use crate::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType as RegistryDriverType};
+use daq_hardware::plugin::schema::{DriverType, UiElement};
+#[cfg(feature = "tokio_serial")]
+use daq_hardware::registry::{DeviceConfig, DeviceRegistry, DriverType as RegistryDriverType};
 
 use crate::grpc::proto::{
-    plugin_service_server::PluginService, DestroyPluginInstanceRequest,
-    DestroyPluginInstanceResponse, GetPluginInfoRequest, GetPluginInstanceStatusRequest,
-    ListPluginInstancesRequest, ListPluginInstancesResponse, ListPluginsRequest,
-    ListPluginsResponse, PluginInfo, PluginInstanceStatus, PluginInstanceSummary,
-    SpawnPluginRequest, SpawnPluginResponse,
+    DestroyPluginInstanceRequest, DestroyPluginInstanceResponse, GetPluginInfoRequest,
+    GetPluginInstanceStatusRequest, ListPluginInstancesRequest, ListPluginInstancesResponse,
+    ListPluginsRequest, ListPluginsResponse, PluginInfo, PluginInstanceStatus,
+    PluginInstanceSummary, SpawnPluginRequest, SpawnPluginResponse,
+    plugin_service_server::PluginService,
 };
 
 #[cfg(feature = "tokio_serial")]

@@ -200,7 +200,7 @@ modules = ["scripting"]
 
 # PVCAM SDK integration (requires PVCAM SDK installed)
 # Must propagate pvcam_hardware to daq-hardware which propagates to daq-driver-pvcam
-pvcam_hardware = ["daq-hardware/pvcam_hardware"]
+pvcam_hardware = ["daq-hardware/pvcam_hardware", "instrument_photometrics"]
 hardware_tests = []
 
 # Camera model for tests (default: Prime BSI 2048x2048)
