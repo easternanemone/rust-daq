@@ -1,0 +1,38 @@
+[package]
+name = "daq-driver-comedi"
+version = "0.1.0"
+edition = "2021"
+description = "Comedi DAQ driver for the rust-daq ecosystem"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# FFI bindings
+comedi-sys = { path = "../comedi-sys" }
+
+# Core DAQ traits
+daq-core = { path = "../daq-core" }
+
+# Async runtime
+tokio = { version = "1", features = ["sync", "rt", "time"] }
+async-trait = "0.1"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+parking_lot = "0.12"
+bitflags = "2"
+serde_json = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[features]
+default = []
+# Enable real hardware support (requires comedilib installed)
+hardware = ["comedi-sys/comedi-sdk"]

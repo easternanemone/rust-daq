@@ -11,7 +11,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .build_transport(!is_wasm)
         .type_attribute(".", "#[allow(missing_docs)]")
-        .compile(&["proto/daq.proto", "proto/health.proto"], &["proto"])?;
+        .compile(
+            &[
+                "proto/daq.proto",
+                "proto/health.proto",
+                "proto/ni_daq.proto",
+            ],
+            &["proto"],
+        )?;
 
     Ok(())
 }

@@ -1,0 +1,17 @@
+[package]
+name = "comedi-sys"
+version = "0.1.0"
+edition = "2021"
+description = "FFI bindings for the Linux Comedi (Control and Measurement Device Interface) library"
+license = "MIT OR Apache-2.0"
+links = "comedi"
+
+[build-dependencies]
+bindgen = "0.69"
+pkg-config = "0.3"
+
+[features]
+default = []
+# Enable this feature to generate bindings from system comedilib headers.
+# Requires comedilib-dev or equivalent to be installed.
+comedi-sdk = []

@@ -1,0 +1,509 @@
+// NI DAQ gRPC API Extensions
+//
+// This file defines NI DAQ specific RPCs for the rust-daq HardwareService.
+// These extensions provide direct access to NI PCI-MIO-16XE-10 capabilities
+// through the Comedi driver layer.
+//
+// Usage:
+//   - Import into HardwareService for NI DAQ devices
+//   - Use with devices where driver_type == "comedi" or "ni_daq"
+
+syntax = "proto3";
+
+package daq.ni_daq;
+
+// =============================================================================
+// NI DAQ Service - Direct hardware access to NI DAQ cards via Comedi
+// =============================================================================
+
+service NiDaqService {
+  // ==========================================================================
+  // Analog Input (Streaming)
+  // ==========================================================================
+
+  // Stream analog input data from specified channels
+  rpc StreamAnalogInput(StreamAnalogInputRequest) returns (stream AnalogInputData);
+
+  // Configure analog input channels (range, reference, timing)
+  rpc ConfigureAnalogInput(ConfigureAnalogInputRequest) returns (ConfigureAnalogInputResponse);
+
+  // Read single sample from analog input
+  rpc ReadAnalogInput(ReadAnalogInputRequest) returns (ReadAnalogInputResponse);
+
+  // ==========================================================================
+  // Analog Output
+  // ==========================================================================
+
+  // Set analog output voltage
+  rpc SetAnalogOutput(SetAnalogOutputRequest) returns (SetAnalogOutputResponse);
+
+  // Read current analog output value
+  rpc GetAnalogOutput(GetAnalogOutputRequest) returns (GetAnalogOutputResponse);
+
+  // Configure analog output (range, timing)
+  rpc ConfigureAnalogOutput(ConfigureAnalogOutputRequest) returns (ConfigureAnalogOutputResponse);
+
+  // ==========================================================================
+  // Digital I/O
+  // ==========================================================================
+
+  // Configure digital I/O pin directions
+  rpc ConfigureDigitalIO(ConfigureDigitalIORequest) returns (ConfigureDigitalIOResponse);
+
+  // Read digital inputs
+  rpc ReadDigitalIO(ReadDigitalIORequest) returns (ReadDigitalIOResponse);
+
+  // Write digital outputs
+  rpc WriteDigitalIO(WriteDigitalIORequest) returns (WriteDigitalIOResponse);
+
+  // Read/write entire digital port
+  rpc ReadDigitalPort(ReadDigitalPortRequest) returns (ReadDigitalPortResponse);
+  rpc WriteDigitalPort(WriteDigitalPortRequest) returns (WriteDigitalPortResponse);
+
+  // ==========================================================================
+  // Counter/Timer
+  // ==========================================================================
+
+  // Read counter value
+  rpc ReadCounter(ReadCounterRequest) returns (ReadCounterResponse);
+
+  // Reset counter
+  rpc ResetCounter(ResetCounterRequest) returns (ResetCounterResponse);
+
+  // Arm counter for counting
+  rpc ArmCounter(ArmCounterRequest) returns (ArmCounterResponse);
+
+  // Disarm counter
+  rpc DisarmCounter(DisarmCounterRequest) returns (DisarmCounterResponse);
+
+  // Configure counter mode (event counting, frequency, etc.)
+  rpc ConfigureCounter(ConfigureCounterRequest) returns (ConfigureCounterResponse);
+
+  // ==========================================================================
+  // Triggering
+  // ==========================================================================
+
+  // Configure hardware trigger
+  rpc ConfigureTrigger(ConfigureTriggerRequest) returns (ConfigureTriggerResponse);
+
+  // Get trigger configuration
+  rpc GetTriggerConfig(GetTriggerConfigRequest) returns (TriggerConfig);
+
+  // ==========================================================================
+  // Device Status
+  // ==========================================================================
+
+  // Get DAQ device status and capabilities
+  rpc GetDAQStatus(GetDAQStatusRequest) returns (DAQStatus);
+
+  // Get timing capabilities
+  rpc GetTimingCapabilities(GetTimingCapabilitiesRequest) returns (TimingCapabilities);
+
+  // Get calibration status
+  rpc GetCalibrationStatus(GetCalibrationStatusRequest) returns (CalibrationStatus);
+}
+
+// =============================================================================
+// Analog Input Messages
+// =============================================================================
+
+message StreamAnalogInputRequest {
+  string device_id = 1;
+
+  // Channels to stream (0-15 for NI PCI-MIO-16XE-10)
+  repeated uint32 channels = 2;
+
+  // Sample rate in Hz per channel
+  double sample_rate_hz = 3;
+
+  // Voltage range index (0-13 for NI PCI-MIO-16XE-10)
+  uint32 range_index = 4;
+
+  // Stop condition
+  oneof stop_condition {
+    uint64 sample_count = 10;    // Stop after N samples per channel
+    uint32 duration_ms = 11;     // Stop after duration
+    bool continuous = 12;        // Run until cancelled
+  }
+
+  // Buffer settings
+  uint32 buffer_size = 20;       // Samples per batch
+}
+
+message AnalogInputData {
+  // Interleaved voltage data [ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]
+  repeated double voltages = 1;
+
+  // Metadata
+  uint32 n_channels = 2;
+  uint64 sequence_number = 3;
+  uint64 timestamp_ns = 4;
+
+  // Statistics
+  uint64 samples_acquired = 5;
+  bool overflow = 6;
+}
+
+message ConfigureAnalogInputRequest {
+  string device_id = 1;
+  repeated ChannelConfig channel_configs = 2;
+  TimingConfig timing = 3;
+}
+
+message ChannelConfig {
+  uint32 channel = 1;
+  uint32 range_index = 2;          // Voltage range (0-13)
+  AnalogReference reference = 3;    // Ground, common, differential
+}
+
+enum AnalogReference {
+  ANALOG_REFERENCE_GROUND = 0;     // Single-ended to ground
+  ANALOG_REFERENCE_COMMON = 1;     // Single-ended to common
+  ANALOG_REFERENCE_DIFFERENTIAL = 2; // Differential measurement
+  ANALOG_REFERENCE_OTHER = 3;      // Board-specific
+}
+
+message TimingConfig {
+  double sample_rate_hz = 1;
+  ClockSource clock_source = 2;
+  uint32 external_clock_pin = 3;   // PFI pin for external clock
+}
+
+enum ClockSource {
+  CLOCK_SOURCE_INTERNAL = 0;
+  CLOCK_SOURCE_EXTERNAL = 1;
+  CLOCK_SOURCE_PXI_STAR = 2;       // For PXI systems
+}
+
+message ConfigureAnalogInputResponse {
+  bool success = 1;
+  string error_message = 2;
+
+  // Actual timing (may differ from requested)
+  double actual_sample_rate_hz = 3;
+  uint32 actual_scan_interval_ns = 4;
+  uint32 actual_convert_interval_ns = 5;
+}
+
+message ReadAnalogInputRequest {
+  string device_id = 1;
+  uint32 channel = 2;
+  uint32 range_index = 3;
+}
+
+message ReadAnalogInputResponse {
+  bool success = 1;
+  string error_message = 2;
+  double voltage = 3;
+  uint32 raw_value = 4;
+  uint64 timestamp_ns = 5;
+}
+
+// =============================================================================
+// Analog Output Messages
+// =============================================================================
+
+message SetAnalogOutputRequest {
+  string device_id = 1;
+  uint32 channel = 2;              // 0-1 for NI PCI-MIO-16XE-10
+  double voltage = 3;
+  uint32 range_index = 4;          // Voltage range
+}
+
+message SetAnalogOutputResponse {
+  bool success = 1;
+  string error_message = 2;
+  double actual_voltage = 3;       // May differ due to DAC resolution
+}
+
+message GetAnalogOutputRequest {
+  string device_id = 1;
+  uint32 channel = 2;
+}
+
+message GetAnalogOutputResponse {
+  double voltage = 1;
+  uint32 raw_value = 2;
+  uint64 timestamp_ns = 3;
+}
+
+message ConfigureAnalogOutputRequest {
+  string device_id = 1;
+  uint32 channel = 2;
+  uint32 range_index = 3;
+  bool external_reference = 4;      // Use external reference voltage
+}
+
+message ConfigureAnalogOutputResponse {
+  bool success = 1;
+  string error_message = 2;
+  VoltageRange actual_range = 3;
+}
+
+message VoltageRange {
+  uint32 index = 1;
+  double min_voltage = 2;
+  double max_voltage = 3;
+  string unit = 4;                  // "V" or "mA"
+}
+
+// =============================================================================
+// Digital I/O Messages
+// =============================================================================
+
+message ConfigureDigitalIORequest {
+  string device_id = 1;
+  repeated DigitalPinConfig pins = 2;
+}
+
+message DigitalPinConfig {
+  uint32 pin = 1;                  // 0-7 for DIO
+  DigitalDirection direction = 2;
+}
+
+enum DigitalDirection {
+  DIGITAL_DIRECTION_INPUT = 0;
+  DIGITAL_DIRECTION_OUTPUT = 1;
+}
+
+message ConfigureDigitalIOResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ReadDigitalIORequest {
+  string device_id = 1;
+  uint32 pin = 2;
+}
+
+message ReadDigitalIOResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool value = 3;
+}
+
+message WriteDigitalIORequest {
+  string device_id = 1;
+  uint32 pin = 2;
+  bool value = 3;
+}
+
+message WriteDigitalIOResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ReadDigitalPortRequest {
+  string device_id = 1;
+  uint32 base_channel = 2;         // Starting channel (0, 8, 16, etc.)
+}
+
+message ReadDigitalPortResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint32 value = 3;                // 8-bit port value
+}
+
+message WriteDigitalPortRequest {
+  string device_id = 1;
+  uint32 base_channel = 2;
+  uint32 value = 3;
+  uint32 mask = 4;                 // Which bits to update (0xFF = all)
+}
+
+message WriteDigitalPortResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// =============================================================================
+// Counter/Timer Messages
+// =============================================================================
+
+message ReadCounterRequest {
+  string device_id = 1;
+  uint32 counter = 2;              // 0-2 for GPCTR0-2
+}
+
+message ReadCounterResponse {
+  bool success = 1;
+  string error_message = 2;
+  uint64 count = 3;
+  uint64 timestamp_ns = 4;
+}
+
+message ResetCounterRequest {
+  string device_id = 1;
+  uint32 counter = 2;
+}
+
+message ResetCounterResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ArmCounterRequest {
+  string device_id = 1;
+  uint32 counter = 2;
+}
+
+message ArmCounterResponse {
+  bool success = 1;
+  string error_message = 2;
+  bool armed = 3;
+}
+
+message DisarmCounterRequest {
+  string device_id = 1;
+  uint32 counter = 2;
+}
+
+message DisarmCounterResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ConfigureCounterRequest {
+  string device_id = 1;
+  uint32 counter = 2;
+  CounterMode mode = 3;
+  CounterEdge edge = 4;
+  uint32 gate_pin = 5;             // PFI pin for gating (optional)
+  uint32 source_pin = 6;           // PFI pin for external source (optional)
+}
+
+enum CounterMode {
+  COUNTER_MODE_EVENT_COUNT = 0;    // Count edges
+  COUNTER_MODE_FREQUENCY = 1;      // Measure frequency
+  COUNTER_MODE_PERIOD = 2;         // Measure period
+  COUNTER_MODE_PULSE_WIDTH = 3;    // Measure pulse width
+  COUNTER_MODE_ENCODER = 4;        // Quadrature encoder
+}
+
+enum CounterEdge {
+  COUNTER_EDGE_RISING = 0;
+  COUNTER_EDGE_FALLING = 1;
+  COUNTER_EDGE_BOTH = 2;
+}
+
+message ConfigureCounterResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// =============================================================================
+// Trigger Messages
+// =============================================================================
+
+message ConfigureTriggerRequest {
+  string device_id = 1;
+  TriggerConfig config = 2;
+}
+
+message TriggerConfig {
+  TriggerSource source = 1;
+  TriggerEdge edge = 2;
+  uint32 pfi_pin = 3;              // PFI pin for external trigger
+  double level = 4;                // Analog trigger level (if supported)
+  double hysteresis = 5;           // Trigger hysteresis
+  uint32 delay_samples = 6;        // Pre/post trigger samples
+  bool retriggerable = 7;          // Allow retriggering
+}
+
+enum TriggerSource {
+  TRIGGER_SOURCE_SOFTWARE = 0;     // Immediate/software trigger
+  TRIGGER_SOURCE_EXTERNAL = 1;     // External trigger input
+  TRIGGER_SOURCE_ANALOG = 2;       // Analog level crossing
+  TRIGGER_SOURCE_DIGITAL = 3;      // Digital pattern
+  TRIGGER_SOURCE_COUNTER = 4;      // Counter output
+}
+
+enum TriggerEdge {
+  TRIGGER_EDGE_RISING = 0;
+  TRIGGER_EDGE_FALLING = 1;
+  TRIGGER_EDGE_EITHER = 2;
+}
+
+message ConfigureTriggerResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message GetTriggerConfigRequest {
+  string device_id = 1;
+}
+
+// =============================================================================
+// Status Messages
+// =============================================================================
+
+message GetDAQStatusRequest {
+  string device_id = 1;
+}
+
+message DAQStatus {
+  string device_id = 1;
+  string board_name = 2;           // e.g., "pci-mio-16xe-10"
+  string driver_name = 3;          // e.g., "ni_pcimio"
+  bool online = 4;
+
+  // Subdevice summary
+  uint32 n_subdevices = 10;
+  repeated SubdeviceSummary subdevices = 11;
+
+  // Current state
+  bool ai_busy = 20;
+  bool ao_busy = 21;
+  bool dio_configured = 22;
+  uint32 active_counters = 23;
+
+  // Capabilities
+  uint32 ai_channels = 30;
+  uint32 ao_channels = 31;
+  uint32 dio_channels = 32;
+  uint32 counter_channels = 33;
+  uint32 ai_resolution_bits = 34;
+  uint32 ao_resolution_bits = 35;
+
+  // Available ranges
+  repeated VoltageRange ai_ranges = 40;
+  repeated VoltageRange ao_ranges = 41;
+}
+
+message SubdeviceSummary {
+  uint32 index = 1;
+  string type = 2;                 // "ai", "ao", "dio", "counter", etc.
+  uint32 n_channels = 3;
+  bool busy = 4;
+  bool supports_commands = 5;
+}
+
+message GetTimingCapabilitiesRequest {
+  string device_id = 1;
+}
+
+message TimingCapabilities {
+  double max_sample_rate_hz = 1;
+  double min_sample_rate_hz = 2;
+  uint32 min_convert_ns = 3;
+  uint32 max_convert_ns = 4;
+  uint32 min_scan_ns = 5;
+  uint32 max_scan_ns = 6;
+  double base_clock_hz = 7;
+  bool external_clock = 8;
+  bool clock_output = 9;
+  repeated uint32 pfi_pins = 10;
+}
+
+message GetCalibrationStatusRequest {
+  string device_id = 1;
+}
+
+message CalibrationStatus {
+  bool calibrated = 1;
+  uint64 last_calibration_ns = 2;
+  string calibration_type = 3;     // "factory", "user", "self"
+  bool eeprom_valid = 4;
+  double temperature_c = 5;        // Board temperature (if available)
+  string message = 6;
+}

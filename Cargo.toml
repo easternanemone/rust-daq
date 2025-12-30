@@ -6,6 +6,8 @@ members = [
     "crates/daq-core",
     "crates/daq-driver-pvcam",
     "crates/daq-driver-pvcam/pvcam-sys",
+    "crates/daq-driver-comedi",
+    "crates/comedi-sys",
     "crates/daq-proto",
     "crates/daq-hardware",
     "crates/daq-scripting",
