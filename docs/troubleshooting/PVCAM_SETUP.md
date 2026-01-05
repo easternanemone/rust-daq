@@ -20,7 +20,65 @@ This guide details the setup and troubleshooting steps for the Photometrics PVCA
 
 3. **Permissions**: Ensure your user is in the `video` or `users` group (depending on udev rules).
 
+## Environment Setup
+
+Before building or running PVCAM code, set these environment variables:
+
+```bash
+# CRITICAL: PVCAM_VERSION is required at runtime
+export PVCAM_VERSION=7.1.1.118
+
+# SDK and library locations
+export PVCAM_SDK_DIR=/opt/pvcam/sdk
+export PVCAM_LIB_DIR=/opt/pvcam/library/x86_64
+
+# LIBRARY_PATH for linker (required for cargo build)
+export LIBRARY_PATH=$PVCAM_LIB_DIR:$LIBRARY_PATH
+
+# LD_LIBRARY_PATH for runtime
+export LD_LIBRARY_PATH=/opt/pvcam/drivers/user-mode:$PVCAM_LIB_DIR:$LD_LIBRARY_PATH
+```
+
+**Quick setup:** Source the PVCAM profile (sets most variables), then add linker path:
+```bash
+source /etc/profile.d/pvcam.sh
+export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
+```
+
 ## Troubleshooting
+
+### Error 151: PL_ERR_INSTALLATION_CORRUPTED
+
+**Symptoms:**
+- `PVCAM version UNKNOWN, library unloaded`
+- `Failure loading mandatory PVCAM library`
+- Error code 151 from PVCAM functions
+
+**Cause:**
+The `PVCAM_VERSION` environment variable is not set. Despite the misleading error message, this is NOT an installation corruption issue.
+
+**Solution:**
+```bash
+export PVCAM_VERSION=7.1.1.118  # Check /opt/pvcam/pvcam.ini for your version
+```
+
+Or source the profile script:
+```bash
+source /etc/profile.d/pvcam.sh
+```
+
+### Linker error: "unable to find library -lpvcam"
+
+**Symptoms:**
+- Rust build fails with `rust-lld: error: unable to find library -lpvcam`
+
+**Cause:**
+The `LIBRARY_PATH` environment variable is not set for the linker.
+
+**Solution:**
+```bash
+export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
+```
 
 ### "Failed to start continuous acquisition"
 

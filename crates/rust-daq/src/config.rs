@@ -929,8 +929,10 @@ mod tests {
 
     #[test]
     fn test_serial_read_timeout_too_short() {
-        let mut settings = TimeoutSettings::default();
-        settings.serial_read_timeout_ms = 50;
+        let settings = TimeoutSettings {
+            serial_read_timeout_ms: 50,
+            ..TimeoutSettings::default()
+        };
         let result = settings.validate();
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -941,8 +943,10 @@ mod tests {
 
     #[test]
     fn test_serial_read_timeout_too_long() {
-        let mut settings = TimeoutSettings::default();
-        settings.serial_read_timeout_ms = 40_000;
+        let settings = TimeoutSettings {
+            serial_read_timeout_ms: 40_000,
+            ..TimeoutSettings::default()
+        };
         let result = settings.validate();
         assert!(result.is_err());
         assert!(result

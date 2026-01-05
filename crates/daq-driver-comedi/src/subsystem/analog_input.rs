@@ -59,8 +59,7 @@ impl AnalogInput {
         let n_channels =
             unsafe { comedi_sys::comedi_get_n_channels(device.handle(), subdevice) as u32 };
 
-        let maxdata =
-            unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
+        let maxdata = unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
 
         debug!(
             subdevice = subdevice,
@@ -120,12 +119,7 @@ impl AnalogInput {
         }
 
         let ptr = unsafe {
-            comedi_sys::comedi_get_range(
-                self.device.handle(),
-                self.subdevice,
-                channel,
-                range_index,
-            )
+            comedi_sys::comedi_get_range(self.device.handle(), self.subdevice, channel, range_index)
         };
 
         unsafe { Range::from_ptr(range_index, ptr) }.ok_or_else(|| ComediError::NullPointer {
@@ -212,12 +206,8 @@ impl AnalogInput {
     /// Convert a voltage to raw ADC value.
     pub fn voltage_to_raw(&self, voltage: f64, range: &Range) -> lsampl_t {
         unsafe {
-            let range_ptr = comedi_sys::comedi_get_range(
-                self.device.handle(),
-                self.subdevice,
-                0,
-                range.index,
-            );
+            let range_ptr =
+                comedi_sys::comedi_get_range(self.device.handle(), self.subdevice, 0, range.index);
 
             if range_ptr.is_null() {
                 // Fallback to manual calculation

@@ -17,7 +17,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn make_batch(rows: usize) -> RecordBatch {
@@ -51,11 +54,6 @@ fn main() {
 
     println!(
         "Arrow write: {} batches ({} rows) in {:.3}s -> {:.0} batches/s (buffer {} MB, path {})",
-        batches,
-        rows,
-        secs,
-        rate,
-        buffer_mb,
-        path
+        batches, rows, secs, rate, buffer_mb, path
     );
 }

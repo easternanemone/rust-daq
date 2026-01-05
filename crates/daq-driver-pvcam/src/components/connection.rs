@@ -47,6 +47,7 @@ pub(crate) fn get_pvcam_error() -> String {
 }
 
 /// Manages the connection to the PVCAM SDK and a specific camera.
+#[derive(Default)]
 pub struct PvcamConnection {
     /// Camera handle from PVCAM SDK
     #[cfg(feature = "pvcam_hardware")]
@@ -54,17 +55,57 @@ pub struct PvcamConnection {
     /// Whether SDK is initialized
     #[cfg(feature = "pvcam_hardware")]
     sdk_initialized: bool,
+
+    /// Mock state for testing without hardware
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub mock_state: std::sync::Mutex<MockCameraState>,
+}
+
+#[cfg(not(feature = "pvcam_hardware"))]
+#[derive(Debug, Clone)]
+pub struct MockCameraState {
+    pub temperature_c: f64,
+    pub temperature_setpoint_c: f64,
+    pub fan_speed: i32, // Store as raw int to match simpler mocking, or use clean types if easy
+    pub exposure_mode: i32,
+    pub clear_mode: i32,
+    pub expose_out_mode: i32,
+    pub shutter_mode: i32,
+    pub shutter_open_delay_us: u32,
+    pub shutter_close_delay_us: u32,
+    pub smart_stream_enabled: bool,
+    pub smart_stream_mode: i32,
+    pub readout_port_index: u16,
+    pub speed_index: u16,
+    pub gain_index: u16,
+}
+
+#[cfg(not(feature = "pvcam_hardware"))]
+impl Default for MockCameraState {
+    fn default() -> Self {
+        Self {
+            temperature_c: 25.0,
+            temperature_setpoint_c: -10.0,
+            fan_speed: 0,       // High
+            exposure_mode: 0,   // Timed
+            clear_mode: 1,      // PreExposure
+            expose_out_mode: 0, // FirstRow
+            shutter_mode: 0,    // Normal
+            shutter_open_delay_us: 10,
+            shutter_close_delay_us: 10,
+            smart_stream_enabled: false,
+            smart_stream_mode: 0, // Exposures
+            readout_port_index: 0,
+            speed_index: 0,
+            gain_index: 0,
+        }
+    }
 }
 
 impl PvcamConnection {
     /// Create a new, unconnected connection manager.
     pub fn new() -> Self {
-        Self {
-            #[cfg(feature = "pvcam_hardware")]
-            handle: None,
-            #[cfg(feature = "pvcam_hardware")]
-            sdk_initialized: false,
-        }
+        Self::default()
     }
 
     /// Initialize the PVCAM SDK.
@@ -99,12 +140,18 @@ impl PvcamConnection {
                 if pl_pvcam_init() == 0 {
                     // Rollback ref count on failure
                     SDK_REF_COUNT.fetch_sub(1, Ordering::SeqCst);
-                    return Err(anyhow!("Failed to initialize PVCAM SDK: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to initialize PVCAM SDK: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             tracing::info!("PVCAM SDK initialized (ref count: 1)");
         } else {
-            tracing::debug!("PVCAM SDK already initialized (ref count: {})", prev_count + 1);
+            tracing::debug!(
+                "PVCAM SDK already initialized (ref count: {})",
+                prev_count + 1
+            );
         }
 
         self.sdk_initialized = true;
@@ -147,7 +194,7 @@ impl PvcamConnection {
                 // SAFETY: name_buffer is writable and sized per SDK requirement.
                 if pl_cam_get_name(0, name_buffer.as_mut_ptr()) != 0 {
                     if pl_cam_open(name_buffer.as_mut_ptr(), &mut hcam, 0) == 0 {
-                        return Err(anyhow!("Failed to open any camera"));
+                        return Err(anyhow!("Failed to open any camera: {}", get_pvcam_error()));
                     }
                 } else {
                     return Err(anyhow!("Failed to open camera: {}", camera_name));
@@ -190,7 +237,9 @@ impl PvcamConnection {
         let _guard = match SDK_INIT_MUTEX.lock() {
             Ok(g) => g,
             Err(poisoned) => {
-                tracing::warn!("SDK init mutex poisoned during uninitialize - recovering (bd-vw80)");
+                tracing::warn!(
+                    "SDK init mutex poisoned during uninitialize - recovering (bd-vw80)"
+                );
                 poisoned.into_inner()
             }
         };

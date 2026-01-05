@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let camera_name = std::env::args().nth(1).unwrap_or_else(|| "PrimeBSI".to_string());
+    let camera_name = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "PrimeBSI".to_string());
     let driver = daq_driver_pvcam::PvcamDriver::new_async(camera_name).await?;
 
     // Create tap channel
@@ -26,7 +28,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Pull one Arrow array from tap
     if let Some(arr) = rx.recv().await {
-        println!("Arrow tap received len={} nulls={}", arr.len(), arr.null_count());
+        println!(
+            "Arrow tap received len={} nulls={}",
+            arr.len(),
+            arr.null_count()
+        );
         // Print a few sample pixels
         for i in 0..std::cmp::min(5, arr.len()) {
             println!("pixel[{i}] = {}", arr.value(i));

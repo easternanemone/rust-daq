@@ -88,6 +88,7 @@ impl Document {
     }
 
     /// Create a new Event document.
+    #[must_use]
     pub fn event(descriptor: Uuid, data: HashMap<String, serde_json::Value>) -> Self {
         Document::Event(EventDoc {
             uid: Uuid::new_v4(),
@@ -100,6 +101,7 @@ impl Document {
     }
 
     /// Create a new RunStop document.
+    #[must_use]
     pub fn run_stop(run_start: Uuid, reason: StopReason) -> Self {
         let exit_status = match &reason {
             StopReason::Success => "success".to_string(),
@@ -117,6 +119,7 @@ impl Document {
     }
 
     /// Get the document UID.
+    #[must_use]
     pub fn uid(&self) -> Uuid {
         match self {
             Document::RunStart(d) => d.uid,
@@ -127,6 +130,7 @@ impl Document {
     }
 
     /// Get the timestamp in nanoseconds.
+    #[must_use]
     pub fn time_ns(&self) -> u64 {
         match self {
             Document::RunStart(d) => d.time_ns,
@@ -157,8 +161,10 @@ pub struct RunStartDoc {
 impl RunStartDoc {
     /// Add metadata to this run start.
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Serialize) -> Self {
-        self.metadata
-            .insert(key.into(), serde_json::to_value(value).unwrap());
+        self.metadata.insert(
+            key.into(),
+            serde_json::to_value(value).expect("Metadata value should be JSON-serializable"),
+        );
         self
     }
 }
@@ -229,12 +235,14 @@ impl DataKey {
     }
 
     /// Set the shape (for arrays).
+    #[must_use]
     pub fn with_shape(mut self, shape: Vec<usize>) -> Self {
         self.shape = shape;
         self
     }
 
     /// Set control limits for plotting.
+    #[must_use]
     pub fn with_limits(mut self, lower: f64, upper: f64) -> Self {
         self.lower_ctrl_limit = Some(lower);
         self.upper_ctrl_limit = Some(upper);
@@ -297,7 +305,7 @@ pub enum StopReason {
 fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("System clock should not be before UNIX epoch")
         .as_nanos() as u64
 }
 

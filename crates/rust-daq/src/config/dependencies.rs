@@ -86,6 +86,7 @@ impl DependencyGraph {
     ///
     /// let graph = DependencyGraph::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             instrument_to_modules: HashMap::new(),
@@ -171,6 +172,7 @@ impl DependencyGraph {
     /// assert_eq!(dependents.len(), 2);
     /// // dependents contains ("polarimetry", "detector") and ("imaging", "sensor")
     /// ```
+    #[must_use]
     pub fn get_dependents(&self, instrument_id: &str) -> Vec<(String, String)> {
         self.instrument_to_modules
             .get(instrument_id)

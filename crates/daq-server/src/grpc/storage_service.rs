@@ -105,10 +105,7 @@ fn sanitize_filename_component(name: &str) -> String {
 /// - Relative paths (../)
 /// - Symlink escapes
 /// - Absolute path injection
-fn validate_path_within_directory(
-    base_dir: &Path,
-    target_path: &Path,
-) -> Result<PathBuf, String> {
+fn validate_path_within_directory(base_dir: &Path, target_path: &Path) -> Result<PathBuf, String> {
     // Canonicalize base directory (must exist)
     let canonical_base = base_dir.canonicalize().map_err(|e| {
         format!(
@@ -120,12 +117,12 @@ fn validate_path_within_directory(
 
     // For the target path, we need to handle files that don't exist yet.
     // Canonicalize the parent directory, then append the filename.
-    let parent = target_path.parent().ok_or_else(|| {
-        format!("Invalid target path: {}", target_path.display())
-    })?;
-    let filename = target_path.file_name().ok_or_else(|| {
-        format!("Target path has no filename: {}", target_path.display())
-    })?;
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| format!("Invalid target path: {}", target_path.display()))?;
+    let filename = target_path
+        .file_name()
+        .ok_or_else(|| format!("Target path has no filename: {}", target_path.display()))?;
 
     // If parent doesn't exist, try to canonicalize what does exist
     let canonical_parent = if parent.exists() {
@@ -302,38 +299,37 @@ impl StorageServiceImpl {
             let path = entry.path();
             if path
                 .extension()
-                .map_or(false, |ext| ext == "h5" || ext == "hdf5")
+                .is_some_and(|ext| ext == "h5" || ext == "hdf5")
+                && let Ok(metadata) = fs::metadata(&path).await
             {
-                if let Ok(metadata) = fs::metadata(&path).await {
-                    let id = Uuid::new_v4().to_string();
-                    let name = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                let id = Uuid::new_v4().to_string();
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
 
-                    let created_at_ns = metadata
-                        .created()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos() as u64)
-                        .unwrap_or(0);
+                let created_at_ns = metadata
+                    .created()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
 
-                    records.insert(
-                        id.clone(),
-                        AcquisitionRecord {
-                            id,
-                            name,
-                            file_path: path.clone(),
-                            created_at_ns,
-                            duration_ns: 0, // Unknown for scanned files
-                            sample_count: 0,
-                            file_size_bytes: metadata.len(),
-                            metadata: HashMap::new(),
-                            scan_id: None,
-                            run_uid: None,
-                        },
-                    );
-                }
+                records.insert(
+                    id.clone(),
+                    AcquisitionRecord {
+                        id,
+                        name,
+                        file_path: path.clone(),
+                        created_at_ns,
+                        duration_ns: 0, // Unknown for scanned files
+                        sample_count: 0,
+                        file_size_bytes: metadata.len(),
+                        metadata: HashMap::new(),
+                        scan_id: None,
+                        run_uid: None,
+                    },
+                );
             }
         }
 
@@ -352,14 +348,14 @@ impl StorageService for StorageServiceImpl {
 
         // Validate output directory
         let output_dir = PathBuf::from(&req.output_directory);
-        if !output_dir.exists() {
-            if let Err(e) = fs::create_dir_all(&output_dir).await {
-                return Ok(Response::new(ConfigureStorageResponse {
-                    success: false,
-                    error_message: format!("Failed to create output directory: {}", e),
-                    resolved_output_directory: String::new(),
-                }));
-            }
+        if !output_dir.exists()
+            && let Err(e) = fs::create_dir_all(&output_dir).await
+        {
+            return Ok(Response::new(ConfigureStorageResponse {
+                success: false,
+                error_message: format!("Failed to create output directory: {}", e),
+                resolved_output_directory: String::new(),
+            }));
         }
 
         let resolved_path = fs::canonicalize(&output_dir)
@@ -454,18 +450,19 @@ impl StorageService for StorageServiceImpl {
         // SECURITY (bd-hwq9): Validate the output path stays within the configured directory
         // This is defense-in-depth - sanitize_filename_component should have already
         // prevented path traversal, but we verify as a second layer of protection.
-        let validated_path = match validate_path_within_directory(&settings.output_directory, &output_path) {
-            Ok(path) => path,
-            Err(e) => {
-                tracing::error!("Path validation failed for recording '{}': {}", req.name, e);
-                return Ok(Response::new(StartRecordingResponse {
-                    success: false,
-                    error_message: format!("Invalid output path: {}", e),
-                    recording_id: String::new(),
-                    output_path: String::new(),
-                }));
-            }
-        };
+        let validated_path =
+            match validate_path_within_directory(&settings.output_directory, &output_path) {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::error!("Path validation failed for recording '{}': {}", req.name, e);
+                    return Ok(Response::new(StartRecordingResponse {
+                        success: false,
+                        error_message: format!("Invalid output path: {}", e),
+                        recording_id: String::new(),
+                        output_path: String::new(),
+                    }));
+                }
+            };
         let output_path = validated_path;
 
         let recording_id = Uuid::new_v4().to_string();
@@ -567,18 +564,18 @@ impl StorageService for StorageServiceImpl {
             match &*recording {
                 Some(s) => {
                     // If specific ID requested, verify it matches
-                    if let Some(ref id) = req.recording_id {
-                        if &s.id != id {
-                            return Ok(Response::new(StopRecordingResponse {
-                                success: false,
-                                error_message: format!("Recording {} not found", id),
-                                acquisition_id: String::new(),
-                                output_path: String::new(),
-                                file_size_bytes: 0,
-                                total_samples: 0,
-                                duration_ns: 0,
-                            }));
-                        }
+                    if let Some(ref id) = req.recording_id
+                        && &s.id != id
+                    {
+                        return Ok(Response::new(StopRecordingResponse {
+                            success: false,
+                            error_message: format!("Recording {} not found", id),
+                            acquisition_id: String::new(),
+                            output_path: String::new(),
+                            file_size_bytes: 0,
+                            total_samples: 0,
+                            duration_ns: 0,
+                        }));
                     }
                     Arc::clone(s)
                 }
@@ -679,22 +676,22 @@ impl StorageService for StorageServiceImpl {
         match &*recording {
             Some(session) => {
                 // If specific ID requested, verify it matches
-                if let Some(ref id) = req.recording_id {
-                    if &session.id != id {
-                        return Ok(Response::new(RecordingStatus {
-                            recording_id: id.clone(),
-                            state: RecordingState::RecordingIdle.into(),
-                            output_path: String::new(),
-                            samples_recorded: 0,
-                            bytes_written: 0,
-                            start_time_ns: 0,
-                            elapsed_ns: 0,
-                            buffer_fill_percent: 0,
-                            pending_samples: 0,
-                            flushes_completed: 0,
-                            error_message: "Recording not found".to_string(),
-                        }));
-                    }
+                if let Some(ref id) = req.recording_id
+                    && &session.id != id
+                {
+                    return Ok(Response::new(RecordingStatus {
+                        recording_id: id.clone(),
+                        state: RecordingState::RecordingIdle.into(),
+                        output_path: String::new(),
+                        samples_recorded: 0,
+                        bytes_written: 0,
+                        start_time_ns: 0,
+                        elapsed_ns: 0,
+                        buffer_fill_percent: 0,
+                        pending_samples: 0,
+                        flushes_completed: 0,
+                        error_message: "Recording not found".to_string(),
+                    }));
                 }
 
                 let now_ns = SystemTime::now()
@@ -755,21 +752,21 @@ impl StorageService for StorageServiceImpl {
             .values()
             .filter(|r| {
                 // Apply name pattern filter
-                if let Some(ref pattern) = req.name_pattern {
-                    if !r.name.contains(pattern.trim_matches('*')) {
-                        return false;
-                    }
+                if let Some(ref pattern) = req.name_pattern
+                    && !r.name.contains(pattern.trim_matches('*'))
+                {
+                    return false;
                 }
                 // Apply timestamp filters
-                if let Some(after) = req.after_timestamp_ns {
-                    if r.created_at_ns < after {
-                        return false;
-                    }
+                if let Some(after) = req.after_timestamp_ns
+                    && r.created_at_ns < after
+                {
+                    return false;
                 }
-                if let Some(before) = req.before_timestamp_ns {
-                    if r.created_at_ns > before {
-                        return false;
-                    }
+                if let Some(before) = req.before_timestamp_ns
+                    && r.created_at_ns > before
+                {
+                    return false;
                 }
                 true
             })
@@ -1029,6 +1026,12 @@ impl StorageService for StorageServiceImpl {
             .map(|m| m.len())
             .unwrap_or(0);
 
+        // Get Arrow schema JSON if available (bd-1il7)
+        #[cfg(feature = "storage_arrow")]
+        let arrow_schema_json = ring_buffer.arrow_schema_json();
+        #[cfg(not(feature = "storage_arrow"))]
+        let arrow_schema_json: Option<String> = None;
+
         Ok(Response::new(RingBufferTapInfo {
             file_path: path.to_string_lossy().to_string(),
             total_size_bytes,
@@ -1040,7 +1043,7 @@ impl StorageService for StorageServiceImpl {
             read_tail: ring_buffer.read_tail(),
             write_epoch: ring_buffer.write_epoch(),
             data_format: "arrow_ipc".to_string(),
-            arrow_schema_json: None, // TODO: Populate from buffer if available
+            arrow_schema_json,
         }))
     }
 }
@@ -1170,7 +1173,10 @@ mod tests {
     #[test]
     fn test_sanitize_filename_path_traversal() {
         // Path traversal attempts should be neutralized
-        assert_eq!(sanitize_filename_component("../../../etc/passwd"), "etc_passwd");
+        assert_eq!(
+            sanitize_filename_component("../../../etc/passwd"),
+            "etc_passwd"
+        );
         assert_eq!(sanitize_filename_component(".."), "unnamed");
         assert_eq!(sanitize_filename_component("foo/../bar"), "foo_bar");
         assert_eq!(sanitize_filename_component("a..b"), "a_b");
@@ -1180,8 +1186,14 @@ mod tests {
     fn test_sanitize_filename_directory_separators() {
         // Directory separators should be replaced
         assert_eq!(sanitize_filename_component("path/to/file"), "path_to_file");
-        assert_eq!(sanitize_filename_component("path\\to\\file"), "path_to_file");
-        assert_eq!(sanitize_filename_component("/absolute/path"), "absolute_path");
+        assert_eq!(
+            sanitize_filename_component("path\\to\\file"),
+            "path_to_file"
+        );
+        assert_eq!(
+            sanitize_filename_component("/absolute/path"),
+            "absolute_path"
+        );
     }
 
     #[test]

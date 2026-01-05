@@ -5,12 +5,12 @@
 
 #[cfg(feature = "rerun_viewer")]
 mod rerun_app {
-    use rerun::external::{eframe, egui, re_viewer, re_log, re_crash_handler, re_memory, tokio};
+    use daq_egui::client::DaqClient;
+    use egui_dock::{DockArea, DockState, Style, TabViewer};
     use rerun::external::re_grpc_client;
     use rerun::external::re_uri::ProxyUri;
-    use daq_egui::client::DaqClient;
+    use rerun::external::{eframe, egui, re_crash_handler, re_log, re_memory, re_viewer, tokio};
     use tokio::sync::mpsc;
-    use egui_dock::{DockArea, DockState, Style, TabViewer};
 
     /// Simplified Instrument Manager Panel for Rerun viewer
     /// (uses Rerun's egui version)
@@ -21,13 +21,21 @@ mod rerun_app {
     }
 
     impl InstrumentManagerPanel {
-        fn ui(&mut self, ui: &mut egui::Ui, _client: Option<&mut DaqClient>, _runtime: &tokio::runtime::Runtime) {
+        fn ui(
+            &mut self,
+            ui: &mut egui::Ui,
+            _client: Option<&mut DaqClient>,
+            _runtime: &tokio::runtime::Runtime,
+        ) {
             ui.heading("Instruments");
             ui.label("Instrument manager panel");
             ui.small("(Simplified version for Rerun viewer)");
 
             if let Some(last) = self.last_refresh {
-                ui.label(format!("Last refresh: {:.1}s ago", last.elapsed().as_secs_f32()));
+                ui.label(format!(
+                    "Last refresh: {:.1}s ago",
+                    last.elapsed().as_secs_f32()
+                ));
             }
 
             if ui.button("Refresh").clicked() {
@@ -51,7 +59,11 @@ mod rerun_app {
             ui.small("(Simplified version for Rerun viewer)");
 
             ui.horizontal(|ui| {
-                let label = if self.paused { "▶ Resume" } else { "⏸ Pause" };
+                let label = if self.paused {
+                    "▶ Resume"
+                } else {
+                    "⏸ Pause"
+                };
                 ui.toggle_value(&mut self.paused, label);
             });
 
@@ -125,10 +137,23 @@ mod rerun_app {
     enum RerunActionResult {
         Connect(Result<DaqClient, String>),
         Refresh(Result<Vec<DeviceInfo>, String>),
-        Move { device_id: String, result: Result<f64, String> },
-        Read { device_id: String, result: Result<(f64, String), String> },
-        StartStream { device_id: String, frame_count: Option<u32>, result: Result<(), String> },
-        StopStream { device_id: String, result: Result<u32, String> },
+        Move {
+            device_id: String,
+            result: Result<f64, String>,
+        },
+        Read {
+            device_id: String,
+            result: Result<(f64, String), String>,
+        },
+        StartStream {
+            device_id: String,
+            frame_count: Option<u32>,
+            result: Result<(), String>,
+        },
+        StopStream {
+            device_id: String,
+            result: Result<u32, String>,
+        },
     }
 
     /// Panel types that can be docked
@@ -177,7 +202,11 @@ mod rerun_app {
 
                 ui.horizontal(|ui| {
                     let connected = self.client.is_some();
-                    let status_color = if connected { egui::Color32::GREEN } else { egui::Color32::GRAY };
+                    let status_color = if connected {
+                        egui::Color32::GREEN
+                    } else {
+                        egui::Color32::GRAY
+                    };
                     ui.colored_label(status_color, "●");
                     ui.label(&self.daq_state.connection_status);
 
@@ -195,7 +224,9 @@ mod rerun_app {
                             self.daq_state.connection_status = "Connecting...".to_string();
 
                             self.runtime.spawn(async move {
-                                let result = DaqClient::connect(&address).await.map_err(|e| e.to_string());
+                                let result = DaqClient::connect(&address)
+                                    .await
+                                    .map_err(|e| e.to_string());
                                 let _ = tx.send(RerunActionResult::Connect(result)).await;
                             });
                         }
@@ -284,12 +315,23 @@ mod rerun_app {
 
                                 ui.horizontal(|ui| {
                                     if device.is_movable {
-                                        ui.add(egui::DragValue::new(&mut self.daq_state.move_target).speed(0.1));
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.daq_state.move_target)
+                                                .speed(0.1),
+                                        );
                                         if ui.small_button("Go").clicked() {
-                                            self.move_device(&device.id, self.daq_state.move_target, false);
+                                            self.move_device(
+                                                &device.id,
+                                                self.daq_state.move_target,
+                                                false,
+                                            );
                                         }
                                         for delta in [-1.0, -0.1, 0.1, 1.0] {
-                                            let label = if delta > 0.0 { format!("+{}", delta) } else { format!("{}", delta) };
+                                            let label = if delta > 0.0 {
+                                                format!("+{}", delta)
+                                            } else {
+                                                format!("{}", delta)
+                                            };
                                             if ui.small_button(label).clicked() {
                                                 self.move_device(&device.id, delta, true);
                                             }
@@ -339,12 +381,10 @@ mod rerun_app {
                     client.move_absolute(&device_id, value).await
                 };
                 let action = match result {
-                    Ok(response) if response.success => {
-                        RerunActionResult::Move {
-                            device_id,
-                            result: Ok(response.final_position),
-                        }
-                    }
+                    Ok(response) if response.success => RerunActionResult::Move {
+                        device_id,
+                        result: Ok(response.final_position),
+                    },
                     Ok(response) => RerunActionResult::Move {
                         device_id,
                         result: Err(response.error_message),
@@ -459,7 +499,8 @@ mod rerun_app {
                     self.render_daq_control(ui);
                 }
                 PanelKind::InstrumentManager => {
-                    self.instrument_panel.ui(ui, self.client.as_mut(), self.runtime);
+                    self.instrument_panel
+                        .ui(ui, self.client.as_mut(), self.runtime);
                 }
                 PanelKind::SignalPlotter => {
                     self.signal_plotter.ui(ui);
@@ -469,10 +510,7 @@ mod rerun_app {
     }
 
     impl DaqRerunApp {
-        pub fn new(
-            cc: &eframe::CreationContext<'_>,
-            rerun_app: re_viewer::App,
-        ) -> Self {
+        pub fn new(cc: &eframe::CreationContext<'_>, rerun_app: re_viewer::App) -> Self {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
@@ -481,8 +519,11 @@ mod rerun_app {
             let (action_tx, action_rx) = mpsc::channel(16);
 
             // Try to restore dock state from storage, otherwise create default layout
-            let dock_state = cc.storage
-                .and_then(|storage| eframe::get_value::<DockState<PanelKind>>(storage, DOCK_STATE_KEY))
+            let dock_state = cc
+                .storage
+                .and_then(|storage| {
+                    eframe::get_value::<DockState<PanelKind>>(storage, DOCK_STATE_KEY)
+                })
                 .unwrap_or_else(Self::default_dock_layout);
 
             Self {
@@ -519,7 +560,8 @@ mod rerun_app {
                                 Ok(client) => {
                                     self.client = Some(client);
                                     self.daq_state.connection_status = "Connected".to_string();
-                                    self.daq_state.status_message = Some("Connected to daemon".to_string());
+                                    self.daq_state.status_message =
+                                        Some("Connected to daemon".to_string());
                                     self.daq_state.error_message = None;
                                 }
                                 Err(e) => {
@@ -530,7 +572,8 @@ mod rerun_app {
                             },
                             RerunActionResult::Refresh(result) => match result {
                                 Ok(devices) => {
-                                    self.daq_state.status_message = Some(format!("Loaded {} devices", devices.len()));
+                                    self.daq_state.status_message =
+                                        Some(format!("Loaded {} devices", devices.len()));
                                     self.daq_state.devices = devices;
                                     self.daq_state.error_message = None;
                                 }
@@ -540,8 +583,11 @@ mod rerun_app {
                                 Ok(position) => {
                                     self.daq_state.status_message =
                                         Some(format!("Moved to {:.4}", position));
-                                    if let Some(dev) =
-                                        self.daq_state.devices.iter_mut().find(|d| d.id == device_id)
+                                    if let Some(dev) = self
+                                        .daq_state
+                                        .devices
+                                        .iter_mut()
+                                        .find(|d| d.id == device_id)
                                     {
                                         dev.position = Some(position);
                                     }
@@ -553,8 +599,11 @@ mod rerun_app {
                                 Ok((value, units)) => {
                                     self.daq_state.status_message =
                                         Some(format!("{}: {:.4} {}", device_id, value, units));
-                                    if let Some(dev) =
-                                        self.daq_state.devices.iter_mut().find(|d| d.id == device_id)
+                                    if let Some(dev) = self
+                                        .daq_state
+                                        .devices
+                                        .iter_mut()
+                                        .find(|d| d.id == device_id)
                                     {
                                         dev.reading = Some(value);
                                     }
@@ -562,7 +611,11 @@ mod rerun_app {
                                 }
                                 Err(e) => self.daq_state.error_message = Some(e),
                             },
-                            RerunActionResult::StartStream { device_id, frame_count, result } => match result {
+                            RerunActionResult::StartStream {
+                                device_id,
+                                frame_count,
+                                result,
+                            } => match result {
                                 Ok(()) => {
                                     let msg = if let Some(n) = frame_count {
                                         format!("Started streaming {} frames from {}", n, device_id)
@@ -596,7 +649,6 @@ mod rerun_app {
                 ctx.request_repaint();
             }
         }
-
     }
 
     impl eframe::App for DaqRerunApp {
@@ -670,8 +722,7 @@ mod rerun_app {
         eprintln!("Connecting to Rerun server at: {}", rerun_url);
 
         // Parse URI - stream creation happens inside eframe callback
-        let uri: ProxyUri = rerun_url.parse()
-            .expect("Invalid Rerun proxy URI");
+        let uri: ProxyUri = rerun_url.parse().expect("Invalid Rerun proxy URI");
 
         let mut native_options = re_viewer::native::eframe_options(None);
         native_options.viewport = native_options

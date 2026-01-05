@@ -967,7 +967,25 @@ impl Triggerable for PvcamDriver {
         self.armed.set(true).await
     }
     async fn trigger(&self) -> Result<()> {
-        // Software trigger logic
+        // If not streaming, emulate a software trigger by acquiring a single frame.
+        // This supports plans like Count which trigger then read.
+        if !self.streaming.get() {
+            let acquisition = self.acquisition.clone();
+            let connection = self.connection.clone();
+            let roi = self.roi.get();
+            let binning = self.binning.get();
+            let exposure_ms = self.exposure_ms.get();
+
+            tokio::spawn(async move {
+                let conn = connection.lock().await;
+                if let Err(e) = acquisition
+                    .acquire_single_frame(&conn, roi, binning, exposure_ms)
+                    .await
+                {
+                    tracing::error!("Trigger acquisition failed: {}", e);
+                }
+            });
+        }
         Ok(())
     }
     async fn is_armed(&self) -> Result<bool> {

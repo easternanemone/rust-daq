@@ -19,11 +19,14 @@ use std::time::Instant;
 use tokio::runtime::Runtime;
 
 use crate::client::DaqClient;
-use crate::widgets::{Histogram, HistogramPosition, RoiSelector};
+use crate::widgets::{Histogram, HistogramPosition, ParameterCache, RoiSelector};
 use daq_proto::daq::FrameData;
 
 /// Maximum frame queue depth (prevents memory buildup if GUI is slow)
-const MAX_QUEUED_FRAMES: usize = 4;
+const MAX_QUEUED_FRAMES: usize = 32;
+
+/// Debounce interval for live exposure updates (200ms)
+const EXPOSURE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// Frame update message for async integration
 #[derive(Debug)]
@@ -52,6 +55,34 @@ impl From<FrameData> for FrameUpdate {
         }
     }
 }
+
+/// Result of an async parameter load operation
+pub struct ParamLoadResult {
+    pub device_id: String,
+    pub params: Vec<ParameterCache>,
+    pub errors: Vec<(String, String)>, // (param_name, error)
+}
+
+/// Result of an async parameter set operation
+pub struct ParamSetResult {
+    pub device_id: String,
+    pub param_name: String,
+    pub success: bool,
+    pub actual_value: String,
+    pub error: Option<String>,
+}
+
+/// Whitelist for quick access camera parameters
+const QUICK_ACCESS_PARAMS: &[&str] = &[
+    "exposure",    // Matches exposure_ms, exposure_mode, etc.
+    "gain",        // Matches gain_index, gain_mode
+    "speed",       // Matches speed_index, speed_mode
+    "temperature", // Matches temperature, temperature_setpoint
+    "fan",         // Matches fan_speed
+    "trigger",     // Matches trigger_mode
+    "roi",         // Matches roi (hardware)
+    "binning",     // Matches binning
+];
 
 /// Sender for pushing frame updates from async tasks
 pub type FrameUpdateSender = mpsc::SyncSender<FrameUpdate>;
@@ -108,7 +139,11 @@ impl Colormap {
         let r = (0.267 + v * (0.993 - 0.267)) * 255.0;
         let g = v * 0.906 * 255.0;
         let b = (0.329 + v * (0.143_f32 - 0.329).abs()) * 255.0;
-        [(r.clamp(0.0, 255.0)) as u8, (g.clamp(0.0, 255.0)) as u8, (b.clamp(0.0, 255.0)) as u8]
+        [
+            (r.clamp(0.0, 255.0)) as u8,
+            (g.clamp(0.0, 255.0)) as u8,
+            (b.clamp(0.0, 255.0)) as u8,
+        ]
     }
 
     fn inferno_lut(v: f32) -> [u8; 3] {
@@ -116,7 +151,11 @@ impl Colormap {
         let r = v.powf(0.5) * 255.0;
         let g = v.powf(1.5) * 200.0;
         let b = (1.0 - v) * v * 4.0 * 255.0;
-        [(r.clamp(0.0, 255.0)) as u8, (g.clamp(0.0, 255.0)) as u8, (b.clamp(0.0, 255.0)) as u8]
+        [
+            (r.clamp(0.0, 255.0)) as u8,
+            (g.clamp(0.0, 255.0)) as u8,
+            (b.clamp(0.0, 255.0)) as u8,
+        ]
     }
 
     fn plasma_lut(v: f32) -> [u8; 3] {
@@ -124,7 +163,11 @@ impl Colormap {
         let r = (0.05 + v * 0.95) * 255.0;
         let g = v * v * 255.0;
         let b = (1.0 - v * 0.7) * 255.0;
-        [(r.clamp(0.0, 255.0)) as u8, (g.clamp(0.0, 255.0)) as u8, (b.clamp(0.0, 255.0)) as u8]
+        [
+            (r.clamp(0.0, 255.0)) as u8,
+            (g.clamp(0.0, 255.0)) as u8,
+            (b.clamp(0.0, 255.0)) as u8,
+        ]
     }
 
     fn magma_lut(v: f32) -> [u8; 3] {
@@ -132,7 +175,11 @@ impl Colormap {
         let r = v.powf(0.7) * 255.0;
         let g = v * v * 200.0;
         let b = (0.3 + v * 0.7) * v * 255.0;
-        [(r.clamp(0.0, 255.0)) as u8, (g.clamp(0.0, 255.0)) as u8, (b.clamp(0.0, 255.0)) as u8]
+        [
+            (r.clamp(0.0, 255.0)) as u8,
+            (g.clamp(0.0, 255.0)) as u8,
+            (b.clamp(0.0, 255.0)) as u8,
+        ]
     }
 }
 
@@ -220,6 +267,14 @@ impl FpsCounter {
     }
 }
 
+/// Async action result for ImageViewerPanel
+enum ImageViewerAction {
+    /// List of available camera devices
+    CamerasLoaded(Vec<String>),
+    /// Error from async operation
+    Error(String),
+}
+
 /// Image Viewer Panel state
 pub struct ImageViewerPanel {
     /// Currently selected device ID
@@ -269,11 +324,50 @@ pub struct ImageViewerPanel {
     histogram: Histogram,
     /// Histogram display position
     histogram_position: HistogramPosition,
+    /// Available camera devices
+    available_cameras: Vec<String>,
+    /// Display minimum (0.0-1.0 normalized) - pixels at or below this are black
+    display_min: f32,
+    /// Display maximum (0.0-1.0 normalized) - pixels at or above this are white
+    display_max: f32,
+    /// Auto-contrast mode - automatically compute min/max from frame data
+    auto_contrast: bool,
+    /// Async action receiver
+    action_rx: std::sync::mpsc::Receiver<ImageViewerAction>,
+    /// Async action sender
+    action_tx: std::sync::mpsc::Sender<ImageViewerAction>,
+    /// Last refresh time
+    last_refresh: Option<Instant>,
+
+    // -- Camera Control Fields --
+    /// Camera parameters (cached)
+    camera_params: Vec<ParameterCache>,
+    /// Parameter edit buffers (device_id, param_name) -> value
+    param_edit_buffers: std::collections::HashMap<(String, String), String>,
+    /// Parameter errors (device_id, param_name) -> error
+    param_errors: std::collections::HashMap<(String, String), String>,
+    /// Show controls side panel
+    show_controls: bool,
+    /// Receiver for parameter load results
+    param_load_rx: Option<mpsc::Receiver<ParamLoadResult>>,
+    /// Receiver for parameter set results
+    param_set_rx: Option<mpsc::Receiver<ParamSetResult>>,
+    /// Parameters currently being set
+    setting_params: std::collections::HashSet<(String, String)>,
+    /// Pending parameter updates to execute
+    pending_param_updates: Vec<(String, String, String)>,
+    /// Device ID currently loading parameters
+    loading_params_device: Option<String>,
+    /// Live exposure preview mode (updates during drag)
+    live_exposure: bool,
+    /// Last time exposure was sent (for debounce)
+    exposure_last_sent: Option<Instant>,
 }
 
 impl Default for ImageViewerPanel {
     fn default() -> Self {
         let (tx, rx) = frame_channel();
+        let (action_tx, action_rx) = std::sync::mpsc::channel();
         Self {
             device_id: None,
             width: 0,
@@ -298,6 +392,25 @@ impl Default for ImageViewerPanel {
             show_roi_panel: true,
             histogram: Histogram::new(),
             histogram_position: HistogramPosition::BottomRight,
+            available_cameras: Vec::new(),
+            display_min: 0.0,
+            display_max: 1.0,
+            auto_contrast: true,
+            action_rx,
+            action_tx,
+            last_refresh: None,
+
+            camera_params: Vec::new(),
+            param_edit_buffers: std::collections::HashMap::new(),
+            param_errors: std::collections::HashMap::new(),
+            show_controls: true,
+            param_load_rx: None,
+            param_set_rx: None,
+            setting_params: std::collections::HashSet::new(),
+            pending_param_updates: Vec::new(),
+            loading_params_device: None,
+            live_exposure: true,
+            exposure_last_sent: None,
         }
     }
 }
@@ -308,6 +421,455 @@ impl ImageViewerPanel {
         Self::default()
     }
 
+    /// Poll for async action results
+    fn poll_actions(&mut self) {
+        while let Ok(action) = self.action_rx.try_recv() {
+            match action {
+                ImageViewerAction::CamerasLoaded(cameras) => {
+                    self.available_cameras = cameras;
+                    self.status = Some(format!("Found {} camera(s)", self.available_cameras.len()));
+                }
+                ImageViewerAction::Error(msg) => {
+                    self.error = Some(msg);
+                    // Clear subscription state on error to allow restart
+                    self.subscription = None;
+                }
+            }
+        }
+    }
+
+    /// Refresh the list of available cameras
+    fn refresh_cameras(&mut self, client: &mut DaqClient, runtime: &Runtime) {
+        let action_tx = self.action_tx.clone();
+        let mut client = client.clone();
+
+        runtime.spawn(async move {
+            match client.list_devices().await {
+                Ok(devices) => {
+                    // Filter for camera devices (FrameProducer capability)
+                    let cameras: Vec<String> = devices
+                        .into_iter()
+                        .filter(|d| {
+                            // Check is_frame_producer flag or camera category
+                            d.is_frame_producer
+                                || d.category == daq_proto::daq::DeviceCategory::Camera as i32
+                        })
+                        .map(|d| d.id)
+                        .collect();
+                    let _ = action_tx.send(ImageViewerAction::CamerasLoaded(cameras));
+                }
+                Err(e) => {
+                    let _ = action_tx.send(ImageViewerAction::Error(format!(
+                        "Failed to list cameras: {}",
+                        e
+                    )));
+                }
+            }
+        });
+
+        self.last_refresh = Some(Instant::now());
+    }
+
+    /// Load parameters for the selected camera (filtered for quick access)
+    fn load_camera_params(&mut self, client: &mut DaqClient, runtime: &Runtime, device_id: &str) {
+        // Don't start another load if already loading
+        if self.loading_params_device.as_deref() == Some(device_id) {
+            return;
+        }
+
+        let mut client = client.clone();
+        let device_id_str = device_id.to_string();
+
+        // Clear existing edit buffers and errors for this device
+        self.param_edit_buffers
+            .retain(|(dev_id, _), _| dev_id != device_id);
+        self.param_errors
+            .retain(|(dev_id, _), _| dev_id != device_id);
+
+        // Set loading state
+        self.loading_params_device = Some(device_id_str.clone());
+
+        // Create channel for result
+        let (tx, rx) = mpsc::channel();
+        self.param_load_rx = Some(rx);
+
+        // Spawn async task to load parameters in background
+        runtime.spawn(async move {
+            let device_id_for_error = device_id_str.clone();
+
+            let result = async {
+                let descriptors = client.list_parameters(&device_id_str).await?;
+
+                // Filter for quick access parameters FIRST to reduce fetch volume
+                let relevant_descriptors: Vec<_> = descriptors
+                    .into_iter()
+                    .filter(|d| {
+                        let name_lower = d.name.to_lowercase();
+                        QUICK_ACCESS_PARAMS
+                            .iter()
+                            .any(|&keyword| name_lower.contains(keyword))
+                    })
+                    .collect();
+
+                // Parallel fetch of relevant parameter values
+                let fetch_futures: Vec<_> = relevant_descriptors
+                    .iter()
+                    .map(|desc| {
+                        let mut client = client.clone();
+                        let device_id = device_id_str.clone();
+                        let param_name = desc.name.clone();
+                        async move {
+                            let value = client.get_parameter(&device_id, &param_name).await;
+                            (param_name, value)
+                        }
+                    })
+                    .collect();
+
+                let fetch_results = futures::future::join_all(fetch_futures).await;
+
+                // Combine descriptors with fetched values
+                let mut params = Vec::new();
+                let mut load_errors = Vec::new();
+
+                for (desc, (param_name, value_result)) in
+                    relevant_descriptors.into_iter().zip(fetch_results)
+                {
+                    match value_result {
+                        Ok(v) => {
+                            params.push(ParameterCache::new(desc, v.value));
+                        }
+                        Err(e) => {
+                            load_errors.push((param_name, e.to_string()));
+                            params.push(ParameterCache::new(desc, String::new()));
+                        }
+                    }
+                }
+
+                Ok::<_, anyhow::Error>(ParamLoadResult {
+                    device_id: device_id_str,
+                    params,
+                    errors: load_errors,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(load_result) => {
+                    let _ = tx.send(load_result);
+                }
+                Err(e) => {
+                    let _ = tx.send(ParamLoadResult {
+                        device_id: device_id_for_error,
+                        params: Vec::new(),
+                        errors: vec![("_load".to_string(), e.to_string())],
+                    });
+                }
+            }
+        });
+    }
+
+    /// Set a camera parameter value
+    fn set_camera_parameter(
+        &mut self,
+        client: &mut DaqClient,
+        runtime: &Runtime,
+        device_id: &str,
+        name: &str,
+        value: &str,
+    ) {
+        let mut client = client.clone();
+        let device_id_str = device_id.to_string();
+        let name_str = name.to_string();
+        let value_str = value.to_string();
+        let buffer_key = (device_id_str.clone(), name_str.clone());
+
+        // Clear any previous error
+        self.param_errors.remove(&buffer_key);
+        // Mark as setting
+        self.setting_params.insert(buffer_key);
+
+        // Create channel (reuse logic from DevicesPanel: replace if exists)
+        // For simplicity in ImageViewer, we'll just use a new channel each time and poll
+        // NOTE: In production, better to have a persistent channel or queue.
+        // We'll follow the pattern of creating a new one and replacing the stored rx.
+        let (tx, rx) = mpsc::channel();
+        self.param_set_rx = Some(rx);
+
+        runtime.spawn(async move {
+            let result = client
+                .set_parameter(&device_id_str, &name_str, &value_str)
+                .await;
+
+            let set_result = match result {
+                Ok(response) => ParamSetResult {
+                    device_id: device_id_str,
+                    param_name: name_str,
+                    success: response.success,
+                    actual_value: response.actual_value,
+                    error: if response.success {
+                        None
+                    } else {
+                        Some(response.error_message)
+                    },
+                },
+                Err(e) => ParamSetResult {
+                    device_id: device_id_str,
+                    param_name: name_str,
+                    success: false,
+                    actual_value: String::new(),
+                    error: Some(e.to_string()),
+                },
+            };
+
+            let _ = tx.send(set_result);
+        });
+    }
+
+    /// Poll for parameter async results
+    fn poll_param_results(&mut self, ctx: &egui::Context) {
+        // Poll loads
+        if let Some(rx) = &self.param_load_rx {
+            if let Ok(result) = rx.try_recv() {
+                // If this result matches our current device, update
+                if Some(&result.device_id) == self.device_id.as_ref() {
+                    self.camera_params = result.params;
+                    self.loading_params_device = None;
+
+                    for (name, err) in result.errors {
+                        self.param_errors
+                            .insert((result.device_id.clone(), name), err);
+                    }
+                }
+                self.param_load_rx = None; // One-shot load
+                ctx.request_repaint();
+            }
+        }
+
+        // Poll sets
+        if let Some(rx) = &self.param_set_rx {
+            while let Ok(result) = rx.try_recv() {
+                let key = (result.device_id.clone(), result.param_name.clone());
+                self.setting_params.remove(&key);
+
+                if result.success {
+                    // Update cache if device matches
+                    if Some(&result.device_id) == self.device_id.as_ref() {
+                        if let Some(param) = self
+                            .camera_params
+                            .iter_mut()
+                            .find(|p| p.descriptor.name == result.param_name)
+                        {
+                            param.update_value(result.actual_value.clone());
+                        }
+                    }
+                    // Update buffer
+                    let unquoted = result.actual_value.trim_matches('"').to_string();
+                    self.param_edit_buffers.insert(key.clone(), unquoted);
+                    self.param_errors.remove(&key);
+                } else if let Some(err) = result.error {
+                    self.param_errors.insert(key, err);
+                }
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Render a single camera parameter control
+    fn render_camera_control(&mut self, ui: &mut egui::Ui, device_id: &str, param_idx: usize) {
+        // Safe access to parameter to avoid borrowing self for the whole method
+        let param = &self.camera_params[param_idx];
+        let desc = &param.descriptor;
+        let buffer_key = (device_id.to_string(), desc.name.clone());
+
+        // Check if setting
+        if self.setting_params.contains(&buffer_key) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(&desc.name);
+            });
+            return;
+        }
+
+        // Read-only
+        if !desc.writable {
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                ui.label(format!(": {}", param.current_value));
+                if !desc.units.is_empty() {
+                    ui.weak(&desc.units);
+                }
+            });
+            return;
+        }
+
+        let mut pending_update: Option<String> = None;
+
+        // Enums
+        if !desc.enum_values.is_empty() {
+            let current = param.current_value.trim_matches('"').to_string();
+            let mut selected = current.clone();
+
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                let id = egui::Id::new("cam_ctrl").with(device_id).with(&desc.name);
+                egui::ComboBox::from_id_salt(id)
+                    .selected_text(&selected)
+                    .show_ui(ui, |ui| {
+                        for val in &desc.enum_values {
+                            ui.selectable_value(&mut selected, val.clone(), val);
+                        }
+                    });
+            });
+
+            if selected != current {
+                pending_update = Some(format!("\"{}\"", selected));
+            }
+        }
+        // Boolean
+        else if desc.dtype == "bool" {
+            let mut val = param.current_value.parse::<bool>().unwrap_or(false);
+            if ui.checkbox(&mut val, &desc.name).changed() {
+                pending_update = Some(val.to_string());
+            }
+        }
+        // Integer
+        else if desc.dtype == "int" {
+            // Get edit buffer or init from current
+            let buffer = self
+                .param_edit_buffers
+                .entry(buffer_key.clone())
+                .or_insert_with(|| param.current_value.clone());
+
+            let mut val: i64 = buffer.parse().unwrap_or(0);
+            let original = val;
+
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                let mut drag = egui::DragValue::new(&mut val).speed(1);
+                if let Some(min) = desc.min_value {
+                    drag = drag.range(min as i64..=i64::MAX);
+                }
+                if let Some(max) = desc.max_value {
+                    drag = drag.range(i64::MIN..=max as i64);
+                }
+
+                let response = ui.add(drag);
+                if !desc.units.is_empty() {
+                    ui.weak(&desc.units);
+                }
+
+                // Update buffer immediately for visual feedback
+                if val != original {
+                    *self.param_edit_buffers.get_mut(&buffer_key).unwrap() = val.to_string();
+                }
+
+                // Commit on release or focus lost
+                if (response.drag_stopped() || response.lost_focus())
+                    && val != param.current_value.parse().unwrap_or(0)
+                {
+                    pending_update = Some(val.to_string());
+                }
+            });
+        }
+        // Float
+        else if desc.dtype == "float" {
+            let buffer = self
+                .param_edit_buffers
+                .entry(buffer_key.clone())
+                .or_insert_with(|| param.current_value.clone());
+
+            let mut val: f64 = buffer.parse().unwrap_or(0.0);
+            let original = val;
+
+            // Check if this is an exposure parameter
+            let is_exposure = desc.name.to_lowercase().contains("exposure");
+
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                let mut drag = egui::DragValue::new(&mut val).speed(0.1);
+                if let Some(min) = desc.min_value {
+                    drag = drag.range(min..=f64::MAX);
+                }
+                if let Some(max) = desc.max_value {
+                    drag = drag.range(f64::MIN..=max);
+                }
+
+                let response = ui.add(drag);
+                if !desc.units.is_empty() {
+                    ui.weak(&desc.units);
+                }
+
+                // Live toggle for exposure parameters
+                if is_exposure {
+                    ui.checkbox(&mut self.live_exposure, "Live");
+                }
+
+                if (val - original).abs() > f64::EPSILON {
+                    *self.param_edit_buffers.get_mut(&buffer_key).unwrap() = val.to_string();
+                }
+
+                let current_float: f64 = param.current_value.parse().unwrap_or(0.0);
+                let value_changed = (val - current_float).abs() > f64::EPSILON;
+
+                // Live exposure: send during drag with debounce
+                if is_exposure && self.live_exposure && response.dragged() && value_changed {
+                    let now = Instant::now();
+                    let should_send = self
+                        .exposure_last_sent
+                        .map(|t| now.duration_since(t) >= EXPOSURE_DEBOUNCE)
+                        .unwrap_or(true);
+
+                    if should_send {
+                        pending_update = Some(val.to_string());
+                        self.exposure_last_sent = Some(now);
+                    }
+                }
+
+                // Always send on drag stop or focus lost (for all floats, including exposure)
+                if (response.drag_stopped() || response.lost_focus()) && value_changed {
+                    pending_update = Some(val.to_string());
+                    if is_exposure {
+                        self.exposure_last_sent = Some(Instant::now());
+                    }
+                }
+            });
+        }
+        // String
+        else if desc.dtype == "string" {
+            let buffer = self
+                .param_edit_buffers
+                .entry(buffer_key.clone())
+                .or_insert_with(|| param.current_value.clone());
+
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                let response = ui.text_edit_singleline(buffer);
+
+                if response.lost_focus() && buffer != &param.current_value {
+                    pending_update = Some(format!("\"{}\"", buffer));
+                }
+            });
+        }
+        // Fallback
+        else {
+            ui.horizontal(|ui| {
+                ui.label(&desc.name);
+                ui.label(&param.current_value);
+            });
+        }
+
+        // Show error
+        if let Some(err) = self.param_errors.get(&buffer_key) {
+            ui.colored_label(egui::Color32::RED, err);
+        }
+
+        // Apply update if needed
+        if let Some(val) = pending_update {
+            self.pending_param_updates
+                .push((device_id.to_string(), desc.name.clone(), val));
+        }
+    }
+
     /// Get sender for async frame updates (public API for external frame producers)
     #[allow(dead_code)]
     pub fn get_sender(&self) -> Option<FrameUpdateSender> {
@@ -315,18 +877,15 @@ impl ImageViewerPanel {
     }
 
     /// Start streaming frames from a device (public API for external control)
-    #[allow(dead_code)]
-    pub fn start_stream(
-        &mut self,
-        device_id: &str,
-        client: &mut DaqClient,
-        runtime: &Runtime,
-    ) {
-        // Cancel existing subscription
+    pub fn start_stream(&mut self, device_id: &str, client: &mut DaqClient, runtime: &Runtime) {
+        // Cancel existing subscription and ensure server-side stream is stopped
         if let Some(sub) = self.subscription.take() {
             let cancel_tx = sub.cancel_tx.clone();
+            let mut client = client.clone();
+            let old_device_id = sub.device_id.clone();
             runtime.spawn(async move {
                 let _ = cancel_tx.send(()).await;
+                let _ = client.stop_stream(&old_device_id).await;
             });
         }
 
@@ -341,22 +900,58 @@ impl ImageViewerPanel {
 
         let (cancel_tx, mut cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
         let mut client = client.clone();
+        let action_tx = self.action_tx.clone();
         let device_id_clone = device_id.to_string();
         let max_fps = self.max_fps;
 
         runtime.spawn(async move {
             use futures::StreamExt;
 
-            // Start the frame stream
+            // 1. Start hardware-side streaming on the daemon
+            // Treat "already streaming" as success (idempotent behavior)
+            let start_result = client.start_stream(&device_id_clone, None).await;
+            if let Err(e) = &start_result {
+                // Check if this is "already streaming" - treat as non-fatal
+                let error_str = e.to_string().to_lowercase();
+                let is_already_streaming = error_str.contains("already streaming")
+                    || error_str.contains("failedprecondition");
+
+                if is_already_streaming {
+                    tracing::info!(
+                        device_id = %device_id_clone,
+                        "Device already streaming; proceeding to subscribe"
+                    );
+                } else {
+                    tracing::error!(device_id = %device_id_clone, error = %e, "Failed to start hardware stream");
+                    let _ = action_tx.send(ImageViewerAction::Error(format!(
+                        "Failed to start hardware stream: {}",
+                        e
+                    )));
+                    return;
+                }
+            }
+
+            // 2. Subscribe to the frame stream
             let stream = match client.stream_frames(&device_id_clone, max_fps).await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::error!(device_id = %device_id_clone, error = %e, "Failed to start frame stream");
+                    // Clean up: stop stream if we started it successfully
+                    if start_result.is_ok() {
+                        let _ = client.stop_stream(&device_id_clone).await;
+                    }
+                    tracing::error!(device_id = %device_id_clone, error = %e, "Failed to subscribe to frame stream");
+                    let _ = action_tx.send(ImageViewerAction::Error(format!(
+                        "Failed to subscribe to frames: {}",
+                        e
+                    )));
                     return;
                 }
             };
 
             tokio::pin!(stream);
+
+            let mut frames_received = 0u64;
+            let mut frames_dropped = 0u64;
 
             loop {
                 tokio::select! {
@@ -367,34 +962,60 @@ impl ImageViewerPanel {
                     frame_result = stream.next() => {
                         match frame_result {
                             Some(Ok(frame_data)) => {
+                                frames_received += 1;
+                                if frames_received % 30 == 0 {
+                                    tracing::debug!(
+                                        device_id = %device_id_clone, 
+                                        frame = frames_received, 
+                                        bytes = frame_data.data.len(),
+                                        "Received frame from gRPC"
+                                    );
+                                }
+                                
                                 let update = FrameUpdate::from(frame_data);
                                 // Use try_send to avoid blocking when queue is full
                                 // Dropping frames is preferred over blocking the stream
                                 match frame_tx.try_send(update) {
                                     Ok(()) => {}
                                     Err(mpsc::TrySendError::Full(_)) => {
-                                        // Queue full - frame dropped, UI will catch up
-                                        tracing::trace!(device_id = %device_id_clone, "Frame dropped - UI queue full");
+                                        frames_dropped += 1;
+                                        if frames_dropped % 10 == 0 {
+                                            tracing::warn!(
+                                                device_id = %device_id_clone, 
+                                                dropped = frames_dropped,
+                                                "Frame dropped - UI queue full (slow render loop?)"
+                                            );
+                                        }
                                     }
                                     Err(mpsc::TrySendError::Disconnected(_)) => {
                                         // Receiver dropped
+                                        tracing::info!("Frame receiver disconnected, stopping stream");
                                         break;
                                     }
                                 }
                             }
                             Some(Err(e)) => {
                                 tracing::warn!(device_id = %device_id_clone, error = %e, "Frame stream error");
-                                // Continue on transient errors
+                                let _ = action_tx.send(ImageViewerAction::Error(format!(
+                                    "Frame stream error: {}", e
+                                )));
+                                break;
                             }
                             None => {
                                 // Stream ended
                                 tracing::info!(device_id = %device_id_clone, "Frame stream ended");
+                                let _ = action_tx.send(ImageViewerAction::Error(format!(
+                                    "Frame stream from {} ended unexpectedly", device_id_clone
+                                )));
                                 break;
                             }
                         }
                     }
                 }
             }
+            
+            // Cleanup: Ensure server-side stream is stopped when subscriber task exits
+            let _ = client.stop_stream(&device_id_clone).await;
         });
 
         self.subscription = Some(FrameStreamSubscription {
@@ -403,13 +1024,24 @@ impl ImageViewerPanel {
         });
     }
 
-    /// Stop streaming
-    pub fn stop_stream(&mut self, runtime: &Runtime) {
+    /// Stop streaming and notify server to stop hardware capture
+    pub fn stop_stream(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         if let Some(sub) = self.subscription.take() {
             let cancel_tx = sub.cancel_tx.clone();
-            runtime.spawn(async move {
-                let _ = cancel_tx.send(()).await;
-            });
+            let device_id = sub.device_id.clone();
+
+            // If client is available, also tell server to stop hardware capture
+            if let Some(client) = client {
+                let mut client = client.clone();
+                runtime.spawn(async move {
+                    let _ = cancel_tx.send(()).await;
+                    let _ = client.stop_stream(&device_id).await;
+                });
+            } else {
+                runtime.spawn(async move {
+                    let _ = cancel_tx.send(()).await;
+                });
+            }
         }
         self.status = Some("Stream stopped".to_string());
     }
@@ -440,13 +1072,23 @@ impl ImageViewerPanel {
         // Validate frame belongs to currently selected device (bd-tjwm.3)
         if let Some(expected_device) = &self.device_id {
             if &frame.device_id != expected_device {
-                tracing::trace!(
+                tracing::warn!(
                     expected = %expected_device,
                     received = %frame.device_id,
-                    "Dropping frame from unexpected device"
+                    "Dropping frame from unexpected device: mismatch"
                 );
                 return;
             }
+        }
+
+        // Trace processed frames (throttled)
+        if frame.frame_number % 30 == 0 {
+            tracing::debug!(
+                frame = frame.frame_number,
+                width = frame.width,
+                height = frame.height,
+                "Processing frame for display"
+            );
         }
 
         self.fps_counter.tick();
@@ -461,10 +1103,16 @@ impl ImageViewerPanel {
         self.last_frame_data = Some(frame.data.clone());
 
         // Update ROI statistics if we have an active ROI
-        self.roi_selector.update_statistics(&frame.data, frame.width, frame.height, frame.bit_depth);
+        self.roi_selector.update_statistics(
+            &frame.data,
+            frame.width,
+            frame.height,
+            frame.bit_depth,
+        );
 
         // Update histogram
-        self.histogram.from_frame_data(&frame.data, frame.width, frame.height, frame.bit_depth);
+        self.histogram
+            .from_frame_data(&frame.data, frame.width, frame.height, frame.bit_depth);
 
         // Convert frame data to RGBA based on bit depth
         let rgba = self.convert_to_rgba(&frame);
@@ -476,16 +1124,13 @@ impl ImageViewerPanel {
         if let Some(texture) = &mut self.texture {
             texture.set(image, egui::TextureOptions::NEAREST);
         } else {
-            self.texture = Some(ctx.load_texture(
-                "camera_frame",
-                image,
-                egui::TextureOptions::NEAREST,
-            ));
+            self.texture =
+                Some(ctx.load_texture("camera_frame", image, egui::TextureOptions::NEAREST));
         }
     }
 
     /// Convert raw frame data to RGBA based on bit depth and colormap
-    fn convert_to_rgba(&self, frame: &FrameUpdate) -> Vec<u8> {
+    fn convert_to_rgba(&mut self, frame: &FrameUpdate) -> Vec<u8> {
         // Guard against zero or invalid dimensions
         if frame.width == 0 || frame.height == 0 {
             return Vec::new();
@@ -510,6 +1155,24 @@ impl ImageViewerPanel {
         let pixel_count = pixel_count as usize;
         let mut rgba = vec![255u8; pixel_count * 4]; // Pre-fill alpha
 
+        // Get the bit depth's max value for normalization
+        let bit_max = match frame.bit_depth {
+            8 => 255.0,
+            12 => 4095.0,
+            16 => 65535.0,
+            _ => 65535.0,
+        };
+
+        // If auto-contrast, compute min/max from frame data
+        if self.auto_contrast {
+            let (data_min, data_max) = self.compute_frame_minmax(frame, bit_max);
+            self.display_min = data_min;
+            self.display_max = data_max;
+        }
+
+        // Compute contrast range (avoid division by zero)
+        let range = (self.display_max - self.display_min).max(0.001);
+
         match frame.bit_depth {
             8 => {
                 // 8-bit grayscale - validate data length (bd-tjwm.7)
@@ -521,8 +1184,10 @@ impl ImageViewerPanel {
                     );
                 }
                 for (i, &pixel) in frame.data.iter().take(pixel_count).enumerate() {
-                    let normalized = pixel as f32 / 255.0;
-                    let scaled = self.scale_mode.apply(normalized);
+                    let normalized = pixel as f32 / bit_max;
+                    // Apply contrast stretch
+                    let contrasted = ((normalized - self.display_min) / range).clamp(0.0, 1.0);
+                    let scaled = self.scale_mode.apply(contrasted);
                     let [r, g, b] = self.colormap.apply(scaled);
                     rgba[i * 4] = r;
                     rgba[i * 4 + 1] = g;
@@ -532,15 +1197,17 @@ impl ImageViewerPanel {
             }
             12 | 16 => {
                 // 16-bit (or 12-bit stored as 16-bit) little-endian
-                let max_val = if frame.bit_depth == 12 { 4095.0 } else { 65535.0 };
                 for i in 0..pixel_count {
                     let byte_idx = i * 2;
                     if byte_idx + 1 >= frame.data.len() {
                         break;
                     }
-                    let pixel = u16::from_le_bytes([frame.data[byte_idx], frame.data[byte_idx + 1]]);
-                    let normalized = pixel as f32 / max_val;
-                    let scaled = self.scale_mode.apply(normalized);
+                    let pixel =
+                        u16::from_le_bytes([frame.data[byte_idx], frame.data[byte_idx + 1]]);
+                    let normalized = pixel as f32 / bit_max;
+                    // Apply contrast stretch
+                    let contrasted = ((normalized - self.display_min) / range).clamp(0.0, 1.0);
+                    let scaled = self.scale_mode.apply(contrasted);
                     let [r, g, b] = self.colormap.apply(scaled);
                     rgba[i * 4] = r;
                     rgba[i * 4 + 1] = g;
@@ -564,8 +1231,46 @@ impl ImageViewerPanel {
         rgba
     }
 
+    /// Compute min/max values from frame data for auto-contrast
+    fn compute_frame_minmax(&self, frame: &FrameUpdate, bit_max: f32) -> (f32, f32) {
+        let mut min_val = f32::MAX;
+        let mut max_val = f32::MIN;
+
+        match frame.bit_depth {
+            8 => {
+                for &pixel in &frame.data {
+                    let val = pixel as f32;
+                    min_val = min_val.min(val);
+                    max_val = max_val.max(val);
+                }
+            }
+            12 | 16 => {
+                for chunk in frame.data.chunks_exact(2) {
+                    let pixel = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    let val = pixel as f32;
+                    min_val = min_val.min(val);
+                    max_val = max_val.max(val);
+                }
+            }
+            _ => {
+                return (0.0, 1.0);
+            }
+        }
+
+        // Normalize to 0.0-1.0 range
+        if min_val < max_val {
+            (min_val / bit_max, max_val / bit_max)
+        } else {
+            (0.0, 1.0)
+        }
+    }
+
     /// Render the image viewer panel
-    pub fn ui(&mut self, ui: &mut egui::Ui, _client: Option<&mut DaqClient>, runtime: &Runtime) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, mut client: Option<&mut DaqClient>, runtime: &Runtime) {
+        // Poll async action results
+        self.poll_actions();
+        self.poll_param_results(ui.ctx());
+
         // Drain async updates
         self.drain_updates(ui.ctx());
 
@@ -574,16 +1279,64 @@ impl ImageViewerPanel {
             ui.ctx().request_repaint();
         }
 
+        // Auto-refresh camera list on first load or if stale
+        let should_refresh = self.last_refresh.is_none()
+            || self
+                .last_refresh
+                .map(|t| t.elapsed().as_secs() > 30)
+                .unwrap_or(false);
+
+        // Track actions to take after UI rendering (avoid borrow issues)
+        let mut start_stream_device: Option<String> = None;
+        let mut stop_stream = false;
+        let mut refresh_cameras = false;
+
         // Toolbar
         ui.horizontal(|ui| {
             ui.heading("Image Viewer");
             ui.separator();
 
-            // Device selector (simple text for now)
+            // Camera selector combo box
+            let selected_text = self
+                .device_id
+                .clone()
+                .unwrap_or_else(|| "Select camera...".to_string());
+
+            egui::ComboBox::from_id_salt("camera_selector")
+                .selected_text(&selected_text)
+                .show_ui(ui, |ui| {
+                    if self.available_cameras.is_empty() {
+                        ui.label("No cameras found");
+                    } else {
+                        for cam_id in &self.available_cameras.clone() {
+                            let is_selected = self.device_id.as_ref() == Some(cam_id);
+                            if ui.selectable_label(is_selected, cam_id).clicked() {
+                                if self.device_id.as_ref() != Some(cam_id) {
+                                    self.device_id = Some(cam_id.clone());
+                                    self.camera_params.clear(); // Trigger auto-load
+                                }
+                            }
+                        }
+                    }
+                });
+
+            // Refresh button
+            if ui
+                .button("🔄")
+                .on_hover_text("Refresh camera list")
+                .clicked()
+            {
+                refresh_cameras = true;
+            }
+
+            // Auto-load parameters if needed
             if let Some(device_id) = &self.device_id {
-                ui.label(format!("Device: {}", device_id));
-            } else {
-                ui.label("No device selected");
+                if self.camera_params.is_empty() && self.loading_params_device.is_none() {
+                    let device_id_clone = device_id.clone();
+                    if let Some(client) = client.as_deref_mut() {
+                        self.load_camera_params(client, runtime, &device_id_clone);
+                    }
+                }
             }
 
             ui.separator();
@@ -591,8 +1344,14 @@ impl ImageViewerPanel {
             // Stream controls
             let is_streaming = self.subscription.is_some();
             if is_streaming {
-                if ui.button("Stop").clicked() {
-                    self.stop_stream(runtime);
+                if ui.button("⏹ Stop").clicked() {
+                    stop_stream = true;
+                }
+            } else if self.device_id.is_some() {
+                if ui.button("▶ Start").clicked() {
+                    if let Some(device_id) = &self.device_id {
+                        start_stream_device = Some(device_id.clone());
+                    }
                 }
             }
 
@@ -617,6 +1376,32 @@ impl ImageViewerPanel {
                     ui.selectable_value(&mut self.scale_mode, ScaleMode::Sqrt, "Sqrt");
                 });
 
+            // Contrast controls
+            ui.separator();
+            ui.checkbox(&mut self.auto_contrast, "Auto");
+            if !self.auto_contrast {
+                ui.add(
+                    egui::DragValue::new(&mut self.display_min)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("Min: ")
+                        .max_decimals(2),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.display_max)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("Max: ")
+                        .max_decimals(2),
+                );
+            } else {
+                ui.weak(format!(
+                    "{:.0}%-{:.0}%",
+                    self.display_min * 100.0,
+                    self.display_max * 100.0
+                ));
+            }
+
             // Zoom controls
             ui.separator();
             if ui.button("Fit").clicked() {
@@ -631,8 +1416,15 @@ impl ImageViewerPanel {
 
             // ROI controls
             ui.separator();
-            let roi_label = if self.roi_selector.selection_mode { "ROI [ON]" } else { "ROI" };
-            if ui.selectable_label(self.roi_selector.selection_mode, roi_label).clicked() {
+            let roi_label = if self.roi_selector.selection_mode {
+                "ROI [ON]"
+            } else {
+                "ROI"
+            };
+            if ui
+                .selectable_label(self.roi_selector.selection_mode, roi_label)
+                .clicked()
+            {
                 self.roi_selector.selection_mode = !self.roi_selector.selection_mode;
             }
             if self.roi_selector.roi().is_some() {
@@ -641,30 +1433,92 @@ impl ImageViewerPanel {
                 }
             }
             ui.checkbox(&mut self.show_roi_panel, "Stats");
+            ui.checkbox(&mut self.show_controls, "Controls");
 
             // Histogram controls
             ui.separator();
             egui::ComboBox::from_id_salt("histogram_pos")
                 .selected_text(format!("Hist: {}", self.histogram_position.label()))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::Hidden, "Hidden");
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::BottomRight, "Bottom Right");
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::BottomLeft, "Bottom Left");
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::TopRight, "Top Right");
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::TopLeft, "Top Left");
-                    ui.selectable_value(&mut self.histogram_position, HistogramPosition::SidePanel, "Side Panel");
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::Hidden,
+                        "Hidden",
+                    );
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::BottomRight,
+                        "Bottom Right",
+                    );
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::BottomLeft,
+                        "Bottom Left",
+                    );
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::TopRight,
+                        "Top Right",
+                    );
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::TopLeft,
+                        "Top Left",
+                    );
+                    ui.selectable_value(
+                        &mut self.histogram_position,
+                        HistogramPosition::SidePanel,
+                        "Side Panel",
+                    );
                 });
             if self.histogram_position.is_visible() {
                 ui.checkbox(&mut self.histogram.log_scale, "Log");
             }
         });
 
+        // Execute collected actions after UI rendering
+        let client = if let Some(client_val) = client {
+            // Auto-refresh on first load
+            if should_refresh {
+                self.refresh_cameras(client_val, runtime);
+            }
+
+            // Handle manual refresh
+            if refresh_cameras {
+                self.refresh_cameras(client_val, runtime);
+            }
+
+            // Handle start stream
+            if let Some(device_id) = start_stream_device {
+                self.start_stream(&device_id, client_val, runtime);
+            }
+
+            // Handle pending param updates
+            let updates: Vec<_> = self.pending_param_updates.drain(..).collect();
+            for (dev, name, val) in updates {
+                self.set_camera_parameter(client_val, runtime, &dev, &name, &val);
+            }
+
+            Some(client_val)
+        } else {
+            self.pending_param_updates.clear();
+            None
+        };
+
+        // Handle stop stream
+        if stop_stream {
+            self.stop_stream(client, runtime);
+        }
+
         ui.separator();
 
         // Status bar
         ui.horizontal(|ui| {
             if self.width > 0 {
-                ui.label(format!("{}x{} @ {}bit", self.width, self.height, self.bit_depth));
+                ui.label(format!(
+                    "{}x{} @ {}bit",
+                    self.width, self.height, self.bit_depth
+                ));
                 ui.separator();
                 ui.label(format!("Frame: {}", self.frame_count));
                 ui.separator();
@@ -682,28 +1536,52 @@ impl ImageViewerPanel {
         ui.separator();
 
         // Image display area with optional statistics panel
-        ui.horizontal(|ui| {
-            // Calculate side panel width based on what's visible
-            let has_roi_panel = self.show_roi_panel && self.roi_selector.roi().is_some();
-            let has_histogram_panel = matches!(self.histogram_position, HistogramPosition::SidePanel);
-            let stats_panel_width = if has_roi_panel || has_histogram_panel {
-                180.0 // Slightly wider to accommodate histogram
+        // Calculate side panel width based on what's visible
+        let has_roi_panel = self.show_roi_panel && self.roi_selector.roi().is_some();
+        let has_histogram_panel = matches!(self.histogram_position, HistogramPosition::SidePanel);
+        let has_controls_panel = self.show_controls && !self.camera_params.is_empty();
+
+        let stats_panel_width = if has_roi_panel || has_histogram_panel || has_controls_panel {
+            if has_controls_panel {
+                280.0
             } else {
-                0.0
+                200.0
+            }
+        } else {
+            0.0
+        };
+
+        // Get full available space BEFORE any layout calls
+        let full_available = ui.available_size();
+        let image_area_size =
+            egui::vec2(full_available.x - stats_panel_width - 8.0, full_available.y);
+
+        // Use columns to split horizontally while filling vertical space
+        ui.columns(if stats_panel_width > 0.0 { 2 } else { 1 }, |columns| {
+            // Image column (first/only column)
+            let ui = &mut columns[0];
+            let available_size = if stats_panel_width > 0.0 {
+                // In column mode, use calculated image area
+                egui::vec2(image_area_size.x, ui.available_height())
+            } else {
+                ui.available_size()
             };
-            let available_size = ui.available_size() - egui::vec2(stats_panel_width + 8.0, 0.0);
 
             if let Some(texture) = &self.texture {
-                // Calculate fit zoom if needed
+                // Calculate fit zoom if needed - continuously fit when auto_fit is enabled
                 if self.auto_fit && self.width > 0 && self.height > 0 {
                     let scale_x = available_size.x / self.width as f32;
                     let scale_y = available_size.y / self.height as f32;
-                    self.zoom = scale_x.min(scale_y).min(1.0); // Don't upscale beyond 1:1
+                    // Allow upscaling to fill available space (remove .min(1.0) cap)
+                    self.zoom = scale_x.min(scale_y);
                     self.pan = egui::Vec2::ZERO;
-                    self.auto_fit = false;
+                    // Keep auto_fit true for continuous fitting as window resizes
                 }
 
-                let image_size = egui::vec2(self.width as f32 * self.zoom, self.height as f32 * self.zoom);
+                let image_size = egui::vec2(
+                    self.width as f32 * self.zoom,
+                    self.height as f32 * self.zoom,
+                );
 
                 // Scrollable/pannable area
                 egui::ScrollArea::both()
@@ -716,10 +1594,7 @@ impl ImageViewerPanel {
 
                         // Calculate image offset (centered)
                         let offset = (available_size - image_size) / 2.0 + self.pan;
-                        let image_rect = egui::Rect::from_min_size(
-                            rect.min + offset,
-                            image_size,
-                        );
+                        let image_rect = egui::Rect::from_min_size(rect.min + offset, image_size);
 
                         // Handle ROI selection or pan depending on mode
                         if self.roi_selector.selection_mode {
@@ -734,7 +1609,9 @@ impl ImageViewerPanel {
 
                             // If ROI was finalized and we have frame data, compute statistics
                             if roi_finalized {
-                                if let (Some(roi), Some(frame_data)) = (self.roi_selector.roi(), &self.last_frame_data) {
+                                if let (Some(roi), Some(frame_data)) =
+                                    (self.roi_selector.roi(), &self.last_frame_data)
+                                {
                                     self.roi_selector.set_roi_from_frame(
                                         *roi,
                                         frame_data,
@@ -780,12 +1657,15 @@ impl ImageViewerPanel {
                         // Draw histogram overlay if positioned on image
                         if self.histogram_position.is_overlay() {
                             let hist_size = egui::vec2(180.0, 80.0);
-                            let hist_rect = self.histogram_position.overlay_rect(image_rect, hist_size);
+                            let hist_rect =
+                                self.histogram_position.overlay_rect(image_rect, hist_size);
 
                             // Create a child UI at the overlay position
-                            let mut hist_ui = ui.new_child(egui::UiBuilder::new()
-                                .max_rect(hist_rect)
-                                .layout(egui::Layout::left_to_right(egui::Align::Min)));
+                            let mut hist_ui = ui.new_child(
+                                egui::UiBuilder::new()
+                                    .max_rect(hist_rect)
+                                    .layout(egui::Layout::left_to_right(egui::Align::Min)),
+                            );
                             self.histogram.show_overlay(&mut hist_ui, hist_size);
                         }
 
@@ -794,8 +1674,10 @@ impl ImageViewerPanel {
                             let image_pos = pos - rect.min - offset;
                             let pixel_x = (image_pos.x / self.zoom) as i32;
                             let pixel_y = (image_pos.y / self.zoom) as i32;
-                            if pixel_x >= 0 && pixel_x < self.width as i32
-                                && pixel_y >= 0 && pixel_y < self.height as i32
+                            if pixel_x >= 0
+                                && pixel_x < self.width as i32
+                                && pixel_y >= 0
+                                && pixel_y < self.height as i32
                             {
                                 response.on_hover_text(format!("({}, {})", pixel_x, pixel_y));
                             }
@@ -808,28 +1690,85 @@ impl ImageViewerPanel {
                 });
             }
 
-            // Side panels (ROI stats and/or histogram)
-            let show_side_panel = self.show_roi_panel || matches!(self.histogram_position, HistogramPosition::SidePanel);
-            if show_side_panel {
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.set_width(stats_panel_width);
-
-                    // ROI statistics
-                    if self.show_roi_panel {
-                        self.roi_selector.show_statistics_panel(ui);
-                    }
-
-                    // Histogram in side panel
-                    if matches!(self.histogram_position, HistogramPosition::SidePanel) {
-                        if self.show_roi_panel && self.roi_selector.roi().is_some() {
+            // Side panels (ROI stats and/or histogram) in second column if present
+            if stats_panel_width > 0.0 && columns.len() > 1 {
+                let side_ui = &mut columns[1];
+                egui::ScrollArea::vertical()
+                    .id_salt("side_panel_scroll")
+                    .show(side_ui, |ui| {
+                        if has_controls_panel {
+                            egui::CollapsingHeader::new("Camera Settings")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    if let Some(device_id_ref) = &self.device_id {
+                                        let device_id = device_id_ref.clone();
+                                        // Use Grid for better alignment
+                                        // Note: render_camera_control handles its own row content
+                                        // but we wrap it to ensure layout consistency
+                                        for i in 0..self.camera_params.len() {
+                                            ui.group(|ui| {
+                                                self.render_camera_control(ui, &device_id, i);
+                                            });
+                                        }
+                                    }
+                                });
                             ui.add_space(8.0);
                         }
-                        self.histogram.show_panel(ui);
-                    }
-                });
+
+                        // ROI statistics
+                        if has_roi_panel {
+                            egui::CollapsingHeader::new("ROI Statistics")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    self.roi_selector.show_statistics_panel(ui);
+
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .button("Apply as Hardware ROI")
+                                        .on_hover_text(
+                                            "Update camera acquisition ROI (restarts stream)",
+                                        )
+                                        .clicked()
+                                    {
+                                        if let Some(roi) = self.roi_selector.roi() {
+                                            if let Some(dev_id) = self.device_id.clone() {
+                                                // Queue ROI update (requires custom logic to stop/start stream)
+                                                // For now, just try setting the parameter directly if available.
+                                                // Real implementation requires complex orchestration.
+                                                // We'll queue it as a parameter update for 'roi'
+                                                // The backend/daemon should handle stream restart ideally,
+                                                // or we handle it here.
+                                                // Let's assume setting 'roi' works like any other param for now
+                                                // but add a TODO for stream restart management.
+                                                let roi_json = serde_json::json!({
+                                                    "x": roi.x as u32,
+                                                    "y": roi.y as u32,
+                                                    "width": roi.width as u32,
+                                                    "height": roi.height as u32
+                                                });
+                                                self.pending_param_updates.push((
+                                                    dev_id,
+                                                    "roi".to_string(),
+                                                    roi_json.to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                });
+                            ui.add_space(8.0);
+                        }
+
+                        // Histogram in side panel
+                        if has_histogram_panel {
+                            egui::CollapsingHeader::new("Histogram")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    self.histogram.show_panel(ui);
+                                });
+                        }
+                    });
             }
-        });
+        }); // close ui.columns
     }
 
     /// Set the device to stream from (for external control)

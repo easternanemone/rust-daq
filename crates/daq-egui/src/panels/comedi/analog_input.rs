@@ -202,11 +202,7 @@ impl AnalogInputPanel {
     }
 
     /// Render the channel selection grid.
-    fn render_channel_grid(
-        &mut self,
-        ui: &mut Ui,
-        runtime: &Runtime,
-    ) {
+    fn render_channel_grid(&mut self, ui: &mut Ui, runtime: &Runtime) {
         ui.group(|ui| {
             ui.label(RichText::new("Channels").strong());
             ui.separator();
@@ -265,11 +261,7 @@ impl AnalogInputPanel {
     }
 
     /// Render details for the selected channel.
-    fn render_channel_details(
-        &mut self,
-        ui: &mut Ui,
-        runtime: &Runtime,
-    ) {
+    fn render_channel_details(&mut self, ui: &mut Ui, runtime: &Runtime) {
         ui.group(|ui| {
             let channel = self.selected_channel;
             let config = self.channels.entry(channel).or_default();

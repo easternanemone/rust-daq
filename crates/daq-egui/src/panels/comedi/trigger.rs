@@ -203,7 +203,12 @@ impl TriggerTab {
     }
 
     fn all() -> &'static [Self] {
-        &[Self::AnalogInput, Self::AnalogOutput, Self::Counter, Self::Timing]
+        &[
+            Self::AnalogInput,
+            Self::AnalogOutput,
+            Self::Counter,
+            Self::Timing,
+        ]
     }
 }
 
@@ -353,10 +358,7 @@ impl TriggerConfigPanel {
             if config.start_source == TriggerSource::AnalogTrigger {
                 ui.horizontal(|ui| {
                     ui.label("Trigger Channel:");
-                    ui.add(
-                        egui::DragValue::new(&mut config.analog_trigger_channel)
-                            .range(0..=15),
-                    );
+                    ui.add(egui::DragValue::new(&mut config.analog_trigger_channel).range(0..=15));
                     ui.label("Level:");
                     ui.add(
                         egui::DragValue::new(&mut config.analog_trigger_level)
@@ -400,10 +402,7 @@ impl TriggerConfigPanel {
             ui.label(RichText::new("Acquisition").strong());
             ui.horizontal(|ui| {
                 ui.label("Samples per trigger:");
-                ui.add(
-                    egui::DragValue::new(&mut config.samples_per_trigger)
-                        .range(0..=1000000),
-                );
+                ui.add(egui::DragValue::new(&mut config.samples_per_trigger).range(0..=1000000));
                 if config.samples_per_trigger == 0 {
                     ui.label(RichText::new("(continuous)").italics());
                 }

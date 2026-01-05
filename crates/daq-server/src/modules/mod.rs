@@ -213,7 +213,7 @@ impl ModuleContext {
             module_id: self.module_id.clone(),
             event_type: event_type.to_string(),
             timestamp_ns: current_time_ns(),
-            severity: severity.into(),
+            severity: severity,
             message: message.to_string(),
             data,
         };
@@ -572,10 +572,10 @@ impl ModuleRegistry {
         }
 
         // Stop if running
-        if let Some(instance) = self.instances.get_mut(module_id) {
-            if instance.state() == ModuleState::Running {
-                instance.stop().await?;
-            }
+        if let Some(instance) = self.instances.get_mut(module_id)
+            && instance.state() == ModuleState::Running
+        {
+            instance.stop().await?;
         }
 
         self.instances.remove(module_id);

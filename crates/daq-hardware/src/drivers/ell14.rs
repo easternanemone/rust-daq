@@ -254,7 +254,11 @@ impl Ell14Driver {
     /// * `shared_port` - Shared serial port from [`open_shared_port`]
     /// * `address` - Device address on the bus (0-9, A-F)
     pub fn with_shared_port(shared_port: SharedPort, address: &str) -> Self {
-        Self::build(shared_port, address.to_string(), Self::DEFAULT_PULSES_PER_DEGREE)
+        Self::build(
+            shared_port,
+            address.to_string(),
+            Self::DEFAULT_PULSES_PER_DEGREE,
+        )
     }
 
     /// Internal helper to open a serial port with ELL14 settings
@@ -293,7 +297,11 @@ impl Ell14Driver {
             .await
             .context("spawn_blocking for ELL14 port opening failed")??;
 
-        Ok(Self::build(Arc::new(Mutex::new(port)), address, Self::DEFAULT_PULSES_PER_DEGREE))
+        Ok(Self::build(
+            Arc::new(Mutex::new(port)),
+            address,
+            Self::DEFAULT_PULSES_PER_DEGREE,
+        ))
     }
 
     /// Create a new ELL14 driver and query device for actual calibration
@@ -325,11 +333,7 @@ impl Ell14Driver {
         let shared_port = Arc::new(Mutex::new(port));
 
         // Create driver with default calibration first (needed for get_device_info)
-        let mut driver = Self::build(
-            shared_port,
-            address_owned,
-            Self::DEFAULT_PULSES_PER_DEGREE,
-        );
+        let mut driver = Self::build(shared_port, address_owned, Self::DEFAULT_PULSES_PER_DEGREE);
 
         // Query device for actual calibration
         // Per ELLx protocol manual: PULSES/M.U. = pulses per measurement unit

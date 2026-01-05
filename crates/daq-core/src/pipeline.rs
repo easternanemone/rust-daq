@@ -103,10 +103,7 @@ where
     type Input = T;
     type Error = anyhow::Error;
 
-    fn register_input(
-        &mut self,
-        mut rx: mpsc::Receiver<T>,
-    ) -> Result<JoinHandle<()>, Self::Error> {
+    fn register_input(&mut self, mut rx: mpsc::Receiver<T>) -> Result<JoinHandle<()>, Self::Error> {
         let reliable_tx = self.reliable_tx.clone();
         let lossy_tx = self.lossy_tx.clone();
 

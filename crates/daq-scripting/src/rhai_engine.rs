@@ -243,7 +243,10 @@ impl RhaiEngine {
     ///
     /// // Now scripts can use: run_engine.queue(plan); run_engine.start();
     /// ```
-    pub fn set_run_engine(&mut self, handle: crate::plan_bindings::RunEngineHandle) -> Result<(), ScriptError> {
+    pub fn set_run_engine(
+        &mut self,
+        handle: crate::plan_bindings::RunEngineHandle,
+    ) -> Result<(), ScriptError> {
         self.set_global("run_engine", ScriptValue::new(handle))
     }
 
@@ -302,8 +305,9 @@ impl RhaiEngine {
         // As a last resort, try extracting custom Rhai types
         else {
             Err(ScriptError::TypeConversionError {
-                expected: "i64, f64, bool, String, StageHandle, CameraHandle, RunEngineHandle, or Dynamic"
-                    .to_string(),
+                expected:
+                    "i64, f64, bool, String, StageHandle, CameraHandle, RunEngineHandle, or Dynamic"
+                        .to_string(),
                 found: "unknown type".to_string(),
             })
         }

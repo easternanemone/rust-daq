@@ -246,7 +246,10 @@ fn render_enum_editor(ui: &mut egui::Ui, param: &mut ParameterCache) -> Paramete
             .selected_text(&selected)
             .show_ui(ui, |ui| {
                 for option in &param.descriptor.enum_values {
-                    if ui.selectable_value(&mut selected, option.clone(), option).clicked() {
+                    if ui
+                        .selectable_value(&mut selected, option.clone(), option)
+                        .clicked()
+                    {
                         param.edit_buffer = format!("\"{}\"", selected);
                     }
                 }
@@ -282,7 +285,9 @@ fn render_json_fallback(ui: &mut egui::Ui, param: &mut ParameterCache) -> Parame
 }
 
 /// Group parameters by prefix (e.g., "thermal.temperature" -> "thermal")
-pub fn group_parameters_by_prefix(params: &[ParameterCache]) -> Vec<(String, Vec<&ParameterCache>)> {
+pub fn group_parameters_by_prefix(
+    params: &[ParameterCache],
+) -> Vec<(String, Vec<&ParameterCache>)> {
     use std::collections::BTreeMap;
 
     let mut groups: BTreeMap<String, Vec<&ParameterCache>> = BTreeMap::new();
@@ -311,7 +316,10 @@ pub fn filter_parameters<'a>(params: &'a [ParameterCache], query: &str) -> Vec<&
         .iter()
         .filter(|p| {
             p.descriptor.name.to_lowercase().contains(&query_lower)
-                || p.descriptor.description.to_lowercase().contains(&query_lower)
+                || p.descriptor
+                    .description
+                    .to_lowercase()
+                    .contains(&query_lower)
         })
         .collect()
 }

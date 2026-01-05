@@ -466,15 +466,11 @@ impl CounterDisplayPanel {
             } else {
                 format!("{:.1} s ago", age)
             };
-            ui.label(
-                RichText::new(age_text)
-                    .size(10.0)
-                    .color(if age > 1.0 {
-                        Color32::YELLOW
-                    } else {
-                        Color32::GRAY
-                    }),
-            );
+            ui.label(RichText::new(age_text).size(10.0).color(if age > 1.0 {
+                Color32::YELLOW
+            } else {
+                Color32::GRAY
+            }));
         });
     }
 
@@ -521,13 +517,11 @@ impl CounterDisplayPanel {
                     } else {
                         format!("{:.1}s", age)
                     };
-                    ui.label(
-                        RichText::new(age_text).color(if age > 1.0 {
-                            Color32::YELLOW
-                        } else {
-                            Color32::GRAY
-                        }),
-                    );
+                    ui.label(RichText::new(age_text).color(if age > 1.0 {
+                        Color32::YELLOW
+                    } else {
+                        Color32::GRAY
+                    }));
 
                     ui.end_row();
                 }

@@ -18,9 +18,9 @@
 
 // Import all public types from the library root
 use daq_driver_pvcam::{
-    CameraInfo, CentroidsConfig, CentroidsMode, ClearMode, ExposureMode, ExposeOutMode,
-    FanSpeed, GainMode, PPFeature, PPParam, ReadoutPort, ShutterMode, ShutterStatus,
-    SmartStreamEntry, SmartStreamMode, SpeedMode,
+    CameraInfo, CentroidsConfig, CentroidsMode, ClearMode, ExposeOutMode, ExposureMode, FanSpeed,
+    GainMode, PPFeature, PPParam, ReadoutPort, ShutterMode, ShutterStatus, SmartStreamEntry,
+    SmartStreamMode, SpeedMode,
 };
 // Import feature functions
 use daq_driver_pvcam::components::features::PvcamFeatures;
@@ -296,7 +296,10 @@ mod mock_features {
     fn set_temperature_setpoint_mock() {
         let conn = mock_connection();
         let result = PvcamFeatures::set_temperature_setpoint(&conn, -30.0);
-        assert!(result.is_ok(), "Setting temperature setpoint should succeed in mock mode");
+        assert!(
+            result.is_ok(),
+            "Setting temperature setpoint should succeed in mock mode"
+        );
     }
 
     #[test]
@@ -355,7 +358,10 @@ mod mock_features {
         assert_eq!(speed, FanSpeed::High, "Mock fan speed should be High");
 
         let result = PvcamFeatures::set_fan_speed(&conn, FanSpeed::Low);
-        assert!(result.is_ok(), "Setting fan speed should succeed in mock mode");
+        assert!(
+            result.is_ok(),
+            "Setting fan speed should succeed in mock mode"
+        );
     }
 
     #[test]
@@ -496,7 +502,10 @@ mod mock_features {
         let conn = mock_connection();
 
         let enabled = PvcamFeatures::is_smart_stream_enabled(&conn).unwrap();
-        assert!(!enabled, "Smart streaming should be disabled by default in mock");
+        assert!(
+            !enabled,
+            "Smart streaming should be disabled by default in mock"
+        );
 
         let result = PvcamFeatures::set_smart_stream_enabled(&conn, true);
         assert!(result.is_ok());
@@ -603,7 +612,7 @@ mod hardware_features {
     fn open_camera() -> PvcamConnection {
         let mut conn = PvcamConnection::new();
         conn.initialize().expect("Failed to initialize PVCAM SDK");
-        conn.open("Prime BSI").expect("Failed to open camera");
+        conn.open("pvcamUSB_0").expect("Failed to open camera");
         conn
     }
 
@@ -615,7 +624,11 @@ mod hardware_features {
         println!("Current temperature: {:.2}°C", temp);
 
         // Prime BSI typically operates between -50°C and +50°C
-        assert!(temp > -60.0 && temp < 60.0, "Temperature {} out of expected range", temp);
+        assert!(
+            temp > -60.0 && temp < 60.0,
+            "Temperature {} out of expected range",
+            temp
+        );
     }
 
     #[test]
@@ -638,7 +651,11 @@ mod hardware_features {
 
         // Prime BSI specific validations
         assert!(info.chip_name.contains("GS2020") || info.chip_name.len() > 0);
-        assert_eq!(info.sensor_size, (2048, 2048), "Prime BSI should be 2048x2048");
+        assert_eq!(
+            info.sensor_size,
+            (2048, 2048),
+            "Prime BSI should be 2048x2048"
+        );
     }
 
     #[test]
@@ -673,8 +690,10 @@ mod hardware_features {
         let modes = PvcamFeatures::list_speed_modes(&conn).unwrap();
         println!("Available speed modes:");
         for mode in &modes {
-            println!("  [{}] {} - {} ns/pixel, {} bit, port {}",
-                mode.index, mode.name, mode.pixel_time_ns, mode.bit_depth, mode.port_index);
+            println!(
+                "  [{}] {} - {} ns/pixel, {} bit, port {}",
+                mode.index, mode.name, mode.pixel_time_ns, mode.bit_depth, mode.port_index
+            );
         }
 
         // May be empty if not enumerable
@@ -739,12 +758,19 @@ mod hardware_features {
         let conn = open_camera();
 
         let readout = PvcamFeatures::get_readout_time_us(&conn).unwrap();
-        println!("Readout time: {} µs ({:.2} ms)", readout, readout as f64 / 1000.0);
+        println!(
+            "Readout time: {} µs ({:.2} ms)",
+            readout,
+            readout as f64 / 1000.0
+        );
 
         // Some timing parameters may require acquisition setup first
         match PvcamFeatures::get_clearing_time_us(&conn) {
             Ok(clearing) => println!("Clearing time: {} µs", clearing),
-            Err(e) => println!("Clearing time not available (may need acquisition setup): {}", e),
+            Err(e) => println!(
+                "Clearing time not available (may need acquisition setup): {}",
+                e
+            ),
         }
 
         match PvcamFeatures::get_pre_trigger_delay_us(&conn) {
@@ -759,7 +785,11 @@ mod hardware_features {
 
         // Readout should be reasonable (0-100 ms for full frame)
         // Note: May be 0 if not configured
-        assert!(readout < 200_000, "Readout time {} unexpectedly high", readout);
+        assert!(
+            readout < 200_000,
+            "Readout time {} unexpectedly high",
+            readout
+        );
     }
 
     #[test]
@@ -799,13 +829,18 @@ mod hardware_features {
         let features = PvcamFeatures::list_pp_features(&conn).unwrap();
         println!("Post-processing features:");
         for feature in &features {
-            println!("  [{}] {} (ID: {})", feature.index, feature.name, feature.id);
+            println!(
+                "  [{}] {} (ID: {})",
+                feature.index, feature.name, feature.id
+            );
 
             // List params for this feature
             if let Ok(params) = PvcamFeatures::list_pp_params(&conn, feature.index) {
                 for param in params {
-                    println!("    - [{}] {} = {} (ID: {})",
-                        param.index, param.name, param.value, param.id);
+                    println!(
+                        "    - [{}] {} = {} (ID: {})",
+                        param.index, param.name, param.value, param.id
+                    );
                 }
             }
         }

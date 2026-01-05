@@ -64,6 +64,7 @@ pub enum AddressSource {
 impl AddressSource {
     /// Returns the priority for address resolution (higher = preferred).
     #[must_use]
+    #[allow(dead_code)]
     pub fn priority(self) -> u8 {
         match self {
             Self::Default => 0,
@@ -161,6 +162,7 @@ impl DaemonAddress {
 
     /// Returns `true` if this address uses TLS (https scheme).
     #[must_use]
+    #[allow(dead_code)]
     pub fn is_tls(&self) -> bool {
         self.url.starts_with("https://")
     }
@@ -169,6 +171,7 @@ impl DaemonAddress {
     ///
     /// Useful when loading a persisted address (changes source from UserInput to Persisted).
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_source(mut self, source: AddressSource) -> Self {
         self.source = source;
         self
@@ -350,6 +353,7 @@ pub fn save_to_storage(storage: &mut dyn eframe::Storage, address: &DaemonAddres
 /// Try to load a daemon address from eframe::Storage.
 ///
 /// Returns `None` if no address is saved or if the saved address is invalid.
+#[allow(dead_code)]
 pub fn try_load_from_storage(storage: &dyn eframe::Storage) -> Option<DaemonAddress> {
     let persisted = storage.get_string(STORAGE_KEY_DAEMON_ADDR)?;
     DaemonAddress::parse(&persisted, AddressSource::Persisted).ok()
@@ -435,7 +439,8 @@ mod tests {
 
     #[test]
     fn test_daemon_address_tls() {
-        let addr = DaemonAddress::parse("https://secure.example.com", AddressSource::Environment).unwrap();
+        let addr =
+            DaemonAddress::parse("https://secure.example.com", AddressSource::Environment).unwrap();
         assert!(addr.is_tls());
     }
 
@@ -490,7 +495,12 @@ mod tests {
 
     #[test]
     fn test_address_error_display() {
-        assert_eq!(AddressError::EmptyInput.to_string(), "Address cannot be empty");
-        assert!(AddressError::UnsupportedScheme("ftp".to_string()).to_string().contains("ftp"));
+        assert_eq!(
+            AddressError::EmptyInput.to_string(),
+            "Address cannot be empty"
+        );
+        assert!(AddressError::UnsupportedScheme("ftp".to_string())
+            .to_string()
+            .contains("ftp"));
     }
 }

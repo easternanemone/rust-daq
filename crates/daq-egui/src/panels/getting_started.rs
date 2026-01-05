@@ -17,10 +17,10 @@ impl GettingStartedPanel {
         ui.group(|ui| {
             ui.heading("🎯 Demo Mode (No Hardware Required)");
             ui.add_space(4.0);
-            
+
             ui.label("Try rust-daq without physical hardware using mock devices:");
             ui.add_space(8.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("1️⃣");
                 ui.vertical(|ui| {
@@ -35,9 +35,9 @@ impl GettingStartedPanel {
                     ui.code(".\\rust-daq-daemon.exe daemon --hardware-config config/demo.toml");
                 });
             });
-            
+
             ui.add_space(8.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("2️⃣");
                 ui.vertical(|ui| {
@@ -47,9 +47,9 @@ impl GettingStartedPanel {
                     ui.code("http://127.0.0.1:50051");
                 });
             });
-            
+
             ui.add_space(8.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("3️⃣");
                 ui.vertical(|ui| {
@@ -62,9 +62,9 @@ impl GettingStartedPanel {
                 });
             });
         });
-        
+
         ui.add_space(12.0);
-        
+
         // Example Scripts Section
         ui.group(|ui| {
             ui.heading("📜 Try the Working Demo (v0.5.0)");
@@ -95,17 +95,17 @@ impl GettingStartedPanel {
                 });
             });
         });
-        
+
         ui.add_space(12.0);
-        
+
         // Visualization Section
         ui.group(|ui| {
             ui.heading("📊 Live Data Visualization");
             ui.add_space(4.0);
-            
+
             ui.label("View camera frames in real-time using Rerun:");
             ui.add_space(8.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("1️⃣");
                 ui.vertical(|ui| {
@@ -114,9 +114,9 @@ impl GettingStartedPanel {
                     ui.label("(Install via: pip install rerun-sdk)");
                 });
             });
-            
+
             ui.add_space(4.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("2️⃣");
                 ui.vertical(|ui| {
@@ -125,45 +125,50 @@ impl GettingStartedPanel {
                 });
             });
         });
-        
+
         ui.add_space(12.0);
-        
+
         // Next Steps Section
         ui.group(|ui| {
             ui.heading("⚙️ Next Steps");
             ui.add_space(4.0);
-            
+
             ui.label("Ready to use real hardware?");
             ui.add_space(8.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("📝");
-                ui.label("Edit crates/rust-daq/config/hardware.example.toml with your device settings");
+                ui.label(
+                    "Edit crates/rust-daq/config/hardware.example.toml with your device settings",
+                );
             });
-            
+
             ui.add_space(4.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("🔌");
                 ui.label("Connect physical devices and update serial ports");
             });
-            
+
             ui.add_space(4.0);
-            
+
             ui.horizontal(|ui| {
                 ui.label("🚀");
                 ui.label("Start daemon with: --hardware-config config/hardware.toml");
             });
-            
+
             ui.add_space(8.0);
-            
+
             if ui.button("📖 View Documentation").clicked() {
-                ui.ctx().copy_text("See project documentation at https://github.com/easternanemone/rust-daq".to_string());
+                ui.ctx().copy_text(
+                    "See project documentation at https://github.com/easternanemone/rust-daq"
+                        .to_string(),
+                );
             }
         });
-        
+
         ui.add_space(12.0);
-        
+
         // Advanced Options
         ui.collapsing("Advanced Demo Options", |ui| {
             ui.add_space(4.0);

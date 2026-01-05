@@ -51,10 +51,10 @@ run_engine.abort("reason");       // Abort current plan
 run_engine.halt();                // Emergency stop
 
 // Query state
-let state = run_engine.state();         // "idle", "running", "paused"
+let state = run_engine.state();         // "idle", "running", "paused", "aborting"
 let len = run_engine.queue_len();       // Queue length
 let uid = run_engine.current_run_uid(); // Current run UUID
-let prog = run_engine.current_progress(); // Progress (0-100)
+let prog = run_engine.current_progress(); // -1 when unavailable, 0-100 otherwise
 ```
 
 ### Plan (PlanHandle)

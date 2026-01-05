@@ -13,7 +13,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn main() {
@@ -22,9 +25,7 @@ fn main() {
     let path = env_or("RING_READ_PATH", "/tmp/ring_reader_bench.buf".to_string());
 
     let rb = Arc::new(RingBuffer::create(Path::new(&path), buffer_mb).expect("create ring"));
-    let mut tap = rb
-        .register_tap("bench".to_string(), 1)
-        .expect("tap");
+    let mut tap = rb.register_tap("bench".to_string(), 1).expect("tap");
 
     let frame = vec![0u8; 1024]; // 1 KB frame
 

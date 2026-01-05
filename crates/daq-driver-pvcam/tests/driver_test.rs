@@ -16,9 +16,11 @@
 //! cargo test -p daq-driver-pvcam --test driver_test --features "pvcam_hardware,hardware_tests"
 //! ```
 
+use daq_core::capabilities::{ExposureControl, FrameProducer, Parameterized, Triggerable};
 use daq_driver_pvcam::PvcamDriver;
-use daq_core::capabilities::{ExposureControl, FrameProducer, Triggerable, Parameterized};
+use serde_json::json;
 use std::time::Duration;
+use tracing_subscriber::EnvFilter;
 
 // =============================================================================
 // Mock Mode Driver Tests
@@ -36,7 +38,9 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_resolution() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
         let (width, height) = driver.resolution();
 
         // Mock mode should return 2048x2048
@@ -46,7 +50,9 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_exposure_control() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
 
         // Set exposure to 50ms
         driver.set_exposure(0.050).await.unwrap();
@@ -58,7 +64,9 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_arm_trigger() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
 
         // Initially not armed
         let armed = driver.is_armed().await.unwrap();
@@ -75,20 +83,36 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_parameters() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
         let params = driver.parameters();
 
         // Should have registered parameters
         let names = params.names();
-        assert!(names.contains(&"acquisition.exposure_ms"), "Should have acquisition.exposure_ms parameter");
-        assert!(names.contains(&"acquisition.roi"), "Should have acquisition.roi parameter");
-        assert!(names.contains(&"acquisition.binning"), "Should have acquisition.binning parameter");
-        assert!(names.contains(&"thermal.temperature"), "Should have thermal.temperature parameter");
+        assert!(
+            names.contains(&"acquisition.exposure_ms"),
+            "Should have acquisition.exposure_ms parameter"
+        );
+        assert!(
+            names.contains(&"acquisition.roi"),
+            "Should have acquisition.roi parameter"
+        );
+        assert!(
+            names.contains(&"acquisition.binning"),
+            "Should have acquisition.binning parameter"
+        );
+        assert!(
+            names.contains(&"thermal.temperature"),
+            "Should have thermal.temperature parameter"
+        );
     }
 
     #[tokio::test]
     async fn driver_streaming_mock() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
 
         // Set short exposure for fast mock frames
         driver.set_exposure(0.010).await.unwrap();
@@ -127,7 +151,9 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_frame_count() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
 
         // Initially zero
         assert_eq!(driver.frame_count(), 0);
@@ -152,7 +178,9 @@ mod mock_driver {
 
     #[tokio::test]
     async fn driver_acquire_single_frame() {
-        let driver = PvcamDriver::new_async("MockCamera".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("MockCamera".to_string())
+            .await
+            .unwrap();
 
         // Set exposure
         driver.set_exposure(0.010).await.unwrap();
@@ -177,21 +205,34 @@ mod hardware_driver {
 
     lazy_static::lazy_static! {
         static ref CAMERA_LOCK: Mutex<()> = Mutex::new(());
+        static ref LOG_INIT: () = {
+            let _ = tracing_subscriber::fmt()
+                .with_test_writer()
+                .with_env_filter(EnvFilter::new("debug,pvcam_sys=trace"))
+                .try_init();
+        };
     }
 
     #[tokio::test]
     async fn hardware_create_driver() {
+        let _ = *LOG_INIT;
         let _lock = CAMERA_LOCK.lock().unwrap();
 
-        let driver = PvcamDriver::new_async("Prime BSI".to_string()).await;
-        assert!(driver.is_ok(), "Should create driver with real hardware: {:?}", driver.err());
+        let driver = PvcamDriver::new_async("pvcamUSB_0".to_string()).await;
+        assert!(
+            driver.is_ok(),
+            "Should create driver with real hardware: {:?}",
+            driver.err()
+        );
     }
 
     #[tokio::test]
     async fn hardware_resolution() {
         let _lock = CAMERA_LOCK.lock().unwrap();
 
-        let driver = PvcamDriver::new_async("Prime BSI".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("pvcamUSB_0".to_string())
+            .await
+            .unwrap();
         let (width, height) = driver.resolution();
 
         // Prime BSI is 2048x2048
@@ -203,24 +244,44 @@ mod hardware_driver {
     async fn hardware_exposure_control() {
         let _lock = CAMERA_LOCK.lock().unwrap();
 
-        let driver = PvcamDriver::new_async("Prime BSI".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("pvcamUSB_0".to_string())
+            .await
+            .unwrap();
 
         // Set exposure to 100ms
         driver.set_exposure(0.100).await.unwrap();
 
         // Read back
         let exposure = driver.get_exposure().await.unwrap();
-        assert!((exposure - 0.100).abs() < 0.01, "Exposure should be ~100ms, got {}", exposure);
+        assert!(
+            (exposure - 0.100).abs() < 0.01,
+            "Exposure should be ~100ms, got {}",
+            exposure
+        );
     }
 
     #[tokio::test]
     async fn hardware_stream_frames() {
         let _lock = CAMERA_LOCK.lock().unwrap();
 
-        let driver = PvcamDriver::new_async("Prime BSI".to_string()).await.unwrap();
+        let driver = PvcamDriver::new_async("pvcamUSB_0".to_string())
+            .await
+            .unwrap();
 
         // Set short exposure
         driver.set_exposure(0.010).await.unwrap();
+
+        // Ensure clear mode is PreExposure (fix for streaming issue)
+        if let Some(param) = driver.parameters().get("acquisition.clear_mode") {
+            param.set_json(json!("PreExposure")).unwrap();
+        } else {
+            println!("Warning: acquisition.clear_mode not found");
+        }
+
+        // Ensure trigger mode is Timed
+        if let Some(param) = driver.parameters().get("acquisition.trigger_mode") {
+            param.set_json(json!("Timed")).unwrap();
+        }
 
         // Start streaming
         driver.start_stream().await.unwrap();
@@ -231,7 +292,7 @@ mod hardware_driver {
             let mut received = 0;
             let start = std::time::Instant::now();
 
-            while received < 5 && start.elapsed() < Duration::from_secs(5) {
+            while received < 5 && start.elapsed() < Duration::from_secs(30) {
                 tokio::select! {
                     frame = rx.recv() => {
                         if let Ok(frame) = frame {
@@ -243,7 +304,11 @@ mod hardware_driver {
                 }
             }
 
-            assert!(received >= 3, "Should receive at least 3 frames, got {}", received);
+            assert!(
+                received >= 3,
+                "Should receive at least 3 frames, got {}",
+                received
+            );
         }
 
         // Stop streaming

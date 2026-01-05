@@ -34,7 +34,13 @@ impl WaveformType {
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::DC, Self::Sine, Self::Square, Self::Triangle, Self::Sawtooth]
+        &[
+            Self::DC,
+            Self::Sine,
+            Self::Square,
+            Self::Triangle,
+            Self::Sawtooth,
+        ]
     }
 }
 
@@ -160,11 +166,13 @@ impl AnalogOutputPanel {
         ui.separator();
 
         // Control bar
-        let zero_clicked = ui.horizontal(|ui| {
-            ui.checkbox(&mut self.funcgen_mode, "Function Generator Mode");
-            ui.separator();
-            ui.button("Zero All Outputs").clicked()
-        }).inner;
+        let zero_clicked = ui
+            .horizontal(|ui| {
+                ui.checkbox(&mut self.funcgen_mode, "Function Generator Mode");
+                ui.separator();
+                ui.button("Zero All Outputs").clicked()
+            })
+            .inner;
 
         if zero_clicked {
             self.zero_all_outputs(runtime);
@@ -186,12 +194,7 @@ impl AnalogOutputPanel {
     }
 
     /// Render control for a single channel.
-    fn render_channel_control(
-        &mut self,
-        ui: &mut Ui,
-        ch: usize,
-        runtime: &Runtime,
-    ) {
+    fn render_channel_control(&mut self, ui: &mut Ui, ch: usize, runtime: &Runtime) {
         let range = NI_VOLTAGE_RANGES[self.channels[ch].range_index];
 
         // Collect actions to perform after UI rendering to avoid borrow conflicts
@@ -229,12 +232,15 @@ impl AnalogOutputPanel {
 
                 // Numeric input
                 let mut voltage_drag = self.channels[ch].voltage;
-                if ui.add(
-                    egui::DragValue::new(&mut voltage_drag)
-                        .range(range.min..=range.max)
-                        .speed(0.01)
-                        .suffix(" V"),
-                ).changed() {
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut voltage_drag)
+                            .range(range.min..=range.max)
+                            .speed(0.01)
+                            .suffix(" V"),
+                    )
+                    .changed()
+                {
                     self.channels[ch].voltage = voltage_drag;
                 }
             });
@@ -367,7 +373,9 @@ impl AnalogOutputPanel {
         runtime.spawn(async move {
             // TODO: Implement actual gRPC call
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            let _ = tx.send(ActionResult::WriteSuccess { channel, voltage }).await;
+            let _ = tx
+                .send(ActionResult::WriteSuccess { channel, voltage })
+                .await;
         });
     }
 

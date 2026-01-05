@@ -14,7 +14,15 @@ use crate::widgets::{offline_notice, OfflineContext};
 #[derive(Debug)]
 enum ActionResult {
     /// Refresh completed with script and execution lists
-    Refresh(Result<(Vec<daq_proto::daq::ScriptInfo>, Vec<daq_proto::daq::ScriptStatus>), String>),
+    Refresh(
+        Result<
+            (
+                Vec<daq_proto::daq::ScriptInfo>,
+                Vec<daq_proto::daq::ScriptStatus>,
+            ),
+            String,
+        >,
+    ),
     /// Script started with execution ID
     Started(Result<String, String>),
     /// Script stopped
@@ -118,7 +126,8 @@ impl ScriptsPanel {
 
         // Auto-refresh when executions are running
         if self.auto_refresh_enabled && self.has_running_executions() {
-            let should_refresh = self.last_auto_refresh
+            let should_refresh = self
+                .last_auto_refresh
                 .map(|t| t.elapsed().as_secs() >= 2)
                 .unwrap_or(true);
 
@@ -126,7 +135,8 @@ impl ScriptsPanel {
                 self.last_auto_refresh = Some(std::time::Instant::now());
                 pending_refresh = true;
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
         } else if self.auto_refresh_enabled && !self.has_running_executions() {
             // Disable auto-refresh when no executions running
             self.auto_refresh_enabled = false;
@@ -149,8 +159,12 @@ impl ScriptsPanel {
             ui.separator();
 
             // Run button - enabled when script is selected and no action in flight (bd-tjwm.6)
-            let can_run = self.selected_script.is_some() && has_client && self.action_in_flight == 0;
-            if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
+            let can_run =
+                self.selected_script.is_some() && has_client && self.action_in_flight == 0;
+            if ui
+                .add_enabled(can_run, egui::Button::new("▶ Run"))
+                .clicked()
+            {
                 if let Some(script_id) = &self.selected_script {
                     pending_start = Some(script_id.clone());
                 }
@@ -222,7 +236,11 @@ impl ScriptsPanel {
     fn render_scripts_list(&mut self, ui: &mut egui::Ui) {
         if self.scripts.is_empty() {
             ui.label("No scripts found.");
-            ui.label(egui::RichText::new("Upload via CLI: rust-daq-daemon upload <file.rhai>").small().weak());
+            ui.label(
+                egui::RichText::new("Upload via CLI: rust-daq-daemon upload <file.rhai>")
+                    .small()
+                    .weak(),
+            );
         } else {
             egui::ScrollArea::vertical()
                 .id_salt("scripts_list")
@@ -235,7 +253,9 @@ impl ScriptsPanel {
                             ui.horizontal(|ui| {
                                 // Selection indicator
                                 if selected {
-                                    ui.label(egui::RichText::new("▸").color(egui::Color32::LIGHT_BLUE));
+                                    ui.label(
+                                        egui::RichText::new("▸").color(egui::Color32::LIGHT_BLUE),
+                                    );
                                 } else {
                                     ui.label("  ");
                                 }
@@ -247,9 +267,14 @@ impl ScriptsPanel {
                             });
 
                             // Script ID in smaller text
-                            ui.label(egui::RichText::new(format!("ID: {}", &script.script_id[..8.min(script.script_id.len())]))
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "ID: {}",
+                                    &script.script_id[..8.min(script.script_id.len())]
+                                ))
                                 .small()
-                                .weak());
+                                .weak(),
+                            );
                         });
                     }
                 });
@@ -261,7 +286,11 @@ impl ScriptsPanel {
     fn render_executions_list_inner(&mut self, ui: &mut egui::Ui) -> Option<String> {
         if self.executions.is_empty() {
             ui.label("No executions.");
-            ui.label(egui::RichText::new("Select a script and click Run").small().weak());
+            ui.label(
+                egui::RichText::new("Select a script and click Run")
+                    .small()
+                    .weak(),
+            );
             return None;
         }
 
@@ -292,13 +321,19 @@ impl ScriptsPanel {
                             ui.label(egui::RichText::new(state_icon).color(state_color));
                             ui.colored_label(state_color, &exec.state);
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // Stop button for running executions (bd-tjwm.6: disable when action in flight)
-                                let can_stop = is_running && self.action_in_flight == 0;
-                                if ui.add_enabled(can_stop, egui::Button::new("⏹ Stop")).clicked() {
-                                    stop_execution_id = Some(exec.execution_id.clone());
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    // Stop button for running executions (bd-tjwm.6: disable when action in flight)
+                                    let can_stop = is_running && self.action_in_flight == 0;
+                                    if ui
+                                        .add_enabled(can_stop, egui::Button::new("⏹ Stop"))
+                                        .clicked()
+                                    {
+                                        stop_execution_id = Some(exec.execution_id.clone());
+                                    }
+                                },
+                            );
                         });
 
                         // Execution ID
@@ -308,23 +343,30 @@ impl ScriptsPanel {
                             exec.execution_id.clone()
                         };
 
-                        if ui.selectable_label(selected, egui::RichText::new(id_display).small()).clicked() {
+                        if ui
+                            .selectable_label(selected, egui::RichText::new(id_display).small())
+                            .clicked()
+                        {
                             self.selected_execution = Some(exec.execution_id.clone());
                         }
 
                         // Progress bar for running/pending executions
                         if is_running || exec.state == "PENDING" {
                             let progress = exec.progress_percent as f32 / 100.0;
-                            ui.add(egui::ProgressBar::new(progress)
-                                .text(format!("{}%", exec.progress_percent))
-                                .animate(is_running));
+                            ui.add(
+                                egui::ProgressBar::new(progress)
+                                    .text(format!("{}%", exec.progress_percent))
+                                    .animate(is_running),
+                            );
                         }
 
                         // Current line being executed
                         if is_running && !exec.current_line.is_empty() {
-                            ui.label(egui::RichText::new(format!("Line: {}", exec.current_line))
-                                .small()
-                                .weak());
+                            ui.label(
+                                egui::RichText::new(format!("Line: {}", exec.current_line))
+                                    .small()
+                                    .weak(),
+                            );
                         }
 
                         // Error message if present
@@ -342,9 +384,17 @@ impl ScriptsPanel {
     }
 
     /// Start executing a script
-    fn start_script(&mut self, script_id: String, client: Option<&mut DaqClient>, runtime: &Runtime) {
+    fn start_script(
+        &mut self,
+        script_id: String,
+        client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+    ) {
         self.error = None;
-        self.status = Some(format!("Starting script {}...", &script_id[..8.min(script_id.len())]));
+        self.status = Some(format!(
+            "Starting script {}...",
+            &script_id[..8.min(script_id.len())]
+        ));
 
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
@@ -367,9 +417,18 @@ impl ScriptsPanel {
     }
 
     /// Stop a running script execution
-    fn stop_script(&mut self, execution_id: String, force: bool, client: Option<&mut DaqClient>, runtime: &Runtime) {
+    fn stop_script(
+        &mut self,
+        execution_id: String,
+        force: bool,
+        client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+    ) {
         self.error = None;
-        self.status = Some(format!("Stopping execution {}...", &execution_id[..8.min(execution_id.len())]));
+        self.status = Some(format!(
+            "Stopping execution {}...",
+            &execution_id[..8.min(execution_id.len())]
+        ));
 
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());

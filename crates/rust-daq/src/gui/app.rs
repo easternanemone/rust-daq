@@ -73,6 +73,8 @@ pub struct DaqGuiApp {
     pub _backend_handle: Option<()>,
     /// Whether state streaming is active
     pub is_streaming: bool,
+    /// Currently active video stream device ID (single stream only)
+    pub active_video_stream: Option<String>,
 
     /// Currently selected device ID (for plot/image highlighting)
     pub selected_device_id: Option<String>,
@@ -98,6 +100,9 @@ pub struct DaqGuiApp {
 
     /// Auto-connect flag
     pub first_frame: bool,
+
+    /// Auto-scale images (contrast stretch)
+    pub auto_scale: bool,
 }
 
 impl DaqGuiApp {
@@ -144,6 +149,7 @@ impl DaqGuiApp {
             last_update: Instant::now(),
             _backend_handle: backend_thread,
             is_streaming: false,
+            active_video_stream: None,
             selected_device_id: None,
             open_devices: HashSet::new(),
             param_edit_states: HashMap::new(),
@@ -153,6 +159,7 @@ impl DaqGuiApp {
             logs: Vec::new(),
             style_initialized: false,
             first_frame: true,
+            auto_scale: true,
         }
     }
 
@@ -290,6 +297,7 @@ impl DaqGuiApp {
                     size,
                     data,
                 } => {
+                    self.active_video_stream = Some(device_id.clone());
                     let [w, h] = size;
                     if w * h > 0 {
                         // Determine format based on data length
@@ -302,6 +310,35 @@ impl DaqGuiApp {
                         } else if data.len() == w * h * 4 {
                             // RGBA
                             egui::ColorImage::from_rgba_unmultiplied([w, h], &data)
+                        } else if data.len() == w * h * 4 {
+                            // RGBA
+                            egui::ColorImage::from_rgba_unmultiplied([w, h], &data)
+                        } else if data.len() == w * h * 2 {
+                            // Grayscale 16-bit
+                            let u16_data: Vec<u16> = data
+                                .chunks_exact(2)
+                                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                                .collect();
+
+                            let u8_data: Vec<u8> = if self.auto_scale {
+                                // Auto-scale: Contrast stretch [min, max] -> [0, 255]
+                                let min_val = *u16_data.iter().min().unwrap_or(&0) as f32;
+                                let max_val = *u16_data.iter().max().unwrap_or(&65535) as f32;
+                                let range = (max_val - min_val).max(1.0);
+
+                                u16_data
+                                    .iter()
+                                    .map(|&v| {
+                                        let normalized = (v as f32 - min_val) / range;
+                                        (normalized * 255.0).clamp(0.0, 255.0) as u8
+                                    })
+                                    .collect()
+                            } else {
+                                // Raw: Take MSB (divide by 256)
+                                u16_data.iter().map(|&v| (v >> 8) as u8).collect()
+                            };
+
+                            egui::ColorImage::from_gray([w, h], &u8_data)
                         } else {
                             tracing::warn!("Invalid image data size for dimensions {}x{}", w, h);
                             return;
@@ -570,6 +607,9 @@ impl DaqGuiApp {
                             device,
                             &mut self.param_edit_states,
                             &mut self.channels,
+                            &mut self.active_video_stream,
+                            self.images.get_mut(&device_id),
+                            &mut self.auto_scale,
                         );
                     });
             }
@@ -616,7 +656,18 @@ impl DaqGuiApp {
                             let is_open = self.open_devices.contains(&id);
 
                             // Name (Click to select for Plot)
-                            if ui.selectable_label(is_selected, &device.name).clicked() {
+                            let icon = if device.capabilities.contains(&"FrameProducer".to_string())
+                            {
+                                "📷 "
+                            } else if device.capabilities.contains(&"Movable".to_string()) {
+                                "↔ "
+                            } else {
+                                ""
+                            };
+                            if ui
+                                .selectable_label(is_selected, format!("{}{}", icon, device.name))
+                                .clicked()
+                            {
                                 // Toggle selection
                                 if is_selected {
                                     self.selected_device_id = None;
@@ -661,6 +712,9 @@ impl DaqGuiApp {
         device: &mut DeviceRow,
         states: &mut HashMap<String, ParameterEditState>,
         channels: &mut UiChannels,
+        active_video_stream: &mut Option<String>,
+        image_entry: Option<&mut (egui::ColorImage, Option<egui::TextureHandle>)>,
+        auto_scale: &mut bool,
     ) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(&device.driver_type).weak());
@@ -668,6 +722,56 @@ impl DaqGuiApp {
             ui.label(format!("Caps: {}", device.capabilities.join(", ")));
         });
         ui.separator();
+
+        // 0. Live View (Camera)
+        // Check both "FrameProducer" and "frame_producer" just in case of case mismatch,
+        // though backend standardizes on PascalCase "FrameProducer".
+        if device.capabilities.contains(&"FrameProducer".to_string()) {
+            ui.heading("Live View");
+            ui.horizontal(|ui| {
+                let is_active = active_video_stream.as_ref() == Some(&device.id);
+                if is_active {
+                    if ui.button("Stop Streaming").clicked() {
+                        channels.send_command(BackendCommand::StopVideoStream);
+                        *active_video_stream = None;
+                    }
+                    ui.label("🔴 Streaming");
+                } else {
+                    if ui.button("Start Streaming").clicked() {
+                        channels.send_command(BackendCommand::StartVideoStream {
+                            device_id: device.id.clone(),
+                        });
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.checkbox(auto_scale, "Auto Scale");
+                if *auto_scale {
+                    ui.small(" (Min/Max Stretch)");
+                } else {
+                    ui.small(" (Raw / 8-bit MSB)");
+                }
+            });
+
+            // Display Image if available
+            if let Some((image, texture_option)) = image_entry {
+                let texture = texture_option.get_or_insert_with(|| {
+                    ui.ctx().load_texture(
+                        format!("video_{}", device.id),
+                        image.clone(),
+                        egui::TextureOptions::NEAREST, // Pixelated for scientific data
+                    )
+                });
+
+                // Update texture if image changed (handled by `ImageReceived` invalidating texture?
+                // `ImageReceived` logic: `images.insert(device_id, (image, None))`.
+                // So if it was inserted, texture_option is None, and we reload it here.
+                // Ideally we should update existing texture to avoid reallocation, but this works for v1.
+                ui.image(&*texture);
+            }
+            ui.separator();
+        }
 
         // 1. Motion Controls (Top Priority)
         if device.capabilities.contains(&"Movable".to_string()) {

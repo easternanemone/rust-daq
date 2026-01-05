@@ -75,8 +75,16 @@ impl PlanRunnerPanel {
             ui.horizontal(|ui| {
                 ui.label("Plan Type:");
                 ui.selectable_value(&mut self.selected_plan_type, PlanType::Count, "Count");
-                ui.selectable_value(&mut self.selected_plan_type, PlanType::LineScan, "Line Scan");
-                ui.selectable_value(&mut self.selected_plan_type, PlanType::GridScan, "Grid Scan");
+                ui.selectable_value(
+                    &mut self.selected_plan_type,
+                    PlanType::LineScan,
+                    "Line Scan",
+                );
+                ui.selectable_value(
+                    &mut self.selected_plan_type,
+                    PlanType::GridScan,
+                    "Grid Scan",
+                );
             });
 
             ui.add_space(8.0);

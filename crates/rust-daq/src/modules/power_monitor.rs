@@ -494,7 +494,7 @@ async fn power_monitor_task(
         ctx.emit_data("power_reading", values).await;
 
         // Emit statistics periodically (every window_size samples)
-        if stats.count % window_size as u64 == 0 {
+        if stats.count.is_multiple_of(window_size as u64) {
             ctx.emit_data("statistics", stats.as_hashmap()).await;
         }
 

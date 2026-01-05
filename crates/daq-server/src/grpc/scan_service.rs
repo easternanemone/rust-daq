@@ -331,14 +331,12 @@ impl ScanServiceImpl {
         };
 
         // Arm camera if configured
-        if let Some((_, ref trig)) = triggerable {
-            if config.arm_camera.unwrap_or(false) {
-                if let Err(e) = trig.arm().await {
-                    Self::set_scan_error(&scans, &scan_id, format!("Failed to arm camera: {}", e))
-                        .await;
-                    return;
-                }
-            }
+        if let Some((_, ref trig)) = triggerable
+            && config.arm_camera.unwrap_or(false)
+            && let Err(e) = trig.arm().await
+        {
+            Self::set_scan_error(&scans, &scan_id, format!("Failed to arm camera: {}", e)).await;
+            return;
         }
 
         // Execute scan points
@@ -407,12 +405,11 @@ impl ScanServiceImpl {
             let mut data_points = Vec::new();
             for trigger_idx in 0..triggers {
                 // Trigger camera if configured
-                if let Some((_, ref trig)) = triggerable {
-                    if let Err(e) = trig.trigger().await {
-                        Self::set_scan_error(&scans, &scan_id, format!("Trigger failed: {}", e))
-                            .await;
-                        return;
-                    }
+                if let Some((_, ref trig)) = triggerable
+                    && let Err(e) = trig.trigger().await
+                {
+                    Self::set_scan_error(&scans, &scan_id, format!("Trigger failed: {}", e)).await;
+                    return;
                 }
 
                 // Read all acquisition devices
@@ -831,7 +828,7 @@ impl ScanService for ScanServiceImpl {
 
         for (scan_id, scan) in scans_guard.iter() {
             if let Some(filter) = req.state_filter {
-                let filter_state: i32 = filter.into();
+                let filter_state: i32 = filter;
                 if scan.state != filter_state {
                     continue;
                 }
@@ -870,7 +867,7 @@ impl ScanService for ScanServiceImpl {
             .ok_or_else(|| Status::already_exists("Progress stream already taken"))?;
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-        let mapped_stream = tokio_stream::StreamExt::map(stream, |progress| Ok(progress));
+        let mapped_stream = tokio_stream::StreamExt::map(stream, Ok);
 
         Ok(Response::new(Box::pin(mapped_stream)))
     }

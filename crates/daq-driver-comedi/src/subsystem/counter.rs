@@ -78,8 +78,7 @@ impl Counter {
         let n_channels =
             unsafe { comedi_sys::comedi_get_n_channels(device.handle(), subdevice) as u32 };
 
-        let maxdata =
-            unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
+        let maxdata = unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
 
         debug!(
             subdevice = subdevice,

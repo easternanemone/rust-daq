@@ -5,6 +5,9 @@
 //!
 //! Performance optimization (bd-l2bt): Uses manifest file for O(1) listing
 //! instead of reading all preset files.
+//!
+//! Async I/O optimization (bd-zheg): All file I/O operations use tokio::fs
+//! to prevent blocking tokio worker threads during gRPC request handling.
 
 use crate::grpc::proto::{
     DeletePresetRequest, DeletePresetResponse, GetPresetRequest, ListPresetsRequest,
@@ -14,11 +17,12 @@ use crate::grpc::proto::{
 use daq_hardware::registry::DeviceRegistry;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
-use std::io::Write;
+use std::fs as std_fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
@@ -50,8 +54,8 @@ impl std::fmt::Debug for PresetServiceImpl {
 impl PresetServiceImpl {
     /// Create a new PresetService with the given storage directory
     pub fn new(registry: Arc<RwLock<DeviceRegistry>>, storage_path: PathBuf) -> Self {
-        // Ensure storage directory exists
-        if let Err(e) = fs::create_dir_all(&storage_path) {
+        // Ensure storage directory exists (sync I/O in constructor is acceptable)
+        if let Err(e) = std_fs::create_dir_all(&storage_path) {
             tracing::warn!("Failed to create preset storage directory: {}", e);
         }
         Self {
@@ -84,13 +88,13 @@ impl PresetServiceImpl {
     }
 
     /// Load manifest from disk (returns empty vec if not found or corrupted)
-    fn load_manifest(&self) -> Vec<PresetMetadata> {
+    async fn load_manifest(&self) -> Vec<PresetMetadata> {
         let path = self.manifest_path();
-        if !path.exists() {
+        if !fs::try_exists(&path).await.unwrap_or(false) {
             return Vec::new();
         }
 
-        match fs::read_to_string(&path) {
+        match fs::read_to_string(&path).await {
             Ok(content) => serde_json::from_str::<Vec<ManifestEntry>>(&content)
                 .map(|entries| entries.into_iter().map(|e| e.to_proto()).collect())
                 .unwrap_or_default(),
@@ -99,20 +103,21 @@ impl PresetServiceImpl {
     }
 
     /// Save manifest to disk
-    fn save_manifest(&self, presets: &[PresetMetadata]) -> Result<(), Status> {
+    async fn save_manifest(&self, presets: &[PresetMetadata]) -> Result<(), Status> {
         let entries: Vec<ManifestEntry> = presets.iter().map(ManifestEntry::from_proto).collect();
         let json = serde_json::to_string_pretty(&entries)
             .map_err(|e| Status::internal(format!("Failed to serialize manifest: {}", e)))?;
 
         fs::write(self.manifest_path(), json)
+            .await
             .map_err(|e| Status::internal(format!("Failed to write manifest: {}", e)))?;
 
         Ok(())
     }
 
     /// Update manifest with a new or modified preset metadata
-    fn update_manifest_entry(&self, meta: &PresetMetadata) -> Result<(), Status> {
-        let mut presets = self.load_manifest();
+    async fn update_manifest_entry(&self, meta: &PresetMetadata) -> Result<(), Status> {
+        let mut presets = self.load_manifest().await;
 
         // Remove existing entry if present
         presets.retain(|p| p.preset_id != meta.preset_id);
@@ -123,21 +128,21 @@ impl PresetServiceImpl {
         // Sort by updated_at (newest first)
         presets.sort_by(|a, b| b.updated_at_ns.cmp(&a.updated_at_ns));
 
-        self.save_manifest(&presets)
+        self.save_manifest(&presets).await
     }
 
     /// Remove preset from manifest
-    fn remove_manifest_entry(&self, preset_id: &str) -> Result<(), Status> {
-        let mut presets = self.load_manifest();
+    async fn remove_manifest_entry(&self, preset_id: &str) -> Result<(), Status> {
+        let mut presets = self.load_manifest().await;
         presets.retain(|p| p.preset_id != preset_id);
-        self.save_manifest(&presets)
+        self.save_manifest(&presets).await
     }
 
     /// Rebuild manifest by scanning all preset files (fallback for corrupted manifest)
-    fn rebuild_manifest(&self) -> Result<Vec<PresetMetadata>, Status> {
+    async fn rebuild_manifest(&self) -> Result<Vec<PresetMetadata>, Status> {
         tracing::info!("Rebuilding preset manifest from disk...");
-        let presets = self.scan_presets_from_disk()?;
-        self.save_manifest(&presets)?;
+        let presets = self.scan_presets_from_disk().await?;
+        self.save_manifest(&presets).await?;
         tracing::info!("Manifest rebuilt with {} presets", presets.len());
         Ok(presets)
     }
@@ -150,7 +155,7 @@ impl PresetServiceImpl {
     }
 
     /// Save preset to filesystem with backup rotation
-    fn save_preset_to_disk(&self, preset: &Preset) -> Result<(), Status> {
+    async fn save_preset_to_disk(&self, preset: &Preset) -> Result<(), Status> {
         let preset_id = preset
             .meta
             .as_ref()
@@ -174,8 +179,8 @@ impl PresetServiceImpl {
         let path = self.preset_path(&preset_id);
 
         // Rotate backups if file exists
-        if path.exists() {
-            self.rotate_backups(&preset_id)?;
+        if fs::try_exists(&path).await.unwrap_or(false) {
+            self.rotate_backups(&preset_id).await?;
         }
 
         // Serialize preset to JSON
@@ -186,19 +191,22 @@ impl PresetServiceImpl {
         let hash = Self::hash_content(json.as_bytes());
 
         let mut file = fs::File::create(&path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to create preset file: {}", e)))?;
 
         file.write_all(json.as_bytes())
+            .await
             .map_err(|e| Status::internal(format!("Failed to write preset: {}", e)))?;
 
         // Write hash file
         let hash_path = path.with_extension("json.sha256");
         fs::write(&hash_path, &hash)
+            .await
             .map_err(|e| Status::internal(format!("Failed to write hash file: {}", e)))?;
 
         // Update manifest for O(1) listing
         if let Some(meta) = &preset.meta {
-            self.update_manifest_entry(meta)?;
+            self.update_manifest_entry(meta).await?;
         }
 
         tracing::info!("Saved preset '{}' (hash: {})", preset_id, &hash[..8]);
@@ -206,24 +214,24 @@ impl PresetServiceImpl {
     }
 
     /// Rotate backup files (keep max_backups)
-    fn rotate_backups(&self, preset_id: &str) -> Result<(), Status> {
+    async fn rotate_backups(&self, preset_id: &str) -> Result<(), Status> {
         // Remove oldest backup if at limit
         let oldest_backup = self.backup_path(preset_id, self.max_backups);
-        if oldest_backup.exists() {
-            let _ = fs::remove_file(&oldest_backup);
-            let _ = fs::remove_file(oldest_backup.with_extension("json.sha256"));
+        if fs::try_exists(&oldest_backup).await.unwrap_or(false) {
+            let _ = fs::remove_file(&oldest_backup).await;
+            let _ = fs::remove_file(oldest_backup.with_extension("json.sha256")).await;
         }
 
         // Shift existing backups
         for i in (1..self.max_backups).rev() {
             let from = self.backup_path(preset_id, i);
             let to = self.backup_path(preset_id, i + 1);
-            if from.exists() {
-                let _ = fs::rename(&from, &to);
+            if fs::try_exists(&from).await.unwrap_or(false) {
+                let _ = fs::rename(&from, &to).await;
                 let from_hash = from.with_extension("json.sha256");
                 let to_hash = to.with_extension("json.sha256");
-                if from_hash.exists() {
-                    let _ = fs::rename(&from_hash, &to_hash);
+                if fs::try_exists(&from_hash).await.unwrap_or(false) {
+                    let _ = fs::rename(&from_hash, &to_hash).await;
                 }
             }
         }
@@ -231,12 +239,12 @@ impl PresetServiceImpl {
         // Move current to backup 1
         let current = self.preset_path(preset_id);
         let backup1 = self.backup_path(preset_id, 1);
-        if current.exists() {
-            let _ = fs::rename(&current, &backup1);
+        if fs::try_exists(&current).await.unwrap_or(false) {
+            let _ = fs::rename(&current, &backup1).await;
             let current_hash = current.with_extension("json.sha256");
             let backup1_hash = backup1.with_extension("json.sha256");
-            if current_hash.exists() {
-                let _ = fs::rename(&current_hash, &backup1_hash);
+            if fs::try_exists(&current_hash).await.unwrap_or(false) {
+                let _ = fs::rename(&current_hash, &backup1_hash).await;
             }
         }
 
@@ -244,10 +252,10 @@ impl PresetServiceImpl {
     }
 
     /// Load preset from filesystem with integrity check
-    fn load_preset_from_disk(&self, preset_id: &str) -> Result<Preset, Status> {
+    async fn load_preset_from_disk(&self, preset_id: &str) -> Result<Preset, Status> {
         let path = self.preset_path(preset_id);
 
-        if !path.exists() {
+        if !fs::try_exists(&path).await.unwrap_or(false) {
             return Err(Status::not_found(format!(
                 "Preset '{}' not found",
                 preset_id
@@ -255,12 +263,14 @@ impl PresetServiceImpl {
         }
 
         let content = fs::read(&path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to read preset file: {}", e)))?;
 
         // Verify hash if available
         let hash_path = path.with_extension("json.sha256");
-        if hash_path.exists() {
+        if fs::try_exists(&hash_path).await.unwrap_or(false) {
             let stored_hash = fs::read_to_string(&hash_path)
+                .await
                 .map_err(|e| Status::internal(format!("Failed to read hash file: {}", e)))?;
 
             let computed_hash = Self::hash_content(&content);
@@ -281,57 +291,58 @@ impl PresetServiceImpl {
     /// List all presets using the manifest for O(1) performance (bd-l2bt)
     ///
     /// Falls back to scanning all files if manifest is missing or corrupted.
-    fn list_presets_from_disk(&self) -> Result<Vec<PresetMetadata>, Status> {
+    async fn list_presets_from_disk(&self) -> Result<Vec<PresetMetadata>, Status> {
         // Try to load from manifest first (fast path)
-        let manifest = self.load_manifest();
+        let manifest = self.load_manifest().await;
         if !manifest.is_empty() {
             return Ok(manifest);
         }
 
         // Manifest is empty or missing - rebuild from disk scan
         // This handles first-time use or corrupted manifest
-        self.rebuild_manifest()
+        self.rebuild_manifest().await
     }
 
     /// Scan all preset files from disk (slow O(n) operation)
     ///
     /// Used to rebuild the manifest. Reads and parses each preset file.
-    fn scan_presets_from_disk(&self) -> Result<Vec<PresetMetadata>, Status> {
+    async fn scan_presets_from_disk(&self) -> Result<Vec<PresetMetadata>, Status> {
         let mut presets = Vec::new();
 
-        let entries = fs::read_dir(&self.storage_path)
+        let mut entries = fs::read_dir(&self.storage_path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to read preset directory: {}", e)))?;
 
-        for entry in entries.flatten() {
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            Status::internal(format!("Failed to read preset directory entry: {}", e))
+        })? {
             let path = entry.path();
 
             // Only process .json files (not backups, hash files, or manifest)
-            if let Some(ext) = path.extension() {
-                if ext == "json"
-                    && !path.to_string_lossy().contains(".backup")
-                    && path
-                        .file_name()
-                        .map(|n| n != MANIFEST_FILENAME)
-                        .unwrap_or(true)
-                {
-                    if let Some(stem) = path.file_stem() {
-                        let preset_id = stem.to_string_lossy().to_string();
+            if let Some(ext) = path.extension()
+                && ext == "json"
+                && !path.to_string_lossy().contains(".backup")
+                && path
+                    .file_name()
+                    .map(|n| n != MANIFEST_FILENAME)
+                    .unwrap_or(true)
+                && let Some(stem) = path.file_stem()
+            {
+                let preset_id = stem.to_string_lossy().to_string();
 
-                        // Try to load metadata without full preset
-                        match self.load_preset_from_disk(&preset_id) {
-                            Ok(preset) => {
-                                if let Some(meta) = preset.meta {
-                                    presets.push(meta);
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Skipping corrupted preset '{}': {}",
-                                    preset_id,
-                                    e.message()
-                                );
-                            }
+                // Try to load metadata without full preset
+                match self.load_preset_from_disk(&preset_id).await {
+                    Ok(preset) => {
+                        if let Some(meta) = preset.meta {
+                            presets.push(meta);
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping corrupted preset '{}': {}",
+                            preset_id,
+                            e.message()
+                        );
                     }
                 }
             }
@@ -344,10 +355,10 @@ impl PresetServiceImpl {
     }
 
     /// Delete preset from storage
-    fn delete_preset_from_disk(&self, preset_id: &str) -> Result<(), Status> {
+    async fn delete_preset_from_disk(&self, preset_id: &str) -> Result<(), Status> {
         let path = self.preset_path(preset_id);
 
-        if !path.exists() {
+        if !fs::try_exists(&path).await.unwrap_or(false) {
             return Err(Status::not_found(format!(
                 "Preset '{}' not found",
                 preset_id
@@ -356,21 +367,22 @@ impl PresetServiceImpl {
 
         // Remove main file
         fs::remove_file(&path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to delete preset: {}", e)))?;
 
         // Remove hash file
         let hash_path = path.with_extension("json.sha256");
-        let _ = fs::remove_file(hash_path);
+        let _ = fs::remove_file(hash_path).await;
 
         // Remove backups
         for i in 1..=self.max_backups {
             let backup = self.backup_path(preset_id, i);
-            let _ = fs::remove_file(&backup);
-            let _ = fs::remove_file(backup.with_extension("json.sha256"));
+            let _ = fs::remove_file(&backup).await;
+            let _ = fs::remove_file(backup.with_extension("json.sha256")).await;
         }
 
         // Remove from manifest for O(1) listing
-        self.remove_manifest_entry(preset_id)?;
+        self.remove_manifest_entry(preset_id).await?;
 
         tracing::info!("Deleted preset '{}'", preset_id);
         Ok(())
@@ -400,44 +412,42 @@ impl PresetServiceImpl {
             };
 
             // Apply position if present (for Movable devices)
-            if let Some(pos) = config.get("position").and_then(|v| v.as_f64()) {
-                if let Some(movable) = registry.get_movable(device_id) {
-                    match movable.move_abs(pos).await {
-                        Ok(_) => applied_count += 1,
-                        Err(e) => errors.push(format!("Failed to move '{}': {}", device_id, e)),
-                    }
+            if let Some(pos) = config.get("position").and_then(|v| v.as_f64())
+                && let Some(movable) = registry.get_movable(device_id)
+            {
+                match movable.move_abs(pos).await {
+                    Ok(_) => applied_count += 1,
+                    Err(e) => errors.push(format!("Failed to move '{}': {}", device_id, e)),
                 }
             }
 
             // Apply exposure if present (for cameras)
-            if let Some(exp) = config.get("exposure_ms").and_then(|v| v.as_f64()) {
-                if let Some(exposure_ctrl) = registry.get_exposure_control(device_id) {
-                    match exposure_ctrl.set_exposure(exp).await {
-                        Ok(_) => applied_count += 1,
-                        Err(e) => {
-                            errors.push(format!("Failed to set exposure '{}': {}", device_id, e))
-                        }
-                    }
+            if let Some(exp) = config.get("exposure_ms").and_then(|v| v.as_f64())
+                && let Some(exposure_ctrl) = registry.get_exposure_control(device_id)
+            {
+                match exposure_ctrl.set_exposure(exp).await {
+                    Ok(_) => applied_count += 1,
+                    Err(e) => errors.push(format!("Failed to set exposure '{}': {}", device_id, e)),
                 }
             }
 
             // 3. Generic parameters (Parameterized devices)
-            if let Some(param_set) = registry.get_parameters(device_id) {
-                if let Some(obj) = config.as_object() {
-                    for (param_name, value) in obj {
-                        // Skip hardcoded fields handled above
-                        if param_name == "position" || param_name == "exposure_ms" {
-                            continue;
-                        }
+            if let Some(param_set) = registry.get_parameters(device_id)
+                && let Some(obj) = config.as_object()
+            {
+                for (param_name, value) in obj {
+                    // Skip hardcoded fields handled above
+                    if param_name == "position" || param_name == "exposure_ms" {
+                        continue;
+                    }
 
-                        if let Some(parameter) = param_set.get(param_name) {
-                            match parameter.set_json(value.clone()) {
-                                Ok(_) => applied_count += 1,
-                                Err(e) => errors.push(format!(
-                                    "Failed to set parameter '{}.{}': {}",
-                                    device_id, param_name, e
-                                )),
-                            }
+                    if let Some(parameter) = param_set.get(param_name) {
+                        match parameter.set_json(value.clone()) {
+                            Ok(_) => applied_count += 1,
+                            Err(e) => errors.push(format!(
+                                "Failed to set parameter '{}.{}': {}",
+                                device_id, param_name, e
+                            )),
                         }
                     }
                 }
@@ -465,7 +475,7 @@ impl PresetService for PresetServiceImpl {
         &self,
         _request: Request<ListPresetsRequest>,
     ) -> Result<Response<ListPresetsResponse>, Status> {
-        let presets = self.list_presets_from_disk()?;
+        let presets = self.list_presets_from_disk().await?;
         Ok(Response::new(ListPresetsResponse { presets }))
     }
 
@@ -486,7 +496,7 @@ impl PresetService for PresetServiceImpl {
 
         // Check if exists and overwrite flag
         let path = self.preset_path(&preset_id);
-        if path.exists() && !req.overwrite {
+        if fs::try_exists(&path).await.unwrap_or(false) && !req.overwrite {
             return Ok(Response::new(SavePresetResponse {
                 saved: false,
                 message: format!(
@@ -510,7 +520,7 @@ impl PresetService for PresetServiceImpl {
             meta.updated_at_ns = now_ns;
         }
 
-        self.save_preset_to_disk(&preset)?;
+        self.save_preset_to_disk(&preset).await?;
 
         Ok(Response::new(SavePresetResponse {
             saved: true,
@@ -523,7 +533,7 @@ impl PresetService for PresetServiceImpl {
         request: Request<LoadPresetRequest>,
     ) -> Result<Response<LoadPresetResponse>, Status> {
         let req = request.into_inner();
-        let preset = self.load_preset_from_disk(&req.preset_id)?;
+        let preset = self.load_preset_from_disk(&req.preset_id).await?;
 
         // Apply configurations to devices
         let message = self.apply_preset_to_devices(&preset).await?;
@@ -539,7 +549,7 @@ impl PresetService for PresetServiceImpl {
         request: Request<DeletePresetRequest>,
     ) -> Result<Response<DeletePresetResponse>, Status> {
         let req = request.into_inner();
-        self.delete_preset_from_disk(&req.preset_id)?;
+        self.delete_preset_from_disk(&req.preset_id).await?;
 
         Ok(Response::new(DeletePresetResponse {
             deleted: true,
@@ -552,7 +562,7 @@ impl PresetService for PresetServiceImpl {
         request: Request<GetPresetRequest>,
     ) -> Result<Response<Preset>, Status> {
         let req = request.into_inner();
-        let preset = self.load_preset_from_disk(&req.preset_id)?;
+        let preset = self.load_preset_from_disk(&req.preset_id).await?;
         Ok(Response::new(preset))
     }
 }
@@ -704,10 +714,10 @@ mod tests {
         let preset = create_test_preset("test1");
 
         // Save
-        service.save_preset_to_disk(&preset).unwrap();
+        service.save_preset_to_disk(&preset).await.unwrap();
 
         // Load
-        let loaded = service.load_preset_from_disk("test1").unwrap();
+        let loaded = service.load_preset_from_disk("test1").await.unwrap();
         assert_eq!(
             loaded.meta.as_ref().unwrap().preset_id,
             preset.meta.as_ref().unwrap().preset_id
@@ -727,12 +737,14 @@ mod tests {
         // Save multiple presets
         service
             .save_preset_to_disk(&create_test_preset("preset_a"))
+            .await
             .unwrap();
         service
             .save_preset_to_disk(&create_test_preset("preset_b"))
+            .await
             .unwrap();
 
-        let list = service.list_presets_from_disk().unwrap();
+        let list = service.list_presets_from_disk().await.unwrap();
         assert_eq!(list.len(), 2);
     }
 
@@ -744,11 +756,12 @@ mod tests {
 
         service
             .save_preset_to_disk(&create_test_preset("to_delete"))
+            .await
             .unwrap();
-        assert!(service.load_preset_from_disk("to_delete").is_ok());
+        assert!(service.load_preset_from_disk("to_delete").await.is_ok());
 
-        service.delete_preset_from_disk("to_delete").unwrap();
-        assert!(service.load_preset_from_disk("to_delete").is_err());
+        service.delete_preset_from_disk("to_delete").await.unwrap();
+        assert!(service.load_preset_from_disk("to_delete").await.is_err());
     }
 
     #[tokio::test]
@@ -760,19 +773,31 @@ mod tests {
 
         // Save same preset multiple times
         let mut preset = create_test_preset("rotate_test");
-        service.save_preset_to_disk(&preset).unwrap();
+        service.save_preset_to_disk(&preset).await.unwrap();
 
         preset.meta.as_mut().unwrap().description = "v2".to_string();
-        service.save_preset_to_disk(&preset).unwrap();
+        service.save_preset_to_disk(&preset).await.unwrap();
 
         preset.meta.as_mut().unwrap().description = "v3".to_string();
-        service.save_preset_to_disk(&preset).unwrap();
+        service.save_preset_to_disk(&preset).await.unwrap();
 
         // Check backups exist
-        assert!(service.backup_path("rotate_test", 1).exists());
-        assert!(service.backup_path("rotate_test", 2).exists());
+        assert!(
+            fs::try_exists(service.backup_path("rotate_test", 1))
+                .await
+                .unwrap_or(false)
+        );
+        assert!(
+            fs::try_exists(service.backup_path("rotate_test", 2))
+                .await
+                .unwrap_or(false)
+        );
         // Backup 3 should not exist (max_backups=2)
-        assert!(!service.backup_path("rotate_test", 3).exists());
+        assert!(
+            !fs::try_exists(service.backup_path("rotate_test", 3))
+                .await
+                .unwrap_or(false)
+        );
     }
 
     #[tokio::test]
@@ -783,14 +808,15 @@ mod tests {
 
         service
             .save_preset_to_disk(&create_test_preset("integrity"))
+            .await
             .unwrap();
 
         // Corrupt the file
         let path = service.preset_path("integrity");
-        fs::write(&path, "corrupted content").unwrap();
+        fs::write(&path, "corrupted content").await.unwrap();
 
         // Load should fail integrity check
-        let result = service.load_preset_from_disk("integrity");
+        let result = service.load_preset_from_disk("integrity").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().message().contains("integrity"));
     }

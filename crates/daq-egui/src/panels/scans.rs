@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
 use crate::widgets::{offline_notice, OfflineContext};
-use daq_proto::daq::{ScanConfig, AxisConfig};
+use daq_proto::daq::{AxisConfig, ScanConfig};
 
 /// Axis configuration for the wizard
 #[derive(Clone)]
@@ -39,12 +39,32 @@ enum PendingAction {
 }
 
 enum ScanActionResult {
-    Refresh(Result<(Vec<daq_proto::daq::ScanStatus>, Vec<daq_proto::daq::DeviceInfo>), String>),
+    Refresh(
+        Result<
+            (
+                Vec<daq_proto::daq::ScanStatus>,
+                Vec<daq_proto::daq::DeviceInfo>,
+            ),
+            String,
+        >,
+    ),
     Create(Result<(String, u32), String>),
-    Start { scan_id: String, result: Result<(), String> },
-    Pause { scan_id: String, result: Result<u32, String> },
-    Resume { scan_id: String, result: Result<(), String> },
-    Stop { scan_id: String, result: Result<u32, String> },
+    Start {
+        scan_id: String,
+        result: Result<(), String>,
+    },
+    Pause {
+        scan_id: String,
+        result: Result<u32, String>,
+    },
+    Resume {
+        scan_id: String,
+        result: Result<(), String>,
+    },
+    Stop {
+        scan_id: String,
+        result: Result<u32, String>,
+    },
 }
 
 /// Scans panel state
@@ -67,7 +87,7 @@ pub struct ScansPanel {
     action_rx: mpsc::Receiver<ScanActionResult>,
     /// Number of in-flight async actions
     action_in_flight: usize,
-    
+
     // Scan wizard state
     /// Show wizard
     show_wizard: bool,
@@ -123,10 +143,8 @@ impl ScansPanel {
                         },
                         ScanActionResult::Pause { scan_id, result } => match result {
                             Ok(point) => {
-                                self.status = Some(format!(
-                                    "Paused scan: {} at point {}",
-                                    scan_id, point
-                                ));
+                                self.status =
+                                    Some(format!("Paused scan: {} at point {}", scan_id, point));
                                 self.error = None;
                             }
                             Err(e) => self.error = Some(e),
@@ -165,7 +183,7 @@ impl ScansPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.poll_async_results(ui.ctx());
         self.pending_action = None;
-        
+
         ui.heading("Scans");
 
         // Show offline notice if not connected (bd-j3xz.4.4)
@@ -177,7 +195,7 @@ impl ScansPanel {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);
             }
-            
+
             if ui.button("➕ New Scan").clicked() {
                 self.show_wizard = true;
                 self.wizard_name = format!("scan_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
@@ -187,15 +205,15 @@ impl ScansPanel {
                 self.wizard_dwell_ms = 100.0;
                 self.wizard_triggers_per_point = 1;
             }
-            
+
             if let Some(last) = self.last_refresh {
                 let elapsed = last.elapsed();
                 ui.label(format!("Updated {}s ago", elapsed.as_secs()));
             }
         });
-        
+
         ui.separator();
-        
+
         // Show error/status messages
         if let Some(err) = &self.error {
             ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
@@ -203,15 +221,15 @@ impl ScansPanel {
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::GREEN, status);
         }
-        
+
         ui.add_space(8.0);
-        
+
         // Scan wizard
         if self.show_wizard {
             self.render_wizard(ui);
             ui.separator();
         }
-        
+
         // Scan list
         if self.scans.is_empty() {
             ui.label("No scans found. Click 'New Scan' to create one.");
@@ -226,23 +244,23 @@ impl ScansPanel {
                     }
                 });
         }
-        
+
         // Execute pending action
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
         }
     }
-    
+
     /// Render the scan creation wizard
     fn render_wizard(&mut self, ui: &mut egui::Ui) {
         ui.group(|ui| {
             ui.heading("Create New Scan");
-            
+
             ui.horizontal(|ui| {
                 ui.label("Name:");
                 ui.text_edit_singleline(&mut self.wizard_name);
             });
-            
+
             ui.horizontal(|ui| {
                 ui.label("Scan Type:");
                 egui::ComboBox::from_id_salt("scan_type")
@@ -258,87 +276,93 @@ impl ScansPanel {
                         ui.selectable_value(&mut self.wizard_scan_type, 3, "Snake Scan (2D)");
                     });
             });
-            
+
             ui.separator();
             ui.label("Scan Axes:");
-            
+
             // Axis configurations - use index-based iteration to avoid borrow issues
             let num_axes = self.wizard_axes.len();
             let mut remove_idx = None;
-            
+
             for i in 0..num_axes {
                 let axis = &mut self.wizard_axes[i];
                 ui.horizontal(|ui| {
                     ui.label(format!("Axis {}:", i + 1));
-                    
+
                     ui.label("Device:");
-                    ui.add_sized([120.0, 18.0], egui::TextEdit::singleline(&mut axis.device_id));
-                    
+                    ui.add_sized(
+                        [120.0, 18.0],
+                        egui::TextEdit::singleline(&mut axis.device_id),
+                    );
+
                     ui.label("Start:");
                     ui.add(egui::DragValue::new(&mut axis.start).speed(0.1));
-                    
+
                     ui.label("End:");
                     ui.add(egui::DragValue::new(&mut axis.end).speed(0.1));
-                    
+
                     ui.label("Points:");
                     ui.add(egui::DragValue::new(&mut axis.num_points).range(2..=10000));
-                    
+
                     if num_axes > 1 && ui.button("✕").clicked() {
                         remove_idx = Some(i);
                     }
                 });
             }
-            
+
             if let Some(idx) = remove_idx {
                 self.wizard_axes.remove(idx);
             }
-            
+
             if self.wizard_axes.len() < 3 && ui.button("➕ Add Axis").clicked() {
                 self.wizard_axes.push(AxisWizardConfig::default());
             }
-            
+
             ui.separator();
             ui.label("Acquisition Settings:");
-            
+
             ui.horizontal(|ui| {
                 ui.label("Dwell time (ms):");
                 ui.add(egui::DragValue::new(&mut self.wizard_dwell_ms).range(0.0..=10000.0));
             });
-            
+
             ui.horizontal(|ui| {
                 ui.label("Triggers per point:");
                 ui.add(egui::DragValue::new(&mut self.wizard_triggers_per_point).range(1..=1000));
             });
-            
+
             ui.separator();
-            
+
             ui.horizontal(|ui| {
-                let can_create = !self.wizard_axes.is_empty() 
+                let can_create = !self.wizard_axes.is_empty()
                     && self.wizard_axes.iter().all(|a| !a.device_id.is_empty());
-                
-                if ui.add_enabled(can_create, egui::Button::new("✓ Create Scan")).clicked() {
+
+                if ui
+                    .add_enabled(can_create, egui::Button::new("✓ Create Scan"))
+                    .clicked()
+                {
                     self.pending_action = Some(PendingAction::CreateScan);
                 }
-                
+
                 if ui.button("✕ Cancel").clicked() {
                     self.show_wizard = false;
                 }
             });
         });
     }
-    
+
     /// Render a single scan as a card
     fn render_scan_card(&mut self, ui: &mut egui::Ui, scan: &daq_proto::daq::ScanStatus) {
         let state_color = match scan.state {
-            1 => egui::Color32::GRAY,    // CREATED
-            2 => egui::Color32::YELLOW,  // RUNNING
-            3 => egui::Color32::BLUE,    // PAUSED
-            4 => egui::Color32::GREEN,   // COMPLETED
-            5 => egui::Color32::GRAY,    // STOPPED
-            6 => egui::Color32::RED,     // ERROR
+            1 => egui::Color32::GRAY,   // CREATED
+            2 => egui::Color32::YELLOW, // RUNNING
+            3 => egui::Color32::BLUE,   // PAUSED
+            4 => egui::Color32::GREEN,  // COMPLETED
+            5 => egui::Color32::GRAY,   // STOPPED
+            6 => egui::Color32::RED,    // ERROR
             _ => egui::Color32::WHITE,
         };
-        
+
         let state_name = match scan.state {
             1 => "Created",
             2 => "Running",
@@ -348,26 +372,24 @@ impl ScansPanel {
             6 => "Error",
             _ => "Unknown",
         };
-        
+
         ui.group(|ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(state_color, "●");
                 ui.strong(&scan.scan_id);
                 ui.label(format!("- {}", state_name));
             });
-            
+
             // Progress bar
             if scan.total_points > 0 {
                 let progress = scan.current_point as f32 / scan.total_points as f32;
-                let progress_bar = egui::ProgressBar::new(progress)
-                    .text(format!("{}/{} points ({:.1}%)", 
-                        scan.current_point, 
-                        scan.total_points,
-                        scan.progress_percent
-                    ));
+                let progress_bar = egui::ProgressBar::new(progress).text(format!(
+                    "{}/{} points ({:.1}%)",
+                    scan.current_point, scan.total_points, scan.progress_percent
+                ));
                 ui.add(progress_bar);
             }
-            
+
             // Control buttons based on state
             ui.horizontal(|ui| {
                 match scan.state {
@@ -408,14 +430,14 @@ impl ScansPanel {
                     _ => {}
                 }
             });
-            
+
             // Error message
             if !scan.error_message.is_empty() {
                 ui.colored_label(egui::Color32::RED, &scan.error_message);
             }
         });
     }
-    
+
     /// Execute a pending action
     fn execute_action(
         &mut self,
@@ -432,12 +454,12 @@ impl ScansPanel {
             PendingAction::StopScan { scan_id } => self.stop_scan(client, runtime, &scan_id),
         }
     }
-    
+
     /// Refresh the scan list
     fn refresh(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
@@ -459,25 +481,29 @@ impl ScansPanel {
             let _ = tx.send(ScanActionResult::Refresh(result)).await;
         });
     }
-    
+
     /// Create a new scan from wizard config
     fn create_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         // Build scan config
-        let axes: Vec<AxisConfig> = self.wizard_axes.iter().map(|a| AxisConfig {
-            device_id: a.device_id.clone(),
-            start_position: a.start,
-            end_position: a.end,
-            num_points: a.num_points,
-        }).collect();
-        
+        let axes: Vec<AxisConfig> = self
+            .wizard_axes
+            .iter()
+            .map(|a| AxisConfig {
+                device_id: a.device_id.clone(),
+                start_position: a.start,
+                end_position: a.end,
+                num_points: a.num_points,
+            })
+            .collect();
+
         let config = ScanConfig {
             axes,
             scan_type: self.wizard_scan_type,
@@ -489,7 +515,7 @@ impl ScansPanel {
             name: self.wizard_name.clone(),
             metadata: Default::default(),
         };
-        
+
         let mut client = client.clone();
         let tx = self.action_tx.clone();
         self.action_in_flight = self.action_in_flight.saturating_add(1);
@@ -509,16 +535,16 @@ impl ScansPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Start a scan
     fn start_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, scan_id: &str) {
         self.error = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let scan_id = scan_id.to_string();
         let tx = self.action_tx.clone();
@@ -543,16 +569,16 @@ impl ScansPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Pause a scan
     fn pause_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, scan_id: &str) {
         self.error = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let scan_id = scan_id.to_string();
         let tx = self.action_tx.clone();
@@ -582,16 +608,16 @@ impl ScansPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Resume a scan
     fn resume_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, scan_id: &str) {
         self.error = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let scan_id = scan_id.to_string();
         let tx = self.action_tx.clone();
@@ -616,16 +642,16 @@ impl ScansPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Stop a scan
     fn stop_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, scan_id: &str) {
         self.error = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let scan_id = scan_id.to_string();
         let tx = self.action_tx.clone();

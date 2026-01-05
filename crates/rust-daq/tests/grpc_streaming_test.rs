@@ -6,10 +6,10 @@
 #[cfg(feature = "networking")]
 mod streaming_tests {
     use chrono::Utc;
+    use daq_core::core::Measurement;
     use daq_proto::daq::MeasurementRequest;
     use daq_server::grpc::ControlService;
     use daq_server::DaqServer;
-    use daq_core::core::Measurement;
 
     use tokio_stream::StreamExt;
     use tonic::Request;
@@ -77,7 +77,7 @@ mod streaming_tests {
 
         // Send mixed channel data
         tokio::spawn(async move {
-            let channels = vec!["temperature", "pressure", "temperature", "voltage"];
+            let channels = ["temperature", "pressure", "temperature", "voltage"];
             for (i, &channel) in channels.iter().enumerate() {
                 let _ = data_sender.send(Measurement::Scalar {
                     name: channel.to_string(),

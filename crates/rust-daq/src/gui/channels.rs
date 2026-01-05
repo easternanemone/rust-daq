@@ -8,9 +8,7 @@
 use tokio::sync::{mpsc, watch};
 use tracing::warn;
 
-use super::types::{
-    BackendCommand, BackendEvent, BackendMetrics, DeviceStateSnapshot, PlotPoint,
-};
+use super::types::{BackendCommand, BackendEvent, BackendMetrics, DeviceStateSnapshot, PlotPoint};
 
 /// Channel capacities (from Codex recommendations).
 pub const STATE_CHANNEL_CAPACITY: usize = 256;
@@ -169,7 +167,10 @@ impl BackendHandle {
     /// Check if there's a command waiting.
     pub fn has_command(&mut self) -> bool {
         // peek without consuming
-        matches!(self.cmd_rx.try_recv(), Ok(_) | Err(mpsc::error::TryRecvError::Empty))
+        matches!(
+            self.cmd_rx.try_recv(),
+            Ok(_) | Err(mpsc::error::TryRecvError::Empty)
+        )
     }
 
     /// Receive the next command (async, use in tokio context).

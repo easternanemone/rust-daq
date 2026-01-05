@@ -133,12 +133,7 @@ impl DigitalIO {
         let mut bit: u32 = 0;
 
         let result = unsafe {
-            comedi_sys::comedi_dio_read(
-                self.device.handle(),
-                self.subdevice,
-                channel,
-                &mut bit,
-            )
+            comedi_sys::comedi_dio_read(self.device.handle(), self.subdevice, channel, &mut bit)
         };
 
         if result < 0 {

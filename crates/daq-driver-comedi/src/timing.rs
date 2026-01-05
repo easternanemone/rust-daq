@@ -123,14 +123,14 @@ impl Default for TimingCapabilities {
     fn default() -> Self {
         // Default values for NI PCI-MIO-16XE-10
         Self {
-            max_sample_rate: 100_000.0,       // 100 kS/s
-            min_sample_rate: 0.0001,          // Essentially unlimited minimum
-            min_convert_ns: 1_000,            // 1 µs minimum convert
-            max_convert_ns: 1_000_000_000,    // 1 second max
-            min_scan_ns: 10_000,              // 10 µs minimum scan
-            max_scan_ns: 4_000_000_000,       // ~4 seconds max
-            base_clock_hz: 20_000_000.0,      // 20 MHz
-            divisor_range: (1, 0x00FF_FFFF),  // 24-bit counter
+            max_sample_rate: 100_000.0,      // 100 kS/s
+            min_sample_rate: 0.0001,         // Essentially unlimited minimum
+            min_convert_ns: 1_000,           // 1 µs minimum convert
+            max_convert_ns: 1_000_000_000,   // 1 second max
+            min_scan_ns: 10_000,             // 10 µs minimum scan
+            max_scan_ns: 4_000_000_000,      // ~4 seconds max
+            base_clock_hz: 20_000_000.0,     // 20 MHz
+            divisor_range: (1, 0x00FF_FFFF), // 24-bit counter
             external_clock: true,
             clock_output: true,
             pfi_pins: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],

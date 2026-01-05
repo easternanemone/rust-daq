@@ -29,8 +29,8 @@ impl Default for ChannelConfig {
         Self {
             connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(30),
-            keepalive_interval: Duration::from_secs(30),
-            keepalive_timeout: Duration::from_secs(10),
+            keepalive_interval: Duration::from_secs(10),
+            keepalive_timeout: Duration::from_secs(60),
             keepalive_while_idle: true,
         }
     }
@@ -39,6 +39,7 @@ impl Default for ChannelConfig {
 impl ChannelConfig {
     /// Fast configuration for local connections (localhost/Tailscale).
     #[must_use]
+    #[allow(dead_code)]
     pub fn fast() -> Self {
         Self {
             connect_timeout: Duration::from_secs(5),
@@ -52,32 +53,58 @@ impl ChannelConfig {
 use daq_proto::daq::{
     control_service_client::ControlServiceClient,
     hardware_service_client::HardwareServiceClient,
+    module_service_client::ModuleServiceClient,
     scan_service_client::ScanServiceClient,
     storage_service_client::StorageServiceClient,
-    module_service_client::ModuleServiceClient,
-    // Request/Response types
-    DaemonInfoRequest, ListDevicesRequest, ListScansRequest, ListScriptsRequest,
-    ListExecutionsRequest, MoveRequest, ReadValueRequest, DeviceStateRequest,
-    // Script execution types (Phase 6: bd-uu9t)
-    StartRequest as ScriptStartRequest, StartResponse as ScriptStartResponse,
-    StopRequest as ScriptStopRequest, StopResponse as ScriptStopResponse,
-    UploadRequest as ScriptUploadRequest, UploadResponse as ScriptUploadResponse,
-    // Storage types
-    GetStorageConfigRequest, GetRecordingStatusRequest, StartRecordingRequest,
-    StopRecordingRequest, ListAcquisitionsRequest,
-    // Module types
-    ListModuleTypesRequest, ListModulesRequest, CreateModuleRequest,
-    StartModuleRequest, StopModuleRequest, AssignDeviceRequest,
+    AssignDeviceRequest,
+    CreateModuleRequest,
     // Scan types
-    CreateScanRequest, StartScanRequest, StopScanRequest, PauseScanRequest,
-    ResumeScanRequest, ScanConfig,
-    // Camera streaming
-    StartStreamRequest, StopStreamRequest, StreamFramesRequest, FrameData,
-    // Parameter types (bd-cdh5.1)
-    ListParametersRequest, GetParameterRequest, SetParameterRequest,
+    CreateScanRequest,
+    // Request/Response types
+    DaemonInfoRequest,
     DeviceCommandRequest,
+    DeviceStateRequest,
+    FrameData,
+    GetParameterRequest,
+    GetRecordingStatusRequest,
+    // Storage types
+    GetStorageConfigRequest,
+    ListAcquisitionsRequest,
+    ListDevicesRequest,
+    ListExecutionsRequest,
+    // Module types
+    ListModuleTypesRequest,
+    ListModulesRequest,
+    // Parameter types (bd-cdh5.1)
+    ListParametersRequest,
+    ListScansRequest,
+    ListScriptsRequest,
+    MoveRequest,
+    ObservableValue,
+    PauseScanRequest,
+    ReadValueRequest,
+    ResumeScanRequest,
+    ScanConfig,
+    SetParameterRequest,
+    StartModuleRequest,
+    StartRecordingRequest,
+    // Script execution types (Phase 6: bd-uu9t)
+    StartRequest as ScriptStartRequest,
+    StartResponse as ScriptStartResponse,
+    StartScanRequest,
+    // Camera streaming
+    StartStreamRequest,
+    StopModuleRequest,
+    StopRecordingRequest,
+    StopRequest as ScriptStopRequest,
+    StopResponse as ScriptStopResponse,
+    StopScanRequest,
+    StopStreamRequest,
+    StreamFramesRequest,
     // Observable streaming (bd-qqjq stub for bd-r5vb)
-    StreamObservablesRequest, ObservableValue,
+    StreamObservablesRequest,
+    UploadRequest as ScriptUploadRequest,
+    UploadResponse as ScriptUploadResponse,
 };
 
 /// gRPC client wrapper for the DAQ daemon
@@ -85,6 +112,8 @@ use daq_proto::daq::{
 pub struct DaqClient {
     control: ControlServiceClient<Channel>,
     hardware: HardwareServiceClient<Channel>,
+    /// Dedicated client for streaming RPCs (no request timeout)
+    hardware_streaming: HardwareServiceClient<Channel>,
     scan: ScanServiceClient<Channel>,
     storage: StorageServiceClient<Channel>,
     module: ModuleServiceClient<Channel>,
@@ -106,10 +135,23 @@ impl DaqClient {
     ///
     /// Use `ChannelConfig::fast()` for local/Tailscale connections with quicker
     /// failure detection, or customize timeouts for high-latency networks.
-    pub async fn connect_with_config(address: &DaemonAddress, config: ChannelConfig) -> Result<Self> {
+    pub async fn connect_with_config(
+        address: &DaemonAddress,
+        config: ChannelConfig,
+    ) -> Result<Self> {
+        // Channel with request timeout for regular RPCs
         let endpoint = Channel::from_shared(address.as_str().to_string())?
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
+            .http2_keep_alive_interval(config.keepalive_interval)
+            .keep_alive_timeout(config.keepalive_timeout)
+            .keep_alive_while_idle(config.keepalive_while_idle);
+
+        // Streaming channel WITHOUT request timeout for long-lived streaming RPCs
+        // This prevents the 30-second default timeout from cancelling frame streams
+        let streaming_endpoint = Channel::from_shared(address.as_str().to_string())?
+            .connect_timeout(config.connect_timeout)
+            // No .timeout() call - streaming RPCs should not have a request timeout
             .http2_keep_alive_interval(config.keepalive_interval)
             .keep_alive_timeout(config.keepalive_timeout)
             .keep_alive_while_idle(config.keepalive_while_idle);
@@ -121,11 +163,15 @@ impl DaqClient {
         // }
 
         let channel = endpoint.connect().await?;
+        let streaming_channel = streaming_endpoint.connect().await?;
 
         Ok(Self {
             control: ControlServiceClient::new(channel.clone()),
             // Hardware client needs larger message size for camera frame streaming
             hardware: HardwareServiceClient::new(channel.clone())
+                .max_decoding_message_size(MAX_MESSAGE_SIZE),
+            // Dedicated streaming client without request timeout
+            hardware_streaming: HardwareServiceClient::new(streaming_channel)
                 .max_decoding_message_size(MAX_MESSAGE_SIZE),
             scan: ScanServiceClient::new(channel.clone()),
             storage: StorageServiceClient::new(channel.clone()),
@@ -138,7 +184,9 @@ impl DaqClient {
     /// Returns `Ok(())` if the daemon is responsive, `Err` otherwise.
     /// This is used by the ConnectionManager to detect stale connections.
     pub async fn health_check(&mut self) -> Result<()> {
-        self.control.get_daemon_info(daq_proto::daq::DaemonInfoRequest {}).await?;
+        self.control
+            .get_daemon_info(daq_proto::daq::DaemonInfoRequest {})
+            .await?;
         Ok(())
     }
 
@@ -154,47 +202,76 @@ impl DaqClient {
 
     /// List all devices
     pub async fn list_devices(&mut self) -> Result<Vec<daq_proto::daq::DeviceInfo>> {
-        let response = self.hardware.list_devices(ListDevicesRequest {
-            capability_filter: None,
-        }).await?;
+        let response = self
+            .hardware
+            .list_devices(ListDevicesRequest {
+                capability_filter: None,
+            })
+            .await?;
         Ok(response.into_inner().devices)
     }
 
     /// Get device state
-    pub async fn get_device_state(&mut self, device_id: &str) -> Result<daq_proto::daq::DeviceStateResponse> {
-        let response = self.hardware.get_device_state(DeviceStateRequest {
-            device_id: device_id.to_string(),
-        }).await?;
+    pub async fn get_device_state(
+        &mut self,
+        device_id: &str,
+    ) -> Result<daq_proto::daq::DeviceStateResponse> {
+        let response = self
+            .hardware
+            .get_device_state(DeviceStateRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Move device to absolute position
-    pub async fn move_absolute(&mut self, device_id: &str, position: f64) -> Result<daq_proto::daq::MoveResponse> {
-        let response = self.hardware.move_absolute(MoveRequest {
-            device_id: device_id.to_string(),
-            value: position,
-            wait_for_completion: Some(false),
-            timeout_ms: None,
-        }).await?;
+    pub async fn move_absolute(
+        &mut self,
+        device_id: &str,
+        position: f64,
+    ) -> Result<daq_proto::daq::MoveResponse> {
+        let response = self
+            .hardware
+            .move_absolute(MoveRequest {
+                device_id: device_id.to_string(),
+                value: position,
+                wait_for_completion: Some(false),
+                timeout_ms: None,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Move device by relative amount
-    pub async fn move_relative(&mut self, device_id: &str, distance: f64) -> Result<daq_proto::daq::MoveResponse> {
-        let response = self.hardware.move_relative(MoveRequest {
-            device_id: device_id.to_string(),
-            value: distance,
-            wait_for_completion: Some(false),
-            timeout_ms: None,
-        }).await?;
+    pub async fn move_relative(
+        &mut self,
+        device_id: &str,
+        distance: f64,
+    ) -> Result<daq_proto::daq::MoveResponse> {
+        let response = self
+            .hardware
+            .move_relative(MoveRequest {
+                device_id: device_id.to_string(),
+                value: distance,
+                wait_for_completion: Some(false),
+                timeout_ms: None,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Read value from device
-    pub async fn read_value(&mut self, device_id: &str) -> Result<daq_proto::daq::ReadValueResponse> {
-        let response = self.hardware.read_value(ReadValueRequest {
-            device_id: device_id.to_string(),
-        }).await?;
+    pub async fn read_value(
+        &mut self,
+        device_id: &str,
+    ) -> Result<daq_proto::daq::ReadValueResponse> {
+        let response = self
+            .hardware
+            .read_value(ReadValueRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -210,25 +287,32 @@ impl DaqClient {
 
     /// List all executions
     pub async fn list_executions(&mut self) -> Result<Vec<daq_proto::daq::ScriptStatus>> {
-        let response = self.control.list_executions(ListExecutionsRequest {
-            script_id: None,
-            state: None,
-        }).await?;
+        let response = self
+            .control
+            .list_executions(ListExecutionsRequest {
+                script_id: None,
+                state: None,
+            })
+            .await?;
         Ok(response.into_inner().executions)
     }
 
     /// Upload a script to the daemon (Phase 6: bd-uu9t)
+    #[allow(dead_code)]
     pub async fn upload_script(
         &mut self,
         name: &str,
         content: &str,
         metadata: std::collections::HashMap<String, String>,
     ) -> Result<ScriptUploadResponse> {
-        let response = self.control.upload_script(ScriptUploadRequest {
-            name: name.to_string(),
-            script_content: content.to_string(),
-            metadata,
-        }).await?;
+        let response = self
+            .control
+            .upload_script(ScriptUploadRequest {
+                name: name.to_string(),
+                script_content: content.to_string(),
+                metadata,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -238,10 +322,13 @@ impl DaqClient {
         script_id: &str,
         parameters: std::collections::HashMap<String, String>,
     ) -> Result<ScriptStartResponse> {
-        let response = self.control.start_script(ScriptStartRequest {
-            script_id: script_id.to_string(),
-            parameters,
-        }).await?;
+        let response = self
+            .control
+            .start_script(ScriptStartRequest {
+                script_id: script_id.to_string(),
+                parameters,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -251,10 +338,13 @@ impl DaqClient {
         execution_id: &str,
         force: bool,
     ) -> Result<ScriptStopResponse> {
-        let response = self.control.stop_script(ScriptStopRequest {
-            execution_id: execution_id.to_string(),
-            force,
-        }).await?;
+        let response = self
+            .control
+            .stop_script(ScriptStopRequest {
+                execution_id: execution_id.to_string(),
+                force,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -264,50 +354,76 @@ impl DaqClient {
 
     /// List all scans
     pub async fn list_scans(&mut self) -> Result<Vec<daq_proto::daq::ScanStatus>> {
-        let response = self.scan.list_scans(ListScansRequest {
-            state_filter: None,
-        }).await?;
+        let response = self
+            .scan
+            .list_scans(ListScansRequest { state_filter: None })
+            .await?;
         Ok(response.into_inner().scans)
     }
 
     /// Create a new scan
-    pub async fn create_scan(&mut self, config: ScanConfig) -> Result<daq_proto::daq::CreateScanResponse> {
-        let response = self.scan.create_scan(CreateScanRequest {
-            config: Some(config),
-        }).await?;
+    pub async fn create_scan(
+        &mut self,
+        config: ScanConfig,
+    ) -> Result<daq_proto::daq::CreateScanResponse> {
+        let response = self
+            .scan
+            .create_scan(CreateScanRequest {
+                config: Some(config),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Start a scan
     pub async fn start_scan(&mut self, scan_id: &str) -> Result<daq_proto::daq::StartScanResponse> {
-        let response = self.scan.start_scan(StartScanRequest {
-            scan_id: scan_id.to_string(),
-        }).await?;
+        let response = self
+            .scan
+            .start_scan(StartScanRequest {
+                scan_id: scan_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Pause a scan
     pub async fn pause_scan(&mut self, scan_id: &str) -> Result<daq_proto::daq::PauseScanResponse> {
-        let response = self.scan.pause_scan(PauseScanRequest {
-            scan_id: scan_id.to_string(),
-        }).await?;
+        let response = self
+            .scan
+            .pause_scan(PauseScanRequest {
+                scan_id: scan_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Resume a scan
-    pub async fn resume_scan(&mut self, scan_id: &str) -> Result<daq_proto::daq::ResumeScanResponse> {
-        let response = self.scan.resume_scan(ResumeScanRequest {
-            scan_id: scan_id.to_string(),
-        }).await?;
+    pub async fn resume_scan(
+        &mut self,
+        scan_id: &str,
+    ) -> Result<daq_proto::daq::ResumeScanResponse> {
+        let response = self
+            .scan
+            .resume_scan(ResumeScanRequest {
+                scan_id: scan_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Stop a scan
-    pub async fn stop_scan(&mut self, scan_id: &str, emergency: bool) -> Result<daq_proto::daq::StopScanResponse> {
-        let response = self.scan.stop_scan(StopScanRequest {
-            scan_id: scan_id.to_string(),
-            emergency_stop: emergency,
-        }).await?;
+    pub async fn stop_scan(
+        &mut self,
+        scan_id: &str,
+        emergency: bool,
+    ) -> Result<daq_proto::daq::StopScanResponse> {
+        let response = self
+            .scan
+            .stop_scan(StopScanRequest {
+                scan_id: scan_id.to_string(),
+                emergency_stop: emergency,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -317,48 +433,64 @@ impl DaqClient {
 
     /// Get storage configuration
     pub async fn get_storage_config(&mut self) -> Result<daq_proto::daq::StorageConfig> {
-        let response = self.storage.get_storage_config(GetStorageConfigRequest {}).await?;
+        let response = self
+            .storage
+            .get_storage_config(GetStorageConfigRequest {})
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Get recording status
     pub async fn get_recording_status(&mut self) -> Result<daq_proto::daq::RecordingStatus> {
-        let response = self.storage.get_recording_status(GetRecordingStatusRequest {
-            recording_id: None,
-        }).await?;
+        let response = self
+            .storage
+            .get_recording_status(GetRecordingStatusRequest { recording_id: None })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Start recording
-    pub async fn start_recording(&mut self, name: &str) -> Result<daq_proto::daq::StartRecordingResponse> {
-        let response = self.storage.start_recording(StartRecordingRequest {
-            name: name.to_string(),
-            metadata: Default::default(),
-            config_override: None,
-            scan_id: None,
-            run_uid: None,
-        }).await?;
+    pub async fn start_recording(
+        &mut self,
+        name: &str,
+    ) -> Result<daq_proto::daq::StartRecordingResponse> {
+        let response = self
+            .storage
+            .start_recording(StartRecordingRequest {
+                name: name.to_string(),
+                metadata: Default::default(),
+                config_override: None,
+                scan_id: None,
+                run_uid: None,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Stop recording
     pub async fn stop_recording(&mut self) -> Result<daq_proto::daq::StopRecordingResponse> {
-        let response = self.storage.stop_recording(StopRecordingRequest {
-            recording_id: None,
-            final_metadata: Default::default(),
-        }).await?;
+        let response = self
+            .storage
+            .stop_recording(StopRecordingRequest {
+                recording_id: None,
+                final_metadata: Default::default(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// List acquisitions
     pub async fn list_acquisitions(&mut self) -> Result<Vec<daq_proto::daq::AcquisitionSummary>> {
-        let response = self.storage.list_acquisitions(ListAcquisitionsRequest {
-            name_pattern: None,
-            after_timestamp_ns: None,
-            before_timestamp_ns: None,
-            limit: Some(100),
-            offset: None,
-        }).await?;
+        let response = self
+            .storage
+            .list_acquisitions(ListAcquisitionsRequest {
+                name_pattern: None,
+                after_timestamp_ns: None,
+                before_timestamp_ns: None,
+                limit: Some(100),
+                offset: None,
+            })
+            .await?;
         Ok(response.into_inner().acquisitions)
     }
 
@@ -368,73 +500,120 @@ impl DaqClient {
 
     /// List module types
     pub async fn list_module_types(&mut self) -> Result<Vec<daq_proto::daq::ModuleTypeSummary>> {
-        let response = self.module.list_module_types(ListModuleTypesRequest {
-            required_capability: None,
-        }).await?;
+        let response = self
+            .module
+            .list_module_types(ListModuleTypesRequest {
+                required_capability: None,
+            })
+            .await?;
         Ok(response.into_inner().module_types)
     }
 
     /// List module instances
     pub async fn list_modules(&mut self) -> Result<Vec<daq_proto::daq::ModuleStatus>> {
-        let response = self.module.list_modules(ListModulesRequest {
-            type_filter: None,
-            state_filter: None,
-        }).await?;
+        let response = self
+            .module
+            .list_modules(ListModulesRequest {
+                type_filter: None,
+                state_filter: None,
+            })
+            .await?;
         Ok(response.into_inner().modules)
     }
 
     /// Create a module instance
-    pub async fn create_module(&mut self, type_id: &str, name: &str) -> Result<daq_proto::daq::CreateModuleResponse> {
-        let response = self.module.create_module(CreateModuleRequest {
-            type_id: type_id.to_string(),
-            instance_name: name.to_string(),
-            initial_config: Default::default(),
-        }).await?;
+    pub async fn create_module(
+        &mut self,
+        type_id: &str,
+        name: &str,
+    ) -> Result<daq_proto::daq::CreateModuleResponse> {
+        let response = self
+            .module
+            .create_module(CreateModuleRequest {
+                type_id: type_id.to_string(),
+                instance_name: name.to_string(),
+                initial_config: Default::default(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Start a module
-    pub async fn start_module(&mut self, module_id: &str) -> Result<daq_proto::daq::StartModuleResponse> {
-        let response = self.module.start_module(StartModuleRequest {
-            module_id: module_id.to_string(),
-        }).await?;
+    pub async fn start_module(
+        &mut self,
+        module_id: &str,
+    ) -> Result<daq_proto::daq::StartModuleResponse> {
+        let response = self
+            .module
+            .start_module(StartModuleRequest {
+                module_id: module_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Stop a module
-    pub async fn stop_module(&mut self, module_id: &str) -> Result<daq_proto::daq::StopModuleResponse> {
-        let response = self.module.stop_module(StopModuleRequest {
-            module_id: module_id.to_string(),
-            force: false,
-        }).await?;
+    pub async fn stop_module(
+        &mut self,
+        module_id: &str,
+    ) -> Result<daq_proto::daq::StopModuleResponse> {
+        let response = self
+            .module
+            .stop_module(StopModuleRequest {
+                module_id: module_id.to_string(),
+                force: false,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Assign device to module role
-    pub async fn assign_device(&mut self, module_id: &str, role_id: &str, device_id: &str) -> Result<daq_proto::daq::AssignDeviceResponse> {
-        let response = self.module.assign_device(AssignDeviceRequest {
-            module_id: module_id.to_string(),
-            role_id: role_id.to_string(),
-            device_id: device_id.to_string(),
-        }).await?;
+    #[allow(dead_code)]
+    pub async fn assign_device(
+        &mut self,
+        module_id: &str,
+        role_id: &str,
+        device_id: &str,
+    ) -> Result<daq_proto::daq::AssignDeviceResponse> {
+        let response = self
+            .module
+            .assign_device(AssignDeviceRequest {
+                module_id: module_id.to_string(),
+                role_id: role_id.to_string(),
+                device_id: device_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Start camera stream (frames logged to Rerun)
     /// If frame_count is None, streams indefinitely until stopped.
-    pub async fn start_stream(&mut self, device_id: &str, frame_count: Option<u32>) -> Result<daq_proto::daq::StartStreamResponse> {
-        let response = self.hardware.start_stream(StartStreamRequest {
-            device_id: device_id.to_string(),
-            frame_count,
-        }).await?;
+    pub async fn start_stream(
+        &mut self,
+        device_id: &str,
+        frame_count: Option<u32>,
+    ) -> Result<daq_proto::daq::StartStreamResponse> {
+        let response = self
+            .hardware
+            .start_stream(StartStreamRequest {
+                device_id: device_id.to_string(),
+                frame_count,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Stop camera stream
-    pub async fn stop_stream(&mut self, device_id: &str) -> Result<daq_proto::daq::StopStreamResponse> {
-        let response = self.hardware.stop_stream(StopStreamRequest {
-            device_id: device_id.to_string(),
-        }).await?;
+    pub async fn stop_stream(
+        &mut self,
+        device_id: &str,
+    ) -> Result<daq_proto::daq::StopStreamResponse> {
+        let response = self
+            .hardware
+            .stop_stream(StopStreamRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -442,6 +621,9 @@ impl DaqClient {
     ///
     /// Returns a gRPC stream of FrameData. The max_fps parameter limits the
     /// frame rate to prevent overwhelming the GUI (0 = no limit).
+    ///
+    /// Uses a dedicated streaming channel without request timeout to prevent
+    /// long-lived streams from being cancelled by the default 30-second timeout.
     pub async fn stream_frames(
         &mut self,
         device_id: &str,
@@ -451,7 +633,8 @@ impl DaqClient {
             device_id: device_id.to_string(),
             max_fps,
         };
-        let response = self.hardware.stream_frames(request).await?;
+        // Use hardware_streaming client (no request timeout) for long-lived streams
+        let response = self.hardware_streaming.stream_frames(request).await?;
         Ok(response.into_inner())
     }
 
@@ -460,29 +643,50 @@ impl DaqClient {
     // =========================================================================
 
     /// List all parameters for a device
-    pub async fn list_parameters(&mut self, device_id: &str) -> Result<Vec<daq_proto::daq::ParameterDescriptor>> {
-        let response = self.hardware.list_parameters(ListParametersRequest {
-            device_id: device_id.to_string(),
-        }).await?;
+    pub async fn list_parameters(
+        &mut self,
+        device_id: &str,
+    ) -> Result<Vec<daq_proto::daq::ParameterDescriptor>> {
+        let response = self
+            .hardware
+            .list_parameters(ListParametersRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
         Ok(response.into_inner().parameters)
     }
 
     /// Get a single parameter value
-    pub async fn get_parameter(&mut self, device_id: &str, name: &str) -> Result<daq_proto::daq::ParameterValue> {
-        let response = self.hardware.get_parameter(GetParameterRequest {
-            device_id: device_id.to_string(),
-            parameter_name: name.to_string(),
-        }).await?;
+    pub async fn get_parameter(
+        &mut self,
+        device_id: &str,
+        name: &str,
+    ) -> Result<daq_proto::daq::ParameterValue> {
+        let response = self
+            .hardware
+            .get_parameter(GetParameterRequest {
+                device_id: device_id.to_string(),
+                parameter_name: name.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
     /// Set a parameter value
-    pub async fn set_parameter(&mut self, device_id: &str, name: &str, value: &str) -> Result<daq_proto::daq::SetParameterResponse> {
-        let response = self.hardware.set_parameter(SetParameterRequest {
-            device_id: device_id.to_string(),
-            parameter_name: name.to_string(),
-            value: value.to_string(),
-        }).await?;
+    pub async fn set_parameter(
+        &mut self,
+        device_id: &str,
+        name: &str,
+        value: &str,
+    ) -> Result<daq_proto::daq::SetParameterResponse> {
+        let response = self
+            .hardware
+            .set_parameter(SetParameterRequest {
+                device_id: device_id.to_string(),
+                parameter_name: name.to_string(),
+                value: value.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -493,11 +697,14 @@ impl DaqClient {
         command: &str,
         args: &str,
     ) -> Result<daq_proto::daq::DeviceCommandResponse> {
-        let response = self.hardware.execute_device_command(DeviceCommandRequest {
-            device_id: device_id.to_string(),
-            command: command.to_string(),
-            args: args.to_string(),
-        }).await?;
+        let response = self
+            .hardware
+            .execute_device_command(DeviceCommandRequest {
+                device_id: device_id.to_string(),
+                command: command.to_string(),
+                args: args.to_string(),
+            })
+            .await?;
         Ok(response.into_inner())
     }
 
@@ -509,6 +716,9 @@ impl DaqClient {
     ///
     /// Returns a stream of ObservableValue messages from the specified devices
     /// and observables. The server may downsample to the requested rate.
+    ///
+    /// Uses a dedicated streaming channel without request timeout to prevent
+    /// long-lived streams from being cancelled by the default 30-second timeout.
     ///
     /// # Arguments
     ///
@@ -526,8 +736,8 @@ impl DaqClient {
             observable_names,
             sample_rate_hz,
         };
-        let response = self.hardware.stream_observables(request).await?;
+        // Use hardware_streaming client (no request timeout) for long-lived streams
+        let response = self.hardware_streaming.stream_observables(request).await?;
         Ok(response.into_inner())
     }
-
 }

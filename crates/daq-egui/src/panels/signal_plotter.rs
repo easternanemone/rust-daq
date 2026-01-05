@@ -46,7 +46,11 @@ pub struct ObservableUpdate {
 }
 
 impl ObservableUpdate {
-    pub fn new(device_id: impl Into<String>, observable_name: impl Into<String>, value: f64) -> Self {
+    pub fn new(
+        device_id: impl Into<String>,
+        observable_name: impl Into<String>,
+        value: f64,
+    ) -> Self {
         Self {
             device_id: device_id.into(),
             observable_name: observable_name.into(),
@@ -129,7 +133,12 @@ impl SignalTrace {
 
         // Trim old points beyond maximum history (keep more for scrollback)
         let cutoff = time - MAX_HISTORY_SECONDS;
-        while self.points.front().map(|(t, _)| *t < cutoff).unwrap_or(false) {
+        while self
+            .points
+            .front()
+            .map(|(t, _)| *t < cutoff)
+            .unwrap_or(false)
+        {
             self.points.pop_front();
         }
 
@@ -152,7 +161,9 @@ impl SignalTrace {
 
     /// Compute statistics for points within a time range
     pub fn statistics_for_range(&self, t_start: f64, t_end: f64) -> TraceStatistics {
-        let values: Vec<f64> = self.points.iter()
+        let values: Vec<f64> = self
+            .points
+            .iter()
             .filter(|(t, _)| *t >= t_start && *t <= t_end)
             .map(|(_, v)| *v)
             .collect();
@@ -168,9 +179,7 @@ impl SignalTrace {
         let min = values.iter().copied().fold(f64::INFINITY, f64::min);
         let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
-        let variance: f64 = values.iter()
-            .map(|v| (v - mean).powi(2))
-            .sum::<f64>() / n as f64;
+        let variance: f64 = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
         let std_dev = variance.sqrt();
 
         TraceStatistics {
@@ -312,7 +321,13 @@ impl SignalPlotterPanel {
 
 impl SignalPlotterPanel {
     /// Add a new trace (uses shared time baseline for consistent timestamps)
-    pub fn add_trace(&mut self, label: &str, device_id: &str, observable_name: &str, color: egui::Color32) {
+    pub fn add_trace(
+        &mut self,
+        label: &str,
+        device_id: &str,
+        observable_name: &str,
+        color: egui::Color32,
+    ) {
         self.traces.push(SignalTrace::with_start_time(
             label,
             device_id,
@@ -331,7 +346,9 @@ impl SignalPlotterPanel {
     /// Push value to a trace by label (public API for external control)
     #[allow(dead_code)]
     pub fn push_value(&mut self, label: &str, value: f64) {
-        if self.paused { return; }
+        if self.paused {
+            return;
+        }
         if let Some(trace) = self.traces.iter_mut().find(|t| t.label == label) {
             trace.push(value);
         }
@@ -339,10 +356,14 @@ impl SignalPlotterPanel {
 
     /// Push value by device_id and observable_name
     pub fn push_observable(&mut self, device_id: &str, observable_name: &str, value: f64) {
-        if self.paused { return; }
-        if let Some(trace) = self.traces.iter_mut().find(|t|
-            t.device_id == device_id && t.observable_name == observable_name
-        ) {
+        if self.paused {
+            return;
+        }
+        if let Some(trace) = self
+            .traces
+            .iter_mut()
+            .find(|t| t.device_id == device_id && t.observable_name == observable_name)
+        {
             trace.push(value);
         }
     }
@@ -358,7 +379,11 @@ impl SignalPlotterPanel {
 
             ui.separator();
 
-            let label = if self.paused { "▶ Resume" } else { "⏸ Pause" };
+            let label = if self.paused {
+                "▶ Resume"
+            } else {
+                "⏸ Pause"
+            };
             ui.toggle_value(&mut self.paused, label);
 
             ui.toggle_value(&mut self.show_legend, "Legend");
@@ -392,19 +417,26 @@ impl SignalPlotterPanel {
             let min_response = ui.add(
                 egui::TextEdit::singleline(&mut self.y_min_input)
                     .desired_width(60.0)
-                    .hint_text("auto")
+                    .hint_text("auto"),
             );
 
             ui.label("Max:");
             let max_response = ui.add(
                 egui::TextEdit::singleline(&mut self.y_max_input)
                     .desired_width(60.0)
-                    .hint_text("auto")
+                    .hint_text("auto"),
             );
 
             // Lock/Apply button
-            let lock_label = if self.y_axis_locked { "🔒 Locked" } else { "🔓 Apply" };
-            if ui.button(lock_label).clicked() || min_response.lost_focus() || max_response.lost_focus() {
+            let lock_label = if self.y_axis_locked {
+                "🔒 Locked"
+            } else {
+                "🔓 Apply"
+            };
+            if ui.button(lock_label).clicked()
+                || min_response.lost_focus()
+                || max_response.lost_focus()
+            {
                 // Try to parse min/max values
                 let y_min = self.y_min_input.trim().parse::<f64>().ok();
                 let y_max = self.y_max_input.trim().parse::<f64>().ok();
@@ -441,10 +473,10 @@ impl SignalPlotterPanel {
                 .show_ui(ui, |ui| {
                     for &window in TIME_WINDOW_OPTIONS {
                         let label = format!("{}s", window as i32);
-                        if ui.selectable_label(
-                            (self.time_window - window).abs() < 0.01,
-                            label
-                        ).clicked() {
+                        if ui
+                            .selectable_label((self.time_window - window).abs() < 0.01, label)
+                            .clicked()
+                        {
                             self.time_window = window;
                         }
                     }
@@ -453,7 +485,11 @@ impl SignalPlotterPanel {
             ui.separator();
 
             // Freeze toggle
-            let freeze_label = if self.frozen { "🔒 Frozen" } else { "❄ Freeze" };
+            let freeze_label = if self.frozen {
+                "🔒 Frozen"
+            } else {
+                "❄ Freeze"
+            };
             if ui.selectable_label(self.frozen, freeze_label).clicked() {
                 self.frozen = !self.frozen;
                 if self.frozen {
@@ -472,22 +508,27 @@ impl SignalPlotterPanel {
 
                 // Scroll left (earlier)
                 if ui.button("◀").clicked() && self.frozen_time_offset < max_scroll {
-                    self.frozen_time_offset = (self.frozen_time_offset + self.time_window / 4.0).min(max_scroll);
+                    self.frozen_time_offset =
+                        (self.frozen_time_offset + self.time_window / 4.0).min(max_scroll);
                 }
 
                 // Scroll slider
                 let mut scroll_pos = self.frozen_time_offset;
-                if ui.add(
-                    egui::Slider::new(&mut scroll_pos, 0.0..=max_scroll.max(0.01))
-                        .show_value(false)
-                        .clamping(egui::SliderClamping::Always)
-                ).changed() {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut scroll_pos, 0.0..=max_scroll.max(0.01))
+                            .show_value(false)
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                    .changed()
+                {
                     self.frozen_time_offset = scroll_pos;
                 }
 
                 // Scroll right (later)
                 if ui.button("▶").clicked() && self.frozen_time_offset > 0.0 {
-                    self.frozen_time_offset = (self.frozen_time_offset - self.time_window / 4.0).max(0.0);
+                    self.frozen_time_offset =
+                        (self.frozen_time_offset - self.time_window / 4.0).max(0.0);
                 }
 
                 // Jump to live
@@ -558,9 +599,7 @@ impl SignalPlotterPanel {
                     continue;
                 }
 
-                let points: PlotPoints = trace.points.iter()
-                    .map(|(t, v)| [*t, *v])
-                    .collect();
+                let points: PlotPoints = trace.points.iter().map(|(t, v)| [*t, *v]).collect();
 
                 let line = Line::new(points)
                     .name(&trace.label)
@@ -607,10 +646,26 @@ impl SignalPlotterPanel {
 
                         ui.colored_label(trace.color, &trace.label);
                         ui.label(format!("{}", stats.count));
-                        ui.label(if stats.count > 0 { format!("{:.4}", stats.min) } else { "-".to_string() });
-                        ui.label(if stats.count > 0 { format!("{:.4}", stats.max) } else { "-".to_string() });
-                        ui.label(if stats.count > 0 { format!("{:.4}", stats.mean) } else { "-".to_string() });
-                        ui.label(if stats.count > 0 { format!("{:.4}", stats.std_dev) } else { "-".to_string() });
+                        ui.label(if stats.count > 0 {
+                            format!("{:.4}", stats.min)
+                        } else {
+                            "-".to_string()
+                        });
+                        ui.label(if stats.count > 0 {
+                            format!("{:.4}", stats.max)
+                        } else {
+                            "-".to_string()
+                        });
+                        ui.label(if stats.count > 0 {
+                            format!("{:.4}", stats.mean)
+                        } else {
+                            "-".to_string()
+                        });
+                        ui.label(if stats.count > 0 {
+                            format!("{:.4}", stats.std_dev)
+                        } else {
+                            "-".to_string()
+                        });
                         ui.end_row();
                     }
                 });
@@ -641,9 +696,15 @@ impl SignalPlotterPanel {
                             for (idx, trace) in self.traces.iter_mut().enumerate() {
                                 // Visibility toggle
                                 let vis_icon = if trace.visible { "👁" } else { "👁‍🗨" };
-                                if ui.button(vis_icon).on_hover_text(
-                                    if trace.visible { "Hide trace" } else { "Show trace" }
-                                ).clicked() {
+                                if ui
+                                    .button(vis_icon)
+                                    .on_hover_text(if trace.visible {
+                                        "Hide trace"
+                                    } else {
+                                        "Show trace"
+                                    })
+                                    .clicked()
+                                {
                                     trace.visible = !trace.visible;
                                 }
 
@@ -651,7 +712,10 @@ impl SignalPlotterPanel {
                                 ui.color_edit_button_srgba(&mut trace.color);
 
                                 // Label (editable)
-                                ui.add(egui::TextEdit::singleline(&mut trace.label).desired_width(80.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut trace.label)
+                                        .desired_width(80.0),
+                                );
 
                                 // Device/Observable info
                                 ui.label(format!("{}/{}", trace.device_id, trace.observable_name));
@@ -681,14 +745,14 @@ impl SignalPlotterPanel {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_trace_device)
                             .desired_width(100.0)
-                            .hint_text("device_id")
+                            .hint_text("device_id"),
                     );
 
                     ui.label("Observable:");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_trace_observable)
                             .desired_width(100.0)
-                            .hint_text("observable")
+                            .hint_text("observable"),
                     );
                 });
 
@@ -697,20 +761,18 @@ impl SignalPlotterPanel {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_trace_label)
                             .desired_width(100.0)
-                            .hint_text("trace name")
+                            .hint_text("trace name"),
                     );
 
                     ui.label("Color:");
                     // Color preset buttons
                     for (idx, &color) in TRACE_COLORS.iter().enumerate() {
                         let is_selected = self.new_trace_color_idx == idx;
-                        let btn = egui::Button::new("  ")
-                            .fill(color)
-                            .stroke(if is_selected {
-                                egui::Stroke::new(2.0, egui::Color32::WHITE)
-                            } else {
-                                egui::Stroke::NONE
-                            });
+                        let btn = egui::Button::new("  ").fill(color).stroke(if is_selected {
+                            egui::Stroke::new(2.0, egui::Color32::WHITE)
+                        } else {
+                            egui::Stroke::NONE
+                        });
                         if ui.add(btn).clicked() {
                             self.new_trace_color_idx = idx;
                         }
@@ -718,10 +780,13 @@ impl SignalPlotterPanel {
                 });
 
                 ui.horizontal(|ui| {
-                    let can_add = !self.new_trace_device.is_empty()
-                        && !self.new_trace_observable.is_empty();
+                    let can_add =
+                        !self.new_trace_device.is_empty() && !self.new_trace_observable.is_empty();
 
-                    if ui.add_enabled(can_add, egui::Button::new("➕ Add Trace")).clicked() {
+                    if ui
+                        .add_enabled(can_add, egui::Button::new("➕ Add Trace"))
+                        .clicked()
+                    {
                         // Clone strings to avoid borrow conflict
                         let device = self.new_trace_device.clone();
                         let observable = self.new_trace_observable.clone();
@@ -739,7 +804,8 @@ impl SignalPlotterPanel {
                         self.new_trace_device.clear();
                         self.new_trace_observable.clear();
                         self.new_trace_label.clear();
-                        self.new_trace_color_idx = (self.new_trace_color_idx + 1) % TRACE_COLORS.len();
+                        self.new_trace_color_idx =
+                            (self.new_trace_color_idx + 1) % TRACE_COLORS.len();
                     }
                 });
 
@@ -752,22 +818,28 @@ impl SignalPlotterPanel {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.export_path)
                             .desired_width(200.0)
-                            .hint_text("path/to/file.csv")
+                            .hint_text("path/to/file.csv"),
                     );
 
                     let can_export = !self.traces.is_empty() && !self.export_path.is_empty();
 
-                    if ui.add_enabled(can_export, egui::Button::new("📁 Export CSV")).clicked() {
+                    if ui
+                        .add_enabled(can_export, egui::Button::new("📁 Export CSV"))
+                        .clicked()
+                    {
                         let path = self.export_path.clone();
                         match self.export_to_csv(&path) {
                             Ok(()) => {
-                                let point_count: usize = self.traces.iter()
-                                    .map(|t| t.points.len())
-                                    .sum();
+                                let point_count: usize =
+                                    self.traces.iter().map(|t| t.points.len()).sum();
                                 self.export_status = Some((
-                                    format!("Exported {} traces ({} points) to {}",
-                                        self.traces.len(), point_count, path),
-                                    false
+                                    format!(
+                                        "Exported {} traces ({} points) to {}",
+                                        self.traces.len(),
+                                        point_count,
+                                        path
+                                    ),
+                                    false,
                                 ));
                             }
                             Err(e) => {
@@ -830,7 +902,8 @@ impl SignalPlotterPanel {
         csv.push('\n');
 
         // Collect all unique timestamps and sort them
-        let mut all_timestamps: Vec<f64> = self.traces
+        let mut all_timestamps: Vec<f64> = self
+            .traces
             .iter()
             .flat_map(|t| t.points.iter().map(|(ts, _)| *ts))
             .collect();
@@ -861,14 +934,16 @@ impl SignalPlotterPanel {
 
         let csv_content = self.generate_csv();
 
-        let file = std::fs::File::create(path)
-            .map_err(|e| format!("Failed to create file: {}", e))?;
+        let file =
+            std::fs::File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
 
         let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(csv_content.as_bytes())
+        writer
+            .write_all(csv_content.as_bytes())
             .map_err(|e| format!("Failed to write data: {}", e))?;
 
-        writer.flush()
+        writer
+            .flush()
             .map_err(|e| format!("Failed to flush buffer: {}", e))?;
 
         Ok(())

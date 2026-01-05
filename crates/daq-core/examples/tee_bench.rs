@@ -1,15 +1,15 @@
 //! Benchmark the Tee pipeline (reliable mpsc + lossy broadcast).
-//! 
+//!
 //! Runs a synthetic source sending `Measurement::Scalar` into a Tee that
 //! forwards to both reliable (mpsc) and lossy (broadcast) consumers.
-//! 
+//!
 //! Environment variables:
 //! - `TEE_BENCH_MESSAGES` (default: 100_000)
 //! - `TEE_BENCH_PAYLOAD`  (default: 0) additional bytes in the scalar name to
 //!   simulate metadata size.
 //! - `TEE_BENCH_BUFFER`   (default: 1024) size of reliable mpsc channel
 //! - `TEE_BENCH_LATENCY`  (default: 1) set to 0 to skip latency stats
-//! 
+//!
 //! Example:
 //! ```bash
 //! cargo run -p daq-core --example tee_bench
@@ -22,7 +22,10 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 #[tokio::main(flavor = "current_thread")]

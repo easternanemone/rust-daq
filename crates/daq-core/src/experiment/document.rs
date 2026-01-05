@@ -250,6 +250,7 @@ impl DataKey {
 /// Event document - actual measurement data
 ///
 /// Contains scalar data inline and references bulk data via external storage.
+/// Supports middle-data (small arrays, metadata) without Arrow Flight overhead (bd-9unn).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventDoc {
     /// Unique event ID
@@ -268,6 +269,15 @@ pub struct EventDoc {
     pub timestamps: HashMap<String, u64>,
     /// Position data (axis name -> position)
     pub positions: HashMap<String, f64>,
+
+    // === Middle-data support (bd-9unn) ===
+    /// String metadata (status messages, enum states, quality flags)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+    /// Small array data (spectra, waveforms up to ~64KB)
+    /// Stored as serialized bytes (msgpack, JSON, or raw binary)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub arrays: HashMap<String, Vec<u8>>,
 }
 
 impl EventDoc {
@@ -281,6 +291,8 @@ impl EventDoc {
             data: HashMap::new(),
             timestamps: HashMap::new(),
             positions: HashMap::new(),
+            metadata: HashMap::new(),
+            arrays: HashMap::new(),
         }
     }
 
@@ -293,6 +305,26 @@ impl EventDoc {
 
     pub fn with_position(mut self, axis: &str, position: f64) -> Self {
         self.positions.insert(axis.to_string(), position);
+        self
+    }
+
+    /// Add string metadata (status, enum state, quality flag)
+    pub fn with_metadata(mut self, key: &str, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.to_string(), value.into());
+        self
+    }
+
+    /// Add array data (spectrum, waveform) as raw bytes
+    pub fn with_array(mut self, key: &str, data: Vec<u8>) -> Self {
+        self.arrays.insert(key.to_string(), data);
+        self
+    }
+
+    /// Add array data as f64 slice (convenience method)
+    /// Encodes as little-endian bytes for efficient storage
+    pub fn with_f64_array(mut self, key: &str, data: &[f64]) -> Self {
+        let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.arrays.insert(key.to_string(), bytes);
         self
     }
 }

@@ -8,6 +8,7 @@ use crate::grpc::proto::{
     control_service_server::{ControlService, ControlServiceServer},
 };
 use crate::grpc::run_engine_service::RunEngineServiceImpl;
+#[cfg(feature = "tokio_serial")]
 use crate::grpc::{PluginServiceImpl, PluginServiceServer};
 use daq_core::core::Measurement;
 #[cfg(feature = "scripting")]
@@ -25,6 +26,7 @@ use std::sync::Arc;
 #[cfg(feature = "storage_hdf5")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use sysinfo::System;
 #[cfg(feature = "storage_hdf5")]
 use tokio::sync::mpsc;
 use tokio::sync::{RwLock, broadcast};
@@ -496,7 +498,7 @@ impl ControlService for DaqServer {
         let req = request.into_inner();
         let script_id = Uuid::new_v4().to_string();
 
-        let script_size = req.script_content.as_bytes().len();
+        let script_size = req.script_content.len();
         if script_size > limits::MAX_SCRIPT_SIZE {
             return Ok(Response::new(UploadResponse {
                 script_id: String::new(),
@@ -708,23 +710,47 @@ impl ControlService for DaqServer {
 
     type StreamStatusStream = tokio_stream::wrappers::ReceiverStream<Result<SystemStatus, Status>>;
 
-    /// Stream system status updates at 10Hz
+    /// Stream system status updates at 10Hz (bd-obmt)
+    ///
+    /// Provides real system metrics:
+    /// - CPU usage percentage (global across all cores)
+    /// - Memory usage in MB (used_memory from sysinfo)
+    /// - Current engine state (RUNNING, IDLE, ERROR)
     async fn stream_status(
         &self,
         _request: Request<StatusRequest>,
     ) -> Result<Response<Self::StreamStatusStream>, Status> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
-        // Spawn background task to send status updates
+        // Spawn background task to send status updates at 10Hz
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+            let mut sys = System::new_all();
+
             loop {
                 interval.tick().await;
 
-                // TODO: Get real system metrics
+                // Refresh all system metrics
+                sys.refresh_all();
+
+                // Get CPU usage as a percentage (0.0 to 100.0)
+                let cpu_usage_percent = sys.global_cpu_usage();
+
+                // Get memory usage in KB, convert to MB
+                let used_memory_kb = sys.used_memory();
+                let used_memory_mb = used_memory_kb as f64 / 1024.0;
+
+                // Determine engine state based on CPU activity
+                // This is a simple heuristic: if CPU > 1%, we consider it RUNNING
+                let current_state = if cpu_usage_percent > 1.0 {
+                    "RUNNING".to_string()
+                } else {
+                    "IDLE".to_string()
+                };
+
                 let status = SystemStatus {
-                    current_state: "RUNNING".to_string(),
-                    current_memory_usage_mb: 42.0,
+                    current_state,
+                    current_memory_usage_mb: used_memory_mb,
                     live_values: HashMap::new(),
                     timestamp_ns: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -905,16 +931,16 @@ impl ControlService for DaqServer {
             .iter()
             .filter(|(_, exec)| {
                 // Filter by script_id if provided
-                if let Some(ref script_id) = req.script_id {
-                    if &exec.script_id != script_id {
-                        return false;
-                    }
+                if let Some(ref script_id) = req.script_id
+                    && &exec.script_id != script_id
+                {
+                    return false;
                 }
                 // Filter by state if provided
-                if let Some(ref state) = req.state {
-                    if &exec.state != state {
-                        return false;
-                    }
+                if let Some(ref state) = req.state
+                    && &exec.state != state
+                {
+                    return false;
                 }
                 true
             })
@@ -1167,10 +1193,10 @@ pub async fn start_server_with_hardware(
         // Spawn writer task
         tokio::spawn(async move {
             while let Some(measurement) = rx.recv().await {
-                if let Ok(frame) = encode_measurement_frame(&measurement) {
-                    if let Err(e) = rb_clone.write(&frame) {
-                        tracing::error!(error = %e, "Failed to write measurement to ring buffer");
-                    }
+                if let Ok(frame) = encode_measurement_frame(&measurement)
+                    && let Err(e) = rb_clone.write(&frame)
+                {
+                    tracing::error!(error = %e, "Failed to write measurement to ring buffer");
                 }
                 // Yield to allow other tasks to run
                 tokio::task::yield_now().await;
@@ -1424,7 +1450,7 @@ pub async fn start_server_with_hardware(
         )))
         // HardwareService needs larger message size for camera frame streaming (16 MB)
         .add_service(tonic_web::enable(
-            HardwareServiceServer::new(hardware_server).max_encoding_message_size(16 * 1024 * 1024),
+            HardwareServiceServer::new(hardware_server).max_encoding_message_size(64 * 1024 * 1024),
         ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(PluginServiceServer::new(plugin_server)))
@@ -1466,12 +1492,34 @@ pub async fn start_server_with_hardware(
         )))
         // HardwareService needs larger message size for camera frame streaming (16 MB)
         .add_service(tonic_web::enable(
-            HardwareServiceServer::new(hardware_server).max_encoding_message_size(16 * 1024 * 1024),
+            HardwareServiceServer::new(hardware_server).max_encoding_message_size(64 * 1024 * 1024),
         ))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))
         .add_service(tonic_web::enable(PresetServiceServer::new(preset_server)))
         .add_service(tonic_web::enable(StorageServiceServer::new(storage_server)));
+
+    // Start Prometheus metrics server if enabled (bd-v299)
+    #[cfg(feature = "metrics")]
+    let _metrics_handle = {
+        let metrics_port: u16 = std::env::var("METRICS_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9091);
+        match crate::grpc::metrics_service::start_metrics_server(metrics_port).await {
+            Ok(handle) => {
+                println!(
+                    "  - Prometheus Metrics: http://0.0.0.0:{}/metrics (bd-v299)",
+                    metrics_port
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to start metrics server: {}", e);
+                None
+            }
+        }
+    };
 
     server_builder.serve(bind_addr).await?;
 

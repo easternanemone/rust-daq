@@ -59,7 +59,6 @@ pub struct Frame {
     pub data: Vec<u8>,
 
     // === Timing & Identification (bd-183h) ===
-
     /// Driver-provided frame sequence number (monotonically increasing)
     pub frame_number: u64,
 
@@ -71,7 +70,6 @@ pub struct Frame {
     pub timestamp_ns: u64,
 
     // === Acquisition Parameters (bd-183h) ===
-
     /// Exposure time used for this frame (milliseconds)
     pub exposure_ms: Option<f64>,
 
@@ -82,7 +80,6 @@ pub struct Frame {
     pub roi_y: u32,
 
     // === Extended Metadata (bd-183h) ===
-
     /// Optional extended metadata (temperature, gain, etc.)
     ///
     /// Boxed to avoid allocation overhead for frames without metadata.
@@ -234,7 +231,7 @@ impl Frame {
         if self.bit_depth <= 8 {
             return None;
         }
-        if self.data.len() % 2 != 0 {
+        if !self.data.len().is_multiple_of(2) {
             return None;
         }
 

@@ -5,7 +5,9 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
-use crate::widgets::{ParameterCache, filter_parameters, group_parameters_by_prefix, offline_notice, OfflineContext};
+use crate::widgets::{
+    filter_parameters, group_parameters_by_prefix, offline_notice, OfflineContext, ParameterCache,
+};
 
 /// Result of an async parameter load operation
 struct ParamLoadResult {
@@ -37,15 +39,33 @@ struct DeviceCache {
 /// Pending action to execute after UI rendering
 enum PendingAction {
     Refresh,
-    MoveAbsolute { device_id: String, value: f64 },
-    MoveRelative { device_id: String, value: f64 },
-    ReadValue { device_id: String },
+    MoveAbsolute {
+        device_id: String,
+        value: f64,
+    },
+    MoveRelative {
+        device_id: String,
+        value: f64,
+    },
+    ReadValue {
+        device_id: String,
+    },
     /// Load parameters for a device (bd-cdh5.1)
-    LoadParameters { device_id: String },
+    LoadParameters {
+        device_id: String,
+    },
     /// Set a parameter value (bd-cdh5.1)
-    SetParameter { device_id: String, name: String, value: String },
+    SetParameter {
+        device_id: String,
+        name: String,
+        value: String,
+    },
     /// Execute a device command (bd-cdh5.4)
-    ExecuteCommand { device_id: String, command: String, args: String },
+    ExecuteCommand {
+        device_id: String,
+        command: String,
+        args: String,
+    },
 }
 
 /// Result of an async device action
@@ -158,7 +178,8 @@ impl DevicesPanel {
                             Ok(devices) => {
                                 self.devices = devices;
                                 self.last_refresh = Some(std::time::Instant::now());
-                                self.status = Some(format!("Loaded {} devices", self.devices.len()));
+                                self.status =
+                                    Some(format!("Loaded {} devices", self.devices.len()));
                                 self.error = None;
                             }
                             Err(e) => {
@@ -172,7 +193,8 @@ impl DevicesPanel {
                             error,
                         } => {
                             if success {
-                                self.status = Some(format!("Moved {} to {:.4}", device_id, final_position));
+                                self.status =
+                                    Some(format!("Moved {} to {:.4}", device_id, final_position));
                                 self.error = None;
                             } else {
                                 self.error = error;
@@ -186,7 +208,8 @@ impl DevicesPanel {
                             error,
                         } => {
                             if success {
-                                self.status = Some(format!("{}: {:.4} {}", device_id, value, units));
+                                self.status =
+                                    Some(format!("{}: {:.4} {}", device_id, value, units));
                                 self.error = None;
                             } else {
                                 self.error = error;
@@ -198,7 +221,8 @@ impl DevicesPanel {
                             error,
                         } => {
                             if success {
-                                self.status = Some(format!("Command '{}' executed successfully", command));
+                                self.status =
+                                    Some(format!("Command '{}' executed successfully", command));
                                 self.error = None;
                             } else {
                                 self.error = error;
@@ -219,11 +243,16 @@ impl DevicesPanel {
                     // Store any load errors
                     for (param_name, error) in result.errors {
                         let key = (result.device_id.clone(), param_name);
-                        self.param_errors.insert(key, format!("Load failed: {}", error));
+                        self.param_errors
+                            .insert(key, format!("Load failed: {}", error));
                     }
 
                     // Update device cache
-                    if let Some(device) = self.devices.iter_mut().find(|d| d.info.id == result.device_id) {
+                    if let Some(device) = self
+                        .devices
+                        .iter_mut()
+                        .find(|d| d.info.id == result.device_id)
+                    {
                         device.parameters = result.params;
                         device.parameters_loaded = true;
                     }
@@ -252,8 +281,16 @@ impl DevicesPanel {
 
                     if result.success {
                         // Update cached value
-                        if let Some(device) = self.devices.iter_mut().find(|d| d.info.id == result.device_id) {
-                            if let Some(param) = device.parameters.iter_mut().find(|p| p.descriptor.name == result.param_name) {
+                        if let Some(device) = self
+                            .devices
+                            .iter_mut()
+                            .find(|d| d.info.id == result.device_id)
+                        {
+                            if let Some(param) = device
+                                .parameters
+                                .iter_mut()
+                                .find(|p| p.descriptor.name == result.param_name)
+                            {
                                 param.update_value(result.actual_value.clone());
                             }
                         }
@@ -298,20 +335,20 @@ impl DevicesPanel {
         if offline_notice(ui, client.is_none(), OfflineContext::Devices) {
             return;
         }
-        
+
         ui.horizontal(|ui| {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);
             }
-            
+
             if let Some(last) = self.last_refresh {
                 let elapsed = last.elapsed();
                 ui.label(format!("Updated {}s ago", elapsed.as_secs()));
             }
         });
-        
+
         ui.separator();
-        
+
         // Show error/status messages
         if let Some(err) = &self.error {
             ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
@@ -319,17 +356,19 @@ impl DevicesPanel {
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::GREEN, status);
         }
-        
+
         // Clone selected device for rendering (avoids borrow issues)
-        let selected_device = self.selected_device.as_ref()
+        let selected_device = self
+            .selected_device
+            .as_ref()
             .and_then(|id| self.devices.iter().find(|d| &d.info.id == id).cloned());
-        
+
         // Device list and details in two columns
         ui.columns(2, |columns| {
             // Left column: device list
             columns[0].heading("Device List");
             columns[0].separator();
-            
+
             if self.devices.is_empty() {
                 columns[0].label("No devices found. Click Refresh to load.");
             } else {
@@ -338,66 +377,82 @@ impl DevicesPanel {
                     .show(&mut columns[0], |ui| {
                         for device in &self.devices {
                             let selected = self.selected_device.as_ref() == Some(&device.info.id);
-                            let label = format!(
-                                "{} ({})",
-                                device.info.name,
-                                device.info.driver_type
-                            );
-                            
+                            let label =
+                                format!("{} ({})", device.info.name, device.info.driver_type);
+
                             if ui.selectable_label(selected, &label).clicked() {
                                 self.selected_device = Some(device.info.id.clone());
                             }
                         }
                     });
             }
-            
+
             // Right column: device details
             columns[1].heading("Device Details");
             columns[1].separator();
-            
+
             if let Some(device) = &selected_device {
                 self.render_device_details(&mut columns[1], device);
             } else {
                 columns[1].label("Select a device to view details");
             }
         });
-        
+
         // Execute pending action after UI is done borrowing self
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
         }
     }
-    
+
     /// Render details for a selected device
     fn render_device_details(&mut self, ui: &mut egui::Ui, device: &DeviceCache) {
         let info = &device.info;
-        
+
         ui.group(|ui| {
             ui.heading(&info.name);
             ui.label(format!("ID: {}", info.id));
             ui.label(format!("Driver: {}", info.driver_type));
-            
+
             ui.separator();
             ui.label("Capabilities:");
             ui.horizontal(|ui| {
-                if info.is_movable { ui.label("📐 Movable"); }
-                if info.is_readable { ui.label("📖 Readable"); }
-                if info.is_triggerable { ui.label("⚡ Triggerable"); }
-                if info.is_frame_producer { ui.label("📷 Camera"); }
-                if info.is_exposure_controllable { ui.label("⏱ Exposure"); }
-                if info.is_shutter_controllable { ui.label("🚪 Shutter"); }
-                if info.is_wavelength_tunable { ui.label("🌈 Wavelength"); }
-                if info.is_emission_controllable { ui.label("💡 Emission"); }
+                if info.is_movable {
+                    ui.label("📐 Movable");
+                }
+                if info.is_readable {
+                    ui.label("📖 Readable");
+                }
+                if info.is_triggerable {
+                    ui.label("⚡ Triggerable");
+                }
+                if info.is_frame_producer {
+                    ui.label("📷 Camera");
+                }
+                if info.is_exposure_controllable {
+                    ui.label("⏱ Exposure");
+                }
+                if info.is_shutter_controllable {
+                    ui.label("🚪 Shutter");
+                }
+                if info.is_wavelength_tunable {
+                    ui.label("🌈 Wavelength");
+                }
+                if info.is_emission_controllable {
+                    ui.label("💡 Emission");
+                }
             });
         });
-        
+
         // State display
         if let Some(state) = &device.state {
             ui.add_space(8.0);
             ui.group(|ui| {
                 ui.heading("Current State");
-                ui.label(format!("Online: {}", if state.online { "✅" } else { "❌" }));
-                
+                ui.label(format!(
+                    "Online: {}",
+                    if state.online { "✅" } else { "❌" }
+                ));
+
                 if let Some(pos) = state.position {
                     ui.label(format!("Position: {:.4}", pos));
                 }
@@ -412,20 +467,22 @@ impl DevicesPanel {
                 }
             });
         }
-        
+
         // Control section for movable devices
         if info.is_movable {
             ui.add_space(8.0);
             ui.group(|ui| {
                 ui.heading("Motion Control");
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Target:");
-                    ui.add(egui::DragValue::new(&mut self.move_target)
-                        .speed(0.1)
-                        .suffix(" units"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.move_target)
+                            .speed(0.1)
+                            .suffix(" units"),
+                    );
                 });
-                
+
                 ui.horizontal(|ui| {
                     if ui.button("Move Absolute").clicked() {
                         self.pending_action = Some(PendingAction::MoveAbsolute {
@@ -440,11 +497,15 @@ impl DevicesPanel {
                         });
                     }
                 });
-                
+
                 // Quick move buttons
                 ui.horizontal(|ui| {
                     for delta in [-10.0, -1.0, -0.1, 0.1, 1.0, 10.0] {
-                        let label = if delta > 0.0 { format!("+{}", delta) } else { format!("{}", delta) };
+                        let label = if delta > 0.0 {
+                            format!("+{}", delta)
+                        } else {
+                            format!("{}", delta)
+                        };
                         if ui.button(label).clicked() {
                             self.pending_action = Some(PendingAction::MoveRelative {
                                 device_id: info.id.clone(),
@@ -455,7 +516,7 @@ impl DevicesPanel {
                 });
             });
         }
-        
+
         // Read button for readable devices
         if info.is_readable {
             ui.add_space(8.0);
@@ -503,7 +564,7 @@ impl DevicesPanel {
                 ui.horizontal(|ui| {
                     ui.label("Filter:");
                     ui.text_edit_singleline(&mut self.param_filter);
-                    
+
                     ui.checkbox(&mut self.show_advanced, "Advanced");
 
                     if is_loading {
@@ -520,14 +581,23 @@ impl DevicesPanel {
 
                 // Render parameters - collect any changes to apply later
                 let mut filtered = filter_parameters(&device.parameters, &self.param_filter);
-                
+
                 // If not showing advanced, filter by basic whitelist
                 if !self.show_advanced {
-                    let basic_whitelist = ["exposure_ms", "gain_mode", "temperature", "binning", "roi", "trigger_mode"];
+                    let basic_whitelist = [
+                        "exposure_ms",
+                        "gain_mode",
+                        "temperature",
+                        "binning",
+                        "roi",
+                        "trigger_mode",
+                    ];
                     filtered.retain(|p| {
                         let name = &p.descriptor.name;
                         // Match either exact name or group.name where name is in whitelist
-                        basic_whitelist.iter().any(|&w| name == w || name.ends_with(&format!(".{}", w)))
+                        basic_whitelist
+                            .iter()
+                            .any(|&w| name == w || name.ends_with(&format!(".{}", w)))
                     });
                 }
 
@@ -595,7 +665,12 @@ impl DevicesPanel {
 
     /// Render a single parameter (helper for Properties section)
     /// Uses separate edit buffers to allow mutation during rendering
-    fn render_single_parameter(&mut self, ui: &mut egui::Ui, device_id: &str, param: &ParameterCache) {
+    fn render_single_parameter(
+        &mut self,
+        ui: &mut egui::Ui,
+        device_id: &str,
+        param: &ParameterCache,
+    ) {
         let desc = &param.descriptor;
         let buffer_key = (device_id.to_string(), desc.name.clone());
 
@@ -644,7 +719,8 @@ impl DevicesPanel {
 
                 if selected != current {
                     // Use serde_json for proper escaping
-                    let json_value = serde_json::to_string(&selected).unwrap_or_else(|_| format!("\"{}\"", selected));
+                    let json_value = serde_json::to_string(&selected)
+                        .unwrap_or_else(|_| format!("\"{}\"", selected));
                     self.pending_action = Some(PendingAction::SetParameter {
                         device_id: device_id.to_string(),
                         name: desc.name.clone(),
@@ -676,7 +752,8 @@ impl DevicesPanel {
             }
             "int" => {
                 // Use persistent edit buffer for integers
-                let edit_buffer = self.param_edit_buffers
+                let edit_buffer = self
+                    .param_edit_buffers
                     .entry(buffer_key.clone())
                     .or_insert_with(|| param.current_value.clone());
 
@@ -719,7 +796,8 @@ impl DevicesPanel {
             }
             "float" => {
                 // Use persistent edit buffer for floats
-                let edit_buffer = self.param_edit_buffers
+                let edit_buffer = self
+                    .param_edit_buffers
                     .entry(buffer_key.clone())
                     .or_insert_with(|| param.current_value.clone());
 
@@ -749,7 +827,9 @@ impl DevicesPanel {
                     *self.param_edit_buffers.get_mut(&buffer_key).unwrap() = value.to_string();
 
                     // Commit on focus lost or drag stopped
-                    if (response.lost_focus() || response.drag_stopped()) && (value - original).abs() > f64::EPSILON {
+                    if (response.lost_focus() || response.drag_stopped())
+                        && (value - original).abs() > f64::EPSILON
+                    {
                         self.pending_action = Some(PendingAction::SetParameter {
                             device_id: device_id.to_string(),
                             name: desc.name.clone(),
@@ -761,7 +841,8 @@ impl DevicesPanel {
             "string" => {
                 // Use persistent edit buffer for strings - this fixes the per-frame recreation bug
                 let current_unquoted = param.current_value.trim_matches('"').to_string();
-                let edit_buffer = self.param_edit_buffers
+                let edit_buffer = self
+                    .param_edit_buffers
                     .entry(buffer_key.clone())
                     .or_insert_with(|| current_unquoted.clone());
 
@@ -796,7 +877,7 @@ impl DevicesPanel {
             ui.colored_label(egui::Color32::RED, err);
         }
     }
-    
+
     /// Execute a pending action
     fn execute_action(
         &mut self,
@@ -818,10 +899,18 @@ impl DevicesPanel {
             PendingAction::LoadParameters { device_id } => {
                 self.load_parameters(client, runtime, &device_id);
             }
-            PendingAction::SetParameter { device_id, name, value } => {
+            PendingAction::SetParameter {
+                device_id,
+                name,
+                value,
+            } => {
                 self.set_parameter(client, runtime, &device_id, &name, &value);
             }
-            PendingAction::ExecuteCommand { device_id, command, args } => {
+            PendingAction::ExecuteCommand {
+                device_id,
+                command,
+                args,
+            } => {
                 self.execute_command(client, runtime, &device_id, &command, &args);
             }
         }
@@ -852,7 +941,9 @@ impl DevicesPanel {
         self.action_in_flight = self.action_in_flight.saturating_add(1);
 
         runtime.spawn(async move {
-            let result = client.execute_device_command(&device_id, &command, &args).await;
+            let result = client
+                .execute_device_command(&device_id, &command, &args)
+                .await;
             let action = match result {
                 Ok(response) => DeviceActionResult::Command {
                     command,
@@ -872,7 +963,7 @@ impl DevicesPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Refresh the device list from the daemon
     fn refresh_devices(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
@@ -914,7 +1005,7 @@ impl DevicesPanel {
             let _ = tx.send(DeviceActionResult::Refresh(result)).await;
         });
     }
-    
+
     /// Move a device
     fn move_device(
         &mut self,
@@ -926,12 +1017,12 @@ impl DevicesPanel {
     ) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let device_id = device_id.to_string();
         let tx = self.action_tx.clone();
@@ -965,7 +1056,7 @@ impl DevicesPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Read value from a device
     fn read_device(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, device_id: &str) {
         self.error = None;
@@ -1013,7 +1104,12 @@ impl DevicesPanel {
 
     /// Load parameters for a device (async, non-blocking)
     /// Spawns a background task and uses channel to return results
-    fn load_parameters(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, device_id: &str) {
+    fn load_parameters(
+        &mut self,
+        client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+        device_id: &str,
+    ) {
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
@@ -1028,8 +1124,10 @@ impl DevicesPanel {
         let device_id_str = device_id.to_string();
 
         // Clear existing edit buffers and errors for this device
-        self.param_edit_buffers.retain(|(dev_id, _), _| dev_id != device_id);
-        self.param_errors.retain(|(dev_id, _), _| dev_id != device_id);
+        self.param_edit_buffers
+            .retain(|(dev_id, _), _| dev_id != device_id);
+        self.param_errors
+            .retain(|(dev_id, _), _| dev_id != device_id);
 
         // Set loading state
         self.loading_params_device = Some(device_id_str.clone());
@@ -1046,15 +1144,18 @@ impl DevicesPanel {
                 let descriptors = client.list_parameters(&device_id_str).await?;
 
                 // Parallel fetch of all parameter values (fixes N+1 pattern)
-                let fetch_futures: Vec<_> = descriptors.iter().map(|desc| {
-                    let mut client = client.clone();
-                    let device_id = device_id_str.clone();
-                    let param_name = desc.name.clone();
-                    async move {
-                        let value = client.get_parameter(&device_id, &param_name).await;
-                        (param_name, value)
-                    }
-                }).collect();
+                let fetch_futures: Vec<_> = descriptors
+                    .iter()
+                    .map(|desc| {
+                        let mut client = client.clone();
+                        let device_id = device_id_str.clone();
+                        let param_name = desc.name.clone();
+                        async move {
+                            let value = client.get_parameter(&device_id, &param_name).await;
+                            (param_name, value)
+                        }
+                    })
+                    .collect();
 
                 let fetch_results = futures::future::join_all(fetch_futures).await;
 
@@ -1062,7 +1163,8 @@ impl DevicesPanel {
                 let mut params = Vec::new();
                 let mut load_errors = Vec::new();
 
-                for (desc, (param_name, value_result)) in descriptors.into_iter().zip(fetch_results) {
+                for (desc, (param_name, value_result)) in descriptors.into_iter().zip(fetch_results)
+                {
                     match value_result {
                         Ok(v) => {
                             params.push(ParameterCache::new(desc, v.value));
@@ -1079,7 +1181,8 @@ impl DevicesPanel {
                     params,
                     errors: load_errors,
                 })
-            }.await;
+            }
+            .await;
 
             match result {
                 Ok(load_result) => {
@@ -1087,11 +1190,13 @@ impl DevicesPanel {
                 }
                 Err(e) => {
                     // Send empty result with error (device_id needed for cleanup)
-                    let _ = tx.send(ParamLoadResult {
-                        device_id: device_id_for_error,
-                        params: Vec::new(),
-                        errors: vec![("_load".to_string(), e.to_string())],
-                    }).await;
+                    let _ = tx
+                        .send(ParamLoadResult {
+                            device_id: device_id_for_error,
+                            params: Vec::new(),
+                            errors: vec![("_load".to_string(), e.to_string())],
+                        })
+                        .await;
                 }
             }
         });
@@ -1137,8 +1242,16 @@ impl DevicesPanel {
                         self.setting_params.remove(&key);
 
                         if result.success {
-                            if let Some(device) = self.devices.iter_mut().find(|d| d.info.id == result.device_id) {
-                                if let Some(param) = device.parameters.iter_mut().find(|p| p.descriptor.name == result.param_name) {
+                            if let Some(device) = self
+                                .devices
+                                .iter_mut()
+                                .find(|d| d.info.id == result.device_id)
+                            {
+                                if let Some(param) = device
+                                    .parameters
+                                    .iter_mut()
+                                    .find(|p| p.descriptor.name == result.param_name)
+                                {
                                     param.update_value(result.actual_value.clone());
                                 }
                             }
@@ -1170,7 +1283,9 @@ impl DevicesPanel {
 
         // Spawn async task
         runtime.spawn(async move {
-            let result = client.set_parameter(&device_id_str, &name_str, &value_str).await;
+            let result = client
+                .set_parameter(&device_id_str, &name_str, &value_str)
+                .await;
 
             let set_result = match result {
                 Ok(response) => ParamSetResult {
@@ -1178,7 +1293,11 @@ impl DevicesPanel {
                     param_name: name_str,
                     success: response.success,
                     actual_value: response.actual_value,
-                    error: if response.success { None } else { Some(response.error_message) },
+                    error: if response.success {
+                        None
+                    } else {
+                        Some(response.error_message)
+                    },
                 },
                 Err(e) => ParamSetResult {
                     device_id: device_id_str,

@@ -41,6 +41,7 @@ pub enum ConnectionState {
     /// Successfully connected to the daemon.
     Connected {
         /// Time when connection was established
+        #[allow(dead_code)]
         connected_at: Instant,
     },
 
@@ -78,6 +79,7 @@ impl ConnectionState {
 
     /// Returns true if in an error state.
     #[must_use]
+    #[allow(dead_code)]
     pub fn is_error(&self) -> bool {
         matches!(self, Self::Error { .. })
     }
@@ -124,13 +126,18 @@ impl PartialEq for ConnectionState {
             (Self::Disconnected, Self::Disconnected) => true,
             (Self::Connecting, Self::Connecting) => true,
             (Self::Connected { .. }, Self::Connected { .. }) => true,
+            (Self::Reconnecting { attempt: a1, .. }, Self::Reconnecting { attempt: a2, .. }) => {
+                a1 == a2
+            }
             (
-                Self::Reconnecting { attempt: a1, .. },
-                Self::Reconnecting { attempt: a2, .. },
-            ) => a1 == a2,
-            (
-                Self::Error { message: m1, retriable: r1 },
-                Self::Error { message: m2, retriable: r2 },
+                Self::Error {
+                    message: m1,
+                    retriable: r1,
+                },
+                Self::Error {
+                    message: m2,
+                    retriable: r2,
+                },
             ) => m1 == m2 && r1 == r2,
             _ => false,
         }
@@ -173,6 +180,7 @@ pub struct HealthConfig {
     /// How often to check connection health.
     pub interval: Duration,
     /// How long to wait for health check response.
+    #[allow(dead_code)]
     pub timeout: Duration,
     /// Whether health checks are enabled.
     pub enabled: bool,
@@ -194,6 +202,7 @@ impl Default for HealthConfig {
 impl HealthConfig {
     /// Faster health checks for local/Tailscale connections.
     #[must_use]
+    #[allow(dead_code)]
     pub fn fast() -> Self {
         Self {
             interval: Duration::from_secs(15),
@@ -215,6 +224,14 @@ pub struct HealthStatus {
     pub consecutive_failures: u32,
     /// Whether a health check is currently in progress.
     pub check_in_progress: bool,
+    /// RTT of the last successful health check in milliseconds (bd-j3xz.3.3).
+    pub last_rtt_ms: Option<f64>,
+    /// Total number of errors since connection established (bd-j3xz.3.3).
+    pub total_errors: u32,
+    /// When the last error occurred (bd-j3xz.3.3).
+    pub last_error_at: Option<Instant>,
+    /// The last error message for diagnostics (bd-j3xz.3.3).
+    pub last_error_message: Option<String>,
 }
 
 impl ReconnectConfig {
@@ -222,7 +239,9 @@ impl ReconnectConfig {
     #[must_use]
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let base_delay = self.initial_delay.as_secs_f64()
-            * self.backoff_multiplier.powi((attempt.saturating_sub(1)) as i32);
+            * self
+                .backoff_multiplier
+                .powi((attempt.saturating_sub(1)) as i32);
         let capped_delay = base_delay.min(self.max_delay.as_secs_f64());
 
         let final_delay = if self.jitter {
@@ -256,8 +275,9 @@ fn rand_jitter() -> f64 {
 /// Result of a connection attempt sent through the channel.
 pub enum ConnectResult {
     /// Connection succeeded.
+    /// The client is boxed to reduce enum size variance.
     Connected {
-        client: DaqClient,
+        client: Box<DaqClient>,
         daemon_version: Option<String>,
         address: DaemonAddress,
     },
@@ -305,6 +325,10 @@ impl ConnectionManager {
                 last_success: None,
                 consecutive_failures: 0,
                 check_in_progress: false,
+                last_rtt_ms: None,
+                total_errors: 0,
+                last_error_at: None,
+                last_error_message: None,
             },
             tx,
             rx,
@@ -314,6 +338,7 @@ impl ConnectionManager {
     }
 
     /// Create with custom reconnect configuration.
+    #[allow(dead_code)]
     pub fn with_config(config: ReconnectConfig) -> Self {
         let mut manager = Self::new();
         manager.config = config;
@@ -328,28 +353,33 @@ impl ConnectionManager {
 
     /// Get the reconnect configuration.
     #[must_use]
+    #[allow(dead_code)]
     pub fn config(&self) -> &ReconnectConfig {
         &self.config
     }
 
     /// Set the reconnect configuration.
+    #[allow(dead_code)]
     pub fn set_config(&mut self, config: ReconnectConfig) {
         self.config = config;
     }
 
     /// Get the health check configuration.
     #[must_use]
+    #[allow(dead_code)]
     pub fn health_config(&self) -> &HealthConfig {
         &self.health_config
     }
 
     /// Set the health check configuration.
+    #[allow(dead_code)]
     pub fn set_health_config(&mut self, config: HealthConfig) {
         self.health_config = config;
     }
 
     /// Get the current health status.
     #[must_use]
+    #[allow(dead_code)]
     pub fn health_status(&self) -> &HealthStatus {
         &self.health_status
     }
@@ -378,28 +408,37 @@ impl ConnectionManager {
         }
     }
 
-    /// Record a successful health check.
-    pub fn record_health_success(&mut self) {
+    /// Record a successful health check with RTT measurement (bd-j3xz.3.3).
+    ///
+    /// The `rtt_ms` parameter is the round-trip time of the health check in milliseconds.
+    pub fn record_health_success(&mut self, rtt_ms: f64) {
         let now = Instant::now();
         self.health_status.last_check = Some(now);
         self.health_status.last_success = Some(now);
         self.health_status.consecutive_failures = 0;
         self.health_status.check_in_progress = false;
-        tracing::trace!("Health check passed");
+        self.health_status.last_rtt_ms = Some(rtt_ms);
+        tracing::trace!("Health check passed (RTT: {:.1}ms)", rtt_ms);
     }
 
-    /// Record a failed health check.
+    /// Record a failed health check (bd-j3xz.3.3: enhanced diagnostics).
     ///
     /// Returns `true` if the failure threshold was reached and reconnection should start.
     pub fn record_health_failure(&mut self, error: &str) -> bool {
-        self.health_status.last_check = Some(Instant::now());
+        let now = Instant::now();
+        self.health_status.last_check = Some(now);
         self.health_status.consecutive_failures += 1;
         self.health_status.check_in_progress = false;
+        // Track total errors and last error details (bd-j3xz.3.3)
+        self.health_status.total_errors += 1;
+        self.health_status.last_error_at = Some(now);
+        self.health_status.last_error_message = Some(error.to_string());
 
         tracing::warn!(
-            "Health check failed ({}/{}): {}",
+            "Health check failed ({}/{}, total errors: {}): {}",
             self.health_status.consecutive_failures,
             self.health_config.failure_threshold,
+            self.health_status.total_errors,
             error
         );
 
@@ -426,7 +465,11 @@ impl ConnectionManager {
         }
 
         tracing::warn!("Health check threshold exceeded, triggering reconnect");
-        self.start_reconnect(address, runtime, "Connection lost (health check failed)".into());
+        self.start_reconnect(
+            address,
+            runtime,
+            "Connection lost (health check failed)".into(),
+        );
     }
 
     /// Reset health status (called on new connection).
@@ -436,6 +479,10 @@ impl ConnectionManager {
             last_success: None,
             consecutive_failures: 0,
             check_in_progress: false,
+            last_rtt_ms: None,
+            total_errors: 0,
+            last_error_at: None,
+            last_error_message: None,
         };
     }
 
@@ -450,18 +497,30 @@ impl ConnectionManager {
 
         self.state = ConnectionState::Connecting;
         self.reconnect_attempt = 0;
-        tracing::info!("Connecting to {} ({})", address.as_str(), address.source().label());
+        tracing::info!(
+            "Connecting to {} ({})",
+            address.as_str(),
+            address.source().label()
+        );
 
         self.spawn_connect_task(address, runtime, None);
         true
     }
 
     /// Start a reconnection attempt after a delay.
-    fn start_reconnect(&mut self, address: DaemonAddress, runtime: &tokio::runtime::Runtime, error: String) {
+    fn start_reconnect(
+        &mut self,
+        address: DaemonAddress,
+        runtime: &tokio::runtime::Runtime,
+        error: String,
+    ) {
         self.reconnect_attempt += 1;
 
         if !self.config.should_retry(self.reconnect_attempt) {
-            tracing::warn!("Max reconnect attempts ({}) reached", self.config.max_attempts);
+            tracing::warn!(
+                "Max reconnect attempts ({}) reached",
+                self.config.max_attempts
+            );
             self.state = ConnectionState::Error {
                 message: format!("{} (max retries exceeded)", error),
                 retriable: false,
@@ -524,7 +583,7 @@ impl ConnectionManager {
                     };
                     let _ = tx
                         .send(ConnectResult::Connected {
-                            client,
+                            client: Box::new(client),
                             daemon_version,
                             address,
                         })
@@ -566,7 +625,11 @@ impl ConnectionManager {
     /// Poll for connection results. Call this in the UI update loop.
     ///
     /// Returns the new client if connection succeeded.
-    pub fn poll(&mut self, runtime: &tokio::runtime::Runtime, address: &DaemonAddress) -> Option<(DaqClient, Option<String>)> {
+    pub fn poll(
+        &mut self,
+        runtime: &tokio::runtime::Runtime,
+        address: &DaemonAddress,
+    ) -> Option<(DaqClient, Option<String>)> {
         let result = match self.rx.try_recv() {
             Ok(r) => r,
             Err(_) => return None,
@@ -583,10 +646,7 @@ impl ConnectionManager {
                 // Guard against zombie connections: only accept if we're expecting a result
                 // (bd-d8mi: fixes race condition when user cancels while connect is pending)
                 if !self.state.is_connecting() {
-                    tracing::debug!(
-                        "Ignored stale Connected result (state={:?})",
-                        self.state
-                    );
+                    tracing::debug!("Ignored stale Connected result (state={:?})", self.state);
                     return None;
                 }
 
@@ -596,7 +656,7 @@ impl ConnectionManager {
                 self.reconnect_attempt = 0;
                 self.reset_health_status(); // Reset health tracking for new connection
                 tracing::info!("Connected to {}", connected_addr.as_str());
-                Some((client, daemon_version))
+                Some((*client, daemon_version))
             }
             ConnectResult::Failed {
                 error,
@@ -703,7 +763,10 @@ pub fn friendly_error_message(error: &str) -> String {
     }
 
     // DNS/resolution errors
-    if error_lower.contains("dns") || error_lower.contains("resolve") || error_lower.contains("no such host") {
+    if error_lower.contains("dns")
+        || error_lower.contains("resolve")
+        || error_lower.contains("no such host")
+    {
         return "Cannot resolve hostname. Check the address or network connection.".into();
     }
 
@@ -723,8 +786,12 @@ pub fn friendly_error_message(error: &str) -> String {
     }
 
     // TLS/certificate errors
-    if error_lower.contains("certificate") || error_lower.contains("tls") || error_lower.contains("ssl") {
-        return "TLS/certificate error. Check that the daemon supports the configured security.".into();
+    if error_lower.contains("certificate")
+        || error_lower.contains("tls")
+        || error_lower.contains("ssl")
+    {
+        return "TLS/certificate error. Check that the daemon supports the configured security."
+            .into();
     }
 
     // Transport errors (generic)

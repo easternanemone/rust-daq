@@ -102,7 +102,9 @@ async fn test_instrument_to_measurement_basic() {
     stage.wait_settled().await.unwrap();
 
     // Acquire measurements
-    let position_measurement = acquire_position_measurement(&stage, "stage_x").await.unwrap();
+    let position_measurement = acquire_position_measurement(&stage, "stage_x")
+        .await
+        .unwrap();
     let power_measurement = acquire_power_measurement(&power_meter, "laser_power")
         .await
         .unwrap();
@@ -137,7 +139,7 @@ async fn test_multi_instrument_scan_to_measurements() {
 
     camera.arm().await.unwrap();
 
-    let positions = vec![0.0, 5.0, 10.0, 15.0, 20.0];
+    let positions = [0.0, 5.0, 10.0, 15.0, 20.0];
     let mut measurements: Vec<Measurement> = Vec::new();
 
     // Simulate a coordinated scan
@@ -147,8 +149,12 @@ async fn test_multi_instrument_scan_to_measurements() {
         stage.wait_settled().await.unwrap();
 
         // Acquire measurements from all instruments
-        let position = acquire_position_measurement(&stage, "position").await.unwrap();
-        let power = acquire_power_measurement(&power_meter, "power").await.unwrap();
+        let position = acquire_position_measurement(&stage, "position")
+            .await
+            .unwrap();
+        let power = acquire_power_measurement(&power_meter, "power")
+            .await
+            .unwrap();
         let image = acquire_camera_image(&camera, "camera_frame", (i + 1) as u64)
             .await
             .unwrap();
@@ -187,7 +193,9 @@ async fn test_full_pipeline_to_csv() {
         stage.move_abs(pos).await.unwrap();
         stage.wait_settled().await.unwrap();
 
-        let position = acquire_position_measurement(&stage, "stage_x").await.unwrap();
+        let position = acquire_position_measurement(&stage, "stage_x")
+            .await
+            .unwrap();
         let power = acquire_power_measurement(&power_meter, "laser_power")
             .await
             .unwrap();
@@ -248,7 +256,9 @@ async fn test_full_pipeline_to_arrow() {
         stage.move_abs(pos).await.unwrap();
         stage.wait_settled().await.unwrap();
 
-        let position = acquire_position_measurement(&stage, "stage_x").await.unwrap();
+        let position = acquire_position_measurement(&stage, "stage_x")
+            .await
+            .unwrap();
         let power = acquire_power_measurement(&power_meter, "laser_power")
             .await
             .unwrap();
@@ -306,7 +316,9 @@ async fn test_full_pipeline_to_hdf5() {
         stage.wait_settled().await.unwrap();
 
         // Acquire from all instruments
-        let position = acquire_position_measurement(&stage, "stage_x").await.unwrap();
+        let position = acquire_position_measurement(&stage, "stage_x")
+            .await
+            .unwrap();
         let power = acquire_power_measurement(&power_meter, "laser_power")
             .await
             .unwrap();
@@ -429,7 +441,9 @@ async fn test_pipeline_graceful_shutdown() {
             let position = acquire_position_measurement(&stage_clone, "position")
                 .await
                 .unwrap();
-            let power = acquire_power_measurement(&power_clone, "power").await.unwrap();
+            let power = acquire_power_measurement(&power_clone, "power")
+                .await
+                .unwrap();
 
             // Write to pipeline
             let measurements = vec![position, power];
@@ -494,7 +508,9 @@ async fn test_pipeline_high_throughput() {
         let position = acquire_position_measurement(&stage, "position")
             .await
             .unwrap();
-        let power = acquire_power_measurement(&power_meter, "power").await.unwrap();
+        let power = acquire_power_measurement(&power_meter, "power")
+            .await
+            .unwrap();
 
         let measurements = vec![position, power];
         let batches = Measurement::into_arrow_batches(&measurements).unwrap();
@@ -555,8 +571,12 @@ async fn test_pipeline_data_integrity() {
         stage.move_abs(pos).await.unwrap();
         stage.wait_settled().await.unwrap();
 
-        let position = acquire_position_measurement(&stage, "stage_x").await.unwrap();
-        let power = acquire_power_measurement(&power_meter, "power").await.unwrap();
+        let position = acquire_position_measurement(&stage, "stage_x")
+            .await
+            .unwrap();
+        let power = acquire_power_measurement(&power_meter, "power")
+            .await
+            .unwrap();
 
         actual_measurements.push(position.clone());
         actual_measurements.push(power.clone());

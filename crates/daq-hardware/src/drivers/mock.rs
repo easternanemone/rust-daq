@@ -316,7 +316,7 @@ impl MockCamera {
                                     .collect();
 
                                 let frame = Arc::new(Frame::from_u16(w, h, &buffer));
-                                
+
                                 // Reliable Path
                                 if let Some(ref r_tx) = reliable_tx_for_task {
                                     let _ = r_tx.send(frame.clone()).await;
@@ -464,7 +464,17 @@ impl Triggerable for MockCamera {
         // Simulate 30fps frame readout time
         sleep(Duration::from_millis(33)).await;
 
-        println!("MockCamera: Frame #{} readout complete", count);
+        // Generate and emit frame
+        let (w, h) = self.resolution;
+        // Create simple pattern data
+        let buffer: Vec<u16> = (0..(w * h))
+            .map(|i| ((i + count as u32) % 65536) as u16)
+            .collect();
+        let frame = Arc::new(Frame::from_u16(w, h, &buffer));
+
+        let _ = self.frame_tx.send(frame);
+
+        println!("MockCamera: Frame #{} readout and emit complete", count);
         Ok(())
     }
 
@@ -532,7 +542,10 @@ impl daq_core::pipeline::MeasurementSource for MockCamera {
     type Output = Arc<Frame>;
     type Error = anyhow::Error;
 
-    async fn register_output(&self, tx: tokio::sync::mpsc::Sender<Self::Output>) -> Result<(), Self::Error> {
+    async fn register_output(
+        &self,
+        tx: tokio::sync::mpsc::Sender<Self::Output>,
+    ) -> Result<(), Self::Error> {
         let mut reliable = self.reliable_tx.lock().await;
         *reliable = Some(tx);
         Ok(())

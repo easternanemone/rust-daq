@@ -345,7 +345,10 @@ impl DioMonitorPanel {
                             // Tooltip with details
                             response.on_hover_ui(|ui| {
                                 ui.label(format!("Pin: {}", self.pin_labels[pin_idx as usize]));
-                                ui.label(format!("State: {}", if pin.state { "HIGH" } else { "LOW" }));
+                                ui.label(format!(
+                                    "State: {}",
+                                    if pin.state { "HIGH" } else { "LOW" }
+                                ));
                                 ui.label(format!("Rising edges: {}", pin.rising_edges));
                                 ui.label(format!("Falling edges: {}", pin.falling_edges));
                                 if let Some(pw) = pin.last_pulse_width_ms {
@@ -443,11 +446,7 @@ impl DioMonitorPanel {
                 let pin = &self.pins[i];
 
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&self.pin_labels[i])
-                            .monospace()
-                            .size(10.0),
-                    );
+                    ui.label(RichText::new(&self.pin_labels[i]).monospace().size(10.0));
 
                     let (rect, _) = ui.allocate_exact_size(
                         egui::vec2(available_width, row_height),
@@ -455,8 +454,7 @@ impl DioMonitorPanel {
                     );
 
                     // Background
-                    ui.painter()
-                        .rect_filled(rect, 2.0, Color32::from_gray(30));
+                    ui.painter().rect_filled(rect, 2.0, Color32::from_gray(30));
 
                     // Draw waveform from history
                     let mut prev_x = rect.min.x;

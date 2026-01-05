@@ -63,7 +63,9 @@ impl DocumentViewerPanel {
             .show(ui, |ui| {
                 ui.group(|ui| {
                     if self.document_log.is_empty() {
-                        ui.label("No documents yet. Queue a plan and start the engine to see data.");
+                        ui.label(
+                            "No documents yet. Queue a plan and start the engine to see data.",
+                        );
                     } else {
                         for doc in &self.document_log {
                             ui.horizontal(|ui| {
@@ -107,7 +109,8 @@ impl DocumentViewerPanel {
 
             if ui.button("Subscribe to Stream").clicked() {
                 // TODO: Call RunEngineService.StreamDocuments
-                self.document_log.push("START: run_uid=abc123, plan_type=count, num_points=5".to_string());
+                self.document_log
+                    .push("START: run_uid=abc123, plan_type=count, num_points=5".to_string());
             }
         });
 

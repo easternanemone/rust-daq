@@ -457,15 +457,15 @@ impl ModuleService for ModuleServiceImpl {
         match registry.create_module(&req.type_id, &req.instance_name) {
             Ok(module_id) => {
                 // Apply initial config if provided
-                if !req.initial_config.is_empty() {
-                    if let Err(e) = registry.configure_module(&module_id, req.initial_config) {
-                        // Module created but config failed - still return success with warning
-                        return Ok(Response::new(CreateModuleResponse {
-                            success: true,
-                            module_id,
-                            error_message: format!("Created but config failed: {}", e),
-                        }));
-                    }
+                if !req.initial_config.is_empty()
+                    && let Err(e) = registry.configure_module(&module_id, req.initial_config)
+                {
+                    // Module created but config failed - still return success with warning
+                    return Ok(Response::new(CreateModuleResponse {
+                        success: true,
+                        module_id,
+                        error_message: format!("Created but config failed: {}", e),
+                    }));
                 }
 
                 Ok(Response::new(CreateModuleResponse {
@@ -513,16 +513,16 @@ impl ModuleService for ModuleServiceImpl {
             .list_modules()
             .filter(|instance| {
                 // Filter by type if specified
-                if let Some(ref type_filter) = req.type_filter {
-                    if instance.type_id() != type_filter {
-                        return false;
-                    }
+                if let Some(ref type_filter) = req.type_filter
+                    && instance.type_id() != type_filter
+                {
+                    return false;
                 }
                 // Filter by state if specified
-                if let Some(state_filter) = req.state_filter {
-                    if instance.state() as i32 != state_filter {
-                        return false;
-                    }
+                if let Some(state_filter) = req.state_filter
+                    && instance.state() as i32 != state_filter
+                {
+                    return false;
                 }
                 true
             })
@@ -726,7 +726,7 @@ impl ModuleService for ModuleServiceImpl {
             Ok(()) => {
                 // Check if module is now ready
                 let instance = registry.get_module(&req.module_id);
-                let ready = instance.map_or(false, |inst| {
+                let ready = instance.is_some_and(|inst| {
                     let type_info = registry.get_type_info(inst.type_id());
                     let required_total = type_info.map(|i| i.required_roles.len()).unwrap_or(0);
                     let assignments = inst.get_assignments();

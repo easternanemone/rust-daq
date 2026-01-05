@@ -46,7 +46,10 @@ impl SmartStreamEditor {
                 for (i, exposure) in self.exposures.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(format!("{}: ", i + 1));
-                        if ui.add(egui::DragValue::new(exposure).suffix(" ms")).changed() {
+                        if ui
+                            .add(egui::DragValue::new(exposure).suffix(" ms"))
+                            .changed()
+                        {
                             changed = true;
                         }
                         if ui.button("❌").clicked() {

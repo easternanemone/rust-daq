@@ -71,7 +71,7 @@ impl SettableAnalogOutput {
     /// Get or cache the range info.
     fn get_range(&self) -> Result<Range> {
         if let Some(ref range) = *self.range.read() {
-            return Ok(range.clone());
+            return Ok(*range);
         }
 
         let range = self
@@ -79,7 +79,7 @@ impl SettableAnalogOutput {
             .range_info(0, self.range_index)
             .map_err(|e| anyhow::anyhow!("Failed to get range info: {}", e))?;
 
-        *self.range.write() = Some(range.clone());
+        *self.range.write() = Some(range);
         Ok(range)
     }
 

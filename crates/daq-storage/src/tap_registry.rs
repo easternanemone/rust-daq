@@ -42,7 +42,7 @@ impl TapConsumer {
     /// Check if this frame should be delivered based on nth_frame setting
     pub fn should_deliver(&self) -> bool {
         let count = self.frame_count.fetch_add(1, Ordering::Relaxed);
-        count % self.nth_frame as u64 == 0
+        count.is_multiple_of(self.nth_frame as u64)
     }
 
     /// Attempt to send a frame without blocking

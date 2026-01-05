@@ -24,17 +24,17 @@ mod camera_integration_tests {
         let mut registry = DeviceRegistry::new();
 
         // Register MockCamera
-	        registry
-	            .register(DeviceConfig {
-	                id: "test_camera".into(),
-	                name: "Test MockCamera".into(),
-	                driver: DriverType::MockCamera {
-	                    width: 640,
-	                    height: 480,
-	                },
-	            })
-	            .await
-	            .unwrap();
+        registry
+            .register(DeviceConfig {
+                id: "test_camera".into(),
+                name: "Test MockCamera".into(),
+                driver: DriverType::MockCamera {
+                    width: 640,
+                    height: 480,
+                },
+            })
+            .await
+            .unwrap();
 
         registry
     }

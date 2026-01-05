@@ -464,11 +464,11 @@ impl ComediDevice {
     ///
     /// Returns the first counter subdevice found, or an error if none.
     pub fn counter(&self) -> Result<Counter> {
-        let subdevice = self
-            .find_subdevice(SubdeviceType::Counter)
-            .ok_or_else(|| ComediError::NotSupported {
+        let subdevice = self.find_subdevice(SubdeviceType::Counter).ok_or_else(|| {
+            ComediError::NotSupported {
                 message: "No counter subdevice found".to_string(),
-            })?;
+            }
+        })?;
 
         Counter::new(self.clone(), subdevice)
     }

@@ -129,6 +129,7 @@ impl VersionManager {
     ///
     /// let manager = VersionManager::new(PathBuf::from("config/versions"));
     /// ```
+    #[must_use]
     pub fn new(versions_dir: PathBuf) -> Self {
         Self {
             versions_dir,
@@ -209,7 +210,8 @@ impl VersionManager {
 
     fn compute_hash(&self, settings: &Settings) -> String {
         let mut hasher = Sha256::new();
-        let toml_str = toml::to_string(settings).unwrap();
+        let toml_str = toml::to_string(settings)
+            .expect("Settings struct should always serialize to valid TOML");
         hasher.update(toml_str.as_bytes());
         format!("{:x}", hasher.finalize())[..8].to_string()
     }
@@ -316,7 +318,10 @@ impl VersionManager {
         while let Some(entry) = read_dir.next_entry().await? {
             let path = entry.path();
             if path.is_file() {
-                let filename = path.file_name().unwrap().to_string_lossy().to_string();
+                let Some(filename) = path.file_name().map(|n| n.to_string_lossy().to_string())
+                else {
+                    continue;
+                };
                 if let Some(info) = self.parse_version_info(&filename).await {
                     versions.push(info);
                 }

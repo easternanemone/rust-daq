@@ -159,10 +159,7 @@ impl ComediPanel {
                 ComediTab::Counter,
             ] {
                 let label = format!("{} {}", tab.icon(), tab.label());
-                if ui
-                    .selectable_label(self.active_tab == tab, label)
-                    .clicked()
-                {
+                if ui.selectable_label(self.active_tab == tab, label).clicked() {
                     self.active_tab = tab;
                 }
             }
@@ -218,7 +215,12 @@ impl ComediPanel {
     }
 
     /// Render overview tab.
-    fn render_overview(&mut self, ui: &mut Ui, _client: Option<&mut DaqClient>, _runtime: &Runtime) {
+    fn render_overview(
+        &mut self,
+        ui: &mut Ui,
+        _client: Option<&mut DaqClient>,
+        _runtime: &Runtime,
+    ) {
         ui.columns(2, |columns| {
             // Left column: Device info and subsystem summary
             columns[0].group(|ui| {

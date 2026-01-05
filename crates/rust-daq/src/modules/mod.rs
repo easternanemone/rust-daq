@@ -213,7 +213,7 @@ impl ModuleContext {
             module_id: self.module_id.clone(),
             event_type: event_type.to_string(),
             timestamp_ns: current_time_ns(),
-            severity: severity.into(),
+            severity: severity,
             message: message.to_string(),
             data,
         };
@@ -338,6 +338,7 @@ impl std::fmt::Debug for ModuleInstance {
 
 impl ModuleInstance {
     /// Create a new module instance
+    #[must_use]
     pub fn new(id: String, name: String, module: Box<dyn Module>) -> Self {
         let (event_tx, event_rx) = mpsc::channel(100);
         let (data_tx, data_rx) = mpsc::channel(100);
@@ -361,11 +362,13 @@ impl ModuleInstance {
     }
 
     /// Get the module type ID
+    #[must_use]
     pub fn type_id(&self) -> &str {
         self.module.type_id()
     }
 
     /// Get current state
+    #[must_use]
     pub fn state(&self) -> ModuleState {
         self.module.state()
     }
@@ -376,6 +379,7 @@ impl ModuleInstance {
     }
 
     /// Get current configuration
+    #[must_use]
     pub fn get_config(&self) -> HashMap<String, String> {
         self.module.get_config()
     }
@@ -391,6 +395,7 @@ impl ModuleInstance {
     }
 
     /// Get all assignments
+    #[must_use]
     pub fn get_assignments(&self) -> &HashMap<String, String> {
         &self.assignments
     }
@@ -536,11 +541,13 @@ impl ModuleRegistry {
     }
 
     /// List all registered module types
+    #[must_use]
     pub fn list_types(&self) -> Vec<&ModuleTypeInfo> {
         self.type_info_cache.values().collect()
     }
 
     /// Get info for a specific module type
+    #[must_use]
     pub fn get_type_info(&self, type_id: &str) -> Option<&ModuleTypeInfo> {
         self.type_info_cache.get(type_id)
     }
@@ -587,6 +594,7 @@ impl ModuleRegistry {
     }
 
     /// Get a module instance
+    #[must_use]
     pub fn get_module(&self, module_id: &str) -> Option<&ModuleInstance> {
         self.instances.get(module_id)
     }
@@ -749,6 +757,7 @@ impl ModuleRegistry {
     }
 
     /// Get the device registry
+    #[must_use]
     pub fn device_registry(&self) -> Arc<RwLock<DeviceRegistry>> {
         Arc::clone(&self.device_registry)
     }

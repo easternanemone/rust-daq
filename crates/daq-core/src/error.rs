@@ -242,9 +242,7 @@ pub enum DaqError {
     Processing(String),
 
     /// Requested frame dimensions exceed supported limits.
-    #[error(
-        "Frame dimensions {width}x{height} exceed maximum {max_dimension} per dimension"
-    )]
+    #[error("Frame dimensions {width}x{height} exceed maximum {max_dimension} per dimension")]
     FrameDimensionsTooLarge {
         width: u32,
         height: u32,

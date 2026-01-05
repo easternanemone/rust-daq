@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# NOTE (bd-n80s): This crate depends only on daq-core, NOT daq-hardware.
+# daq-hardware depends on daq-driver-pvcam (for the driver implementation),
+# so any traits/types needed here must come from daq-core to avoid cycles.
 daq-core = { path = "../daq-core" }
-# daq-hardware = { path = "../daq-hardware" } # Removed to break cycle
 pvcam-sys = { path = "pvcam-sys", optional = true }
 async-trait = "0.1"
 tokio = { version = "1", features = ["sync", "time"] }
@@ -26,6 +28,7 @@ criterion = { version = "0.5", default-features = false }
 arrow = "56"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 lazy_static = "1.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Examples and benchmarks that require specific features (bd-h7wh)
 [[example]]

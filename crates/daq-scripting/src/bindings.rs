@@ -364,7 +364,7 @@ pub fn register_hardware(engine: &mut Engine) {
                 return;
             }
 
-            let _ = block_in_place(|| {
+            block_in_place(|| {
                 handle.block_on(tokio::time::sleep(Duration::from_secs_f64(seconds)))
             });
         } else {
@@ -436,18 +436,13 @@ pub fn register_hardware(engine: &mut Engine) {
     engine.register_fn("get_soft_limits", |stage: &mut StageHandle| -> Dynamic {
         let limits = &stage.soft_limits;
         match (limits.min, limits.max) {
-            (Some(min), Some(max)) => Dynamic::from(vec![
-                Dynamic::from(min),
-                Dynamic::from(max),
-            ]),
-            (Some(min), None) => Dynamic::from(vec![
-                Dynamic::from(min),
-                Dynamic::from(f64::INFINITY),
-            ]),
-            (None, Some(max)) => Dynamic::from(vec![
-                Dynamic::from(f64::NEG_INFINITY),
-                Dynamic::from(max),
-            ]),
+            (Some(min), Some(max)) => Dynamic::from(vec![Dynamic::from(min), Dynamic::from(max)]),
+            (Some(min), None) => {
+                Dynamic::from(vec![Dynamic::from(min), Dynamic::from(f64::INFINITY)])
+            }
+            (None, Some(max)) => {
+                Dynamic::from(vec![Dynamic::from(f64::NEG_INFINITY), Dynamic::from(max)])
+            }
             (None, None) => Dynamic::from(Vec::<Dynamic>::new()),
         }
     });
@@ -549,7 +544,11 @@ mod tests {
         let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_abs(150.0);");
         assert!(result.is_err(), "Move above max should fail");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("soft limit"), "Error should mention soft limit: {}", err);
+        assert!(
+            err.contains("soft limit"),
+            "Error should mention soft limit: {}",
+            err
+        );
 
         // Move below min should fail
         let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_abs(-10.0);");
@@ -557,7 +556,10 @@ mod tests {
 
         // Relative move that would exceed limits should fail
         let result = engine.eval_with_scope::<()>(&mut scope, "stage.move_rel(60.0);"); // 50 + 60 = 110 > 100
-        assert!(result.is_err(), "Relative move exceeding limits should fail");
+        assert!(
+            result.is_err(),
+            "Relative move exceeding limits should fail"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

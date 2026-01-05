@@ -48,7 +48,15 @@
 //! the `lost_frames` counter is incremented by the gap size and `discontinuity_events`
 //! is incremented. This allows downstream consumers to know when data is missing.
 
+use crate::components::connection::PvcamConnection;
+#[cfg(feature = "pvcam_hardware")]
+use crate::components::features::PvcamFeatures;
 use anyhow::{anyhow, bail, Result};
+use daq_core::core::Roi;
+use daq_core::data::Frame;
+use daq_core::parameter::Parameter;
+#[cfg(feature = "pvcam_hardware")]
+use std::alloc::{alloc_zeroed, dealloc, Layout};
 #[cfg(feature = "pvcam_hardware")]
 use std::sync::atomic::AtomicBool;
 #[cfg(feature = "pvcam_hardware")]
@@ -57,16 +65,8 @@ use std::sync::atomic::AtomicI16;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-#[cfg(feature = "pvcam_hardware")]
-use std::alloc::{alloc_zeroed, dealloc, Layout};
-use daq_core::data::Frame;
-use daq_core::parameter::Parameter;
-use crate::components::connection::PvcamConnection;
-#[cfg(feature = "pvcam_hardware")]
-use crate::components::features::PvcamFeatures;
-use daq_core::core::Roi;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 #[cfg(feature = "pvcam_hardware")]
@@ -151,12 +151,14 @@ impl CallbackContext {
         };
 
         let timeout_duration = Duration::from_millis(timeout_ms);
-        let result = self.condvar.wait_timeout_while(guard, timeout_duration, |notified| {
-            // Wait while NOT notified AND no pending frames AND not shutdown
-            !*notified
-                && self.pending_frames.load(Ordering::Acquire) == 0
-                && !self.shutdown.load(Ordering::Acquire)
-        });
+        let result = self
+            .condvar
+            .wait_timeout_while(guard, timeout_duration, |notified| {
+                // Wait while NOT notified AND no pending frames AND not shutdown
+                !*notified
+                    && self.pending_frames.load(Ordering::Acquire) == 0
+                    && !self.shutdown.load(Ordering::Acquire)
+            });
 
         match result {
             Ok((mut guard, _)) => {
@@ -171,9 +173,15 @@ impl CallbackContext {
     #[inline]
     pub fn consume_one(&self) {
         // Saturating decrement to avoid underflow
-        let _ = self.pending_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            if n > 0 { Some(n - 1) } else { None }
-        });
+        let _ = self
+            .pending_frames
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                if n > 0 {
+                    Some(n - 1)
+                } else {
+                    None
+                }
+            });
     }
 
     /// Signal shutdown to wake waiting threads
@@ -305,7 +313,11 @@ impl PageAlignedBuffer {
         if ptr.is_null() {
             panic!("Failed to allocate page-aligned buffer of {} bytes", size);
         }
-        Self { ptr, layout, len: size }
+        Self {
+            ptr,
+            layout,
+            len: size,
+        }
     }
 
     /// Get a mutable pointer to the buffer for passing to PVCAM SDK.
@@ -324,7 +336,9 @@ impl PageAlignedBuffer {
 impl Drop for PageAlignedBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { dealloc(self.ptr, self.layout); }
+            unsafe {
+                dealloc(self.ptr, self.layout);
+            }
         }
     }
 }
@@ -332,10 +346,9 @@ impl Drop for PageAlignedBuffer {
 // SAFETY: The buffer is only accessed from the frame loop thread and
 // PVCAM SDK (which operates on the same thread). The Arc<Mutex<>> wrapper
 // ensures synchronized access.
+// NOTE: Sync impl removed - Arc<Mutex<T>> only requires T: Send for Arc to be Sync
 #[cfg(feature = "pvcam_hardware")]
 unsafe impl Send for PageAlignedBuffer {}
-#[cfg(feature = "pvcam_hardware")]
-unsafe impl Sync for PageAlignedBuffer {}
 
 // =============================================================================
 // FFI Safety Wrappers (bd-g9gq)
@@ -413,14 +426,15 @@ mod ffi_safe {
     /// # Returns
     /// - `Ok(frame_ptr)` - pointer to the frame data in the circular buffer
     /// - `Err(())` if no frame available or error
-    pub fn get_oldest_frame(hcam: i16, frame_info: &mut FRAME_INFO) -> Result<*mut std::ffi::c_void, ()> {
+    pub fn get_oldest_frame(
+        hcam: i16,
+        frame_info: &mut FRAME_INFO,
+    ) -> Result<*mut std::ffi::c_void, ()> {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
         let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
 
         // SAFETY: hcam is valid, frame_info and frame_ptr are valid stack allocations
-        let result = unsafe {
-            pl_exp_get_oldest_frame_ex(hcam, &mut frame_ptr, frame_info)
-        };
+        let result = unsafe { pl_exp_get_oldest_frame_ex(hcam, &mut frame_ptr, frame_info) };
 
         if result == 0 || frame_ptr.is_null() {
             Err(())
@@ -498,9 +512,7 @@ mod ffi_safe {
         debug_assert!(frame_size > 0, "frame_size must be positive");
 
         // SAFETY: All pointers are valid per caller contract, frame_size matches buffer
-        let result = unsafe {
-            pl_md_frame_decode(md_frame_ptr, frame_ptr as *mut _, frame_size)
-        };
+        let result = unsafe { pl_md_frame_decode(md_frame_ptr, frame_ptr as *mut _, frame_size) };
 
         result != 0
     }
@@ -573,7 +585,7 @@ pub struct PvcamAcquisition {
 
 impl PvcamAcquisition {
     pub fn new(streaming: Parameter<bool>) -> Self {
-        let (frame_tx, _) = tokio::sync::broadcast::channel(16);
+        let (frame_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             streaming,
             frame_count: Arc::new(AtomicU64::new(0)),
@@ -719,7 +731,10 @@ impl PvcamAcquisition {
     }
 
     #[cfg(feature = "arrow_tap")]
-    pub async fn set_arrow_tap(&self, tx: tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>) {
+    pub async fn set_arrow_tap(
+        &self,
+        tx: tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>,
+    ) {
         let mut guard = self.arrow_tap.lock().await;
         *guard = Some(tx);
     }
@@ -765,7 +780,7 @@ impl PvcamAcquisition {
         conn: &PvcamConnection,
         roi: Roi,
         binning: (u16, u16),
-        exposure_ms: f64
+        exposure_ms: f64,
     ) -> Result<()> {
         // Avoid unused parameter warnings when hardware feature is disabled.
         let _ = conn;
@@ -796,14 +811,20 @@ impl PvcamAcquisition {
             if use_metadata && !current_metadata {
                 tracing::info!("Enabling PVCAM metadata for hardware timestamp decoding");
                 if let Err(e) = PvcamFeatures::set_metadata_enabled(conn, true) {
-                    tracing::error!("Failed to enable metadata: {}. Falling back to no metadata", e);
+                    tracing::error!(
+                        "Failed to enable metadata: {}. Falling back to no metadata",
+                        e
+                    );
                     self.metadata_enabled.store(false, Ordering::Release);
                 }
             } else if !use_metadata && current_metadata {
                 // Disable metadata to prevent data corruption when not decoding
                 tracing::debug!("Disabling PVCAM metadata (no decoder configured)");
                 if let Err(e) = PvcamFeatures::set_metadata_enabled(conn, false) {
-                    tracing::warn!("Failed to disable metadata: {}. Data may include headers", e);
+                    tracing::warn!(
+                        "Failed to disable metadata: {}. Data may include headers",
+                        e
+                    );
                 }
             }
 
@@ -837,7 +858,8 @@ impl PvcamAcquisition {
                     exposure_ms as uns32,
                     &mut frame_bytes,
                     CIRC_NO_OVERWRITE,
-                ) == 0 {
+                ) == 0
+                {
                     let _ = self.streaming.set(false).await;
                     return Err(anyhow!("Failed to setup continuous acquisition"));
                 }
@@ -915,7 +937,10 @@ impl PvcamAcquisition {
             // to avoid internal driver copies (double buffering).
             let mut circ_buf = PageAlignedBuffer::new(circ_buf_size);
             let circ_ptr = circ_buf.as_mut_ptr();
-            tracing::debug!("Allocated {}KB page-aligned circular buffer", circ_buf_size / 1024);
+            tracing::debug!(
+                "Allocated {}KB page-aligned circular buffer",
+                circ_buf_size / 1024
+            );
 
             unsafe {
                 // SAFETY: circ_ptr points to page-aligned contiguous buffer; SDK expects byte size.
@@ -961,7 +986,8 @@ impl PvcamAcquisition {
             // Fatal errors (READOUT_FAILED, etc.) are sent from frame loop to update streaming state.
             // Uses tokio unbounded_channel: send() is non-blocking (safe from sync code),
             // recv() is async-native (no polling needed in watcher task).
-            let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<AcquisitionError>();
+            let (error_tx, mut error_rx) =
+                tokio::sync::mpsc::unbounded_channel::<AcquisitionError>();
             *self.error_tx.lock().await = Some(error_tx.clone());
 
             // Clone streaming parameter for error watcher task
@@ -1025,14 +1051,16 @@ impl PvcamAcquisition {
         #[cfg(not(feature = "pvcam_hardware"))]
         {
             tracing::warn!("start_stream: pvcam_hardware NOT compiled - using mock stream");
-            self.start_mock_stream(roi, binning, exposure_ms, reliable_tx).await?;
+            self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
+                .await?;
         }
 
         // Handle case where hardware feature enabled but handle missing (mock fallback logic)
         #[cfg(feature = "pvcam_hardware")]
         if conn.handle().is_none() {
             tracing::warn!("start_stream: pvcam_hardware compiled but handle is None - falling back to mock stream");
-            self.start_mock_stream(roi, binning, exposure_ms, reliable_tx).await?;
+            self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
+                .await?;
         }
 
         Ok(())
@@ -1059,11 +1087,11 @@ impl PvcamAcquisition {
     }
 
     async fn start_mock_stream(
-        &self, 
-        roi: Roi, 
-        binning: (u16, u16), 
+        &self,
+        roi: Roi,
+        binning: (u16, u16),
         exposure_ms: f64,
-        reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>
+        reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>,
     ) -> Result<()> {
         let streaming = self.streaming.clone();
         let frame_tx = self.frame_tx.clone();
@@ -1077,13 +1105,16 @@ impl PvcamAcquisition {
 
             while streaming.get() {
                 tokio::time::sleep(Duration::from_millis(exposure_ms as u64)).await;
-                if !streaming.get() { break; }
+                if !streaming.get() {
+                    break;
+                }
 
                 let frame_num = frame_count.fetch_add(1, Ordering::SeqCst);
                 let mut pixels = vec![0u16; frame_size];
                 for y in 0..binned_height {
                     for x in 0..binned_width {
-                        let value = (((x + y + frame_num as u32) % 4096) as u16).saturating_add(100);
+                        let value =
+                            (((x + y + frame_num as u32) % 4096) as u16).saturating_add(100);
                         pixels[(y * binned_width + x) as usize] = value;
                     }
                 }
@@ -1099,13 +1130,18 @@ impl PvcamAcquisition {
                         .with_timestamp(Frame::timestamp_now())
                         .with_exposure(exposure_ms)
                         .with_roi_offset(roi.x, roi.y)
-                        .with_metadata(ext_metadata)
+                        .with_metadata(ext_metadata),
                 );
-                
+
+                // CRITICAL: Broadcast first, then reliable (matches hardware path)
+                // This ensures GUI streaming gets frames regardless of pipeline state
+                let _ = frame_tx.send(frame.clone());
                 if let Some(ref tx) = reliable_tx {
-                    let _ = tx.send(frame.clone()).await;
+                    // Use try_send to avoid blocking mock stream loop
+                    if tx.try_send(frame).is_err() && frame_num.is_multiple_of(100) {
+                        tracing::warn!("Mock stream: reliable channel full at frame {}", frame_num);
+                    }
                 }
-                let _ = frame_tx.send(frame);
             }
         });
         Ok(())
@@ -1189,8 +1225,9 @@ impl PvcamAcquisition {
         shutdown: Arc<AtomicBool>,
         frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
         reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>,
-        #[cfg(feature = "arrow_tap")]
-        arrow_tap: Option<tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>>,
+        #[cfg(feature = "arrow_tap")] arrow_tap: Option<
+            tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>,
+        >,
         frame_count: Arc<AtomicU64>,
         lost_frames: Arc<AtomicU64>,
         discontinuity_events: Arc<AtomicU64>,
@@ -1214,23 +1251,18 @@ impl PvcamAcquisition {
         let mut buffer_cnt: uns32 = 0;
         let mut consecutive_timeouts: u32 = 0;
         const CALLBACK_WAIT_TIMEOUT_MS: u64 = 100; // Short timeout to check shutdown
-        let max_consecutive_timeouts: u32 = if use_callback {
-            // In callback mode, "no frames" often just means we're waiting for the next exposure/readout.
-            // Scale the stuck-acquisition timeout with exposure time while still bounding it.
-            let expected_period_ms = exposure_ms.max(1.0);
-            // Bound to 24h to avoid overflow while still supporting very long exposures.
-            let max_idle_ms = (expected_period_ms * 10.0 + 5_000.0).min(24.0 * 60.0 * 60.0 * 1000.0);
-            ((max_idle_ms / CALLBACK_WAIT_TIMEOUT_MS as f64).ceil() as u64).min(u32::MAX as u64) as u32
-        } else {
-            // Polling mode sleeps ~1ms per miss, so 5000 ~= 5 seconds.
-            5000
-        };
+                                                   // FORCE LONG TIMEOUT for debugging
+        let max_consecutive_timeouts: u32 = 1000; // 100s
 
         if use_callback {
             tracing::debug!("Using EOF callback mode for frame acquisition");
         } else {
             tracing::debug!("Using polling mode for frame acquisition");
         }
+
+        // ... (existing md_frame logic) ... check file content
+
+        // Inside loop:
 
         // Gemini SDK review: Create md_frame struct for metadata decoding
         // This struct holds pointers into the frame buffer for extracting timestamps.
@@ -1288,6 +1320,22 @@ impl PvcamAcquisition {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 consecutive_timeouts += 1;
+
+                // DIAGNOSTIC PROBE: Warn every 1 second
+                if consecutive_timeouts % 10 == 0 {
+                    let (st, bytes, cnt) = match ffi_safe::check_cont_status(hcam) {
+                        Ok(vals) => vals,
+                        Err(_) => (-999, 0, 0),
+                    };
+                    tracing::warn!(
+                        "DIAGNOSTIC: Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}",
+                        consecutive_timeouts,
+                        st,
+                        bytes,
+                        cnt
+                    );
+                }
+
                 if consecutive_timeouts >= max_consecutive_timeouts {
                     tracing::warn!("Frame loop: max consecutive timeouts reached");
                     // Gemini SDK review: Signal involuntary stop on timeout
@@ -1348,7 +1396,6 @@ impl PvcamAcquisition {
 
                 // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
-
                     // Frame loss detection (bd-ek9n.3): Check for gaps in FrameNr sequence
                     // FrameNr is 1-based hardware counter from PVCAM
                     let current_frame_nr = frame_info.FrameNr;
@@ -1388,7 +1435,11 @@ impl PvcamAcquisition {
                     // bd-g9gq: Use FFI safe wrapper with explicit safety contract
                     let frame_metadata = if !md_frame_ptr.is_null() {
                         // Decode the metadata-enabled frame buffer
-                        if ffi_safe::decode_frame_metadata(md_frame_ptr, frame_ptr, frame_bytes as uns32) {
+                        if ffi_safe::decode_frame_metadata(
+                            md_frame_ptr,
+                            frame_ptr,
+                            frame_bytes as uns32,
+                        ) {
                             // Successfully decoded - extract timestamps
                             let hdr = &*(*md_frame_ptr).header;
                             let ts_res = hdr.timestampResNs as u64;
@@ -1402,7 +1453,10 @@ impl PvcamAcquisition {
                                 roi_count: hdr.roiCount,
                             })
                         } else {
-                            tracing::warn!("pl_md_frame_decode failed for frame {}", current_frame_nr);
+                            tracing::warn!(
+                                "pl_md_frame_decode failed for frame {}",
+                                current_frame_nr
+                            );
                             None
                         }
                     } else {
@@ -1414,10 +1468,7 @@ impl PvcamAcquisition {
                     // For simplicity, we copy expected_frame_bytes from the buffer start
                     // (metadata header is at the END of the buffer per PVCAM design).
                     let copy_bytes = frame_bytes.min(expected_frame_bytes);
-                    let sdk_bytes = std::slice::from_raw_parts(
-                        frame_ptr as *const u8,
-                        copy_bytes,
-                    );
+                    let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
                     let pixel_data = sdk_bytes.to_vec();
 
                     // Unlock ASAP to free SDK buffer for next frame
@@ -1458,25 +1509,52 @@ impl PvcamAcquisition {
                     let frame_arc = Arc::new(frame);
 
                     // Deliver to channels
-                    if let Some(ref tx) = reliable_tx {
-                        let _ = tx.blocking_send(frame_arc.clone());
+                    // CRITICAL: Send to broadcast FIRST before reliable path.
+                    // The reliable path uses blocking_send which can block if the
+                    // measurement pipeline is backpressured. Sending to broadcast
+                    // first ensures GUI streaming gets frames regardless.
+                    let receiver_count = frame_tx.receiver_count();
+                    if receiver_count == 0 {
+                        tracing::warn!(
+                            "Dropping frame {}: no active broadcast subscribers",
+                            current_frame_nr
+                        );
+                    } else if current_frame_nr % 30 == 1 {
+                        tracing::debug!(
+                            "Sending frame {} to {} broadcast subscribers",
+                            current_frame_nr,
+                            receiver_count
+                        );
                     }
                     let _ = frame_tx.send(frame_arc.clone());
 
+                    // Reliable path: use try_send to avoid blocking the frame loop
+                    // If measurement pipeline is slow, frames will be dropped here
+                    // rather than blocking broadcast delivery
+                    if let Some(ref tx) = reliable_tx {
+                        if tx.try_send(frame_arc.clone()).is_err() && current_frame_nr % 100 == 0 {
+                            // Rate-limit warnings to avoid log spam at high FPS
+                            tracing::warn!("Reliable channel full, dropping frames around {} for measurement pipeline", current_frame_nr);
+                        }
+                    }
+
                     // Arrow tap optimization (bd-ek9n.5)
+                    // Use try_send to avoid blocking frame loop
                     #[cfg(feature = "arrow_tap")]
                     if let Some(ref tap) = arrow_tap {
                         use arrow::array::{PrimitiveArray, UInt16Type};
                         use arrow::buffer::Buffer;
                         // Frame.data is a public Vec<u8> field, not a method
                         let buffer = Buffer::from(frame_arc.data.clone());
-                        let arr = Arc::new(PrimitiveArray::<UInt16Type>::new(Arc::new(buffer), None));
-                        let _ = tap.blocking_send(arr);
+                        let arr =
+                            Arc::new(PrimitiveArray::<UInt16Type>::new(Arc::new(buffer), None));
+                        let _ = tap.try_send(arr); // Non-blocking: drop if slow
                     }
 
                     // Gemini SDK review: Send metadata through channel if available
+                    // Use try_send to avoid blocking frame loop
                     if let (Some(md), Some(ref tx)) = (frame_metadata, &metadata_tx) {
-                        let _ = tx.blocking_send(md);
+                        let _ = tx.try_send(md); // Non-blocking: drop if slow
                     }
                 }
             }
@@ -1501,7 +1579,13 @@ impl PvcamAcquisition {
                     // Confirm there's really no data available and then clear pending_frames to avoid spin.
                     let mut has_buffered_frames = false;
                     unsafe {
-                        if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                        if pl_exp_check_cont_status(
+                            hcam,
+                            &mut status,
+                            &mut bytes_arrived,
+                            &mut buffer_cnt,
+                        ) != 0
+                        {
                             has_buffered_frames = buffer_cnt > 0;
                         }
                     }

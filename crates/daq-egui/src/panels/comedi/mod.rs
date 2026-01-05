@@ -19,6 +19,13 @@
 //! - [`DioMonitorPanel`] - LED-style DIO state visualization
 //! - [`CounterDisplayPanel`] - Large counter value display with rate
 //! - [`DataLoggerPanel`] - Scrolling data table with export
+//!
+//! # Note
+//!
+//! These panels are work-in-progress and not yet integrated into the main UI.
+//! They are retained for future use when the Comedi gRPC interface is complete.
+
+#![allow(dead_code)]
 
 mod analog_input;
 mod analog_output;
@@ -32,29 +39,41 @@ mod trigger;
 mod unified;
 mod voltmeter;
 
+// WIP: These panels are not yet integrated. Uncomment when Comedi gRPC is complete.
+#[allow(unused_imports)]
 pub use analog_input::AnalogInputPanel;
+#[allow(unused_imports)]
 pub use analog_output::AnalogOutputPanel;
+#[allow(unused_imports)]
 pub use counter::CounterPanel;
+#[allow(unused_imports)]
 pub use counter_display::{
     counter_display_channel, CounterDisplayPanel, CounterDisplayReceiver, CounterDisplaySender,
     CounterUpdate,
 };
+#[allow(unused_imports)]
 pub use data_logger::{
     data_logger_channel, DataLoggerPanel, DataLoggerReceiver, DataLoggerSender, LogEntry,
 };
+#[allow(unused_imports)]
 pub use digital_io::DigitalIOPanel;
+#[allow(unused_imports)]
 pub use dio_monitor::{
     dio_monitor_channel, DioMonitorPanel, DioMonitorReceiver, DioMonitorSender, DioStateUpdate,
 };
+#[allow(unused_imports)]
 pub use oscilloscope::{
     oscilloscope_channel, OscilloscopePanel, OscilloscopeReceiver, OscilloscopeSample,
     OscilloscopeSender, SignalSource, SyntheticSignal, TriggerEdge, TriggerMode,
 };
+#[allow(unused_imports)]
 pub use trigger::{
     ClockSource, SubsystemTriggerConfig, SyncMode, TriggerConfigPanel, TriggerPolarity,
     TriggerSource,
 };
+#[allow(unused_imports)]
 pub use unified::ComediPanel;
+#[allow(unused_imports)]
 pub use voltmeter::{
     voltmeter_channel, VoltmeterPanel, VoltmeterReading, VoltmeterReceiver, VoltmeterSender,
 };

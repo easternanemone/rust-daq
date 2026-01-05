@@ -73,7 +73,10 @@ where
 }
 
 // Simpler helper for synchronous operations that may error
-fn map_error<T, E: std::fmt::Display>(label: &str, result: Result<T, E>) -> Result<T, Box<EvalAltResult>> {
+fn map_error<T, E: std::fmt::Display>(
+    label: &str,
+    result: Result<T, E>,
+) -> Result<T, Box<EvalAltResult>> {
     result.map_err(|e| {
         Box::new(EvalAltResult::ErrorRuntime(
             format!("{}: {}", label, e).into(),
@@ -297,7 +300,7 @@ pub fn register_comedi_hardware(engine: &mut Engine) {
         "range",
         |ai: &mut AnalogInputHandle, channel: i64| -> Array {
             let (min, max) = ai.driver.voltage_range(channel as u32);
-            vec![Dynamic::from(min), Dynamic::from(max)].into()
+            vec![Dynamic::from(min), Dynamic::from(max)]
         },
     );
 
@@ -308,7 +311,10 @@ pub fn register_comedi_hardware(engine: &mut Engine) {
     // ao.write(channel, voltage)
     engine.register_fn(
         "write",
-        |ao: &mut AnalogOutputHandle, channel: i64, voltage: f64| -> Result<(), Box<EvalAltResult>> {
+        |ao: &mut AnalogOutputHandle,
+         channel: i64,
+         voltage: f64|
+         -> Result<(), Box<EvalAltResult>> {
             map_error("AO write", ao.driver.write_voltage(channel as u32, voltage))?;
 
             // Broadcast measurement
@@ -330,7 +336,10 @@ pub fn register_comedi_hardware(engine: &mut Engine) {
     engine.register_fn(
         "write_raw",
         |ao: &mut AnalogOutputHandle, channel: i64, value: i64| -> Result<(), Box<EvalAltResult>> {
-            map_error("AO write_raw", ao.driver.write_raw(channel as u32, value as u32))
+            map_error(
+                "AO write_raw",
+                ao.driver.write_raw(channel as u32, value as u32),
+            )
         },
     );
 
@@ -364,7 +373,7 @@ pub fn register_comedi_hardware(engine: &mut Engine) {
         "range",
         |ao: &mut AnalogOutputHandle, channel: i64| -> Array {
             let (min, max) = ao.driver.voltage_range(channel as u32);
-            vec![Dynamic::from(min), Dynamic::from(max)].into()
+            vec![Dynamic::from(min), Dynamic::from(max)]
         },
     );
 
@@ -582,7 +591,9 @@ pub mod mock {
         }
 
         pub fn get_raw(&self, channel: u32) -> Option<u32> {
-            self.values.get(channel as usize).map(|v| v.load(Ordering::SeqCst))
+            self.values
+                .get(channel as usize)
+                .map(|v| v.load(Ordering::SeqCst))
         }
     }
 
@@ -743,8 +754,8 @@ pub mod mock {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::mock::*;
+    use super::*;
 
     #[test]
     fn test_mock_analog_input() {

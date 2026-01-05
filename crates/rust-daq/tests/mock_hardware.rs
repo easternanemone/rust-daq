@@ -161,7 +161,7 @@ async fn test_mock_camera_streaming() {
 
 #[tokio::test]
 async fn test_mock_camera_resolutions() {
-    let cameras = vec![
+    let cameras = [
         MockCamera::new(1920, 1080),
         MockCamera::new(640, 480),
         MockCamera::new(3840, 2160),
@@ -182,7 +182,7 @@ async fn test_synchronized_stage_camera() {
     let camera = MockCamera::new(1920, 1080);
 
     // Simulate a simple scan: move stage, trigger camera at each position
-    let positions = vec![0.0, 5.0, 10.0, 15.0, 20.0];
+    let positions = [0.0, 5.0, 10.0, 15.0, 20.0];
 
     camera.arm().await.unwrap();
 

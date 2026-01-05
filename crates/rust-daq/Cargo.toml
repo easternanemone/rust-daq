@@ -54,11 +54,11 @@ egui = { version = "0.30", optional = true }
 eframe = { version = "0.30", features = ["persistence"], optional = true }
 egui_plot = { version = "0.30", optional = true }
 egui_extras = { version = "0.30", optional = true }
-hdf5 = { version = "0.8.1", optional = true }
+hdf5 = { package = "hdf5-metno", version = "0.11.0", optional = true }
 arrow = { version = "57", optional = true, features = ["ipc"] }
 csv = { version = "1.3.0", optional = true }
 matrw = { version = "0.1.2", optional = true }
-netcdf = { version = "0.9.0", optional = true }
+# netcdf = { version = "0.9.0", optional = true }
 chrono = { version = "0.4.38", features = ["serde"] }
 
 # Serialization & Configuration
@@ -111,6 +111,8 @@ tokio-test = "0.4"
 tracing-test = "0.2"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 nix = { version = "0.29", features = ["term"] }
+daq-driver-pvcam = { path = "../daq-driver-pvcam", features = ["mock"] }
+
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hostname = "0.4"
@@ -150,7 +152,7 @@ backend = ["server", "modules", "all_hardware", "storage_csv"]
 frontend = ["gui_egui", "networking"]
 cli = ["all_hardware", "storage_csv", "scripting", "scripting_python"]
 
-full = ["storage_csv", "storage_arrow", "storage_matlab", "storage_netcdf", "instrument_serial", "modules", "server", "all_hardware"]
+full = ["storage_csv", "storage_arrow", "storage_matlab", "instrument_serial", "modules", "server", "all_hardware"]
 
 # NOTE: storage_hdf5 requires a native HDF5 installation (e.g., libhdf5-dev). It is
 # intentionally omitted from the "full" feature set to keep CI and users without HDF5
@@ -162,7 +164,7 @@ storage_csv = ["dep:csv"]
 storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
 storage_arrow = ["dep:arrow", "daq-storage/storage_arrow"]
 storage_matlab = ["dep:matrw"]
-storage_netcdf = ["dep:netcdf"]
+# storage_netcdf = ["dep:netcdf"]
 
 # Legacy instrument support
 instrument_serial = ["dep:serialport", "daq-hardware/serial"]
@@ -171,8 +173,9 @@ instrument_visa = ["dep:visa-rs"]
 # V5+ Serial communication (safe async for laboratory devices)
 tokio_serial = ["dep:tokio-serial", "instrument_serial", "daq-hardware/tokio_serial"]
 
-# V5 Hardware drivers (async, capability-based)
-# Serial drivers now use tokio-serial
+# V5 Hardware drivers (bd-5bfv): Pass-through to daq-hardware.
+# Canonical driver feature definitions are in daq-hardware/Cargo.toml.
+# Serial drivers use tokio-serial for async I/O.
 instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
 instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
 instrument_photometrics = ["tokio_serial", "daq-hardware/instrument_photometrics"]

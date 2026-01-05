@@ -36,7 +36,10 @@
 //! // Process documents as they arrive
 //! while let Some(doc) = docs.recv().await {
 //!     match doc {
-//!         Document::Event(e) => println!("Data: {:?}", e.data),
+//!         Document::Event(e) => {
+//!             println!("Data: {:?}", e.data);
+//!             println!("Frames: {:?}", e.arrays.keys());
+//!         }
 //!         Document::Stop(_) => break,
 //!         _ => {}
 //!     }
@@ -50,6 +53,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
 
 use super::plans::{Plan, PlanCommand};
+use daq_core::data::Frame;
 use daq_core::experiment::document::{
     new_uid, DataKey, DescriptorDoc, Document, EventDoc, ExperimentManifest, StartDoc, StopDoc,
 };
@@ -92,7 +96,9 @@ struct RunContext {
     descriptor_uid: String,
     seq_num: u32,
     collected_data: HashMap<String, f64>,
+    collected_frames: HashMap<String, Vec<u8>>,
     current_positions: HashMap<String, f64>,
+    frame_subscriptions: HashMap<String, broadcast::Receiver<Arc<Frame>>>,
 }
 
 /// The RunEngine orchestrates experiment execution
@@ -284,18 +290,52 @@ impl RunEngine {
         // and persist the hardware state snapshot for experiment reproducibility
         self.emit_document(Document::Manifest(manifest)).await;
 
+        // Setup frame subscriptions for any FrameProducers in the plan
+        let mut frame_subscriptions = HashMap::new();
+        {
+            let registry = self.device_registry.read().await;
+            for det_id in plan.detectors() {
+                // Check if it's a FrameProducer
+                if let Some(producer) = registry.get_frame_producer(&det_id) {
+                    if let Some(rx) = producer.subscribe_frames().await {
+                        info!("Subscribed to frames from {}", det_id);
+                        frame_subscriptions.insert(det_id.to_string(), rx);
+                    } else {
+                        warn!(
+                            "Device {} is FrameProducer but returned no subscription",
+                            det_id
+                        );
+                    }
+                }
+            }
+        }
+
         // Create and emit DescriptorDoc for the primary stream
         let mut descriptor = DescriptorDoc::new(&run_uid, "primary");
+
+        // Populate descriptor data keys
+        let registry = self.device_registry.read().await;
         for det in plan.detectors() {
-            descriptor
-                .data_keys
-                .insert(det.clone(), DataKey::scalar(&det, ""));
+            if let Some(producer) = registry.get_frame_producer(&det) {
+                let (w, h) = producer.resolution();
+                // Assume uint16 for now, or check metadata if available
+                // Assume uint16 for now, or check metadata if available
+                let mut key = DataKey::array(&det, vec![h as i32, w as i32]);
+                key.dtype = "uint16".to_string();
+                descriptor.data_keys.insert(det.clone(), key);
+            } else {
+                descriptor
+                    .data_keys
+                    .insert(det.clone(), DataKey::scalar(&det, ""));
+            }
         }
         for mover in plan.movers() {
             descriptor
                 .data_keys
                 .insert(mover.clone(), DataKey::scalar(&mover, ""));
         }
+        drop(registry); // Release lock
+
         let descriptor_uid = descriptor.uid.clone();
         self.emit_document(Document::Descriptor(descriptor)).await;
 
@@ -307,7 +347,9 @@ impl RunEngine {
                 descriptor_uid,
                 seq_num: 0,
                 collected_data: HashMap::new(),
+                collected_frames: HashMap::new(),
                 current_positions: HashMap::new(),
+                frame_subscriptions,
             });
         }
 
@@ -412,11 +454,38 @@ impl RunEngine {
             }
 
             PlanCommand::Read { device_id } => {
-                let value = self.execute_read(&device_id).await?;
+                // Check if we have a frame subscription for this device
+                let mut is_frame_device = false;
 
-                // Store in context for next EmitEvent
-                if let Some(ctx) = self.run_context.lock().await.as_mut() {
-                    ctx.collected_data.insert(device_id, value);
+                {
+                    // Scope to hold lock briefly
+                    let mut ctx_guard = self.run_context.lock().await;
+                    if let Some(ctx) = ctx_guard.as_mut() {
+                        if let Some(rx) = ctx.frame_subscriptions.get_mut(&device_id) {
+                            is_frame_device = true;
+                            // Wait for a frame (async)
+                            match rx.recv().await {
+                                Ok(frame) => {
+                                    let data_copy = frame.data.clone();
+                                    ctx.collected_frames.insert(device_id.clone(), data_copy);
+                                    debug!(device = %device_id, size = %frame.data.len(), "Captured frame");
+                                }
+                                Err(e) => {
+                                    warn!(device = %device_id, error = %e, "Failed to receive frame");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !is_frame_device {
+                    // Standard scalar read
+                    let value = self.execute_read(&device_id).await?;
+
+                    // Store in context for next EmitEvent
+                    if let Some(ctx) = self.run_context.lock().await.as_mut() {
+                        ctx.collected_data.insert(device_id, value);
+                    }
                 }
                 Ok(false)
             }
@@ -457,12 +526,24 @@ impl RunEngine {
                 // Merge collected data
                 data.extend(ctx.collected_data.drain());
 
+                // Get frames
+                let collected_arrays = if !ctx.collected_frames.is_empty() {
+                    let mut frames = HashMap::new();
+                    for (k, v) in ctx.collected_frames.drain() {
+                        frames.insert(k, v);
+                    }
+                    frames
+                } else {
+                    HashMap::new()
+                };
+
                 // Merge positions
                 let mut all_positions = ctx.current_positions.clone();
                 all_positions.extend(positions);
 
                 let mut event = EventDoc::new(&ctx.run_uid, &ctx.descriptor_uid, ctx.seq_num);
                 event.data = data;
+                event.arrays = collected_arrays;
                 event.positions = all_positions;
 
                 ctx.seq_num += 1;
@@ -686,5 +767,84 @@ mod tests {
             // Manifest should contain system info
             assert!(manifest.system_info.contains_key("software_version"));
         }
+    }
+
+    #[tokio::test]
+    async fn test_engine_with_frame_producer() {
+        use daq_hardware::registry::{DeviceConfig, DriverType};
+
+        // 1. Setup Registry with MockCamera
+        let registry = Arc::new(RwLock::new(DeviceRegistry::new()));
+        {
+            let mut reg = registry.write().await;
+            reg.register(DeviceConfig {
+                id: "cam1".to_string(),
+                name: "Mock Camera".to_string(),
+                driver: DriverType::MockCamera {
+                    width: 10,
+                    height: 10,
+                },
+            })
+            .await
+            .unwrap();
+        }
+
+        // 2. Setup Engine
+        // Arm the camera first (since Count plan doesn't stage/arm)
+        {
+            let reg = registry.read().await;
+            let cam = reg.get_triggerable("cam1").expect("cam1 not found");
+            cam.arm().await.unwrap();
+        }
+
+        let engine = RunEngine::new(registry);
+        let mut rx = engine.subscribe();
+
+        // 3. Queue Count plan using camera
+        // Note: Count plan uses "detectors" for reading
+        let plan = Box::new(Count::new(3).with_detector("cam1"));
+
+        let engine_clone = Arc::new(engine);
+        let run_future = tokio::spawn(async move {
+            let _ = engine_clone.queue(plan).await;
+            engine_clone.start().await
+        });
+
+        // 4. Verify Documents
+        let mut descriptor_seen = false;
+        let mut events_seen = 0;
+
+        // processing loop
+        while let Ok(doc_result) = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            match doc_result {
+                Ok(Document::Descriptor(desc)) => {
+                    descriptor_seen = true;
+                    // Check if cam1 is registered as array
+                    if let Some(key) = desc.data_keys.get("cam1") {
+                        assert_eq!(key.dtype, "uint16");
+                        assert_eq!(key.shape, vec![10, 10]);
+                    }
+                }
+                Ok(Document::Event(event)) => {
+                    events_seen += 1;
+                    // Check if arrays has cam1 data
+                    assert!(
+                        event.arrays.contains_key("cam1"),
+                        "Event missing cam1 array"
+                    );
+                    let data = event.arrays.get("cam1").unwrap();
+                    assert!(!data.is_empty());
+                }
+                Ok(Document::Stop(_)) => break,
+                Err(_) => break, // Channel closed
+                _ => {}
+            }
+        }
+
+        // Allow graceful finish
+        let _ = run_future.await;
+
+        assert!(descriptor_seen, "Did not receive DescriptorDoc");
+        assert_eq!(events_seen, 3, "Did not receive 3 EventDocs");
     }
 }

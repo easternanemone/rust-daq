@@ -17,9 +17,9 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_serial::SerialStream;
 
 use crate::plugin::schema::{CommandSequence, InstrumentConfig, ValueType};
-use daq_core::observable::ParameterSet; // NEW: For Parameterized trait implementation
 use daq_core::error::DaqError;
 use daq_core::limits::{self, validate_frame_size};
+use daq_core::observable::ParameterSet; // NEW: For Parameterized trait implementation
 
 // =============================================================================
 // Connection Enum - Unified abstraction over Serial, TCP, and Mock
@@ -566,7 +566,7 @@ impl GenericDriver {
             })?;
 
         if is_mocking {
-            if let Some(mock_val) = GenericDriver::get_mock_value(&settable_cap.mock).ok() {
+            if let Ok(mock_val) = GenericDriver::get_mock_value(&settable_cap.mock) {
                 return Ok(mock_val);
             } else {
                 let state_read = self.state.read().await;
@@ -692,11 +692,7 @@ impl GenericDriver {
             let response = self.execute_command(status_cmd).await?;
             let parsed_value = self.parse_response(
                 &response,
-                switchable_cap
-                    .pattern
-                    .as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or("{}"),
+                switchable_cap.pattern.as_deref().unwrap_or("{}"),
                 ValueType::Bool,
             )?;
             self.state
@@ -1023,7 +1019,7 @@ impl GenericDriver {
             .ok_or_else(|| anyhow!("No exposure control capability configured"))?;
 
         if is_mocking {
-            if let Some(mock_val) = GenericDriver::get_mock_value(&exposure_cap.mock).ok() {
+            if let Ok(mock_val) = GenericDriver::get_mock_value(&exposure_cap.mock) {
                 return mock_val
                     .as_f64()
                     .ok_or_else(|| anyhow!("Mock exposure value is not a float"));
@@ -1472,7 +1468,7 @@ impl GenericDriver {
                     *pixel = rng.gen_range(0..intensity);
                 }
             }
-            "flat" | _ => {
+            _ => {
                 buffer.fill(intensity);
             }
         }

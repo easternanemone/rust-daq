@@ -112,7 +112,10 @@ impl RerunSink {
         let rec = RecordingStreamBuilder::new(application_id)
             .spawn() // Spawns a viewer process or connects to one
             ?;
-        Ok(Self { rec, recording_stream: None })
+        Ok(Self {
+            rec,
+            recording_stream: None,
+        })
     }
 
     /// Create a new Rerun sink that starts a gRPC server for remote viewers.
@@ -169,11 +172,18 @@ impl RerunSink {
             "Rerun gRPC server started on {}:{} (connect via rerun+http://{}:{}/proxy)",
             bind_ip,
             port,
-            if bind_ip == "0.0.0.0" { "HOST_IP" } else { bind_ip },
+            if bind_ip == "0.0.0.0" {
+                "HOST_IP"
+            } else {
+                bind_ip
+            },
             port
         );
 
-        Ok(Self { rec, recording_stream: None })
+        Ok(Self {
+            rec,
+            recording_stream: None,
+        })
     }
 
     /// Create a Rerun gRPC server with full control over options.
@@ -199,11 +209,18 @@ impl RerunSink {
             "Rerun gRPC server started on {}:{} (connect via rerun+http://{}:{}/proxy)",
             bind_ip,
             port,
-            if bind_ip == "0.0.0.0" { "HOST_IP" } else { bind_ip },
+            if bind_ip == "0.0.0.0" {
+                "HOST_IP"
+            } else {
+                bind_ip
+            },
             port
         );
 
-        Ok(Self { rec, recording_stream: None })
+        Ok(Self {
+            rec,
+            recording_stream: None,
+        })
     }
 
     /// Create a Rerun gRPC server with simultaneous .rrd file recording.
@@ -237,7 +254,13 @@ impl RerunSink {
         same_machine: bool,
         recording_path: Option<impl AsRef<Path>>,
     ) -> Result<Self> {
-        Self::new_server_with_recording_and_app_id(APP_ID, bind_ip, port, same_machine, recording_path)
+        Self::new_server_with_recording_and_app_id(
+            APP_ID,
+            bind_ip,
+            port,
+            same_machine,
+            recording_path,
+        )
     }
 
     /// Create a Rerun gRPC server with recording and custom application ID.
@@ -274,7 +297,11 @@ impl RerunSink {
             "Rerun gRPC server started on {}:{} (connect via rerun+http://{}:{}/proxy)",
             bind_ip,
             port,
-            if bind_ip == "0.0.0.0" { "HOST_IP" } else { bind_ip },
+            if bind_ip == "0.0.0.0" {
+                "HOST_IP"
+            } else {
+                bind_ip
+            },
             port
         );
 
@@ -284,8 +311,7 @@ impl RerunSink {
             let file_sink = FileSink::new(path_ref)
                 .map_err(|e| anyhow::anyhow!("Failed to create file sink: {}", e))?;
 
-            let file_rec = RecordingStreamBuilder::new(application_id)
-                .set_sinks((file_sink,))?;  // Single-element tuple syntax
+            let file_rec = RecordingStreamBuilder::new(application_id).set_sinks((file_sink,))?; // Single-element tuple syntax
 
             tracing::info!("Recording to: {}", path_ref.display());
             Some(Arc::new(file_rec))
@@ -293,7 +319,10 @@ impl RerunSink {
             None
         };
 
-        Ok(Self { rec, recording_stream })
+        Ok(Self {
+            rec,
+            recording_stream,
+        })
     }
 
     /// Get the connection URL for remote viewers.
@@ -320,9 +349,8 @@ impl RerunSink {
     /// ```
     pub fn load_blueprint(&self, path: impl AsRef<Path>) -> Result<()> {
         self.rec.log_file_from_path(
-            path,
-            None,   // No entity path prefix
-            true,   // Static (blueprint doesn't change over time)
+            path, None, // No entity path prefix
+            true, // Static (blueprint doesn't change over time)
         )?;
         Ok(())
     }
@@ -372,28 +400,40 @@ impl RerunSink {
 
         rec.set_time(
             "stable_time",
-            rerun::TimeCell::from_timestamp_nanos_since_epoch(ts.timestamp_nanos_opt().unwrap_or(0)),
+            rerun::TimeCell::from_timestamp_nanos_since_epoch(
+                ts.timestamp_nanos_opt().unwrap_or(0),
+            ),
         );
 
         match meas {
             Measurement::Scalar { value, .. } => {
                 let _ = rec.log(entity_path, &Scalars::new([*value]));
             }
-            Measurement::Image { width, height, buffer, metadata, .. } => {
+            Measurement::Image {
+                width,
+                height,
+                buffer,
+                metadata,
+                ..
+            } => {
                 let shape = vec![*height as u64, *width as u64];
 
                 // Log tensor with dimension names for better visualization
                 match buffer {
                     PixelBuffer::U8(data) => {
-                        let tensor_data = rerun::TensorData::new(shape, rerun::TensorBuffer::U8(data.clone().into()));
-                        let tensor = Tensor::new(tensor_data)
-                            .with_dim_names(["height", "width"]);
+                        let tensor_data = rerun::TensorData::new(
+                            shape,
+                            rerun::TensorBuffer::U8(data.clone().into()),
+                        );
+                        let tensor = Tensor::new(tensor_data).with_dim_names(["height", "width"]);
                         let _ = rec.log(entity_path.clone(), &tensor);
                     }
                     PixelBuffer::U16(data) => {
-                        let tensor_data = rerun::TensorData::new(shape, rerun::TensorBuffer::U16(data.clone().into()));
-                        let tensor = Tensor::new(tensor_data)
-                            .with_dim_names(["height", "width"]);
+                        let tensor_data = rerun::TensorData::new(
+                            shape,
+                            rerun::TensorBuffer::U16(data.clone().into()),
+                        );
+                        let tensor = Tensor::new(tensor_data).with_dim_names(["height", "width"]);
                         let _ = rec.log(entity_path.clone(), &tensor);
                     }
                     _ => {}
@@ -415,7 +455,10 @@ impl RerunSink {
 
         // Log exposure time if available
         if let Some(exposure_ms) = metadata.exposure_ms {
-            let _ = rec.log(format!("{}/exposure_ms", meta_path), &Scalars::new([exposure_ms]));
+            let _ = rec.log(
+                format!("{}/exposure_ms", meta_path),
+                &Scalars::new([exposure_ms]),
+            );
         }
 
         // Log gain if available
@@ -425,23 +468,39 @@ impl RerunSink {
 
         // Log sensor temperature if available
         if let Some(temp_c) = metadata.temperature_c {
-            let _ = rec.log(format!("{}/temperature_c", meta_path), &Scalars::new([temp_c]));
+            let _ = rec.log(
+                format!("{}/temperature_c", meta_path),
+                &Scalars::new([temp_c]),
+            );
         }
 
         // Log readout time if available
         if let Some(readout_ms) = metadata.readout_ms {
-            let _ = rec.log(format!("{}/readout_ms", meta_path), &Scalars::new([readout_ms]));
+            let _ = rec.log(
+                format!("{}/readout_ms", meta_path),
+                &Scalars::new([readout_ms]),
+            );
         }
 
         // Log binning as separate scalars if available
         if let Some((bin_x, bin_y)) = metadata.binning {
-            let _ = rec.log(format!("{}/binning_x", meta_path), &Scalars::new([bin_x as f64]));
-            let _ = rec.log(format!("{}/binning_y", meta_path), &Scalars::new([bin_y as f64]));
+            let _ = rec.log(
+                format!("{}/binning_x", meta_path),
+                &Scalars::new([bin_x as f64]),
+            );
+            let _ = rec.log(
+                format!("{}/binning_y", meta_path),
+                &Scalars::new([bin_y as f64]),
+            );
         }
     }
 
     /// Log a measurement to both the primary stream and optional recording stream.
-    fn log_measurement(rec: &RecordingStream, recording: Option<&RecordingStream>, meas: Measurement) {
+    fn log_measurement(
+        rec: &RecordingStream,
+        recording: Option<&RecordingStream>,
+        meas: Measurement,
+    ) {
         // Log to primary (visualization) stream
         Self::log_measurement_to_stream(rec, &meas);
 
@@ -475,7 +534,9 @@ impl RerunSink {
             rerun::TimeCell::from_timestamp_nanos_since_epoch(now.as_nanos() as i64),
         );
 
-        let _ = self.rec.log("/system/heartbeat", &Scalars::new([now.as_secs_f64()]));
+        let _ = self
+            .rec
+            .log("/system/heartbeat", &Scalars::new([now.as_secs_f64()]));
 
         // Also log to recording stream if present
         if let Some(file_rec) = &self.recording_stream {

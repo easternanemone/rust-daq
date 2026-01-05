@@ -16,10 +16,27 @@ enum PendingAction {
 }
 
 enum ModuleActionResult {
-    Refresh(Result<(Vec<daq_proto::daq::ModuleTypeSummary>, Vec<daq_proto::daq::ModuleStatus>), String>),
-    Create { module_id: String, result: Result<(), String> },
-    Start { module_id: String, result: Result<(), String> },
-    Stop { module_id: String, result: Result<(), String> },
+    Refresh(
+        Result<
+            (
+                Vec<daq_proto::daq::ModuleTypeSummary>,
+                Vec<daq_proto::daq::ModuleStatus>,
+            ),
+            String,
+        >,
+    ),
+    Create {
+        module_id: String,
+        result: Result<(), String>,
+    },
+    Start {
+        module_id: String,
+        result: Result<(), String>,
+    },
+    Stop {
+        module_id: String,
+        result: Result<(), String>,
+    },
 }
 
 /// Modules panel state
@@ -75,16 +92,14 @@ impl ModulesPanel {
                                 self.error = Some(e);
                             }
                         },
-                        ModuleActionResult::Create { module_id, result } => {
-                            match result {
-                                Ok(()) => {
-                                    self.status = Some(format!("Created module: {}", module_id));
-                                    self.new_module_name.clear();
-                                    self.error = None;
-                                }
-                                Err(e) => self.error = Some(e),
+                        ModuleActionResult::Create { module_id, result } => match result {
+                            Ok(()) => {
+                                self.status = Some(format!("Created module: {}", module_id));
+                                self.new_module_name.clear();
+                                self.error = None;
                             }
-                        }
+                            Err(e) => self.error = Some(e),
+                        },
                         ModuleActionResult::Start { module_id, result } => match result {
                             Ok(()) => {
                                 self.status = Some(format!("Started module: {}", module_id));
@@ -116,7 +131,7 @@ impl ModulesPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.poll_async_results(ui.ctx());
         self.pending_action = None;
-        
+
         ui.heading("Modules");
 
         // Show offline notice if not connected (bd-j3xz.4.4)
@@ -128,15 +143,15 @@ impl ModulesPanel {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);
             }
-            
+
             if let Some(last) = self.last_refresh {
                 let elapsed = last.elapsed();
                 ui.label(format!("Updated {}s ago", elapsed.as_secs()));
             }
         });
-        
+
         ui.separator();
-        
+
         // Show error/status messages
         if let Some(err) = &self.error {
             ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
@@ -144,15 +159,15 @@ impl ModulesPanel {
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::GREEN, status);
         }
-        
+
         ui.add_space(8.0);
-        
+
         // Two-column layout
         ui.columns(2, |columns| {
             // Left column: Module types and creation
             columns[0].heading("Module Types");
             columns[0].separator();
-            
+
             if self.module_types.is_empty() {
                 columns[0].label("No module types available. Click Refresh.");
             } else {
@@ -163,11 +178,11 @@ impl ModulesPanel {
                         for mt in &self.module_types {
                             let selected = self.selected_type.as_ref() == Some(&mt.type_id);
                             let label = format!("{} ({})", mt.display_name, mt.type_id);
-                            
+
                             if ui.selectable_label(selected, &label).clicked() {
                                 self.selected_type = Some(mt.type_id.clone());
                             }
-                            
+
                             if !mt.description.is_empty() {
                                 ui.indent(mt.type_id.clone(), |ui| {
                                     ui.label(egui::RichText::new(&mt.description).small().weak());
@@ -176,21 +191,24 @@ impl ModulesPanel {
                         }
                     });
             }
-            
+
             columns[0].add_space(8.0);
-            
+
             // Create module section
             columns[0].group(|ui| {
                 ui.heading("Create Module");
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Name:");
                     ui.text_edit_singleline(&mut self.new_module_name);
                 });
-                
+
                 let can_create = self.selected_type.is_some() && !self.new_module_name.is_empty();
-                
-                if ui.add_enabled(can_create, egui::Button::new("➕ Create")).clicked() {
+
+                if ui
+                    .add_enabled(can_create, egui::Button::new("➕ Create"))
+                    .clicked()
+                {
                     if let Some(type_id) = &self.selected_type {
                         self.pending_action = Some(PendingAction::CreateModule {
                             type_id: type_id.clone(),
@@ -199,11 +217,11 @@ impl ModulesPanel {
                     }
                 }
             });
-            
+
             // Right column: Active modules
             columns[1].heading("Active Modules");
             columns[1].separator();
-            
+
             if self.modules.is_empty() {
                 columns[1].label("No modules running");
             } else {
@@ -218,26 +236,26 @@ impl ModulesPanel {
                     });
             }
         });
-        
+
         // Execute pending action
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
         }
     }
-    
+
     /// Render a module instance card
     fn render_module_card(&mut self, ui: &mut egui::Ui, module: &daq_proto::daq::ModuleStatus) {
         let state_color = match module.state {
-            1 => egui::Color32::GRAY,    // CREATED
-            2 => egui::Color32::BLUE,    // CONFIGURED
-            3 => egui::Color32::GREEN,   // RUNNING
-            4 => egui::Color32::YELLOW,  // PAUSED
-            5 => egui::Color32::GRAY,    // STOPPED
-            6 => egui::Color32::RED,     // ERROR
+            1 => egui::Color32::GRAY,       // CREATED
+            2 => egui::Color32::BLUE,       // CONFIGURED
+            3 => egui::Color32::GREEN,      // RUNNING
+            4 => egui::Color32::YELLOW,     // PAUSED
+            5 => egui::Color32::GRAY,       // STOPPED
+            6 => egui::Color32::RED,        // ERROR
             7 => egui::Color32::LIGHT_BLUE, // STAGED
             _ => egui::Color32::WHITE,
         };
-        
+
         let state_name = match module.state {
             1 => "Created",
             2 => "Configured",
@@ -248,7 +266,7 @@ impl ModulesPanel {
             7 => "Staged",
             _ => "Unknown",
         };
-        
+
         ui.group(|ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(state_color, "●");
@@ -261,27 +279,27 @@ impl ModulesPanel {
                 }
                 ui.label(format!("({})", module.type_id));
             });
-            
+
             ui.label(format!("ID: {}", module.module_id));
             ui.label(format!("Status: {}", state_name));
-            
+
             if module.required_roles_total > 0 {
                 ui.label(format!(
                     "Roles: {}/{} filled",
                     module.required_roles_filled, module.required_roles_total
                 ));
             }
-            
+
             if module.state == 3 {
                 // Running - show stats
                 ui.label(format!("Events: {}", module.events_emitted));
                 ui.label(format!("Data points: {}", module.data_points_produced));
             }
-            
+
             if !module.error_message.is_empty() {
                 ui.colored_label(egui::Color32::RED, &module.error_message);
             }
-            
+
             // Control buttons
             ui.horizontal(|ui| {
                 match module.state {
@@ -310,7 +328,7 @@ impl ModulesPanel {
             });
         });
     }
-    
+
     /// Execute a pending action
     fn execute_action(
         &mut self,
@@ -331,12 +349,12 @@ impl ModulesPanel {
             }
         }
     }
-    
+
     /// Refresh module data
     fn refresh(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
@@ -358,17 +376,23 @@ impl ModulesPanel {
             let _ = tx.send(ModuleActionResult::Refresh(result)).await;
         });
     }
-    
+
     /// Create a new module
-    fn create_module(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, type_id: &str, name: &str) {
+    fn create_module(
+        &mut self,
+        client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+        type_id: &str,
+        name: &str,
+    ) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let type_id = type_id.to_string();
         let name = name.to_string();
@@ -399,17 +423,17 @@ impl ModulesPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Start a module
     fn start_module(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, module_id: &str) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let module_id = module_id.to_string();
         let tx = self.action_tx.clone();
@@ -434,17 +458,17 @@ impl ModulesPanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Stop a module
     fn stop_module(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, module_id: &str) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let module_id = module_id.to_string();
         let tx = self.action_tx.clone();

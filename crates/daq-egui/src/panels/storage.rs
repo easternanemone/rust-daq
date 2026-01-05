@@ -14,8 +14,16 @@ enum PendingAction {
     StopRecording,
 }
 
+/// Result data from a Refresh action (boxed to reduce enum size variance).
+type RefreshData = (
+    Option<daq_proto::daq::StorageConfig>,
+    Option<daq_proto::daq::RecordingStatus>,
+    Vec<daq_proto::daq::AcquisitionSummary>,
+);
+
 enum StorageActionResult {
-    Refresh(Result<(Option<daq_proto::daq::StorageConfig>, Option<daq_proto::daq::RecordingStatus>, Vec<daq_proto::daq::AcquisitionSummary>), String>),
+    /// Refresh result - boxed to reduce enum size variance.
+    Refresh(Result<Box<RefreshData>, String>),
     Start(Result<String, String>),
     Stop(Result<(String, u64, u64), String>),
 }
@@ -55,7 +63,8 @@ impl StoragePanel {
                     self.action_in_flight = self.action_in_flight.saturating_sub(1);
                     match result {
                         StorageActionResult::Refresh(result) => match result {
-                            Ok((config, status, acquisitions)) => {
+                            Ok(data) => {
+                                let (config, status, acquisitions) = *data;
                                 self.config = config;
                                 self.recording_status = status;
                                 self.acquisitions = acquisitions;
@@ -104,7 +113,7 @@ impl StoragePanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.poll_async_results(ui.ctx());
         self.pending_action = None;
-        
+
         ui.heading("Storage");
 
         // Show offline notice if not connected (bd-j3xz.4.4)
@@ -116,15 +125,15 @@ impl StoragePanel {
             if ui.button("🔄 Refresh").clicked() {
                 self.pending_action = Some(PendingAction::Refresh);
             }
-            
+
             if let Some(last) = self.last_refresh {
                 let elapsed = last.elapsed();
                 ui.label(format!("Updated {}s ago", elapsed.as_secs()));
             }
         });
-        
+
         ui.separator();
-        
+
         // Show error/status messages
         if let Some(err) = &self.error {
             ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
@@ -132,9 +141,9 @@ impl StoragePanel {
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::GREEN, status);
         }
-        
+
         ui.add_space(8.0);
-        
+
         // Storage configuration
         if let Some(config) = &self.config {
             ui.group(|ui| {
@@ -142,7 +151,7 @@ impl StoragePanel {
                 ui.label(format!("Output directory: {}", config.output_directory));
                 ui.label(format!("Flush interval: {} ms", config.flush_interval_ms));
                 ui.label(format!("Max buffer: {} MB", config.max_buffer_mb));
-                
+
                 if let Some(hdf5) = &config.hdf5_config {
                     ui.separator();
                     ui.label(format!("Compression: {}", hdf5.compression));
@@ -150,30 +159,33 @@ impl StoragePanel {
                         ui.label(format!("Compression level: {}", level));
                     }
                 }
-                
+
                 ui.separator();
                 let available_gb = config.disk_space_available_bytes as f64 / 1_000_000_000.0;
                 let used_gb = config.disk_space_used_bytes as f64 / 1_000_000_000.0;
-                ui.label(format!("Disk space: {:.2} GB available, {:.2} GB used", available_gb, used_gb));
+                ui.label(format!(
+                    "Disk space: {:.2} GB available, {:.2} GB used",
+                    available_gb, used_gb
+                ));
             });
         }
-        
+
         ui.add_space(8.0);
-        
+
         // Recording control
         ui.group(|ui| {
             ui.heading("Recording Control");
-            
+
             if let Some(status) = &self.recording_status {
                 let state_color = match status.state {
-                    1 => egui::Color32::GRAY,    // IDLE
-                    2 => egui::Color32::GREEN,   // ACTIVE
-                    3 => egui::Color32::YELLOW,  // FLUSHING
-                    4 => egui::Color32::BLUE,    // FINALIZING
-                    5 => egui::Color32::RED,     // ERROR
+                    1 => egui::Color32::GRAY,   // IDLE
+                    2 => egui::Color32::GREEN,  // ACTIVE
+                    3 => egui::Color32::YELLOW, // FLUSHING
+                    4 => egui::Color32::BLUE,   // FINALIZING
+                    5 => egui::Color32::RED,    // ERROR
                     _ => egui::Color32::WHITE,
                 };
-                
+
                 let state_name = match status.state {
                     1 => "Idle",
                     2 => "Recording",
@@ -182,12 +194,12 @@ impl StoragePanel {
                     5 => "Error",
                     _ => "Unknown",
                 };
-                
+
                 ui.horizontal(|ui| {
                     ui.colored_label(state_color, "●");
                     ui.label(format!("Status: {}", state_name));
                 });
-                
+
                 if status.state == 2 {
                     // Recording active
                     ui.label(format!("Recording: {}", status.output_path));
@@ -195,7 +207,7 @@ impl StoragePanel {
                     let bytes_mb = status.bytes_written as f64 / 1_000_000.0;
                     ui.label(format!("Written: {:.2} MB", bytes_mb));
                     ui.label(format!("Buffer: {}%", status.buffer_fill_percent));
-                    
+
                     if ui.button("⏹ Stop Recording").clicked() {
                         self.pending_action = Some(PendingAction::StopRecording);
                     }
@@ -205,7 +217,7 @@ impl StoragePanel {
                         ui.label("Name:");
                         ui.text_edit_singleline(&mut self.recording_name);
                     });
-                    
+
                     if ui.button("⏺ Start Recording").clicked() {
                         let name = if self.recording_name.is_empty() {
                             format!("recording_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"))
@@ -217,12 +229,12 @@ impl StoragePanel {
                 }
             } else {
                 ui.label("Recording status not available");
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Name:");
                     ui.text_edit_singleline(&mut self.recording_name);
                 });
-                
+
                 if ui.button("⏺ Start Recording").clicked() {
                     let name = if self.recording_name.is_empty() {
                         format!("recording_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"))
@@ -233,13 +245,13 @@ impl StoragePanel {
                 }
             }
         });
-        
+
         ui.add_space(8.0);
-        
+
         // Acquisitions list
         ui.group(|ui| {
             ui.heading("Saved Acquisitions");
-            
+
             if self.acquisitions.is_empty() {
                 ui.label("No acquisitions found");
             } else {
@@ -261,13 +273,13 @@ impl StoragePanel {
                     });
             }
         });
-        
+
         // Execute pending action
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
         }
     }
-    
+
     /// Execute a pending action
     fn execute_action(
         &mut self,
@@ -281,17 +293,17 @@ impl StoragePanel {
             PendingAction::StopRecording => self.stop_recording(client, runtime),
         }
     }
-    
+
     /// Refresh storage info
     fn refresh(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let tx = self.action_tx.clone();
         self.action_in_flight = self.action_in_flight.saturating_add(1);
@@ -306,20 +318,22 @@ impl StoragePanel {
             .await
             .map_err(|e| e.to_string());
 
-            let _ = tx.send(StorageActionResult::Refresh(result)).await;
+            let _ = tx
+                .send(StorageActionResult::Refresh(result.map(Box::new)))
+                .await;
         });
     }
-    
+
     /// Start recording
     fn start_recording(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime, name: &str) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let name = name.to_string();
         let tx = self.action_tx.clone();
@@ -340,17 +354,17 @@ impl StoragePanel {
             let _ = tx.send(action).await;
         });
     }
-    
+
     /// Stop recording
     fn stop_recording(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
         self.error = None;
         self.status = None;
-        
+
         let Some(client) = client else {
             self.error = Some("Not connected to daemon".to_string());
             return;
         };
-        
+
         let mut client = client.clone();
         let tx = self.action_tx.clone();
         self.action_in_flight = self.action_in_flight.saturating_add(1);

@@ -1,8 +1,8 @@
 use daq_core::observable::Observable;
 use daq_core::parameter::Parameter;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 // bd-ga2o: Use current_thread flavor since daq-core doesn't enable rt-multi-thread
 #[tokio::main(flavor = "current_thread")]
@@ -13,7 +13,7 @@ async fn main() {
     // This should probably not panic, but let's see if the validator checks the current value
     let obs = obs.with_range_introspectable(0.0, 10.0);
     println!("Observable created with NaN: {}", obs.get());
-    
+
     // Try to set it to a valid value
     match obs.set(5.0) {
         Ok(_) => println!("Set to 5.0 succeeded"),
@@ -52,7 +52,7 @@ async fn main() {
         p1.set(1).await.unwrap();
         println!("T1 done");
     });
-    
+
     let t2 = tokio::spawn(async move {
         println!("T2 setting 2");
         p2.set(2).await.unwrap();
@@ -71,7 +71,7 @@ async fn main() {
     // T2 update observable to 2. T1 update observable to 1.
     // If T2 finishes last in updating observable, observable is 2.
     // If T1 finishes last in updating observable, observable is 1.
-    
+
     // We want hardware state and observable state to match the "last" command.
     // But "last" is ambiguous without serialization.
 }

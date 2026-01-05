@@ -113,18 +113,22 @@ impl SignalPlotterPanel {
         // Spawn background task to stream updates
         runtime.spawn(async move {
             // Start the gRPC stream
-            let stream_result = client.stream_observables(
-                vec![device_id_owned.clone()],
-                vec![observable_name_owned.clone()],
-                sample_rate_hz,
-            ).await;
+            let stream_result = client
+                .stream_observables(
+                    vec![device_id_owned.clone()],
+                    vec![observable_name_owned.clone()],
+                    sample_rate_hz,
+                )
+                .await;
 
             let mut stream = match stream_result {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(
                         "Failed to start observable stream for {}:{}: {}",
-                        device_id_owned, observable_name_owned, e
+                        device_id_owned,
+                        observable_name_owned,
+                        e
                     );
                     return;
                 }

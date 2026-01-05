@@ -3,7 +3,7 @@
 
 [grpc]
 # Bind address for the gRPC server (port is provided by CLI/runtime).
-bind_address = "127.0.0.1"
+bind_address = "0.0.0.0"
 
 # Optional TLS configuration (PEM-encoded).
 # tls_cert_path = "config/tls/server.crt"

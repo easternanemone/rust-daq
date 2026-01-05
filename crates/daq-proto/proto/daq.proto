@@ -1668,6 +1668,14 @@ message EventDocument {
 
   // Bulk data references (use Arrow Flight to retrieve)
   map<string, FlightTicket> bulk_data = 20;
+
+  // === Middle-data support (bd-9unn) ===
+  // For status messages, enum states, and small text values
+  map<string, string> metadata = 30;
+
+  // For small arrays (spectra, waveforms up to ~64KB) without Arrow Flight overhead
+  // Format: msgpack-encoded arrays, JSON arrays, or raw binary with schema in metadata
+  map<string, bytes> arrays = 31;
 }
 
 // Stop document - emitted at end of a run

@@ -244,7 +244,7 @@ impl HardwareService for HardwareServiceImpl {
             registry
                 .list_devices()
                 .iter()
-                .map(|info| device_info_to_proto(info))
+                .map(device_info_to_proto)
                 .collect()
         };
 
@@ -314,10 +314,10 @@ impl HardwareService for HardwareServiceImpl {
             response.streaming = frame_producer.is_streaming().await.ok();
         }
 
-        if let Some(exposure_ctrl) = exposure_control {
-            if let Ok(seconds) = exposure_ctrl.get_exposure().await {
-                response.exposure_ms = Some(seconds * 1000.0);
-            }
+        if let Some(exposure_ctrl) = exposure_control
+            && let Ok(seconds) = exposure_ctrl.get_exposure().await
+        {
+            response.exposure_ms = Some(seconds * 1000.0);
         }
 
         Ok(Response::new(response))
@@ -974,7 +974,10 @@ impl HardwareService for HardwareServiceImpl {
             Ok(seconds) => Ok(Response::new(GetExposureResponse {
                 exposure_ms: seconds * 1000.0,
             })),
-            Err(e) => Err(Status::internal(format!("Failed to get exposure: {}", e))),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to get exposure: {}",
+                e
+            ))),
         }
     }
 
@@ -1013,7 +1016,10 @@ impl HardwareService for HardwareServiceImpl {
                     error_message: String::new(),
                     is_open: open,
                 })),
-                Err(e) => Err(Status::internal(format!("Failed to set shutter: {}", e))),
+                Err(e) => Err(map_hardware_error_to_status(&format!(
+                    "Failed to set shutter: {}",
+                    e
+                ))),
             }
         }
 
@@ -1048,7 +1054,7 @@ impl HardwareService for HardwareServiceImpl {
 
             match shutter_ctrl.is_shutter_open().await {
                 Ok(is_open) => Ok(Response::new(GetShutterResponse { is_open })),
-                Err(e) => Err(Status::internal(format!(
+                Err(e) => Err(map_hardware_error_to_status(&format!(
                     "Failed to get shutter state: {}",
                     e
                 ))),
@@ -1091,7 +1097,10 @@ impl HardwareService for HardwareServiceImpl {
                     error_message: String::new(),
                     actual_wavelength_nm: requested_nm,
                 })),
-                Err(e) => Err(Status::internal(format!("Failed to set wavelength: {}", e))),
+                Err(e) => Err(map_hardware_error_to_status(&format!(
+                    "Failed to set wavelength: {}",
+                    e
+                ))),
             }
         }
 
@@ -1126,7 +1135,10 @@ impl HardwareService for HardwareServiceImpl {
 
             match wavelength_ctrl.get_wavelength().await {
                 Ok(nm) => Ok(Response::new(GetWavelengthResponse { wavelength_nm: nm })),
-                Err(e) => Err(Status::internal(format!("Failed to get wavelength: {}", e))),
+                Err(e) => Err(map_hardware_error_to_status(&format!(
+                    "Failed to get wavelength: {}",
+                    e
+                ))),
             }
         }
 
@@ -1170,7 +1182,10 @@ impl HardwareService for HardwareServiceImpl {
                     error_message: String::new(),
                     is_enabled: enabled,
                 })),
-                Err(e) => Err(Status::internal(format!("Failed to set emission: {}", e))),
+                Err(e) => Err(map_hardware_error_to_status(&format!(
+                    "Failed to set emission: {}",
+                    e
+                ))),
             }
         }
 
@@ -1205,7 +1220,7 @@ impl HardwareService for HardwareServiceImpl {
 
             match emission_ctrl.is_emission_enabled().await {
                 Ok(is_enabled) => Ok(Response::new(GetEmissionResponse { is_enabled })),
-                Err(e) => Err(Status::internal(format!(
+                Err(e) => Err(map_hardware_error_to_status(&format!(
                     "Failed to get emission state: {}",
                     e
                 ))),
@@ -1254,11 +1269,13 @@ impl HardwareService for HardwareServiceImpl {
             })),
             Err(e) => {
                 let err_msg = e.to_string();
-                // Check for already streaming
+                // Idempotent: treat "already streaming" as success
                 if err_msg.to_lowercase().contains("already streaming") {
-                    Err(Status::failed_precondition(
-                        "Device is already streaming; stop current stream first",
-                    ))
+                    tracing::info!(device_id = %req.device_id, "Device already streaming (idempotent success)");
+                    Ok(Response::new(StartStreamResponse {
+                        success: true,
+                        error_message: "Already streaming".to_string(),
+                    }))
                 } else {
                     let status = map_hardware_error_to_status(&err_msg);
                     Err(status)
@@ -1295,7 +1312,10 @@ impl HardwareService for HardwareServiceImpl {
                     frames_captured,
                 }))
             }
-            Err(e) => Err(Status::internal(format!("Failed to stop stream: {}", e))),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to stop stream: {}",
+                e
+            ))),
         }
     }
 
@@ -1347,7 +1367,14 @@ impl HardwareService for HardwareServiceImpl {
         // Spawn task to forward frames from broadcast to gRPC stream
         let device_id_clone = device_id.clone();
         tokio::spawn(async move {
-            let mut last_frame_time = std::time::Instant::now();
+            // Initialize to allow first frame through immediately
+            let mut last_frame_time = match min_interval {
+                Some(interval) => std::time::Instant::now() - interval,
+                None => std::time::Instant::now(),
+            };
+            let mut frames_sent = 0u64;
+
+            tracing::info!(device_id = %device_id_clone, "Starting frame stream forwarding task");
 
             loop {
                 match frame_rx.recv().await {
@@ -1379,18 +1406,37 @@ impl HardwareService for HardwareServiceImpl {
                             // Extended metadata (bd-183h)
                             temperature_c: frame.metadata.as_ref().and_then(|m| m.temperature_c),
                             gain_mode: frame.metadata.as_ref().and_then(|m| m.gain_mode.clone()),
-                            readout_speed: frame.metadata.as_ref().and_then(|m| m.readout_speed.clone()),
-                            trigger_mode: frame.metadata.as_ref().and_then(|m| m.trigger_mode.clone()),
-                            binning_x: frame.metadata.as_ref().and_then(|m| m.binning.map(|(x, _)| x as u32)),
-                            binning_y: frame.metadata.as_ref().and_then(|m| m.binning.map(|(_, y)| y as u32)),
-                            metadata: frame.metadata.as_ref()
+                            readout_speed: frame
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.readout_speed.clone()),
+                            trigger_mode: frame
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.trigger_mode.clone()),
+                            binning_x: frame
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.binning.map(|(x, _)| x as u32)),
+                            binning_y: frame
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.binning.map(|(_, y)| y as u32)),
+                            metadata: frame
+                                .metadata
+                                .as_ref()
                                 .map(|m| m.extra.clone())
                                 .unwrap_or_default(),
                         };
 
                         if tx.send(Ok(frame_data)).await.is_err() {
-                            // Client disconnected
+                            tracing::info!(device_id = %device_id_clone, "Client disconnected from frame stream");
                             break;
+                        }
+
+                        frames_sent += 1;
+                        if frames_sent.is_multiple_of(30) {
+                            tracing::debug!(device_id = %device_id_clone, frames = frames_sent, "Sent frame to client");
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -1448,7 +1494,10 @@ impl HardwareService for HardwareServiceImpl {
         // If device implements Stageable, call stage()
         if let Some(stageable) = stageable {
             stageable.stage().await.map_err(|e| {
-                Status::internal(format!("Failed to stage device '{}': {}", req.device_id, e))
+                map_hardware_error_to_status(&format!(
+                    "Failed to stage device '{}': {}",
+                    req.device_id, e
+                ))
             })?;
             tracing::info!("Staged device '{}' successfully", req.device_id);
         } else {
@@ -1497,7 +1546,7 @@ impl HardwareService for HardwareServiceImpl {
         // If device implements Stageable, call unstage()
         if let Some(stageable) = stageable {
             stageable.unstage().await.map_err(|e| {
-                Status::internal(format!(
+                map_hardware_error_to_status(&format!(
                     "Failed to unstage device '{}': {}",
                     req.device_id, e
                 ))
@@ -1548,9 +1597,12 @@ impl HardwareService for HardwareServiceImpl {
                 })?
             };
 
-            let result = device.execute_command(&req.command, args).await.map_err(|e| {
-                Status::internal(format!("Command execution failed: {}", e))
-            })?;
+            let result = device
+                .execute_command(&req.command, args)
+                .await
+                .map_err(|e| {
+                    map_hardware_error_to_status(&format!("Command execution failed: {}", e))
+                })?;
 
             return Ok(Response::new(DeviceCommandResponse {
                 success: true,
@@ -1559,66 +1611,12 @@ impl HardwareService for HardwareServiceImpl {
             }));
         }
 
-        // Fallback to legacy hardcoded commands for backward compatibility
-        match req.command.as_str() {
-            "reboot" => {
-                Ok(Response::new(DeviceCommandResponse {
-                    success: true,
-                    error_message: String::new(),
-                    results: "{\"status\": \"initiated\"}".to_string(),
-                }))
-            }
-            #[cfg(feature = "instrument_spectra_physics")]
-            "enable_emission" => {
-                // Imports removed
-                let device = {
-                    let registry = self.registry.read().await;
-                    registry.get_emission_control(&req.device_id)
-                };
-                if let Some(device) = device {
-                    device.enable_emission().await.map_err(|e| {
-                        Status::internal(format!("Failed to enable emission: {}", e))
-                    })?;
-                    Ok(Response::new(DeviceCommandResponse {
-                        success: true,
-                        error_message: String::new(),
-                        results: "{\"success\": true}".to_string(),
-                    }))
-                } else {
-                    Err(Status::unimplemented(format!(
-                        "Device '{}' does not support EmissionControl",
-                        req.device_id
-                    )))
-                }
-            }
-            #[cfg(feature = "instrument_spectra_physics")]
-            "disable_emission" => {
-                // Imports removed
-                let device = {
-                    let registry = self.registry.read().await;
-                    registry.get_emission_control(&req.device_id)
-                };
-                if let Some(device) = device {
-                    device.disable_emission().await.map_err(|e| {
-                        Status::internal(format!("Failed to disable emission: {}", e))
-                    })?;
-                    Ok(Response::new(DeviceCommandResponse {
-                        success: true,
-                        error_message: String::new(),
-                        results: "{\"success\": true}".to_string(),
-                    }))
-                } else {
-                    Err(Status::unimplemented(format!(
-                        "Device '{}' does not support EmissionControl",
-                        req.device_id
-                    )))
-                }
-            }
-            _ => Err(Status::unimplemented(format!(
-                "ExecuteDeviceCommand: unknown command '{}' for device '{}'",
-                req.command, req.device_id
-            ))),
-        }
+        // Device doesn't implement Commandable trait
+        Err(Status::unimplemented(format!(
+            "Device '{}' does not support commands. Use capability-specific endpoints \
+             (e.g., SetEmission for emission control) or implement Commandable trait.",
+            req.device_id
+        )))
     }
 
     // =========================================================================
@@ -1645,7 +1643,7 @@ impl HardwareService for HardwareServiceImpl {
         // 1. Get V5 parameters from Parameterized devices
         if let Some(param_set) = registry.get_parameters(&req.device_id) {
             for param_name in param_set.names() {
-                if let Some(param) = param_set.get(&param_name) {
+                if let Some(param) = param_set.get(param_name) {
                     let metadata = param.metadata();
 
                     // Use introspectable dtype from metadata if available,
@@ -1707,10 +1705,9 @@ impl HardwareService for HardwareServiceImpl {
             drop(registry); // Release lock before async operations
 
             // Get the parameter value
-            let value = settable
-                .get_value(&req.parameter_name)
-                .await
-                .map_err(|e| Status::internal(format!("Failed to get parameter: {}", e)))?;
+            let value = settable.get_value(&req.parameter_name).await.map_err(|e| {
+                map_hardware_error_to_status(&format!("Failed to get parameter: {}", e))
+            })?;
 
             // Get timestamp
             let timestamp_ns = SystemTime::now()
@@ -1728,24 +1725,24 @@ impl HardwareService for HardwareServiceImpl {
         }
 
         // New path - use Parameterized trait
-        if let Some(params) = registry.get_parameters(&req.device_id) {
-            if let Some(param) = params.get(&req.parameter_name) {
-                let value = param
-                    .get_json()
-                    .map_err(|e| Status::internal(format!("Failed to get parameter: {}", e)))?;
-                let timestamp_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0);
+        if let Some(params) = registry.get_parameters(&req.device_id)
+            && let Some(param) = params.get(&req.parameter_name)
+        {
+            let value = param.get_json().map_err(|e| {
+                map_hardware_error_to_status(&format!("Failed to get parameter: {}", e))
+            })?;
+            let timestamp_ns = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
 
-                return Ok(Response::new(ParameterValue {
-                    device_id: req.device_id,
-                    name: req.parameter_name,
-                    value: value.to_string(),
-                    units: String::new(), // Could extract from metadata
-                    timestamp_ns,
-                }));
-            }
+            return Ok(Response::new(ParameterValue {
+                device_id: req.device_id,
+                name: req.parameter_name,
+                value: value.to_string(),
+                units: String::new(), // Could extract from metadata
+                timestamp_ns,
+            }));
         }
 
         // Neither Settable nor Parameterized - device not found
@@ -1892,10 +1889,10 @@ impl HardwareService for HardwareServiceImpl {
                 match rx.recv().await {
                     Ok(change) => {
                         // Apply device filter if specified
-                        if let Some(ref filter_device) = device_filter {
-                            if &change.device_id != filter_device {
-                                continue;
-                            }
+                        if let Some(ref filter_device) = device_filter
+                            && &change.device_id != filter_device
+                        {
+                            continue;
                         }
 
                         // Apply parameter name filter if specified
@@ -1957,11 +1954,11 @@ impl HardwareService for HardwareServiceImpl {
             // Collect observables to monitor
             // Observable uses watch channel (single producer, multiple consumers with latest value)
             let mut subscriptions: Vec<(
-                String,                                           // device_id
-                String,                                           // observable_name
-                tokio::sync::watch::Receiver<f64>,                // subscription
-                std::time::Instant,                               // last_sent
-                f64,                                              // last_value (for change detection)
+                String,                            // device_id
+                String,                            // observable_name
+                tokio::sync::watch::Receiver<f64>, // subscription
+                std::time::Instant,                // last_sent
+                f64,                               // last_value (for change detection)
             )> = Vec::new();
 
             {
@@ -1970,7 +1967,9 @@ impl HardwareService for HardwareServiceImpl {
                     if let Some(param_set) = registry.get_parameters(device_id) {
                         for obs_name in &observable_names {
                             // Try to get Observable<f64> for this name
-                            if let Some(observable) = param_set.get_typed::<Observable<f64>>(obs_name) {
+                            if let Some(observable) =
+                                param_set.get_typed::<Observable<f64>>(obs_name)
+                            {
                                 let rx = observable.subscribe();
                                 let initial_value = *rx.borrow();
                                 subscriptions.push((
@@ -1989,14 +1988,16 @@ impl HardwareService for HardwareServiceImpl {
             if subscriptions.is_empty() {
                 tracing::debug!(
                     "StreamObservables: No matching observables found for {:?}/{:?}",
-                    device_ids, observable_names
+                    device_ids,
+                    observable_names
                 );
                 return;
             }
 
             tracing::debug!(
                 "StreamObservables: Monitoring {} observables at {} Hz",
-                subscriptions.len(), sample_rate_hz
+                subscriptions.len(),
+                sample_rate_hz
             );
 
             // Stream loop - check each subscription for updates
@@ -2043,7 +2044,9 @@ impl HardwareService for HardwareServiceImpl {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }
 
@@ -2083,15 +2086,15 @@ async fn fetch_device_state(
         exposure_ms: None,
     };
 
-    if let Some(movable) = movable {
-        if let Ok(pos) = movable.position().await {
-            response.position = Some(pos);
-        }
+    if let Some(movable) = movable
+        && let Ok(pos) = movable.position().await
+    {
+        response.position = Some(pos);
     }
-    if let Some(readable) = readable {
-        if let Ok(val) = readable.read().await {
-            response.last_reading = Some(val);
-        }
+    if let Some(readable) = readable
+        && let Ok(val) = readable.read().await
+    {
+        response.last_reading = Some(val);
     }
     if let Some(triggerable) = triggerable {
         response.armed = triggerable.is_armed().await.ok();
@@ -2099,10 +2102,10 @@ async fn fetch_device_state(
     if let Some(frame_producer) = frame_producer {
         response.streaming = frame_producer.is_streaming().await.ok();
     }
-    if let Some(exposure_ctrl) = exposure_control {
-        if let Ok(seconds) = exposure_ctrl.get_exposure().await {
-            response.exposure_ms = Some(seconds * 1000.0);
-        }
+    if let Some(exposure_ctrl) = exposure_control
+        && let Ok(seconds) = exposure_ctrl.get_exposure().await
+    {
+        response.exposure_ms = Some(seconds * 1000.0);
     }
 
     Ok(response)
@@ -2252,8 +2255,8 @@ fn get_device_category(
     driver_type: &str,
     capabilities: &[Capability],
 ) -> daq_proto::DeviceCategory {
-    use daq_proto::DeviceCategory as ProtoCategory;
     use daq_core::capabilities::DeviceCategory as CoreCategory;
+    use daq_proto::DeviceCategory as ProtoCategory;
 
     // 1. Use explicit category from metadata if set by driver
     if let Some(category) = explicit_category {
@@ -2278,11 +2281,17 @@ fn get_device_category(
         return ProtoCategory::Laser;
     }
 
-    if driver_lower.contains("1830") || driver_lower.contains("power_meter") || driver_lower.contains("powermeter") {
+    if driver_lower.contains("1830")
+        || driver_lower.contains("power_meter")
+        || driver_lower.contains("powermeter")
+    {
         return ProtoCategory::PowerMeter;
     }
 
-    if driver_lower.contains("esp300") || driver_lower.contains("ell14") || driver_lower.contains("stage") {
+    if driver_lower.contains("esp300")
+        || driver_lower.contains("ell14")
+        || driver_lower.contains("stage")
+    {
         return ProtoCategory::Stage;
     }
 
@@ -2291,7 +2300,9 @@ fn get_device_category(
         return ProtoCategory::Camera;
     }
 
-    if capabilities.contains(&Capability::WavelengthTunable) || capabilities.contains(&Capability::EmissionControl) {
+    if capabilities.contains(&Capability::WavelengthTunable)
+        || capabilities.contains(&Capability::EmissionControl)
+    {
         return ProtoCategory::Laser;
     }
 
@@ -2299,7 +2310,8 @@ fn get_device_category(
         return ProtoCategory::Stage;
     }
 
-    if capabilities.contains(&Capability::Readable) && !capabilities.contains(&Capability::Movable) {
+    if capabilities.contains(&Capability::Readable) && !capabilities.contains(&Capability::Movable)
+    {
         return ProtoCategory::Detector;
     }
 
@@ -2544,7 +2556,6 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     }
-
 
     #[tokio::test]
     async fn test_stream_parameter_changes() {

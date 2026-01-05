@@ -15,29 +15,19 @@ pub type Result<T> = std::result::Result<T, ComediError>;
 pub enum ComediError {
     /// Device could not be opened (file not found, permissions, etc.)
     #[error("Failed to open device '{path}': {message}")]
-    DeviceNotFound {
-        path: String,
-        message: String,
-    },
+    DeviceNotFound { path: String, message: String },
 
     /// Permission denied when accessing the device
     #[error("Permission denied for device '{path}'. Check udev rules or run as root.")]
-    PermissionDenied {
-        path: String,
-    },
+    PermissionDenied { path: String },
 
     /// Device is already in use by another process
     #[error("Device '{path}' is busy (in use by another process)")]
-    DeviceBusy {
-        path: String,
-    },
+    DeviceBusy { path: String },
 
     /// Invalid subdevice index
     #[error("Invalid subdevice {subdevice}: device has {max} subdevices")]
-    InvalidSubdevice {
-        subdevice: u32,
-        max: u32,
-    },
+    InvalidSubdevice { subdevice: u32, max: u32 },
 
     /// Subdevice type mismatch (e.g., trying to use DIO subdevice as AI)
     #[error("Subdevice {subdevice} is type {actual:?}, expected {expected:?}")]
@@ -57,10 +47,7 @@ pub enum ComediError {
 
     /// Invalid range index
     #[error("Invalid range {range}: channel has {max} ranges")]
-    InvalidRange {
-        range: u32,
-        max: u32,
-    },
+    InvalidRange { range: u32, max: u32 },
 
     /// Buffer overflow during acquisition
     #[error("Buffer overflow: data acquisition too slow")]
@@ -72,21 +59,15 @@ pub enum ComediError {
 
     /// Hardware error reported by the device
     #[error("Hardware error: {message}")]
-    HardwareError {
-        message: String,
-    },
+    HardwareError { message: String },
 
     /// Command configuration error
     #[error("Invalid command configuration: {message}")]
-    InvalidCommand {
-        message: String,
-    },
+    InvalidCommand { message: String },
 
     /// Calibration error
     #[error("Calibration error: {message}")]
-    CalibrationError {
-        message: String,
-    },
+    CalibrationError { message: String },
 
     /// I/O error from the operating system
     #[error("I/O error: {0}")]
@@ -102,28 +83,19 @@ pub enum ComediError {
 
     /// Low-level Comedi library error
     #[error("Comedi error ({errno}): {message}")]
-    LibraryError {
-        errno: i32,
-        message: String,
-    },
+    LibraryError { errno: i32, message: String },
 
     /// Null pointer returned from FFI
     #[error("Null pointer returned from Comedi function: {function}")]
-    NullPointer {
-        function: String,
-    },
+    NullPointer { function: String },
 
     /// Operation not supported by this device/subdevice
     #[error("Operation not supported: {message}")]
-    NotSupported {
-        message: String,
-    },
+    NotSupported { message: String },
 
     /// Invalid configuration or parameter
     #[error("Invalid configuration: {message}")]
-    InvalidConfig {
-        message: String,
-    },
+    InvalidConfig { message: String },
 }
 
 /// Subdevice type for error messages (avoids depending on full type enum in errors)
@@ -178,9 +150,7 @@ impl ComediError {
         let message = if msg_ptr.is_null() {
             "Unknown error".to_string()
         } else {
-            CStr::from_ptr(msg_ptr)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
         };
 
         Self::LibraryError { errno, message }
@@ -197,9 +167,7 @@ impl ComediError {
         let message = if msg_ptr.is_null() {
             "Unknown error".to_string()
         } else {
-            CStr::from_ptr(msg_ptr)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
         };
 
         Self::LibraryError { errno, message }

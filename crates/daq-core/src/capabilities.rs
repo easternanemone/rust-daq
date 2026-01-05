@@ -827,7 +827,6 @@ impl<T: Triggerable + FrameProducer> Camera for T {}
 ///     Ok(())
 /// }
 /// ```
-
 /// Example: Power Meter
 ///
 /// A simple power meter implements only Readable:
@@ -854,7 +853,6 @@ impl<T: Triggerable + FrameProducer> Camera for T {}
 ///     Ok(readings)
 /// }
 /// ```
-
 /// Capability: Generic Command Execution
 ///
 /// Devices that can execute specialized commands with structured arguments.

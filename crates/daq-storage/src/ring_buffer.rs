@@ -74,6 +74,7 @@ const HEADER_SIZE: usize = 128;
 /// - _reserved: u32 (4 bytes) - alignment padding
 /// - stream_id: AtomicU64 (8 bytes) - incremented on buffer re-init for cross-process readers
 /// - _padding: [u8; 72] (72 bytes)
+///
 /// Total: 8 + 8 + 8 + 8 + 8 + 4 + 4 + 8 + 72 = 128 bytes
 #[repr(C)]
 struct RingBufferHeader {
@@ -165,6 +166,14 @@ pub struct RingBuffer {
 
     /// Registry for live data taps
     taps: Arc<TapRegistry>,
+
+    /// Arrow schema JSON for cross-process readers (bd-1il7).
+    ///
+    /// Stored in-memory when first Arrow batch is written. Cross-process
+    /// readers can retrieve this via gRPC `get_ring_buffer_tap_info` to
+    /// decode Arrow IPC data without parsing embedded schema.
+    #[cfg(feature = "storage_arrow")]
+    arrow_schema_json: RwLock<Option<String>>,
 }
 
 impl std::fmt::Debug for RingBuffer {
@@ -228,14 +237,40 @@ impl RingBuffer {
     /// let rb = RingBuffer::create(Path::new("/tmp/my_ring_buffer"), 100).unwrap();
     /// ```
     pub fn create(path: &Path, capacity_mb: usize) -> Result<Self> {
+        // Validate capacity_mb is not zero
+        if capacity_mb == 0 {
+            return Err(anyhow!(
+                "Ring buffer capacity must be at least 1 MB, got 0 MB"
+            ));
+        }
+
+        // Upper bounds check: maximum 16 GB to prevent allocation failures
+        const MAX_CAPACITY_MB: usize = 16 * 1024; // 16 GB
+        if capacity_mb > MAX_CAPACITY_MB {
+            return Err(anyhow!(
+                "Ring buffer capacity exceeds maximum ({}), got {} MB",
+                MAX_CAPACITY_MB,
+                capacity_mb
+            ));
+        }
+
+        // Safely compute capacity_bytes with overflow detection
         let capacity_bytes = capacity_mb
             .checked_mul(1024)
             .and_then(|v| v.checked_mul(1024))
-            .ok_or_else(|| anyhow!("Capacity calculation overflowed (capacity_mb too large)"))?;
-            
-        let total_size = capacity_bytes
-            .checked_add(HEADER_SIZE)
-            .ok_or_else(|| anyhow!("Total size calculation overflowed"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "Capacity calculation overflowed: {} MB exceeds maximum allocatable size",
+                    capacity_mb
+                )
+            })?;
+
+        let total_size = capacity_bytes.checked_add(HEADER_SIZE).ok_or_else(|| {
+            anyhow!(
+                "Total size calculation overflowed after adding header ({} bytes)",
+                HEADER_SIZE
+            )
+        })?;
 
         // Create or open the backing file
         let mut opts = OpenOptions::new();
@@ -325,6 +360,8 @@ impl RingBuffer {
             capacity: capacity_bytes as u64,
             data_lock: RwLock::new(()),
             taps: Arc::new(TapRegistry::new()),
+            #[cfg(feature = "storage_arrow")]
+            arrow_schema_json: RwLock::new(None),
         })
     }
 
@@ -419,6 +456,8 @@ impl RingBuffer {
             capacity,
             data_lock: RwLock::new(()),
             taps: Arc::new(TapRegistry::new()),
+            #[cfg(feature = "storage_arrow")]
+            arrow_schema_json: RwLock::new(None),
         })
     }
 
@@ -626,6 +665,7 @@ impl RingBuffer {
     /// Uses exponential backoff to reduce CPU usage during contention:
     /// - Retries 0-9: spin_loop() for sub-microsecond latency
     /// - Retries 10+: sleep with progressive backoff (10µs, 100µs, 1ms, 10ms)
+    ///
     /// This significantly reduces CPU usage compared to pure spin-waiting while
     /// maintaining low latency for the common fast-path case.
     ///
@@ -682,7 +722,7 @@ impl RingBuffer {
 
                 // If epoch is odd, a write is in progress - backoff and retry
                 // bd-jnfu.8: Use progressive backoff to reduce CPU during contention
-                if epoch_before % 2 != 0 {
+                if !epoch_before.is_multiple_of(2) {
                     Self::backoff_sleep(retry);
                     continue;
                 }
@@ -994,6 +1034,31 @@ impl RingBuffer {
             (*self.header).read_tail.fetch_add(bytes, Ordering::Release);
         }
     }
+
+    /// Get the Arrow schema JSON for cross-process readers (bd-1il7).
+    ///
+    /// Returns the schema JSON if Arrow data has been written to this buffer.
+    /// Cross-process readers (Python/Julia via mmap) can use this to decode
+    /// Arrow IPC data without parsing the embedded schema.
+    ///
+    /// # Returns
+    /// `Some(schema_json)` if Arrow data has been written, `None` otherwise.
+    #[cfg(feature = "storage_arrow")]
+    pub fn arrow_schema_json(&self) -> Option<String> {
+        self.arrow_schema_json
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    /// Get the schema length stored in the header.
+    ///
+    /// This indicates whether an Arrow schema is associated with this buffer.
+    /// A non-zero value means `arrow_schema_json()` should return Some.
+    pub fn schema_len(&self) -> u32 {
+        // SAFETY: header is valid for the lifetime of self
+        unsafe { (*self.header).schema_len }
+    }
 }
 
 // =============================================================================
@@ -1052,9 +1117,7 @@ impl AsyncRingBuffer {
     /// # }
     /// ```
     pub fn new(ring_buffer: Arc<RingBuffer>) -> Self {
-        Self {
-            inner: ring_buffer,
-        }
+        Self { inner: ring_buffer }
     }
 
     /// Read a snapshot of current data in the ring buffer (async-safe).
@@ -1203,6 +1266,17 @@ impl AsyncRingBuffer {
         self.inner.advance_tail(bytes)
     }
 
+    /// Get the Arrow schema JSON for cross-process readers (bd-1il7).
+    #[cfg(feature = "storage_arrow")]
+    pub fn arrow_schema_json(&self) -> Option<String> {
+        self.inner.arrow_schema_json()
+    }
+
+    /// Get the schema length stored in the header.
+    pub fn schema_len(&self) -> u32 {
+        self.inner.schema_len()
+    }
+
     /// Get access to the inner RingBuffer.
     ///
     /// # Warning
@@ -1252,6 +1326,9 @@ impl RingBuffer {
     /// with a 4-byte little-endian length prefix. This enables cross-process readers
     /// (Python/Julia via mmap) to easily determine record boundaries.
     ///
+    /// On the first write, the Arrow schema is extracted and stored for retrieval
+    /// via `arrow_schema_json()` (bd-1il7).
+    ///
     /// Wire format:
     /// ```text
     /// +----------------+------------------+
@@ -1266,6 +1343,9 @@ impl RingBuffer {
     /// Ok(()) on success, Err on serialization or write failure
     pub fn write_arrow_batch(&self, batch: &RecordBatch) -> Result<()> {
         use arrow::ipc::writer::FileWriter;
+
+        // Store schema on first write (bd-1il7)
+        self.store_schema_if_needed(&batch.schema());
 
         let mut buffer = Vec::new();
         let mut writer = FileWriter::try_new(&mut buffer, &batch.schema())
@@ -1283,6 +1363,52 @@ impl RingBuffer {
         self.write(&framed)
             .context("Failed to write Arrow IPC data to ring buffer")
     }
+
+    /// Store Arrow schema JSON on first write (bd-1il7).
+    ///
+    /// This extracts the schema from the first batch and stores it for
+    /// cross-process readers. The schema is serialized to JSON format
+    /// which can be parsed by Python/Julia clients.
+    fn store_schema_if_needed(&self, schema: &arrow::datatypes::SchemaRef) {
+        // Check if schema already stored (fast path)
+        if self.schema_len() > 0 {
+            return;
+        }
+
+        // Try to acquire write lock and store schema
+        if let Ok(mut guard) = self.arrow_schema_json.write() {
+            if guard.is_none() {
+                // Serialize schema to JSON
+                let schema_json = serde_json::json!({
+                    "fields": schema.fields().iter().map(|f| {
+                        serde_json::json!({
+                            "name": f.name(),
+                            "data_type": format!("{:?}", f.data_type()),
+                            "nullable": f.is_nullable(),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "metadata": schema.metadata().clone(),
+                });
+
+                if let Ok(json_str) = serde_json::to_string(&schema_json) {
+                    let len = json_str.len();
+                    *guard = Some(json_str);
+
+                    // Update header schema_len (capped at u32::MAX)
+                    let schema_len = std::cmp::min(len, u32::MAX as usize) as u32;
+                    // SAFETY: header is valid for the lifetime of self
+                    unsafe {
+                        (*self.header).schema_len = schema_len;
+                    }
+
+                    tracing::debug!(
+                        schema_len = len,
+                        "Stored Arrow schema JSON in ring buffer (bd-1il7)"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1291,6 +1417,72 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// Test that create() rejects zero capacity.
+    /// Regression test for bd-sep2 (capacity overflow validation).
+    #[test]
+    fn test_create_rejects_zero_capacity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("zero_capacity.buf");
+
+        let result = RingBuffer::create(&path, 0);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("must be at least 1 MB") || err_msg.contains("capacity"),
+            "Error should mention zero capacity is invalid: {}",
+            err_msg
+        );
+    }
+
+    /// Test that create() rejects capacity exceeding maximum (16 GB).
+    /// Regression test for bd-sep2 (capacity overflow validation).
+    #[test]
+    fn test_create_rejects_excessive_capacity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("excessive_capacity.buf");
+
+        // Try to create with 17 GB (exceeds 16 GB limit)
+        let result = RingBuffer::create(&path, 17 * 1024);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exceeds maximum") || err_msg.contains("capacity"),
+            "Error should mention capacity exceeds maximum: {}",
+            err_msg
+        );
+    }
+
+    /// Test that create() handles overflow in multiplication safely.
+    /// This would overflow on 32-bit systems or with pathologically large values.
+    /// Regression test for bd-sep2 (capacity overflow validation).
+    #[test]
+    fn test_create_handles_arithmetic_overflow() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("arithmetic_overflow.buf");
+
+        // Use a value that would overflow if unchecked
+        // On 64-bit systems, max usize is ~9 exabytes (9,223,372 TB)
+        // So we can't easily trigger overflow without hitting the 16GB limit first
+        // But we can test that the function doesn't panic on large values
+        let result = RingBuffer::create(&path, 16 * 1024);
+        // This should fail due to the 16GB upper limit, not a panic from overflow
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                // Either exceeds limit or allocation fails, both are acceptable
+                assert!(
+                    msg.contains("exceeds") || msg.contains("Failed") || msg.contains("allocation"),
+                    "Error should be about exceeds limit or allocation: {}",
+                    msg
+                );
+            }
+            Ok(_) => {
+                // 16GB exactly is at the limit, so it might succeed depending on available RAM
+                // This is still a valid outcome for this test
+            }
+        }
+    }
 
     #[test]
     fn test_create_ring_buffer() {
@@ -1704,10 +1896,7 @@ mod tests {
         }
 
         // Truncate the file to simulate corruption
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         // Truncate to header + 512KB (should be header + 1MB)
         file.set_len((HEADER_SIZE + 512 * 1024) as u64).unwrap();
         drop(file);
@@ -1910,7 +2099,7 @@ mod tests {
 
         // Read with original
         let snapshot = async_rb.read_snapshot().await;
-        assert!(snapshot.len() > 0);
+        assert!(!snapshot.is_empty());
     }
 
     #[tokio::test]
@@ -1964,5 +2153,69 @@ mod tests {
 
         // The snapshot should contain the Arrow IPC data with length prefix
         assert!(snapshot.len() > 4); // At least 4 bytes for length prefix
+    }
+
+    /// Test Arrow schema storage (bd-1il7)
+    #[cfg(feature = "storage_arrow")]
+    #[tokio::test]
+    async fn test_arrow_schema_storage() {
+        use arrow::array::{Float64Array, Int32Array};
+        use arrow::datatypes::{DataType, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use std::sync::Arc as ArrowArc;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("schema_test.buf");
+
+        let rb = Arc::new(RingBuffer::create(&path, 10).unwrap());
+        let async_rb = AsyncRingBuffer::new(rb);
+
+        // Initially no schema
+        assert!(async_rb.arrow_schema_json().is_none());
+        assert_eq!(async_rb.schema_len(), 0);
+
+        // Create and write an Arrow batch
+        let schema = ArrowArc::new(Schema::new(vec![
+            Field::new("temperature", DataType::Float64, false),
+            Field::new("pressure", DataType::Int32, true),
+        ]));
+
+        let temp_array = Float64Array::from(vec![20.5, 21.0, 22.5]);
+        let press_array = Int32Array::from(vec![Some(101325), None, Some(101400)]);
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![ArrowArc::new(temp_array), ArrowArc::new(press_array)],
+        )
+        .unwrap();
+
+        async_rb.write_arrow_batch(&batch).await.unwrap();
+
+        // After writing, schema should be stored
+        let schema_json = async_rb.arrow_schema_json();
+        assert!(schema_json.is_some());
+        let json = schema_json.unwrap();
+        assert!(json.contains("temperature"));
+        assert!(json.contains("pressure"));
+        assert!(json.contains("Float64"));
+        assert!(json.contains("Int32"));
+
+        // schema_len should be non-zero
+        assert!(async_rb.schema_len() > 0);
+
+        // Writing again should not change the schema (first write wins)
+        let schema2 = ArrowArc::new(Schema::new(vec![Field::new(
+            "different",
+            DataType::Float64,
+            false,
+        )]));
+        let arr2 = Float64Array::from(vec![1.0]);
+        let batch2 = RecordBatch::try_new(schema2, vec![ArrowArc::new(arr2)]).unwrap();
+        async_rb.write_arrow_batch(&batch2).await.unwrap();
+
+        // Schema should still be the original one
+        let schema_json2 = async_rb.arrow_schema_json().unwrap();
+        assert!(schema_json2.contains("temperature"));
+        assert!(!schema_json2.contains("different"));
     }
 }

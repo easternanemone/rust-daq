@@ -310,7 +310,6 @@ impl ContinuousStream {
         let batch_size = 1000; // Default batch size in scans
 
         let handle = thread::spawn(move || {
-
             let mut buffer = Vec::with_capacity(batch_size * n_channels);
             let mut last_overflow = false;
 
@@ -331,7 +330,10 @@ impl ContinuousStream {
                         let overflow = stats.buffer_fill > 0.9;
                         if overflow && !last_overflow {
                             overflow_count.fetch_add(1, Ordering::SeqCst);
-                            warn!("Buffer overflow detected (fill: {:.1}%)", stats.buffer_fill * 100.0);
+                            warn!(
+                                "Buffer overflow detected (fill: {:.1}%)",
+                                stats.buffer_fill * 100.0
+                            );
                         }
                         last_overflow = overflow;
 

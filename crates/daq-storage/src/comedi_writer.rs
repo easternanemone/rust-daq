@@ -84,7 +84,7 @@ impl CompressionType {
     pub fn hdf5_filter(&self) -> Option<u32> {
         match self {
             Self::None => None,
-            Self::Gzip => Some(1), // H5Z_FILTER_DEFLATE
+            Self::Gzip => Some(1),    // H5Z_FILTER_DEFLATE
             Self::Lz4 => Some(32004), // LZ4 filter ID
         }
     }
@@ -518,7 +518,7 @@ impl ComediStreamWriter {
         }
 
         let num_channels = self.channels.len();
-        if samples.len() % num_channels != 0 {
+        if !samples.len().is_multiple_of(num_channels) {
             return Err(anyhow!(
                 "Sample count {} is not divisible by channel count {}",
                 samples.len(),
@@ -543,10 +543,7 @@ impl ComediStreamWriter {
         // Write to ring buffer for live tapping
         if let Some(ref rb) = self.ring_buffer {
             // Serialize samples to bytes for ring buffer
-            let bytes: Vec<u8> = samples
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
             rb.write(&bytes)?;
         }
 

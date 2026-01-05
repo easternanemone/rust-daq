@@ -505,7 +505,11 @@ impl OscilloscopePanel {
                 .width(80.0)
                 .show_ui(ui, |ui| {
                     if ui
-                        .selectable_value(&mut self.signal_source, SignalSource::External, "External")
+                        .selectable_value(
+                            &mut self.signal_source,
+                            SignalSource::External,
+                            "External",
+                        )
                         .clicked()
                     {
                         // Switched to external
@@ -724,7 +728,8 @@ impl OscilloscopePanel {
             // Draw trigger time marker
             if let Some(trigger_time) = self.last_trigger_time {
                 if trigger_time >= t_start && trigger_time <= t_end {
-                    let trigger_marker = VLine::new(trigger_time).color(Color32::from_rgb(255, 100, 0));
+                    let trigger_marker =
+                        VLine::new(trigger_time).color(Color32::from_rgb(255, 100, 0));
                     plot_ui.vline(trigger_marker);
                 }
             }
@@ -738,7 +743,10 @@ impl OscilloscopePanel {
             ui.separator();
 
             // Check if any channel beyond 8 is enabled (compute before mutable borrow)
-            let show_all = self.channels.get(8..).map_or(false, |rest| rest.iter().any(|c| c.enabled));
+            let show_all = self
+                .channels
+                .get(8..)
+                .map_or(false, |rest| rest.iter().any(|c| c.enabled));
             let max_visible = if show_all { 16 } else { 8 };
 
             egui::ScrollArea::vertical()

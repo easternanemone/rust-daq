@@ -324,10 +324,10 @@ impl Module for PowerMonitor {
         }
 
         // Validate threshold relationship
-        if let (Some(low), Some(high)) = (self.config.low_threshold, self.config.high_threshold) {
-            if low >= high {
-                warnings.push("low_threshold should be less than high_threshold".to_string());
-            }
+        if let (Some(low), Some(high)) = (self.config.low_threshold, self.config.high_threshold)
+            && low >= high
+        {
+            warnings.push("low_threshold should be less than high_threshold".to_string());
         }
 
         self.state = ModuleState::Configured;
@@ -494,7 +494,7 @@ async fn power_monitor_task(
         ctx.emit_data("power_reading", values).await;
 
         // Emit statistics periodically (every window_size samples)
-        if stats.count % window_size as u64 == 0 {
+        if stats.count.is_multiple_of(window_size as u64) {
             ctx.emit_data("statistics", stats.as_hashmap()).await;
         }
 
@@ -519,15 +519,15 @@ async fn power_monitor_task(
 
 /// Check if value crosses thresholds
 fn check_thresholds(value: f64, config: &PowerMonitorConfig) -> ThresholdState {
-    if let Some(low) = config.low_threshold {
-        if value < low {
-            return ThresholdState::Low;
-        }
+    if let Some(low) = config.low_threshold
+        && value < low
+    {
+        return ThresholdState::Low;
     }
-    if let Some(high) = config.high_threshold {
-        if value > high {
-            return ThresholdState::High;
-        }
+    if let Some(high) = config.high_threshold
+        && value > high
+    {
+        return ThresholdState::High;
     }
     ThresholdState::Normal
 }

@@ -24,7 +24,12 @@ impl Roi {
     /// Create a new ROI with explicit coordinates (for external use)
     #[allow(dead_code)]
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Create ROI from two corners (normalizes to ensure positive dimensions)
@@ -33,7 +38,12 @@ impl Roi {
         let y = y1.min(y2).max(0) as u32;
         let width = (x1 - x2).unsigned_abs();
         let height = (y1 - y2).unsigned_abs();
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check if ROI has non-zero area
@@ -47,7 +57,12 @@ impl Roi {
         let y = self.y.min(image_height.saturating_sub(1));
         let width = self.width.min(image_width.saturating_sub(x));
         let height = self.height.min(image_height.saturating_sub(y));
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Get pixel count in ROI
@@ -86,9 +101,11 @@ impl RoiStatistics {
 
         let mean = sum / n as f64;
 
-        let variance: f64 = pixels.iter()
+        let variance: f64 = pixels
+            .iter()
             .map(|&p| (p as f64 - mean).powi(2))
-            .sum::<f64>() / n as f64;
+            .sum::<f64>()
+            / n as f64;
 
         Self {
             mean,
@@ -118,9 +135,11 @@ impl RoiStatistics {
 
         let mean = sum / n as f64;
 
-        let variance: f64 = pixels.iter()
+        let variance: f64 = pixels
+            .iter()
             .map(|&p| (p as f64 - mean).powi(2))
-            .sum::<f64>() / n as f64;
+            .sum::<f64>()
+            / n as f64;
 
         Self {
             mean,
@@ -182,7 +201,9 @@ impl RoiStatistics {
                         let Some(pixel_offset) = (y as u64).checked_mul(image_width as u64) else {
                             continue;
                         };
-                        let Some(byte_offset) = (pixel_offset + x as u64).checked_mul(bytes_per_pixel) else {
+                        let Some(byte_offset) =
+                            (pixel_offset + x as u64).checked_mul(bytes_per_pixel)
+                        else {
                             continue;
                         };
                         let byte_idx = byte_offset as usize;
@@ -247,7 +268,8 @@ impl RoiSelector {
         image_height: u32,
         bit_depth: u32,
     ) {
-        let stats = RoiStatistics::from_frame_roi(frame_data, image_width, image_height, bit_depth, &roi);
+        let stats =
+            RoiStatistics::from_frame_roi(frame_data, image_width, image_height, bit_depth, &roi);
         self.roi = Some(roi);
         self.stats = Some(stats);
     }
@@ -261,7 +283,13 @@ impl RoiSelector {
         bit_depth: u32,
     ) {
         if let Some(roi) = &self.roi {
-            let stats = RoiStatistics::from_frame_roi(frame_data, image_width, image_height, bit_depth, roi);
+            let stats = RoiStatistics::from_frame_roi(
+                frame_data,
+                image_width,
+                image_height,
+                bit_depth,
+                roi,
+            );
             self.stats = Some(stats);
         }
     }
@@ -281,7 +309,10 @@ impl RoiSelector {
             return false;
         }
 
-        let image_offset = (image_rect.size() - egui::vec2(image_size.0 as f32 * zoom, image_size.1 as f32 * zoom)) / 2.0 + pan;
+        let image_offset = (image_rect.size()
+            - egui::vec2(image_size.0 as f32 * zoom, image_size.1 as f32 * zoom))
+            / 2.0
+            + pan;
 
         // Convert screen position to pixel coordinates
         let screen_to_pixel = |pos: egui::Pos2| -> (i32, i32) {
@@ -334,7 +365,10 @@ impl RoiSelector {
         zoom: f32,
         pan: egui::Vec2,
     ) {
-        let image_offset = (image_rect.size() - egui::vec2(image_size.0 as f32 * zoom, image_size.1 as f32 * zoom)) / 2.0 + pan;
+        let image_offset = (image_rect.size()
+            - egui::vec2(image_size.0 as f32 * zoom, image_size.1 as f32 * zoom))
+            / 2.0
+            + pan;
 
         // Convert pixel coordinates to screen position
         let pixel_to_screen = |px: u32, py: u32| -> egui::Pos2 {
@@ -348,7 +382,11 @@ impl RoiSelector {
             let rect = egui::Rect::from_two_pos(p1, p2);
 
             // Semi-transparent fill
-            painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_unmultiplied(100, 150, 255, 50));
+            painter.rect_filled(
+                rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(100, 150, 255, 50),
+            );
             // Border
             painter.rect_stroke(
                 rect,
@@ -365,7 +403,11 @@ impl RoiSelector {
             let rect = egui::Rect::from_two_pos(p1, p2);
 
             // Semi-transparent fill
-            painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_unmultiplied(255, 200, 100, 30));
+            painter.rect_filled(
+                rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(255, 200, 100, 30),
+            );
             // Border
             painter.rect_stroke(
                 rect,

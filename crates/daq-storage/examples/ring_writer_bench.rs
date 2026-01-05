@@ -17,7 +17,10 @@ use std::path::Path;
 use std::time::Instant;
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn encode_measurement_frame(measurement: &Measurement) -> Vec<u8> {
@@ -29,7 +32,10 @@ fn main() {
     let total: usize = env_or("RING_BENCH_MESSAGES", 100_000);
     let payload: usize = env_or("RING_BENCH_PAYLOAD", 0);
     let buffer_mb: usize = env_or("RING_BENCH_BUFFER_MB", 64);
-    let path = env_or("RING_BENCH_PATH", "/dev/shm/ring_writer_bench.buf".to_string());
+    let path = env_or(
+        "RING_BENCH_PATH",
+        "/dev/shm/ring_writer_bench.buf".to_string(),
+    );
 
     let rb = RingBuffer::create(Path::new(&path), buffer_mb).expect("create ring buffer");
 

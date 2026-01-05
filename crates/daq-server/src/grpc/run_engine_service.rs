@@ -4,17 +4,19 @@
 //! Enables declarative plan execution with pause/resume/abort capabilities.
 
 use crate::grpc::proto::{
-    run_engine_service_server::RunEngineService, AbortPlanRequest, AbortPlanResponse, EngineStatus,
-    GetEngineStatusRequest, HaltEngineRequest, HaltEngineResponse, ListPlanTypesRequest,
-    ListPlanTypesResponse, PauseEngineRequest, PauseEngineResponse, PlanTypeInfo, QueuePlanRequest,
-    QueuePlanResponse, ResumeEngineRequest, ResumeEngineResponse, StartEngineRequest,
-    StartEngineResponse, StreamDocumentsRequest,
+    AbortPlanRequest, AbortPlanResponse, EngineStatus, GetEngineStatusRequest, HaltEngineRequest,
+    HaltEngineResponse, ListPlanTypesRequest, ListPlanTypesResponse, PauseEngineRequest,
+    PauseEngineResponse, PlanTypeInfo, QueuePlanRequest, QueuePlanResponse, ResumeEngineRequest,
+    ResumeEngineResponse, StartEngineRequest, StartEngineResponse, StreamDocumentsRequest,
+    run_engine_service_server::RunEngineService,
 };
-use daq_experiment::run_engine::RunEngine;
 use daq_experiment::Document; // Re-exported from daq_core
+use daq_experiment::plans::{CountBuilder, GridScanBuilder, LineScanBuilder, PlanRegistry};
+use daq_experiment::run_engine::RunEngine;
+use daq_storage::DocumentWriter;
 use futures::StreamExt; // For .filter_map() with async
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tonic::{Request, Response, Status};
 
@@ -33,6 +35,10 @@ pub struct RunEngineServiceImpl {
     proto_doc_sender: tokio::sync::broadcast::Sender<Arc<crate::grpc::proto::Document>>,
     /// Active stream count for observability (bd-f9hn)
     active_streams: Arc<AtomicU64>,
+    /// Plan registry for dynamic plan creation
+    plan_registry: Arc<PlanRegistry>,
+    /// Persists documents to HDF5 (bd-jwsc)
+    document_writer: Arc<DocumentWriter>,
 }
 
 impl RunEngineServiceImpl {
@@ -46,6 +52,39 @@ impl RunEngineServiceImpl {
 
         // Create observability metrics
         let active_streams = Arc::new(AtomicU64::new(0));
+
+        // Initialize plan registry
+        let mut registry = PlanRegistry::new();
+        registry.register("count", CountBuilder);
+        registry.register("line_scan", LineScanBuilder);
+        registry.register("grid_scan", GridScanBuilder);
+        let plan_registry = Arc::new(registry);
+
+        // Initialize document writer (data stored in ./data directory)
+        let data_dir = std::path::Path::new("data").to_path_buf();
+        std::fs::create_dir_all(&data_dir).ok(); // Ensure directory exists
+        let document_writer = Arc::new(DocumentWriter::new(data_dir));
+
+        // Spawn persistence task (bd-jwsc)
+        let engine_clone_writer = engine.clone();
+        let writer_clone = document_writer.clone();
+        tokio::spawn(async move {
+            let mut domain_rx = engine_clone_writer.subscribe();
+            loop {
+                match domain_rx.recv().await {
+                    Ok(doc) => {
+                        // Forward to writer (handles HDF5 interaction on blocking thread)
+                        if let Err(e) = writer_clone.write(doc).await {
+                            tracing::error!(error = %e, "Failed to persist document");
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "Persistence task lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
 
         // Spawn converter task that subscribes to domain stream and broadcasts proto
         let engine_clone = engine.clone();
@@ -69,7 +108,7 @@ impl RunEngineServiceImpl {
                                 let send_result = proto_sender_clone.send(Arc::new(proto_doc));
 
                                 // Observability: Log throughput periodically
-                                if total_converted % 1000 == 0 {
+                                if total_converted.is_multiple_of(1000) {
                                     tracing::info!(
                                         total_converted,
                                         subscriber_count,
@@ -88,7 +127,9 @@ impl RunEngineServiceImpl {
                             }
                             Ok(None) => {
                                 // Skip documents that don't convert (e.g., Manifest)
-                                tracing::trace!("Skipped non-convertible document (e.g., Manifest)");
+                                tracing::trace!(
+                                    "Skipped non-convertible document (e.g., Manifest)"
+                                );
                             }
                             Err(e) => {
                                 tracing::error!(
@@ -121,6 +162,8 @@ impl RunEngineServiceImpl {
             engine,
             proto_doc_sender,
             active_streams,
+            plan_registry,
+            document_writer,
         }
     }
 }
@@ -131,6 +174,8 @@ impl Clone for RunEngineServiceImpl {
             engine: self.engine.clone(),
             proto_doc_sender: self.proto_doc_sender.clone(),
             active_streams: self.active_streams.clone(),
+            plan_registry: self.plan_registry.clone(),
+            document_writer: self.document_writer.clone(),
         }
     }
 }
@@ -143,27 +188,38 @@ impl RunEngineService for RunEngineServiceImpl {
     ) -> Result<Response<ListPlanTypesResponse>, Status> {
         use crate::grpc::proto::PlanTypeSummary;
 
-        // Return hardcoded list of available plan types
-        let plan_types = vec![
-            PlanTypeSummary {
-                type_id: "count".to_string(),
-                display_name: "Count".to_string(),
-                description: "Repeated measurements at current position".to_string(),
-                categories: vec!["0d".to_string()],
-            },
-            PlanTypeSummary {
-                type_id: "line_scan".to_string(),
-                display_name: "Line Scan".to_string(),
-                description: "1D linear scan along a motor axis".to_string(),
-                categories: vec!["scanning".to_string(), "1d".to_string()],
-            },
-            PlanTypeSummary {
-                type_id: "grid_scan".to_string(),
-                display_name: "Grid Scan".to_string(),
-                description: "2D grid scan over two motor axes".to_string(),
-                categories: vec!["scanning".to_string(), "2d".to_string()],
-            },
-        ];
+        // Get available plan types from registry
+        let plan_types = self
+            .plan_registry
+            .list_types()
+            .into_iter()
+            .map(|(type_id, description)| {
+                // Determine categories based on plan type
+                // TODO: Add category metadata to PlanBuilder trait
+                let categories = if type_id == "count" {
+                    vec!["0d".to_string()]
+                } else if type_id == "grid_scan" {
+                    vec!["scanning".to_string(), "2d".to_string()]
+                } else {
+                    vec!["scanning".to_string(), "1d".to_string()]
+                };
+
+                let display_name = match type_id.as_str() {
+                    "count" => "Count",
+                    "line_scan" => "Line Scan",
+                    "grid_scan" => "Grid Scan",
+                    s => s, // Fallback to ID
+                }
+                .to_string();
+
+                PlanTypeSummary {
+                    type_id,
+                    display_name,
+                    description,
+                    categories,
+                }
+            })
+            .collect();
 
         Ok(Response::new(ListPlanTypesResponse { plan_types }))
     }
@@ -172,7 +228,9 @@ impl RunEngineService for RunEngineServiceImpl {
         &self,
         _request: Request<crate::grpc::proto::GetPlanTypeInfoRequest>,
     ) -> Result<Response<PlanTypeInfo>, Status> {
-        Err(Status::unimplemented("get_plan_type_info not yet implemented"))
+        Err(Status::unimplemented(
+            "get_plan_type_info not yet implemented",
+        ))
     }
 
     async fn queue_plan(
@@ -181,15 +239,19 @@ impl RunEngineService for RunEngineServiceImpl {
     ) -> Result<Response<QueuePlanResponse>, Status> {
         let req = request.get_ref();
 
-        // Create plan from request parameters
-        let plan = create_plan_from_request(req)
+        // Create plan from request parameters using the registry
+        let plan = self
+            .plan_registry
+            .create_plan(&req.plan_type, &req.parameters, &req.device_mapping)
             .map_err(|e| Status::invalid_argument(format!("Failed to create plan: {}", e)))?;
 
         // Queue the plan
         let run_uid = if req.metadata.is_empty() {
             self.engine.queue(plan).await
         } else {
-            self.engine.queue_with_metadata(plan, req.metadata.clone()).await
+            self.engine
+                .queue_with_metadata(plan, req.metadata.clone())
+                .await
         };
 
         let queue_len = self.engine.queue_len().await;
@@ -207,7 +269,9 @@ impl RunEngineService for RunEngineServiceImpl {
         _request: Request<StartEngineRequest>,
     ) -> Result<Response<StartEngineResponse>, Status> {
         // Start the engine (spawns background task)
-        self.engine.start().await
+        self.engine
+            .start()
+            .await
             .map_err(|e| Status::internal(format!("Failed to start engine: {}", e)))?;
 
         Ok(Response::new(StartEngineResponse {
@@ -233,7 +297,9 @@ impl RunEngineService for RunEngineServiceImpl {
         &self,
         _request: Request<ResumeEngineRequest>,
     ) -> Result<Response<ResumeEngineResponse>, Status> {
-        self.engine.resume().await
+        self.engine
+            .resume()
+            .await
             .map_err(|e| Status::internal(format!("Failed to resume engine: {}", e)))?;
 
         Ok(Response::new(ResumeEngineResponse {
@@ -250,7 +316,9 @@ impl RunEngineService for RunEngineServiceImpl {
 
         // TODO: Support aborting specific run_uid (currently aborts current run only)
         // For now, ignore _req.run_uid and abort the currently executing plan
-        self.engine.abort("user requested abort via gRPC").await
+        self.engine
+            .abort("user requested abort via gRPC")
+            .await
             .map_err(|e| Status::internal(format!("Failed to abort plan: {}", e)))?;
 
         Ok(Response::new(AbortPlanResponse {
@@ -263,7 +331,9 @@ impl RunEngineService for RunEngineServiceImpl {
         &self,
         _request: Request<HaltEngineRequest>,
     ) -> Result<Response<HaltEngineResponse>, Status> {
-        self.engine.halt().await
+        self.engine
+            .halt()
+            .await
             .map_err(|e| Status::internal(format!("Failed to halt engine: {}", e)))?;
 
         Ok(Response::new(HaltEngineResponse {
@@ -301,8 +371,9 @@ impl RunEngineService for RunEngineServiceImpl {
         }))
     }
 
-    type StreamDocumentsStream =
-        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<crate::grpc::proto::Document, Status>> + Send>>;
+    type StreamDocumentsStream = std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<crate::grpc::proto::Document, Status>> + Send>,
+    >;
 
     async fn stream_documents(
         &self,
@@ -314,7 +385,7 @@ impl RunEngineService for RunEngineServiceImpl {
 
         // Extract filters from request
         let req = request.into_inner();
-        let run_uid_filter = req.run_uid.filter(|s| !s.is_empty());
+        let run_uid_filter = req.run_uid.filter(|s| !s.is_empty()).map(Arc::new);
 
         // Wrap doc_types filter in Arc to avoid cloning Vec on every document
         let doc_types_filter: Option<Arc<Vec<i32>>> = if req.doc_types.is_empty() {
@@ -325,9 +396,10 @@ impl RunEngineService for RunEngineServiceImpl {
 
         // Maintain descriptor_uid → run_uid mapping for Event filtering
         // Events only have descriptor_uid, need to look up run_uid
-        let descriptor_to_run_map = Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::<String, String>::new()
-        ));
+        let descriptor_to_run_map = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            String,
+        >::new()));
 
         // Observability: Track active streams (bd-f9hn)
         let active_streams = self.active_streams.clone();
@@ -393,7 +465,7 @@ impl RunEngineService for RunEngineServiceImpl {
                             };
 
                             if let Some(uid) = doc_run_uid {
-                                if uid != *filter_uid {
+                                if uid.as_str() != filter_uid.as_str() {
                                     docs_filtered.fetch_add(1, Ordering::Relaxed);
                                     return None; // Skip - different run
                                 }
@@ -408,16 +480,15 @@ impl RunEngineService for RunEngineServiceImpl {
                         }
 
                         // Apply doc_types filter
-                        if let Some(ref filter_types) = doc_types_filter {
-                            if !filter_types.contains(&proto_doc_arc.doc_type) {
+                        if let Some(ref filter_types) = doc_types_filter
+                            && !filter_types.contains(&proto_doc_arc.doc_type) {
                                 docs_filtered.fetch_add(1, Ordering::Relaxed);
                                 return None; // Skip - type not in filter
                             }
-                        }
 
                         // Observability: Track sent documents and log periodically
                         let sent = docs_sent.fetch_add(1, Ordering::Relaxed) + 1;
-                        if sent % 100 == 0 {
+                        if sent.is_multiple_of(100) {
                             let filtered = docs_filtered.load(Ordering::Relaxed);
                             let filter_rate = if received > 0 {
                                 (sent as f64 / received as f64) * 100.0
@@ -516,234 +587,9 @@ where
     }
 }
 
-/// Create a Plan from QueuePlanRequest parameters
-fn create_plan_from_request(req: &QueuePlanRequest) -> Result<Box<dyn daq_experiment::plans::Plan>, String> {
-    use daq_experiment::plans::{Count, GridScan, LineScan};
-
-    match req.plan_type.as_str() {
-        "count" => {
-            // Parse count parameters
-            let num_points = req.parameters.get("num_points")
-                .ok_or("Missing parameter: num_points")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid num_points: {}", e))?;
-
-            // Validate parameters
-            if num_points == 0 {
-                return Err("num_points must be > 0".to_string());
-            }
-            if num_points > 10_000_000 {
-                return Err("num_points must be <= 10,000,000 to prevent resource exhaustion".to_string());
-            }
-
-            let mut plan = Count::new(num_points);
-
-            // Optional detector
-            if let Some(detector) = req.device_mapping.get("detector") {
-                if detector.is_empty() {
-                    return Err("detector device name cannot be empty".to_string());
-                }
-                plan = plan.with_detector(detector);
-            }
-
-            // Optional delay
-            if let Some(delay_str) = req.parameters.get("delay") {
-                let delay = delay_str.parse::<f64>()
-                    .map_err(|e| format!("Invalid delay: {}", e))?;
-                if !delay.is_finite() {
-                    return Err("delay must be a finite number (not NaN or infinity)".to_string());
-                }
-                if delay < 0.0 {
-                    return Err("delay must be >= 0".to_string());
-                }
-                plan = plan.with_delay(delay);
-            }
-
-            Ok(Box::new(plan))
-        }
-        "line_scan" => {
-            // Parse line scan parameters
-            let start = req.parameters.get("start")
-                .ok_or("Missing parameter: start")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid start: {}", e))?;
-
-            let end = req.parameters.get("end")
-                .ok_or("Missing parameter: end")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid end: {}", e))?;
-
-            let num_points = req.parameters.get("num_points")
-                .ok_or("Missing parameter: num_points")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid num_points: {}", e))?;
-
-            let motor = req.device_mapping.get("motor")
-                .ok_or("Missing device mapping: motor")?;
-
-            // Validate parameters
-            if !start.is_finite() {
-                return Err("start must be a finite number (not NaN or infinity)".to_string());
-            }
-            if !end.is_finite() {
-                return Err("end must be a finite number (not NaN or infinity)".to_string());
-            }
-            if num_points == 0 {
-                return Err("num_points must be > 0".to_string());
-            }
-            if num_points > 10_000_000 {
-                return Err("num_points must be <= 10,000,000 to prevent resource exhaustion".to_string());
-            }
-            if start == end {
-                return Err("start and end must be different for line scan".to_string());
-            }
-            if motor.is_empty() {
-                return Err("motor device name cannot be empty".to_string());
-            }
-
-            let mut plan = LineScan::new(motor, start, end, num_points);
-
-            // Optional detector
-            if let Some(detector) = req.device_mapping.get("detector") {
-                if detector.is_empty() {
-                    return Err("detector device name cannot be empty".to_string());
-                }
-                plan = plan.with_detector(detector);
-            }
-
-            // Optional settle time
-            if let Some(settle_str) = req.parameters.get("settle_time") {
-                let settle = settle_str.parse::<f64>()
-                    .map_err(|e| format!("Invalid settle_time: {}", e))?;
-                if !settle.is_finite() {
-                    return Err("settle_time must be a finite number (not NaN or infinity)".to_string());
-                }
-                if settle < 0.0 {
-                    return Err("settle_time must be >= 0".to_string());
-                }
-                plan = plan.with_settle_time(settle);
-            }
-
-            Ok(Box::new(plan))
-        }
-        "grid_scan" => {
-            // Parse grid scan parameters
-            let x_start = req.parameters.get("x_start")
-                .ok_or("Missing parameter: x_start")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid x_start: {}", e))?;
-
-            let x_end = req.parameters.get("x_end")
-                .ok_or("Missing parameter: x_end")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid x_end: {}", e))?;
-
-            let x_points = req.parameters.get("x_points")
-                .ok_or("Missing parameter: x_points")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid x_points: {}", e))?;
-
-            let y_start = req.parameters.get("y_start")
-                .ok_or("Missing parameter: y_start")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid y_start: {}", e))?;
-
-            let y_end = req.parameters.get("y_end")
-                .ok_or("Missing parameter: y_end")?
-                .parse::<f64>()
-                .map_err(|e| format!("Invalid y_end: {}", e))?;
-
-            let y_points = req.parameters.get("y_points")
-                .ok_or("Missing parameter: y_points")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid y_points: {}", e))?;
-
-            let x_motor = req.device_mapping.get("x_motor")
-                .ok_or("Missing device mapping: x_motor")?;
-
-            let y_motor = req.device_mapping.get("y_motor")
-                .ok_or("Missing device mapping: y_motor")?;
-
-            // Validate parameters
-            if !x_start.is_finite() {
-                return Err("x_start must be a finite number (not NaN or infinity)".to_string());
-            }
-            if !x_end.is_finite() {
-                return Err("x_end must be a finite number (not NaN or infinity)".to_string());
-            }
-            if !y_start.is_finite() {
-                return Err("y_start must be a finite number (not NaN or infinity)".to_string());
-            }
-            if !y_end.is_finite() {
-                return Err("y_end must be a finite number (not NaN or infinity)".to_string());
-            }
-            if x_points == 0 {
-                return Err("x_points must be > 0".to_string());
-            }
-            if x_points > 100_000 {
-                return Err("x_points must be <= 100,000 to prevent resource exhaustion".to_string());
-            }
-            if y_points == 0 {
-                return Err("y_points must be > 0".to_string());
-            }
-            if y_points > 100_000 {
-                return Err("y_points must be <= 100,000 to prevent resource exhaustion".to_string());
-            }
-            if x_start == x_end {
-                return Err("x_start and x_end must be different for grid scan".to_string());
-            }
-            if y_start == y_end {
-                return Err("y_start and y_end must be different for grid scan".to_string());
-            }
-            if x_motor.is_empty() {
-                return Err("x_motor device name cannot be empty".to_string());
-            }
-            if y_motor.is_empty() {
-                return Err("y_motor device name cannot be empty".to_string());
-            }
-            if x_motor == y_motor {
-                return Err("x_motor and y_motor must be different".to_string());
-            }
-
-            // Note: GridScan takes (outer/slow, inner/fast) axes
-            // Convention: y is outer (slow), x is inner (fast)
-            let mut plan = GridScan::new(
-                y_motor,
-                y_start,
-                y_end,
-                y_points,
-                x_motor,
-                x_start,
-                x_end,
-                x_points,
-            );
-
-            // Optional detector
-            if let Some(detector) = req.device_mapping.get("detector") {
-                if detector.is_empty() {
-                    return Err("detector device name cannot be empty".to_string());
-                }
-                plan = plan.with_detector(detector);
-            }
-
-            // Optional snake scanning
-            if let Some(snake_str) = req.parameters.get("snake") {
-                let snake = snake_str.parse::<bool>()
-                    .map_err(|e| format!("Invalid snake: {}", e))?;
-                plan = plan.with_snake(snake);
-            }
-
-            Ok(Box::new(plan))
-        }
-        _ => Err(format!("Unknown plan type: {}", req.plan_type)),
-    }
-}
-
 /// Convert domain Document to proto Document
 /// Returns Ok(None) for documents that have no proto equivalent (e.g., Manifest)
-fn domain_to_proto_document(
-    doc: Document,
-) -> Result<Option<crate::grpc::proto::Document>, String> {
+fn domain_to_proto_document(doc: Document) -> Result<Option<crate::grpc::proto::Document>, String> {
     use crate::grpc::proto::{
         DataKey as ProtoDataKey, DescriptorDocument, Document as ProtoDocument,
         DocumentType as ProtoDocType, EventDocument, StartDocument, StopDocument,
@@ -791,6 +637,9 @@ fn domain_to_proto_document(
                 data: event.data.clone(),
                 timestamps: event.timestamps.clone(),
                 bulk_data: std::collections::HashMap::new(), // TODO: Bulk data support
+                // Middle-data support (bd-9unn)
+                metadata: event.metadata.clone(),
+                arrays: event.arrays.clone(),
             };
             (
                 ProtoDocType::DocEvent as i32,
@@ -829,7 +678,9 @@ fn domain_to_proto_document(
                 ProtoDocType::DocDescriptor as i32,
                 desc.uid,
                 desc.time_ns,
-                Some(crate::grpc::proto::document::Payload::Descriptor(proto_desc)),
+                Some(crate::grpc::proto::document::Payload::Descriptor(
+                    proto_desc,
+                )),
             )
         }
         DomainDoc::Manifest(_manifest) => {

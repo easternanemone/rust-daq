@@ -389,8 +389,8 @@ fn verify_complete_grpc_api() {
 
     // Services
     use daq_proto::daq::module_service_server::ModuleService;
-    use daq_server::grpc::ModuleServiceImpl;
     use daq_server::grpc::HardwareServiceImpl;
+    use daq_server::grpc::ModuleServiceImpl;
 
     // Verify service exports
     fn _check_service_types() {

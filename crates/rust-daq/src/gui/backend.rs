@@ -65,6 +65,10 @@ pub struct Backend {
     state_stream_task: Option<platform::JoinHandle<()>>,
     /// Channel to stop the state stream
     state_stream_stop_tx: Option<mpsc::Sender<()>>,
+    /// Handle to the video stream task
+    video_stream_task: Option<platform::JoinHandle<()>>,
+    /// Channel to stop the video stream
+    video_stream_stop_tx: Option<mpsc::Sender<()>>,
 }
 
 impl Backend {
@@ -80,6 +84,8 @@ impl Backend {
             last_rtt_check: Instant::now(),
             state_stream_task: None,
             state_stream_stop_tx: None,
+            video_stream_task: None,
+            video_stream_stop_tx: None,
         }
     }
 
@@ -160,8 +166,15 @@ impl Backend {
             BackendCommand::StopStateStream => {
                 self.stop_state_stream().await;
             }
+            BackendCommand::StartVideoStream { device_id } => {
+                self.start_video_stream(device_id).await;
+            }
+            BackendCommand::StopVideoStream => {
+                self.stop_video_stream().await;
+            }
             BackendCommand::Shutdown => {
                 self.stop_state_stream().await;
+                self.stop_video_stream().await;
                 return false;
             }
         }
@@ -636,6 +649,116 @@ impl Backend {
         }
         if let Some(task) = self.state_stream_task.take() {
             // Give it a moment to gracefully stop
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = tokio::time::timeout(Duration::from_millis(500), task).await;
+            }
+        }
+    }
+
+    /// Start streaming video frames from a device.
+    async fn start_video_stream(&mut self, device_id: String) {
+        // Stop existing stream if any
+        self.stop_video_stream().await;
+
+        let Some(client) = self.client.clone() else {
+            self.handle.send_event(BackendEvent::Error {
+                message: "Not connected to daemon".to_string(),
+            });
+            return;
+        };
+
+        info!("Starting video stream for {}", device_id);
+
+        // Create stop channel
+        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
+        self.video_stream_stop_tx = Some(stop_tx);
+
+        let event_tx = self.handle.event_tx.clone();
+        let stats = self.stats.clone();
+        let device_id_task = device_id.clone();
+
+        // Spawn streaming task
+        let task = platform::spawn(async move {
+            let mut client = client;
+            let mut backoff_ms = 100u64;
+            const MAX_BACKOFF_MS: u64 = 5_000;
+
+            loop {
+                let request = daq_proto::daq::StreamFramesRequest {
+                    device_id: device_id_task.clone(),
+                    max_fps: 30,
+                };
+
+                match client.stream_frames(request).await {
+                    Ok(response) => {
+                        backoff_ms = 100;
+                        let mut stream = response.into_inner();
+
+                        loop {
+                            tokio::select! {
+                                _ = stop_rx.recv() => {
+                                    info!("Video stream stop requested");
+                                    return;
+                                }
+                                update = stream.message() => {
+                                    match update {
+                                        Ok(Some(frame)) => {
+                                            // Handle frame
+                                            // FrameData has width, height, data
+                                            let w = frame.width as usize;
+                                            let h = frame.height as usize;
+
+                                            // Only send if we have data to avoid empty updates
+                                            if !frame.data.is_empty() {
+                                                let _ = event_tx.try_send(BackendEvent::ImageReceived {
+                                                    device_id: device_id_task.clone(),
+                                                    size: [w, h],
+                                                    data: frame.data,
+                                                });
+                                            }
+                                        }
+                                        Ok(None) => {
+                                            debug!("Video stream ended");
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            error!("Video stream error: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to subscribe to video stream: {}", e);
+                    }
+                }
+
+                // Check stop before retry
+                tokio::select! {
+                    _ = stop_rx.recv() => {
+                         info!("Video stream stop requested during backoff");
+                         return;
+                    }
+                    _ = platform::sleep(Duration::from_millis(backoff_ms)) => {}
+                }
+
+                backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                stats.stream_restarts.fetch_add(1, Ordering::Relaxed); // Reuse metric? Or add new one? Reusing fine for now.
+            }
+        });
+
+        self.video_stream_task = Some(task);
+    }
+
+    /// Stop the video stream.
+    async fn stop_video_stream(&mut self) {
+        if let Some(stop_tx) = self.video_stream_stop_tx.take() {
+            let _ = stop_tx.send(()).await;
+        }
+        if let Some(task) = self.video_stream_task.take() {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let _ = tokio::time::timeout(Duration::from_millis(500), task).await;

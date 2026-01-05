@@ -19,6 +19,7 @@ pub enum OfflineContext {
     /// Module management
     Modules,
     /// Generic panel
+    #[allow(dead_code)]
     Generic,
 }
 
@@ -135,6 +136,7 @@ pub fn offline_notice(ui: &mut egui::Ui, is_offline: bool, context: OfflineConte
 /// Render a compact offline banner (for use in headers/toolbars).
 ///
 /// Shows a small warning indicator that the panel requires connection.
+#[allow(dead_code)]
 pub fn offline_banner(ui: &mut egui::Ui, is_offline: bool) {
     if !is_offline {
         return;
@@ -150,6 +152,7 @@ pub fn offline_banner(ui: &mut egui::Ui, is_offline: bool) {
 }
 
 /// Render a minimal offline indicator (just an icon with tooltip).
+#[allow(dead_code)]
 pub fn offline_indicator(ui: &mut egui::Ui, is_offline: bool) {
     if !is_offline {
         return;

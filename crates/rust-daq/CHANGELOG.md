@@ -5,6 +5,46 @@ All notable changes to Rust DAQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - December 2025
+
+### Added
+
+- **Arrow Schema in Ring Buffer** (bd-1il7): Ring buffer now stores and exposes Arrow IPC schema JSON for cross-process readers
+  - New `arrow_schema_json()` getter on `RingBuffer` and `AsyncRingBuffer`
+  - Schema automatically captured on first write when `storage_arrow` feature enabled
+  - Exposed via `RingBufferTapInfo` gRPC response
+
+- **EventDocument Middle-Data Support** (bd-9unn): Extended `EventDocument` protocol buffer with `metadata` and `arrays` fields for richer data transport
+
+- **Real System Metrics** (bd-obmt): `stream_status` now reports actual CPU/memory usage via `sysinfo` crate instead of dummy values
+
+- **Arrow Schema Storage Test**: New `test_arrow_schema_storage` test verifying schema capture and retrieval
+
+### Changed
+
+- **Arc<String> Optimization** (bd-wzed): `run_uid_filter` now uses `Arc<String>` to avoid per-document allocations in streaming
+- **PresetService Non-Blocking I/O** (bd-zheg): Moved file operations to `spawn_blocking` to prevent gRPC runtime blocking
+- **RingBuffer Bounds Validation** (bd-sep2): Added proper validation for capacity parameters to prevent overflow
+
+### Fixed
+
+- **Unsafe Sync Implementation** (bd-y7xg): Removed unsafe `Sync` impl for `PageAlignedBuffer`, now uses proper `UnsafeCell` pattern
+- **Feature Flag Duplication** (bd-5bfv): Added `default-features = false` to `daq-hardware` dependency in `daq-server` to prevent cascading defaults
+- **Circular Dependency Documentation** (bd-n80s): Documented why `daq-driver-pvcam` only depends on `daq-core`
+- **Clippy Warnings** (bd-hq39): Fixed unused imports with proper `#[cfg(feature)]` attributes
+- **Formatting Issues**: Fixed with `cargo fmt --all`
+
+### Documentation
+
+- Added documentation comments for hardware feature flags in `rust-daq/Cargo.toml`
+- Added architectural notes for feature flag pass-through pattern in `daq-server/Cargo.toml`
+
+### Verified (No Changes Needed)
+
+- **gRPC Authentication** (bd-wbv4): Already implemented with bearer token support
+- **Specialized Binaries** (bd-dath): Current binary split is appropriate for the architecture
+- **Untracked Binaries** (bd-lenq): Cleaned up in previous session
+
 ## [0.5.0] - 2025-12-06
 
 ### V5 Transition Complete

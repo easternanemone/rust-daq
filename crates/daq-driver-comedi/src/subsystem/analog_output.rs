@@ -58,8 +58,7 @@ impl AnalogOutput {
         let n_channels =
             unsafe { comedi_sys::comedi_get_n_channels(device.handle(), subdevice) as u32 };
 
-        let maxdata =
-            unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
+        let maxdata = unsafe { comedi_sys::comedi_get_maxdata(device.handle(), subdevice, 0) };
 
         debug!(
             subdevice = subdevice,
@@ -119,12 +118,7 @@ impl AnalogOutput {
         }
 
         let ptr = unsafe {
-            comedi_sys::comedi_get_range(
-                self.device.handle(),
-                self.subdevice,
-                channel,
-                range_index,
-            )
+            comedi_sys::comedi_get_range(self.device.handle(), self.subdevice, channel, range_index)
         };
 
         unsafe { Range::from_ptr(range_index, ptr) }.ok_or_else(|| ComediError::NullPointer {
@@ -135,7 +129,13 @@ impl AnalogOutput {
     /// Write a raw value to a channel.
     ///
     /// The value should be in the range 0 to maxdata.
-    pub fn write_raw(&self, channel: u32, range: u32, aref: AnalogReference, data: lsampl_t) -> Result<()> {
+    pub fn write_raw(
+        &self,
+        channel: u32,
+        range: u32,
+        aref: AnalogReference,
+        data: lsampl_t,
+    ) -> Result<()> {
         self.validate_channel(channel)?;
 
         let result = unsafe {
@@ -181,12 +181,8 @@ impl AnalogOutput {
     /// Convert a voltage to raw DAC value.
     pub fn voltage_to_raw(&self, voltage: f64, range: &Range) -> lsampl_t {
         unsafe {
-            let range_ptr = comedi_sys::comedi_get_range(
-                self.device.handle(),
-                self.subdevice,
-                0,
-                range.index,
-            );
+            let range_ptr =
+                comedi_sys::comedi_get_range(self.device.handle(), self.subdevice, 0, range.index);
 
             if range_ptr.is_null() {
                 // Fallback to manual calculation
@@ -201,12 +197,8 @@ impl AnalogOutput {
     /// Convert a raw DAC value to voltage.
     pub fn raw_to_voltage(&self, raw: lsampl_t, range: &Range) -> f64 {
         unsafe {
-            let range_ptr = comedi_sys::comedi_get_range(
-                self.device.handle(),
-                self.subdevice,
-                0,
-                range.index,
-            );
+            let range_ptr =
+                comedi_sys::comedi_get_range(self.device.handle(), self.subdevice, 0, range.index);
 
             if range_ptr.is_null() {
                 let fraction = raw as f64 / self.maxdata as f64;

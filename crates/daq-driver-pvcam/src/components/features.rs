@@ -11,15 +11,15 @@
 //! - **Gain Control**: Gain index and multiplication factor (bd-doju)
 //! - **Temperature**: Sensor temperature monitoring and setpoint
 
-use anyhow::Result;
+use crate::components::connection::PvcamConnection;
 #[cfg(feature = "pvcam_hardware")]
 use anyhow::anyhow;
-use crate::components::connection::PvcamConnection;
+use anyhow::Result;
 
 #[cfg(feature = "pvcam_hardware")]
-use pvcam_sys::*;
-#[cfg(feature = "pvcam_hardware")]
 use crate::components::connection::get_pvcam_error;
+#[cfg(feature = "pvcam_hardware")]
+use pvcam_sys::*;
 #[cfg(feature = "pvcam_hardware")]
 use std::ffi::CStr;
 
@@ -97,7 +97,6 @@ pub enum FanSpeed {
 }
 
 impl FanSpeed {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => FanSpeed::High,
@@ -108,7 +107,6 @@ impl FanSpeed {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             FanSpeed::High => 0,
@@ -165,7 +163,6 @@ pub enum CentroidsMode {
 }
 
 impl CentroidsMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => CentroidsMode::Locate,
@@ -175,7 +172,6 @@ impl CentroidsMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             CentroidsMode::Locate => 0,
@@ -218,7 +214,6 @@ pub enum SmartStreamMode {
 }
 
 impl SmartStreamMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => SmartStreamMode::Exposures,
@@ -227,7 +222,6 @@ impl SmartStreamMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             SmartStreamMode::Exposures => 0,
@@ -278,7 +272,6 @@ pub enum ShutterMode {
 }
 
 impl ShutterMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ShutterMode::Normal,
@@ -290,7 +283,6 @@ impl ShutterMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             ShutterMode::Normal => 0,
@@ -323,7 +315,13 @@ impl ShutterMode {
     }
 
     pub fn all_choices() -> Vec<String> {
-        vec!["Normal".into(), "Open".into(), "Closed".into(), "None".into(), "PreOpen".into()]
+        vec![
+            "Normal".into(),
+            "Open".into(),
+            "Closed".into(),
+            "None".into(),
+            "PreOpen".into(),
+        ]
     }
 }
 
@@ -345,7 +343,6 @@ pub enum ShutterStatus {
 }
 
 impl ShutterStatus {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ShutterStatus::Closed,
@@ -369,7 +366,14 @@ impl ShutterStatus {
     }
 
     pub fn all_choices() -> Vec<String> {
-        vec!["Closed".into(), "Open".into(), "Opening".into(), "Closing".into(), "Fault".into(), "Unknown".into()]
+        vec![
+            "Closed".into(),
+            "Open".into(),
+            "Opening".into(),
+            "Closing".into(),
+            "Fault".into(),
+            "Unknown".into(),
+        ]
     }
 }
 
@@ -393,7 +397,6 @@ pub enum ExposureMode {
 }
 
 impl ExposureMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ExposureMode::Timed,
@@ -405,7 +408,6 @@ impl ExposureMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             ExposureMode::Timed => 0,
@@ -438,7 +440,13 @@ impl ExposureMode {
     }
 
     pub fn all_choices() -> Vec<String> {
-        vec!["Timed".into(), "Strobe".into(), "Bulb".into(), "TriggerFirst".into(), "EdgeTrigger".into()]
+        vec![
+            "Timed".into(),
+            "Strobe".into(),
+            "Bulb".into(),
+            "TriggerFirst".into(),
+            "EdgeTrigger".into(),
+        ]
     }
 }
 
@@ -460,7 +468,6 @@ pub enum ClearMode {
 }
 
 impl ClearMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ClearMode::Never,
@@ -473,7 +480,6 @@ impl ClearMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             ClearMode::Never => 0,
@@ -528,7 +534,6 @@ pub enum ExposureResolution {
 }
 
 impl ExposureResolution {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ExposureResolution::Milliseconds,
@@ -538,7 +543,6 @@ impl ExposureResolution {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             ExposureResolution::Milliseconds => 0,
@@ -557,7 +561,6 @@ pub enum FrameRotate {
 }
 
 impl FrameRotate {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => FrameRotate::None,
@@ -568,7 +571,6 @@ impl FrameRotate {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             FrameRotate::None => 0,
@@ -598,7 +600,12 @@ impl FrameRotate {
     }
 
     pub fn all_choices() -> Vec<String> {
-        vec!["None".into(), "90 CW".into(), "180 CW".into(), "270 CW".into()]
+        vec![
+            "None".into(),
+            "90 CW".into(),
+            "180 CW".into(),
+            "270 CW".into(),
+        ]
     }
 }
 
@@ -611,7 +618,6 @@ pub enum FrameFlip {
 }
 
 impl FrameFlip {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => FrameFlip::None,
@@ -622,7 +628,6 @@ impl FrameFlip {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             FrameFlip::None => 0,
@@ -672,7 +677,6 @@ pub enum ExposeOutMode {
 }
 
 impl ExposeOutMode {
-    #[cfg(feature = "pvcam_hardware")]
     pub fn from_pvcam(value: i32) -> Self {
         match value {
             0 => ExposeOutMode::FirstRow,
@@ -684,7 +688,6 @@ impl ExposeOutMode {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
     pub fn to_pvcam(self) -> i32 {
         match self {
             ExposeOutMode::FirstRow => 0,
@@ -745,12 +748,22 @@ impl PvcamFeatures {
             let mut temp_raw: i16 = 0;
             unsafe {
                 // SAFETY: h is a valid open handle; temp_raw is a writable i16 on the stack.
-                if pl_get_param(h, PARAM_TEMP, ATTR_CURRENT, &mut temp_raw as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_TEMP,
+                    ATTR_CURRENT,
+                    &mut temp_raw as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get temperature: {}", get_pvcam_error()));
                 }
             }
             return Ok(temp_raw as f64 / 100.0);
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(_conn.mock_state.lock().unwrap().temperature_c);
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(-40.0)
     }
 
@@ -765,6 +778,11 @@ impl PvcamFeatures {
                     return Err(anyhow!("Failed to set temperature: {}", get_pvcam_error()));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.temperature_setpoint_c = _celsius;
         }
         Ok(())
     }
@@ -867,12 +885,25 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_FAN_SPEED_SETPOINT, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_FAN_SPEED_SETPOINT,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get fan speed: {}", get_pvcam_error()));
                 }
             }
             return Ok(FanSpeed::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let state = _conn.mock_state.lock().unwrap();
+            Ok(FanSpeed::from_pvcam(state.fan_speed))
+        }
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(FanSpeed::High)
     }
 
@@ -888,6 +919,11 @@ impl PvcamFeatures {
                 }
             }
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.fan_speed = _speed.to_pvcam();
+        }
         Ok(())
     }
 
@@ -902,6 +938,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_SPDTAB_INDEX)
                 .map_err(|e| anyhow!("Failed to get speed index: {}", e));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(_conn.mock_state.lock().unwrap().speed_index);
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(0)
     }
 
@@ -919,6 +959,11 @@ impl PvcamFeatures {
                 }
             }
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.speed_index = _index;
+        }
         Ok(())
     }
 
@@ -929,6 +974,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_READOUT_PORT)
                 .map_err(|e| anyhow!("Failed to get readout port: {}", e));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(_conn.mock_state.lock().unwrap().readout_port_index);
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(0)
     }
 
@@ -945,6 +994,11 @@ impl PvcamFeatures {
                     return Err(anyhow!("Failed to set readout port: {}", get_pvcam_error()));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.readout_port_index = _port;
         }
         Ok(())
     }
@@ -969,10 +1023,12 @@ impl PvcamFeatures {
                     if pl_set_param(h, PARAM_SPDTAB_INDEX, &idx as *const _ as *mut _) != 0 {
                         modes.push(SpeedMode {
                             index: i as u16,
-                            name: Self::get_enum_string_impl(h, PARAM_SPDTAB_INDEX).unwrap_or_else(|_| format!("Speed {}", i)),
+                            name: Self::get_enum_string_impl(h, PARAM_SPDTAB_INDEX)
+                                .unwrap_or_else(|_| format!("Speed {}", i)),
                             pixel_time_ns: Self::get_pixel_time_impl(h).unwrap_or(0),
                             bit_depth: Self::get_bit_depth_impl(h).unwrap_or(16),
-                            port_index: Self::get_u16_param_impl(h, PARAM_READOUT_PORT).unwrap_or(0),
+                            port_index: Self::get_u16_param_impl(h, PARAM_READOUT_PORT)
+                                .unwrap_or(0),
                         });
                     }
                 }
@@ -989,8 +1045,20 @@ impl PvcamFeatures {
         }
         // Mock mode
         Ok(vec![
-            SpeedMode { index: 0, name: "100 MHz".to_string(), pixel_time_ns: 10, bit_depth: 16, port_index: 0 },
-            SpeedMode { index: 1, name: "50 MHz".to_string(), pixel_time_ns: 20, bit_depth: 16, port_index: 0 },
+            SpeedMode {
+                index: 0,
+                name: "100 MHz".to_string(),
+                pixel_time_ns: 10,
+                bit_depth: 16,
+                port_index: 0,
+            },
+            SpeedMode {
+                index: 1,
+                name: "50 MHz".to_string(),
+                pixel_time_ns: 20,
+                bit_depth: 16,
+                port_index: 0,
+            },
         ])
     }
 
@@ -1011,7 +1079,8 @@ impl PvcamFeatures {
                     if pl_set_param(h, PARAM_READOUT_PORT, &idx as *const _ as *mut _) != 0 {
                         ports.push(ReadoutPort {
                             index: i as u16,
-                            name: Self::get_enum_string_impl(h, PARAM_READOUT_PORT).unwrap_or_else(|_| format!("Port {}", i)),
+                            name: Self::get_enum_string_impl(h, PARAM_READOUT_PORT)
+                                .unwrap_or_else(|_| format!("Port {}", i)),
                         });
                     }
                 }
@@ -1028,8 +1097,14 @@ impl PvcamFeatures {
         }
         // Mock mode
         Ok(vec![
-            ReadoutPort { index: 0, name: "Sensitivity".to_string() },
-            ReadoutPort { index: 1, name: "Speed".to_string() },
+            ReadoutPort {
+                index: 0,
+                name: "Sensitivity".to_string(),
+            },
+            ReadoutPort {
+                index: 1,
+                name: "Speed".to_string(),
+            },
         ])
     }
 
@@ -1044,6 +1119,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_GAIN_INDEX)
                 .map_err(|e| anyhow!("Failed to get gain index: {}", e));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(_conn.mock_state.lock().unwrap().gain_index);
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(0)
     }
 
@@ -1058,6 +1137,11 @@ impl PvcamFeatures {
                     return Err(anyhow!("Failed to set gain index: {}", get_pvcam_error()));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.gain_index = _index;
         }
         Ok(())
     }
@@ -1079,7 +1163,8 @@ impl PvcamFeatures {
                     if pl_set_param(h, PARAM_GAIN_INDEX, &idx as *const _ as *mut _) != 0 {
                         modes.push(GainMode {
                             index: i as u16,
-                            name: Self::get_enum_string_impl(h, PARAM_GAIN_INDEX).unwrap_or_else(|_| format!("Gain {}", i)),
+                            name: Self::get_enum_string_impl(h, PARAM_GAIN_INDEX)
+                                .unwrap_or_else(|_| format!("Gain {}", i)),
                         });
                     }
                 }
@@ -1096,8 +1181,14 @@ impl PvcamFeatures {
         }
         // Mock mode
         Ok(vec![
-            GainMode { index: 0, name: "HDR".to_string() },
-            GainMode { index: 1, name: "CMS".to_string() },
+            GainMode {
+                index: 0,
+                name: "HDR".to_string(),
+            },
+            GainMode {
+                index: 1,
+                name: "CMS".to_string(),
+            },
         ])
     }
 
@@ -1112,12 +1203,28 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_EXPOSURE_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get exposure mode: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_EXPOSURE_MODE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get exposure mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(ExposureMode::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let state = _conn.mock_state.lock().unwrap();
+            Ok(ExposureMode::from_pvcam(state.exposure_mode))
+        }
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(ExposureMode::Timed)
     }
 
@@ -1129,9 +1236,17 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_EXPOSURE_MODE, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set exposure mode: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set exposure mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.exposure_mode = _mode.to_pvcam();
         }
         Ok(())
     }
@@ -1143,12 +1258,25 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_CLEAR_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_CLEAR_MODE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get clear mode: {}", get_pvcam_error()));
                 }
             }
             return Ok(ClearMode::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let state = _conn.mock_state.lock().unwrap();
+            Ok(ClearMode::from_pvcam(state.clear_mode))
+        }
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(ClearMode::PreExposure)
     }
 
@@ -1164,6 +1292,11 @@ impl PvcamFeatures {
                 }
             }
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.clear_mode = _mode.to_pvcam();
+        }
         Ok(())
     }
 
@@ -1174,12 +1307,28 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_EXPOSE_OUT_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get expose out mode: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_EXPOSE_OUT_MODE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get expose out mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(ExposeOutMode::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let state = _conn.mock_state.lock().unwrap();
+            Ok(ExposeOutMode::from_pvcam(state.expose_out_mode))
+        }
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(ExposeOutMode::FirstRow)
     }
 
@@ -1191,9 +1340,17 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_EXPOSE_OUT_MODE, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set expose out mode: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set expose out mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.expose_out_mode = _mode.to_pvcam();
         }
         Ok(())
     }
@@ -1209,8 +1366,17 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_EXP_RES, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get exposure resolution: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_EXP_RES,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get exposure resolution: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(ExposureResolution::from_pvcam(value));
@@ -1219,14 +1385,20 @@ impl PvcamFeatures {
     }
 
     /// Set exposure resolution
-    pub fn set_exposure_resolution(_conn: &PvcamConnection, _res: ExposureResolution) -> Result<()> {
+    pub fn set_exposure_resolution(
+        _conn: &PvcamConnection,
+        _res: ExposureResolution,
+    ) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
             let value = _res.to_pvcam();
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_EXP_RES, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set exposure resolution: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set exposure resolution: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1251,7 +1423,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_EXP_RES_INDEX, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set exposure resolution index: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set exposure resolution index: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1269,7 +1444,13 @@ impl PvcamFeatures {
             let mut value: i16 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i16 on stack.
-                if pl_get_param(h, PARAM_ADC_OFFSET, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_ADC_OFFSET,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get ADC offset: {}", get_pvcam_error()));
                 }
             }
@@ -1357,7 +1538,13 @@ impl PvcamFeatures {
             let mut value: f64 = 0.0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable f64 on stack.
-                if pl_get_param(h, PARAM_READOUT_TIME, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_READOUT_TIME,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get readout time: {}", get_pvcam_error()));
                 }
             }
@@ -1377,8 +1564,17 @@ impl PvcamFeatures {
             let mut value: i64 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i64 on stack.
-                if pl_get_param(h, PARAM_CLEARING_TIME, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get clearing time: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_CLEARING_TIME,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get clearing time: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             // PARAM_CLEARING_TIME is in nanoseconds (i64)
@@ -1394,8 +1590,17 @@ impl PvcamFeatures {
             let mut value: i64 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i64 on stack.
-                if pl_get_param(h, PARAM_PRE_TRIGGER_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get pre-trigger delay: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_PRE_TRIGGER_DELAY,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get pre-trigger delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             // PARAM_PRE_TRIGGER_DELAY is in nanoseconds (i64)
@@ -1411,8 +1616,17 @@ impl PvcamFeatures {
             let mut value: i64 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i64 on stack.
-                if pl_get_param(h, PARAM_POST_TRIGGER_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get post-trigger delay: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_POST_TRIGGER_DELAY,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get post-trigger delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             // PARAM_POST_TRIGGER_DELAY is in nanoseconds (i64)
@@ -1432,8 +1646,17 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_SHTR_STATUS, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get shutter status: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_SHTR_STATUS,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get shutter status: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(ShutterStatus::from_pvcam(value));
@@ -1448,12 +1671,24 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_SHTR_OPEN_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_SHTR_OPEN_MODE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Err(anyhow!("Failed to get shutter mode: {}", get_pvcam_error()));
                 }
             }
             return Ok(ShutterMode::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(ShutterMode::from_pvcam(
+            _conn.mock_state.lock().unwrap().shutter_mode,
+        ));
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(ShutterMode::Normal)
     }
 
@@ -1481,8 +1716,17 @@ impl PvcamFeatures {
             let mut value: uns32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable uns32 on stack.
-                if pl_get_param(h, PARAM_SHTR_OPEN_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get shutter open delay: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_SHTR_OPEN_DELAY,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get shutter open delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(value);
@@ -1497,8 +1741,17 @@ impl PvcamFeatures {
             let mut value: uns32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable uns32 on stack.
-                if pl_get_param(h, PARAM_SHTR_CLOSE_DELAY, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get shutter close delay: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_SHTR_CLOSE_DELAY,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get shutter close delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(value);
@@ -1514,7 +1767,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_SHTR_OPEN_DELAY, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set shutter open delay: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set shutter open delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1529,7 +1785,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_SHTR_CLOSE_DELAY, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set shutter close delay: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set shutter close delay: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1563,7 +1822,8 @@ impl PvcamFeatures {
                 let feature = PPFeature {
                     index: i as u16,
                     id: Self::get_u16_param_impl(h, PARAM_PP_FEAT_ID).unwrap_or(0),
-                    name: Self::get_pp_feature_name_impl(h).unwrap_or_else(|_| format!("Feature {}", i)),
+                    name: Self::get_pp_feature_name_impl(h)
+                        .unwrap_or_else(|_| format!("Feature {}", i)),
                 };
                 features.push(feature);
             }
@@ -1572,8 +1832,16 @@ impl PvcamFeatures {
         }
         // Mock mode
         Ok(vec![
-            PPFeature { index: 0, id: 1, name: "PrimeEnhance".to_string() },
-            PPFeature { index: 1, id: 2, name: "PrimeLocate".to_string() },
+            PPFeature {
+                index: 0,
+                id: 1,
+                name: "PrimeEnhance".to_string(),
+            },
+            PPFeature {
+                index: 1,
+                id: 2,
+                name: "PrimeLocate".to_string(),
+            },
         ])
     }
 
@@ -1588,7 +1856,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; selecting PP feature.
                 if pl_set_param(h, PARAM_PP_INDEX, &feat_idx as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to select PP feature: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to select PP feature: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
 
@@ -1601,7 +1872,8 @@ impl PvcamFeatures {
                 let param_idx = i as i32;
                 unsafe {
                     // SAFETY: h is valid; selecting PP parameter.
-                    if pl_set_param(h, PARAM_PP_PARAM_INDEX, &param_idx as *const _ as *mut _) == 0 {
+                    if pl_set_param(h, PARAM_PP_PARAM_INDEX, &param_idx as *const _ as *mut _) == 0
+                    {
                         continue;
                     }
                 }
@@ -1610,7 +1882,8 @@ impl PvcamFeatures {
                 let param = PPParam {
                     index: i as u16,
                     id: Self::get_u16_param_impl(h, PARAM_PP_PARAM_ID).unwrap_or(0),
-                    name: Self::get_pp_param_name_impl(h).unwrap_or_else(|_| format!("Param {}", i)),
+                    name: Self::get_pp_param_name_impl(h)
+                        .unwrap_or_else(|_| format!("Param {}", i)),
                     value: Self::get_u32_param_impl(h, PARAM_PP_PARAM).unwrap_or(0),
                 };
                 params.push(param);
@@ -1620,8 +1893,18 @@ impl PvcamFeatures {
         }
         // Mock mode
         Ok(vec![
-            PPParam { index: 0, id: 1, name: "Enabled".to_string(), value: 1 },
-            PPParam { index: 1, id: 2, name: "Threshold".to_string(), value: 100 },
+            PPParam {
+                index: 0,
+                id: 1,
+                name: "Enabled".to_string(),
+                value: 1,
+            },
+            PPParam {
+                index: 1,
+                id: 2,
+                name: "Threshold".to_string(),
+                value: 100,
+            },
         ])
     }
 
@@ -1641,7 +1924,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; selecting PP feature.
                 if pl_set_param(h, PARAM_PP_INDEX, &feat_idx as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to select PP feature: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to select PP feature: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
 
@@ -1650,7 +1936,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; selecting PP parameter.
                 if pl_set_param(h, PARAM_PP_PARAM_INDEX, &param_idx as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to select PP parameter: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to select PP parameter: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
 
@@ -1658,7 +1947,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_PP_PARAM, &_value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set PP parameter value: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set PP parameter value: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1678,7 +1970,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; selecting PP feature.
                 if pl_set_param(h, PARAM_PP_INDEX, &feat_idx as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to select PP feature: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to select PP feature: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
 
@@ -1687,7 +1982,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid; selecting PP parameter.
                 if pl_set_param(h, PARAM_PP_PARAM_INDEX, &param_idx as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to select PP parameter: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to select PP parameter: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
 
@@ -1716,7 +2014,10 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             unsafe {
                 if pl_pp_reset(h) == 0 {
-                    return Err(anyhow!("Failed to reset PP features: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to reset PP features: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1740,7 +2041,13 @@ impl PvcamFeatures {
                 unsafe {
                     // SAFETY: h is valid; setting index and getting value.
                     if pl_set_param(h, PARAM_BINNING_SER, &idx as *const _ as *mut _) != 0 {
-                        if pl_get_param(h, PARAM_BINNING_SER, ATTR_CURRENT, &mut value as *mut _ as *mut _) != 0 {
+                        if pl_get_param(
+                            h,
+                            PARAM_BINNING_SER,
+                            ATTR_CURRENT,
+                            &mut value as *mut _ as *mut _,
+                        ) != 0
+                        {
                             factors.push(value as u16);
                         }
                     }
@@ -1765,7 +2072,13 @@ impl PvcamFeatures {
                 unsafe {
                     // SAFETY: h is valid; setting index and getting value.
                     if pl_set_param(h, PARAM_BINNING_PAR, &idx as *const _ as *mut _) != 0 {
-                        if pl_get_param(h, PARAM_BINNING_PAR, ATTR_CURRENT, &mut value as *mut _ as *mut _) != 0 {
+                        if pl_get_param(
+                            h,
+                            PARAM_BINNING_PAR,
+                            ATTR_CURRENT,
+                            &mut value as *mut _ as *mut _,
+                        ) != 0
+                        {
                             factors.push(value as u16);
                         }
                     }
@@ -1799,7 +2112,13 @@ impl PvcamFeatures {
             let mut value: rs_bool = 0;
             unsafe {
                 // SAFETY: h is valid; value is writable rs_bool on stack.
-                if pl_get_param(h, PARAM_METADATA_ENABLED, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_METADATA_ENABLED,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     // Parameter may not be available - return false
                     return Ok(false);
                 }
@@ -1833,7 +2152,10 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_METADATA_ENABLED, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set metadata enabled: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set metadata enabled: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1850,7 +2172,12 @@ impl PvcamFeatures {
                 let mut value: i32 = 0;
                 unsafe {
                     // SAFETY: h is valid; value is writable i32 on stack.
-                    let _ = pl_get_param(h, PARAM_CENTROIDS_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _);
+                    let _ = pl_get_param(
+                        h,
+                        PARAM_CENTROIDS_MODE,
+                        ATTR_CURRENT,
+                        &mut value as *mut _ as *mut _,
+                    );
                 }
                 CentroidsMode::from_pvcam(value)
             };
@@ -1859,7 +2186,12 @@ impl PvcamFeatures {
             let max_count = Self::get_u16_param_impl(h, PARAM_CENTROIDS_COUNT).unwrap_or(1000);
             let threshold = Self::get_u32_param_impl(h, PARAM_CENTROIDS_THRESHOLD).unwrap_or(100);
 
-            return Ok(CentroidsConfig { mode, radius, max_count, threshold });
+            return Ok(CentroidsConfig {
+                mode,
+                radius,
+                max_count,
+                threshold,
+            });
         }
         Ok(CentroidsConfig {
             mode: CentroidsMode::Locate,
@@ -1877,24 +2209,41 @@ impl PvcamFeatures {
                 // Set mode
                 let mode = _config.mode.to_pvcam();
                 if pl_set_param(h, PARAM_CENTROIDS_MODE, &mode as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set centroids mode: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set centroids mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
 
                 // Set radius
                 let radius = _config.radius as i32;
                 if pl_set_param(h, PARAM_CENTROIDS_RADIUS, &radius as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set centroids radius: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set centroids radius: {}",
+                        get_pvcam_error()
+                    ));
                 }
 
                 // Set max count
                 let count = _config.max_count as i32;
                 if pl_set_param(h, PARAM_CENTROIDS_COUNT, &count as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set centroids count: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set centroids count: {}",
+                        get_pvcam_error()
+                    ));
                 }
 
                 // Set threshold
-                if pl_set_param(h, PARAM_CENTROIDS_THRESHOLD, &_config.threshold as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set centroids threshold: {}", get_pvcam_error()));
+                if pl_set_param(
+                    h,
+                    PARAM_CENTROIDS_THRESHOLD,
+                    &_config.threshold as *const _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to set centroids threshold: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -1912,7 +2261,13 @@ impl PvcamFeatures {
             let mut value: rs_bool = 0;
             unsafe {
                 // SAFETY: h is valid; value is writable rs_bool on stack.
-                if pl_get_param(h, PARAM_SMART_STREAM_MODE_ENABLED, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_SMART_STREAM_MODE_ENABLED,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Ok(false);
                 }
             }
@@ -1931,10 +2286,23 @@ impl PvcamFeatures {
             let value: rs_bool = if _enabled { 1 } else { 0 };
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
-                if pl_set_param(h, PARAM_SMART_STREAM_MODE_ENABLED, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set smart stream enabled: {}", get_pvcam_error()));
+                if pl_set_param(
+                    h,
+                    PARAM_SMART_STREAM_MODE_ENABLED,
+                    &value as *const _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to set smart stream enabled: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.smart_stream_enabled = _enabled;
         }
         Ok(())
     }
@@ -1946,12 +2314,27 @@ impl PvcamFeatures {
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
-                if pl_get_param(h, PARAM_SMART_STREAM_MODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get smart stream mode: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_SMART_STREAM_MODE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get smart stream mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(SmartStreamMode::from_pvcam(value));
         }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        return Ok(SmartStreamMode::from_pvcam(
+            _conn.mock_state.lock().unwrap().smart_stream_mode,
+        ));
+
+        #[cfg(feature = "pvcam_hardware")]
         Ok(SmartStreamMode::Exposures)
     }
 
@@ -1963,9 +2346,17 @@ impl PvcamFeatures {
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
                 if pl_set_param(h, PARAM_SMART_STREAM_MODE, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set smart stream mode: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set smart stream mode: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
+        }
+        #[cfg(not(feature = "pvcam_hardware"))]
+        {
+            let mut state = _conn.mock_state.lock().unwrap();
+            state.smart_stream_mode = _mode.to_pvcam();
         }
         Ok(())
     }
@@ -1976,26 +2367,35 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             let entries = _exposures_ms.len() as u16;
             let mut ss_struct: *mut smart_stream_type = std::ptr::null_mut();
-            
+
             unsafe {
                 if pl_create_smart_stream_struct(&mut ss_struct, entries) == 0 {
-                    return Err(anyhow!("Failed to create smart stream struct: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to create smart stream struct: {}",
+                        get_pvcam_error()
+                    ));
                 }
-                
+
                 // Copy exposures into the struct
-                let params_slice = std::slice::from_raw_parts_mut((*ss_struct).params, entries as usize);
+                let params_slice =
+                    std::slice::from_raw_parts_mut((*ss_struct).params, entries as usize);
                 params_slice.copy_from_slice(_exposures_ms);
-                
+
                 // Upload to camera
                 // NOTE: pl_set_param expects the ADDRESS of the value to set. For TYPE_VOID_PTR
                 // params like PARAM_SMART_STREAM_EXP_PARAMS, the "value" is a pointer, so we must
                 // pass &ss_struct (address of the pointer), not ss_struct (the pointer value).
-                if pl_set_param(h, PARAM_SMART_STREAM_EXP_PARAMS, &ss_struct as *const _ as *mut _) == 0 {
+                if pl_set_param(
+                    h,
+                    PARAM_SMART_STREAM_EXP_PARAMS,
+                    &ss_struct as *const _ as *mut _,
+                ) == 0
+                {
                     let err = get_pvcam_error();
                     pl_release_smart_stream_struct(&mut ss_struct);
                     return Err(anyhow!("Failed to upload smart stream: {}", err));
                 }
-                
+
                 pl_release_smart_stream_struct(&mut ss_struct);
             }
         }
@@ -2011,8 +2411,17 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
-                if pl_get_param(h, PARAM_HOST_FRAME_ROTATE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get host frame rotate: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_HOST_FRAME_ROTATE,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get host frame rotate: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(FrameRotate::from_pvcam(value));
@@ -2026,7 +2435,10 @@ impl PvcamFeatures {
             let value = _rotate.to_pvcam();
             unsafe {
                 if pl_set_param(h, PARAM_HOST_FRAME_ROTATE, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set host frame rotate: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set host frame rotate: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -2038,8 +2450,17 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
-                if pl_get_param(h, PARAM_HOST_FRAME_FLIP, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to get host frame flip: {}", get_pvcam_error()));
+                if pl_get_param(
+                    h,
+                    PARAM_HOST_FRAME_FLIP,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get host frame flip: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(FrameFlip::from_pvcam(value));
@@ -2053,7 +2474,10 @@ impl PvcamFeatures {
             let value = _flip.to_pvcam();
             unsafe {
                 if pl_set_param(h, PARAM_HOST_FRAME_FLIP, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set host frame flip: {}", get_pvcam_error()));
+                    return Err(anyhow!(
+                        "Failed to set host frame flip: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -2065,7 +2489,13 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             let mut value: rs_bool = 0;
             unsafe {
-                if pl_get_param(h, PARAM_HOST_FRAME_SUMMING_ENABLED, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                if pl_get_param(
+                    h,
+                    PARAM_HOST_FRAME_SUMMING_ENABLED,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
                     return Ok(false);
                 }
             }
@@ -2079,8 +2509,16 @@ impl PvcamFeatures {
         if let Some(h) = _conn.handle() {
             let value: rs_bool = if _enabled { 1 } else { 0 };
             unsafe {
-                if pl_set_param(h, PARAM_HOST_FRAME_SUMMING_ENABLED, &value as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set host frame summing enabled: {}", get_pvcam_error()));
+                if pl_set_param(
+                    h,
+                    PARAM_HOST_FRAME_SUMMING_ENABLED,
+                    &value as *const _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to set host frame summing enabled: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -2100,8 +2538,16 @@ impl PvcamFeatures {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
             unsafe {
-                if pl_set_param(h, PARAM_HOST_FRAME_SUMMING_COUNT, &_count as *const _ as *mut _) == 0 {
-                    return Err(anyhow!("Failed to set host frame summing count: {}", get_pvcam_error()));
+                if pl_set_param(
+                    h,
+                    PARAM_HOST_FRAME_SUMMING_COUNT,
+                    &_count as *const _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to set host frame summing count: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
         }
@@ -2117,8 +2563,17 @@ impl PvcamFeatures {
         let mut buf = [0i8; 256];
         unsafe {
             // SAFETY: h is valid; buf is writable array for string parameter.
-            if pl_get_param(h, PARAM_HEAD_SER_NUM_ALPHA, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
-                return Err(anyhow!("Failed to get serial number: {}", get_pvcam_error()));
+            if pl_get_param(
+                h,
+                PARAM_HEAD_SER_NUM_ALPHA,
+                ATTR_CURRENT,
+                buf.as_mut_ptr() as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get serial number: {}",
+                    get_pvcam_error()
+                ));
             }
             Ok(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
         }
@@ -2129,8 +2584,17 @@ impl PvcamFeatures {
         let mut version: uns16 = 0;
         unsafe {
             // SAFETY: h is valid; version is writable uns16 on stack.
-            if pl_get_param(h, PARAM_CAM_FW_VERSION, ATTR_CURRENT, &mut version as *mut _ as *mut _) == 0 {
-                return Err(anyhow!("Failed to get firmware version: {}", get_pvcam_error()));
+            if pl_get_param(
+                h,
+                PARAM_CAM_FW_VERSION,
+                ATTR_CURRENT,
+                &mut version as *mut _ as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get firmware version: {}",
+                    get_pvcam_error()
+                ));
             }
         }
         // PVCAM firmware version is encoded: major.minor in BCD or similar
@@ -2156,7 +2620,13 @@ impl PvcamFeatures {
         let mut value: i16 = 0;
         unsafe {
             // SAFETY: h is valid; value is writable i16 on stack.
-            if pl_get_param(h, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+            if pl_get_param(
+                h,
+                PARAM_BIT_DEPTH,
+                ATTR_CURRENT,
+                &mut value as *mut _ as *mut _,
+            ) == 0
+            {
                 return Err(anyhow!("Failed to get bit depth: {}", get_pvcam_error()));
             }
         }
@@ -2168,7 +2638,13 @@ impl PvcamFeatures {
         let mut value: uns16 = 0;
         unsafe {
             // SAFETY: h is valid; value is writable uns16 on stack.
-            if pl_get_param(h, PARAM_PIX_TIME, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+            if pl_get_param(
+                h,
+                PARAM_PIX_TIME,
+                ATTR_CURRENT,
+                &mut value as *mut _ as *mut _,
+            ) == 0
+            {
                 return Err(anyhow!("Failed to get pixel time: {}", get_pvcam_error()));
             }
         }
@@ -2181,10 +2657,22 @@ impl PvcamFeatures {
         let mut height: uns16 = 0;
         unsafe {
             // SAFETY: h is valid; width/height are writable uns16 on stack.
-            if pl_get_param(h, PARAM_PIX_SER_SIZE, ATTR_CURRENT, &mut width as *mut _ as *mut _) == 0 {
+            if pl_get_param(
+                h,
+                PARAM_PIX_SER_SIZE,
+                ATTR_CURRENT,
+                &mut width as *mut _ as *mut _,
+            ) == 0
+            {
                 return Err(anyhow!("Failed to get pixel width: {}", get_pvcam_error()));
             }
-            if pl_get_param(h, PARAM_PIX_PAR_SIZE, ATTR_CURRENT, &mut height as *mut _ as *mut _) == 0 {
+            if pl_get_param(
+                h,
+                PARAM_PIX_PAR_SIZE,
+                ATTR_CURRENT,
+                &mut height as *mut _ as *mut _,
+            ) == 0
+            {
                 return Err(anyhow!("Failed to get pixel height: {}", get_pvcam_error()));
             }
         }
@@ -2198,11 +2686,26 @@ impl PvcamFeatures {
         let mut height: uns16 = 0;
         unsafe {
             // SAFETY: h is valid; width/height are writable uns16 on stack.
-            if pl_get_param(h, PARAM_SER_SIZE, ATTR_CURRENT, &mut width as *mut _ as *mut _) == 0 {
+            if pl_get_param(
+                h,
+                PARAM_SER_SIZE,
+                ATTR_CURRENT,
+                &mut width as *mut _ as *mut _,
+            ) == 0
+            {
                 return Err(anyhow!("Failed to get sensor width: {}", get_pvcam_error()));
             }
-            if pl_get_param(h, PARAM_PAR_SIZE, ATTR_CURRENT, &mut height as *mut _ as *mut _) == 0 {
-                return Err(anyhow!("Failed to get sensor height: {}", get_pvcam_error()));
+            if pl_get_param(
+                h,
+                PARAM_PAR_SIZE,
+                ATTR_CURRENT,
+                &mut height as *mut _ as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get sensor height: {}",
+                    get_pvcam_error()
+                ));
             }
         }
         Ok((width as u32, height as u32))
@@ -2214,7 +2717,11 @@ impl PvcamFeatures {
         unsafe {
             // SAFETY: h is valid; value is writable i32 on stack.
             if pl_get_param(h, param, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                return Err(anyhow!("Failed to get parameter {}: {}", param, get_pvcam_error()));
+                return Err(anyhow!(
+                    "Failed to get parameter {}: {}",
+                    param,
+                    get_pvcam_error()
+                ));
             }
         }
         Ok(value as u16)
@@ -2226,7 +2733,11 @@ impl PvcamFeatures {
         unsafe {
             // SAFETY: h is valid; count is writable uns32 on stack.
             if pl_get_param(h, param, ATTR_COUNT, &mut count as *mut _ as *mut _) == 0 {
-                return Err(anyhow!("Failed to get enum count for {}: {}", param, get_pvcam_error()));
+                return Err(anyhow!(
+                    "Failed to get enum count for {}: {}",
+                    param,
+                    get_pvcam_error()
+                ));
             }
         }
         Ok(count)
@@ -2248,7 +2759,15 @@ impl PvcamFeatures {
         unsafe {
             // SAFETY: h is valid; buf is writable; value is the enum index.
             if pl_enum_str_length(h, param, value as u32, std::ptr::null_mut()) != 0 {
-                if pl_get_enum_param(h, param, value as u32, std::ptr::null_mut(), buf.as_mut_ptr(), 256) != 0 {
+                if pl_get_enum_param(
+                    h,
+                    param,
+                    value as u32,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr(),
+                    256,
+                ) != 0
+                {
                     return Ok(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned());
                 }
             }
@@ -2263,7 +2782,11 @@ impl PvcamFeatures {
         unsafe {
             // SAFETY: h is valid; value is writable uns32 on stack.
             if pl_get_param(h, param, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
-                return Err(anyhow!("Failed to get parameter {}: {}", param, get_pvcam_error()));
+                return Err(anyhow!(
+                    "Failed to get parameter {}: {}",
+                    param,
+                    get_pvcam_error()
+                ));
             }
         }
         Ok(value)
@@ -2274,8 +2797,17 @@ impl PvcamFeatures {
         let mut buf = [0i8; 256];
         unsafe {
             // SAFETY: h is valid; buf is writable array for PP feature name string.
-            if pl_get_param(h, PARAM_PP_FEAT_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
-                return Err(anyhow!("Failed to get PP feature name: {}", get_pvcam_error()));
+            if pl_get_param(
+                h,
+                PARAM_PP_FEAT_NAME,
+                ATTR_CURRENT,
+                buf.as_mut_ptr() as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get PP feature name: {}",
+                    get_pvcam_error()
+                ));
             }
             Ok(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
         }
@@ -2286,8 +2818,17 @@ impl PvcamFeatures {
         let mut buf = [0i8; 256];
         unsafe {
             // SAFETY: h is valid; buf is writable array for PP parameter name string.
-            if pl_get_param(h, PARAM_PP_PARAM_NAME, ATTR_CURRENT, buf.as_mut_ptr() as *mut _) == 0 {
-                return Err(anyhow!("Failed to get PP parameter name: {}", get_pvcam_error()));
+            if pl_get_param(
+                h,
+                PARAM_PP_PARAM_NAME,
+                ATTR_CURRENT,
+                buf.as_mut_ptr() as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get PP parameter name: {}",
+                    get_pvcam_error()
+                ));
             }
             Ok(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
         }

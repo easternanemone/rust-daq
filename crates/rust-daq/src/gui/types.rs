@@ -159,6 +159,10 @@ pub enum BackendCommand {
     StartStateStream { device_ids: Vec<String> },
     /// Stop streaming device state
     StopStateStream,
+    /// Start video stream for a device
+    StartVideoStream { device_id: String },
+    /// Stop video stream
+    StopVideoStream,
     /// Shutdown the backend
     Shutdown,
 }

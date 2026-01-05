@@ -31,11 +31,7 @@ fn main() {
         println!("cargo:rustc-link-lib=comedi");
 
         // Check common library paths
-        let lib_paths = [
-            "/usr/local/lib",
-            "/usr/lib",
-            "/usr/lib/x86_64-linux-gnu",
-        ];
+        let lib_paths = ["/usr/local/lib", "/usr/lib", "/usr/lib/x86_64-linux-gnu"];
 
         for path in lib_paths {
             if std::path::Path::new(path).join("libcomedi.so").exists()
@@ -345,6 +341,5 @@ pub const COMEDI_INPUT: c_uint = 0;
 pub const COMEDI_OUTPUT: c_uint = 1;
 "#;
 
-    std::fs::write(out_path.join("bindings.rs"), dummy)
-        .expect("Couldn't write dummy bindings!");
+    std::fs::write(out_path.join("bindings.rs"), dummy).expect("Couldn't write dummy bindings!");
 }

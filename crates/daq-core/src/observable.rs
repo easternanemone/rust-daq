@@ -90,6 +90,16 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 // =============================================================================
+// Type Aliases
+// =============================================================================
+
+/// Validator callback type.
+///
+/// A function that validates a value and returns an error if invalid.
+/// Used by [`Observable::with_validator`] and constraint methods.
+pub type Validator<T> = Arc<dyn Fn(&T) -> Result<()> + Send + Sync>;
+
+// =============================================================================
 // ParameterBase Trait - Generic Parameter Access
 // =============================================================================
 
@@ -158,7 +168,7 @@ where
     /// Parameter metadata
     metadata: ObservableMetadata,
     /// Optional validation function
-    validator: Option<Arc<dyn Fn(&T) -> Result<()> + Send + Sync>>,
+    validator: Option<Validator<T>>,
 }
 
 impl<T: Clone + Send + Sync + 'static> std::fmt::Debug for Observable<T> {
@@ -483,19 +493,23 @@ where
     }
 
     fn value_as_f64(&self) -> Option<f64> {
-        None // Observable doesn't support type-specific access
+        let value = self.get();
+        (&value as &dyn Any).downcast_ref::<f64>().copied()
     }
 
     fn value_as_bool(&self) -> Option<bool> {
-        None // Observable doesn't support type-specific access
+        let value = self.get();
+        (&value as &dyn Any).downcast_ref::<bool>().copied()
     }
 
     fn value_as_string(&self) -> Option<String> {
-        None // Observable doesn't support type-specific access
+        let value = self.get();
+        (&value as &dyn Any).downcast_ref::<String>().cloned()
     }
 
     fn value_as_i64(&self) -> Option<i64> {
-        None // Observable doesn't support type-specific access
+        let value = self.get();
+        (&value as &dyn Any).downcast_ref::<i64>().copied()
     }
 }
 
@@ -609,10 +623,7 @@ impl Observable<f64> {
         self.validator = Some(Arc::new(move |value: &f64| {
             // Reject NaN and Infinity to prevent JSON serialization issues
             if !value.is_finite() {
-                return Err(anyhow!(
-                    "Value must be finite, got {:?}",
-                    value
-                ));
+                return Err(anyhow!("Value must be finite, got {:?}", value));
             }
             if *value < min || *value > max {
                 Err(anyhow!(
@@ -771,11 +782,7 @@ impl Observable<String> {
             if choices.iter().any(|c| c == value) {
                 Ok(())
             } else {
-                Err(anyhow!(
-                    "Value {:?} not in choices {:?}",
-                    value,
-                    choices
-                ))
+                Err(anyhow!("Value {:?} not in choices {:?}", value, choices))
             }
         }));
         self
@@ -1057,5 +1064,78 @@ mod tests {
         // Changing through the registry copy updates the original (shared watch channel)
         registered.set(25.0).await.unwrap();
         assert_eq!(param.get(), 25.0);
+    }
+
+    #[test]
+    fn test_value_as_f64() {
+        let obs_f64 = Observable::new("temperature", 25.5);
+        let param: &dyn ParameterAny = &obs_f64;
+
+        // f64 observable returns Some for value_as_f64
+        assert_eq!(param.value_as_f64(), Some(25.5));
+
+        // f64 observable returns None for other types
+        assert_eq!(param.value_as_bool(), None);
+        assert_eq!(param.value_as_string(), None);
+        assert_eq!(param.value_as_i64(), None);
+    }
+
+    #[test]
+    fn test_value_as_bool() {
+        let obs_bool = Observable::new("enabled", true);
+        let param: &dyn ParameterAny = &obs_bool;
+
+        // bool observable returns Some for value_as_bool
+        assert_eq!(param.value_as_bool(), Some(true));
+
+        // bool observable returns None for other types
+        assert_eq!(param.value_as_f64(), None);
+        assert_eq!(param.value_as_string(), None);
+        assert_eq!(param.value_as_i64(), None);
+    }
+
+    #[test]
+    fn test_value_as_string() {
+        let obs_string = Observable::new("mode", "auto".to_string());
+        let param: &dyn ParameterAny = &obs_string;
+
+        // String observable returns Some for value_as_string
+        assert_eq!(param.value_as_string(), Some("auto".to_string()));
+
+        // String observable returns None for other types
+        assert_eq!(param.value_as_f64(), None);
+        assert_eq!(param.value_as_bool(), None);
+        assert_eq!(param.value_as_i64(), None);
+    }
+
+    #[test]
+    fn test_value_as_i64() {
+        let obs_i64 = Observable::new("count", 42_i64);
+        let param: &dyn ParameterAny = &obs_i64;
+
+        // i64 observable returns Some for value_as_i64
+        assert_eq!(param.value_as_i64(), Some(42));
+
+        // i64 observable returns None for other types
+        assert_eq!(param.value_as_f64(), None);
+        assert_eq!(param.value_as_bool(), None);
+        assert_eq!(param.value_as_string(), None);
+    }
+
+    #[test]
+    fn test_value_as_type_mismatch() {
+        // Test that non-primitive types return None for all accessors
+        #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+        struct CustomType {
+            field: i32,
+        }
+
+        let obs = Observable::new("custom", CustomType { field: 123 });
+        let param: &dyn ParameterAny = &obs;
+
+        assert_eq!(param.value_as_f64(), None);
+        assert_eq!(param.value_as_bool(), None);
+        assert_eq!(param.value_as_string(), None);
+        assert_eq!(param.value_as_i64(), None);
     }
 }

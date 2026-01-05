@@ -3,13 +3,13 @@
 //! A lightweight GUI for controlling the headless rust-daq daemon via gRPC.
 
 // Module definitions for standalone mode
-mod client;
-mod connection;
-mod reconnect;
 #[cfg(feature = "standalone")]
 mod app;
+mod client;
+mod connection;
 #[cfg(feature = "standalone")]
 mod panels;
+mod reconnect;
 #[cfg(feature = "standalone")]
 mod widgets;
 

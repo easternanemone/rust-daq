@@ -89,7 +89,8 @@ pub const PL_CALLBACK_EOF: i32 = 1; // End of frame (frame ready)
 ///
 /// The callback is cast to `*mut c_void` when registered with PVCAM.
 #[cfg(feature = "pvcam-sdk")]
-pub type PvcamCallback = unsafe extern "system" fn(pFrameInfo: *const FRAME_INFO, pContext: *mut std::ffi::c_void);
+pub type PvcamCallback =
+    unsafe extern "system" fn(pFrameInfo: *const FRAME_INFO, pContext: *mut std::ffi::c_void);
 
 // NOTE: pl_cam_register_callback_ex3 and pl_cam_deregister_callback are generated
 // by bindgen from the SDK headers. Use the bindgen-generated versions directly.

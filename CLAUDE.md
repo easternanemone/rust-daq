@@ -10,7 +10,10 @@ See AGENTS.md for workflow details.
 
 Rust-based data acquisition system with V5 headless-first architecture for scientific instrumentation.
 
-**STATUS:** V5 "headless-first" architecture implementation is complete.
+**STATUS:** V5 "headless-first" architecture is functionally complete.
+
+- Phase 1 (HAL & Driver Migration) ✅ Complete
+- Phase 2 (gRPC Streaming & Controls) ✅ Implemented for Prime BSI (Verification blocked by hardware state)
 Legacy V1-V4 code has been removed.
 
 **Hardware Location:** Remote machine at `maitai@100.117.5.12`
@@ -20,6 +23,7 @@ Legacy V1-V4 code has been removed.
 **Documentation:** See docs/getting_started/ for setup, docs/architecture/ for design decisions.
 
 **Build & Test:**
+
 ```bash
 # Build (default: storage_csv, instrument_serial)
 cargo build
@@ -55,6 +59,10 @@ cargo run --bin rust-daq-daemon -- run examples/simple_scan.rhai
 
 # Start gRPC daemon
 cargo run --bin rust-daq-daemon --features networking -- daemon --port 50051
+
+# Run PVCAM Streaming Integration Test (on maitai)
+# Requires PVCAM_SDK_DIR and LD_LIBRARY_PATH
+cargo test --test pvcam_streaming_test --features pvcam_hardware
 ```
 
 ## Development Tools: Rust Ecosystem Integration
@@ -74,6 +82,7 @@ This project integrates three complementary tools for comprehensive Rust develop
 **Purpose:** Automate cargo/rustup commands through Claude Code
 
 **Common Operations:**
+
 ```bash
 # Available as MCP tools (Claude can invoke these):
 - cargo-build: Build the project
@@ -89,6 +98,7 @@ This project integrates three complementary tools for comprehensive Rust develop
 ```
 
 **When to Use:**
+
 - Building and testing code
 - Managing dependencies
 - Running quality checks (clippy, fmt, deny)
@@ -96,6 +106,7 @@ This project integrates three complementary tools for comprehensive Rust develop
 - CI/CD automation tasks
 
 **Example Workflow:**
+
 ```
 "Run clippy on all targets"
 "Add tokio with features async-std and macros"
@@ -110,6 +121,7 @@ This project integrates three complementary tools for comprehensive Rust develop
 **Status:** The rust-analyzer MCP server has been disabled due to protocol compatibility issues with Claude Code. Use the CLI directly via Bash tool instead.
 
 **Common Operations:**
+
 ```bash
 # Get workspace diagnostics (errors, warnings, hints)
 rust-analyzer diagnostics .
@@ -125,12 +137,14 @@ rust-analyzer --version
 ```
 
 **When to Use:**
+
 - Getting comprehensive diagnostics without building
 - Quick error checking across the entire workspace
 - Understanding inactive code due to `#[cfg]` directives
 - Finding all compilation errors and warnings
 
 **Example Workflow:**
+
 ```bash
 # Check all diagnostics in workspace
 rust-analyzer diagnostics .
@@ -143,12 +157,14 @@ cd crates/daq-core && rust-analyzer diagnostics .
 ```
 
 **Output Format:**
+
 - Progress: `N/M X% processing file.rs`
 - Warnings: `WeakWarning` with line/col positions
 - Errors: `Error RustcHardError` with error codes (e.g., E0432)
 - Inactive code: Shows which `#[cfg]` directives caused code to be disabled
 
 **Note:** rust-analyzer is installed as a rustup component. Ensure it's available:
+
 ```bash
 rustup component add rust-analyzer
 ```
@@ -158,6 +174,7 @@ rustup component add rust-analyzer
 **Purpose:** Visualize internal crate structure and module relationships
 
 **Common Operations:**
+
 ```bash
 # CLI commands (use via Bash tool or skill):
 cargo modules structure --package <crate>    # Module hierarchy tree
@@ -172,6 +189,7 @@ cargo modules orphans --package <crate>      # Find unlinked files
 ```
 
 **When to Use:**
+
 - Pre-refactoring analysis
 - Understanding crate architecture
 - Detecting orphaned source files
@@ -179,6 +197,7 @@ cargo modules orphans --package <crate>      # Find unlinked files
 - Investigating circular dependencies
 
 **Example Workflow:**
+
 ```
 "Show me the module structure of daq-hardware"
 "Generate a dependency graph for daq-core"
@@ -237,18 +256,21 @@ See `.claude/skills/cargo-modules.md` for comprehensive usage guide.
 ### Tool Selection Guide
 
 **Use rust-cargo when you need to:**
+
 - Execute cargo commands (build, test, check)
 - Manage dependencies (add, remove, update)
 - Run quality tools (clippy, fmt, deny, hack)
 - Perform package operations
 
 **Use rust-analyzer when you need to:**
+
 - Get comprehensive workspace diagnostics without building
 - Check for compilation errors and warnings quickly
 - See inactive code due to feature flags
 - Understand cfg-conditional compilation
 
 **Use cargo-modules when you need to:**
+
 - Visualize module hierarchy
 - Understand architectural relationships
 - Generate dependency graphs
@@ -267,17 +289,20 @@ See `.claude/skills/cargo-modules.md` for comprehensive usage guide.
 ### Troubleshooting
 
 **rust-cargo issues:**
+
 - Ensure cargo/rustup are installed and in PATH
 - Check that working directory is project root
 - Verify rust-mcp-server is installed: `cargo install rust-mcp-server`
 
 **rust-analyzer issues:**
+
 - Ensure rust-analyzer is installed: `rustup component add rust-analyzer`
 - If diagnostics take too long, analyze specific crates: `cd crates/<name> && rust-analyzer diagnostics .`
 - Some errors in examples/benches are expected if optional features are disabled
 - Output can be verbose; use `grep`, `head`, or redirect to file for filtering
 
 **cargo-modules issues:**
+
 - Always specify `--package` in multi-package workspaces
 - Install if missing: `cargo install cargo-modules`
 - Use filters (`--no-fns`, `--no-types`) for large crates
@@ -285,6 +310,7 @@ See `.claude/skills/cargo-modules.md` for comprehensive usage guide.
 ## Documentation Search
 
 **Hybrid search** is available for codebase exploration:
+
 ```bash
 # Semantic search across 55+ indexed docs (architecture, guides, instruments)
 python scripts/search_hybrid.py --query "your question" --mode auto
@@ -297,6 +323,7 @@ Re-index after updating docs: `python cocoindex_flows/comprehensive_docs_index.p
 **Design Philosophy:** Headless-first + scriptable control + remote GUI
 
 **Crate Structure:**
+
 - `crates/daq-core/` — Domain types, parameters/observables, error handling, and module domain types.
 - `crates/daq-hardware/` — Hardware Abstraction Layer (HAL), capability traits (`Movable`, `Readable`, `FrameProducer`, etc.), and drivers.
 - `crates/daq-driver-pvcam/` — PVCAM camera driver (requires SDK on target machine).
@@ -311,6 +338,7 @@ Re-index after updating docs: `python cocoindex_flows/comprehensive_docs_index.p
 - `crates/daq-examples/` — Example code and usage patterns.
 
 **Dependency Graph:**
+
 ```
                            daq-core (foundation)
                                ↑
@@ -335,6 +363,7 @@ Re-index after updating docs: `python cocoindex_flows/comprehensive_docs_index.p
 **Visualize actual dependencies:** See "Development Tools" section above for using cargo-modules
 
 **Legend:**
+
 - `daq-core`: Foundation types, errors, parameters, observables
 - `daq-hardware`: HAL + drivers (depends on daq-driver-pvcam conditionally)
 - `daq-experiment`: RunEngine and Plans (depends on daq-core, daq-hardware)
@@ -347,6 +376,7 @@ Re-index after updating docs: `python cocoindex_flows/comprehensive_docs_index.p
 - `rust-daq`: Integration layer with `prelude` module for organized re-exports; feature-gates optional dependencies
 
 **Key Components (by crate):**
+
 - **Capability Traits & Hardware Registry**: Re-exported through `rust-daq::prelude` from `daq-hardware` (e.g., `Movable`, `Readable`, `FrameProducer`, `Triggerable`, `ExposureControl`).
 - **Hardware Drivers**: Feature-gated drivers (ell14, esp300, pvcam, maitai, newport_1830c) compiled via `daq-hardware` and surfaced through `rust-daq::hardware`.
 - **Module Domain Types**: `ModuleState`, `ModuleEvent`, etc. live in `crates/daq-core/src/modules.rs`; proto equivalents are mapped in `crates/daq-proto/src/convert.rs`.
@@ -487,15 +517,18 @@ if script_content.len() > MAX_SCRIPT_SIZE {
 ## Feature Flags
 
 **High-Level Profiles:**
+
 - `backend` - Server, modules, all hardware, CSV storage
 - `frontend` - GUI (egui) + networking
 - `cli` - All hardware, CSV storage, Python scripting
 - `full` - Most features (excludes HDF5 which needs native libs)
 
 **Storage Backends:**
+
 - `storage_csv` (default), `storage_hdf5` (requires libhdf5), `storage_arrow`, `storage_matlab`, `storage_netcdf`
 
 **Hardware Drivers (daq-hardware):**
+
 - `serial` / `tokio_serial` (default) - Serial port support
 - `driver-thorlabs` - ELL14 rotators
 - `driver-newport` - ESP300 motion controller
@@ -505,12 +538,14 @@ if script_content.len() > MAX_SCRIPT_SIZE {
 - `full` - All drivers + simulator
 
 **Hardware Drivers (rust-daq):**
+
 - `instrument_serial` (default), `instrument_visa`, `tokio_serial`
 - `instrument_thorlabs`, `instrument_newport`, `instrument_photometrics`
 - `instrument_spectra_physics`, `instrument_newport_power_meter`
 - `all_hardware` - Enable all V5 hardware drivers
 
 **System:**
+
 - `modules` - Module system (depends on `scripting`)
 - `scripting` - Rhai scripting engine integration (optional, makes `daq-scripting` available)
   - **Note**: Disabling `scripting` also disables `ControlService` in daq-server (includes script execution, `stream_measurements`, `stream_status`)
@@ -537,30 +572,37 @@ let driver = Ell14Driver::new_async("/dev/ttyUSB0", "0").await?;
 **Protocol Note:** The `IN` command returns `PULSES/M.U.` (pulses per measurement unit). For rotation stages, M.U. = degrees, so this value is pulses/degree directly.
 
 **Multidrop Bus:** Multiple ELL14 devices can share one serial port:
+
 ```rust
 let shared = Ell14Driver::open_shared_port("/dev/ttyUSB0")?;
 let rotator_2 = Ell14Driver::with_shared_port(shared.clone(), "2");
 let rotator_3 = Ell14Driver::with_shared_port(shared.clone(), "3");
 ```
 
-## PVCAM Camera Setup (maitai@100.117.5.12)
-
-**CRITICAL:** PVCAM Prime BSI camera requires environment variables in `/etc/profile.d/pvcam.sh`:
-
-```bash
-export PVCAM_VERSION="3.10.2.5-12.6.1623.1.887.1.1.118"
-export PVCAM_UMD_PATH="/opt/pvcam/drivers/user-mode"
-export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
-```
-
 **Without `PVCAM_VERSION`:** Error 151 (PL_ERR_INSTALLATION_CORRUPTED) occurs at runtime.
 **Without `LIBRARY_PATH`:** Rust linker fails with "cannot find -lpvcam".
 
+**Troubleshooting:** See [PVCAM_SETUP.md](docs/troubleshooting/PVCAM_SETUP.md) for detailed installation and error resolution.
+
 **Running PVCAM hardware tests:**
+
 ```bash
+# Quick setup: source profile and add linker path
 source /etc/profile.d/pvcam.sh
-export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH
-export PVCAM_SDK_DIR=/opt/pvcam/sdk
+export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
+
+# Or set all variables manually:
+# export PVCAM_VERSION=7.1.1.118  # CRITICAL for runtime
+# export PVCAM_SDK_DIR=/opt/pvcam/sdk
+# export PVCAM_LIB_DIR=/opt/pvcam/library/x86_64
+# export LIBRARY_PATH=$PVCAM_LIB_DIR:$LIBRARY_PATH  # For linker
+# export LD_LIBRARY_PATH=/opt/pvcam/drivers/user-mode:$PVCAM_LIB_DIR:$LD_LIBRARY_PATH
+
+# Run smoke test
+export PVCAM_SMOKE_TEST=1
+cargo test --features pvcam_hardware --test pvcam_hardware_smoke -- --nocapture
+
+# Run full validation suite
 cargo test --features 'instrument_photometrics,pvcam_hardware,hardware_tests' \
   --test hardware_pvcam_validation -- --nocapture --test-threads=1
 ```
@@ -572,13 +614,25 @@ cargo test --features 'instrument_photometrics,pvcam_hardware,hardware_tests' \
 All hardware tests must pass on the remote machine after mock tests pass locally.
 
 **Quick SSH test command:**
+
 ```bash
 ssh maitai@100.117.5.12 'source /etc/profile.d/pvcam.sh && \
+  export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
   export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH && \
   cd ~/rust-daq && cargo test --features hardware_tests -- --nocapture --test-threads=1'
 ```
 
+**PVCAM-specific test command:**
+
+```bash
+ssh maitai@100.117.5.12 'source /etc/profile.d/pvcam.sh && \
+  export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
+  export PVCAM_SMOKE_TEST=1 && \
+  cd ~/rust-daq && cargo test --features pvcam_hardware --test pvcam_hardware_smoke -- --nocapture'
+```
+
 **Serial port inventory on remote:**
+
 | Device | Port | Driver |
 |--------|------|--------|
 | Newport 1830-C Power Meter | `/dev/ttyS0` | `Newport1830CDriver` |
@@ -633,6 +687,7 @@ impl Movable for MyDriver {
 ```
 
 **Key Points:**
+
 - `BoxFuture<'static, Result<()>>` for async hardware callbacks
 - `Parameter::set()` validates BEFORE hardware write, then broadcasts changes
 - **CRITICAL:** Validation happens BEFORE hardware write to prevent invalid device states
@@ -660,6 +715,7 @@ async_ring.write(&data).await?;
 **REQUIRED:** All work MUST be tracked using beads (bd) issue tracker.
 
 **At session start:**
+
 ```bash
 bd ready              # Check available work
 bd show <issue-id>    # View issue details
@@ -667,11 +723,13 @@ bd update <id> --status in_progress
 ```
 
 **During development:**
+
 - Create issues proactively when discovering new work: `bd create "Description"`
 - Link dependencies: `bd dep add <from> <to>`
 - Update design notes: `bd update <id> --design "Implementation notes"`
 
 **When completing:**
+
 ```bash
 bd close <id> --reason "What was done"
 bd ready              # See unblocked work
@@ -688,6 +746,7 @@ bd ready              # See unblocked work
 2. **Async Context:** All methods are async. Ensure tokio runtime context is available.
 
 3. **Lock-Across-Await:** NEVER hold `tokio::sync::Mutex` guards across `.await` points. Extract data, drop guard, then await:
+
    ```rust
    // WRONG: Holds lock across await
    let guard = mutex.lock().await;
@@ -699,6 +758,7 @@ bd ready              # See unblocked work
    ```
 
 4. **Floating-Point Truncation:** When converting degrees/positions to pulses, use `.round()`:
+
    ```rust
    // WRONG: Truncates (45.0 * 398.2222 = 17919.999 → 17919)
    let pulses = (degrees * pulses_per_degree) as i32;

@@ -138,7 +138,10 @@ impl DigitalIOPanel {
         ui.horizontal(|ui| {
             ui.heading("Digital I/O");
             ui.separator();
-            ui.label(format!("Device: {} ({} pins)", self.device_id, self.n_channels));
+            ui.label(format!(
+                "Device: {} ({} pins)",
+                self.device_id, self.n_channels
+            ));
         });
 
         ui.separator();
@@ -154,31 +157,33 @@ impl DigitalIOPanel {
         ui.separator();
 
         // Control bar - capture button clicks
-        let (read_all, all_inputs, all_outputs) = ui.horizontal(|ui| {
-            // View mode selector
-            ui.label("View:");
-            ui.selectable_value(&mut self.view_mode, ViewMode::Grid, "Grid");
-            ui.selectable_value(&mut self.view_mode, ViewMode::List, "List");
-            ui.selectable_value(&mut self.view_mode, ViewMode::Port, "Port");
+        let (read_all, all_inputs, all_outputs) = ui
+            .horizontal(|ui| {
+                // View mode selector
+                ui.label("View:");
+                ui.selectable_value(&mut self.view_mode, ViewMode::Grid, "Grid");
+                ui.selectable_value(&mut self.view_mode, ViewMode::List, "List");
+                ui.selectable_value(&mut self.view_mode, ViewMode::Port, "Port");
 
-            ui.separator();
+                ui.separator();
 
-            ui.checkbox(&mut self.auto_refresh, "Auto-refresh");
-            if self.auto_refresh {
-                ui.add(
-                    egui::DragValue::new(&mut self.refresh_interval_ms)
-                        .range(50..=1000)
-                        .suffix(" ms"),
-                );
-            }
+                ui.checkbox(&mut self.auto_refresh, "Auto-refresh");
+                if self.auto_refresh {
+                    ui.add(
+                        egui::DragValue::new(&mut self.refresh_interval_ms)
+                            .range(50..=1000)
+                            .suffix(" ms"),
+                    );
+                }
 
-            ui.separator();
+                ui.separator();
 
-            let read = ui.button("Read All").clicked();
-            let inputs = ui.button("All Inputs").clicked();
-            let outputs = ui.button("All Outputs").clicked();
-            (read, inputs, outputs)
-        }).inner;
+                let read = ui.button("Read All").clicked();
+                let inputs = ui.button("All Inputs").clicked();
+                let outputs = ui.button("All Outputs").clicked();
+                (read, inputs, outputs)
+            })
+            .inner;
 
         if read_all {
             self.read_all_inputs(runtime);
@@ -256,7 +261,9 @@ impl DigitalIOPanel {
                             };
 
                             if ui
-                                .add(egui::Button::new(RichText::new(dir_text).color(dir_color).small()))
+                                .add(egui::Button::new(
+                                    RichText::new(dir_text).color(dir_color).small(),
+                                ))
                                 .clicked()
                             {
                                 // Toggle direction
@@ -313,11 +320,7 @@ impl DigitalIOPanel {
                     let state = self.pins[i].state;
                     let direction = self.pins[i].direction;
                     let state_text = if state { "HIGH" } else { "LOW" };
-                    let state_color = if state {
-                        Color32::GREEN
-                    } else {
-                        Color32::GRAY
-                    };
+                    let state_color = if state { Color32::GREEN } else { Color32::GRAY };
 
                     if direction == DioDirection::Output {
                         if ui
@@ -383,7 +386,11 @@ impl DigitalIOPanel {
         ui.horizontal(|ui| {
             ui.label("Binary:");
             for i in (start_pin..end_pin).rev() {
-                let bit = if self.pins[i as usize].state { "1" } else { "0" };
+                let bit = if self.pins[i as usize].state {
+                    "1"
+                } else {
+                    "0"
+                };
                 let color = if self.pins[i as usize].state {
                     Color32::GREEN
                 } else {
@@ -430,13 +437,15 @@ impl DigitalIOPanel {
         ui.separator();
 
         // Port-wide operations - capture clicks and handle after
-        let (set_high, set_low, toggle_all) = ui.horizontal(|ui| {
-            (
-                ui.button("Set All High").clicked(),
-                ui.button("Set All Low").clicked(),
-                ui.button("Toggle All").clicked(),
-            )
-        }).inner;
+        let (set_high, set_low, toggle_all) = ui
+            .horizontal(|ui| {
+                (
+                    ui.button("Set All High").clicked(),
+                    ui.button("Set All Low").clicked(),
+                    ui.button("Toggle All").clicked(),
+                )
+            })
+            .inner;
 
         if set_high {
             for i in start_pin..end_pin {

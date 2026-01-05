@@ -105,7 +105,11 @@ fn validate_points(points: i64) -> Result<usize, Box<EvalAltResult>> {
     }
     if points > MAX_SCAN_POINTS {
         return Err(Box::new(EvalAltResult::ErrorRuntime(
-            format!("points exceeds maximum ({}), got {}", MAX_SCAN_POINTS, points).into(),
+            format!(
+                "points exceeds maximum ({}), got {}",
+                MAX_SCAN_POINTS, points
+            )
+            .into(),
             Position::NONE,
         )));
     }
@@ -134,7 +138,12 @@ pub fn register_plans(engine: &mut Engine) {
     // line_scan(motor, start, end, points, detector)
     engine.register_fn(
         "line_scan",
-        |motor: &str, start: f64, end: f64, points: i64, detector: &str| -> Result<PlanHandle, Box<EvalAltResult>> {
+        |motor: &str,
+         start: f64,
+         end: f64,
+         points: i64,
+         detector: &str|
+         -> Result<PlanHandle, Box<EvalAltResult>> {
             let valid_points = validate_points(points)?;
             let plan = LineScan::new(motor, start, end, valid_points).with_detector(detector);
             Ok(PlanHandle::new(plan))
@@ -205,11 +214,14 @@ pub fn register_plans(engine: &mut Engine) {
     );
 
     // count simple (no delay)
-    engine.register_fn("count_simple", |num_points: i64| -> Result<PlanHandle, Box<EvalAltResult>> {
-        let valid_points = validate_points(num_points)?;
-        let plan = Count::new(valid_points);
-        Ok(PlanHandle::new(plan))
-    });
+    engine.register_fn(
+        "count_simple",
+        |num_points: i64| -> Result<PlanHandle, Box<EvalAltResult>> {
+            let valid_points = validate_points(num_points)?;
+            let plan = Count::new(valid_points);
+            Ok(PlanHandle::new(plan))
+        },
+    );
 
     // =========================================================================
     // Plan Properties
@@ -412,7 +424,9 @@ mod tests {
         // Create and inject run_engine
         let registry = Arc::new(RwLock::new(DeviceRegistry::new()));
         let run_engine = RunEngineHandle::new(registry);
-        engine.set_run_engine(run_engine).expect("Failed to set run_engine");
+        engine
+            .set_run_engine(run_engine)
+            .expect("Failed to set run_engine");
 
         // This should not panic - run_engine should be accessible
         let script = r#"
@@ -421,7 +435,11 @@ mod tests {
         "#;
 
         let result = engine.execute_script(script).await;
-        assert!(result.is_ok(), "RunEngine operations should work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "RunEngine operations should work: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -517,7 +535,8 @@ mod tests {
         let mut engine = Engine::new();
         register_plans(&mut engine);
 
-        let result: Result<PlanHandle, _> = engine.eval(r#"line_scan("x", 0.0, 10.0, 1000001, "det")"#);
+        let result: Result<PlanHandle, _> =
+            engine.eval(r#"line_scan("x", 0.0, 10.0, 1000001, "det")"#);
         if let Err(e) = result {
             assert!(e.to_string().contains("points exceeds maximum"));
         } else {

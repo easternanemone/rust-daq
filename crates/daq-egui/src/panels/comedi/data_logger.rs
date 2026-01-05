@@ -21,7 +21,12 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    pub fn new(timestamp: f64, channel: impl Into<String>, value: f64, unit: impl Into<String>) -> Self {
+    pub fn new(
+        timestamp: f64,
+        channel: impl Into<String>,
+        value: f64,
+        unit: impl Into<String>,
+    ) -> Self {
         Self {
             timestamp,
             channel: channel.into(),
@@ -418,8 +423,12 @@ impl DataLoggerPanel {
                                     .color(Self::channel_color(&entry.channel)),
                             );
                             ui.label(
-                                RichText::new(format!("{:.decimals$}", entry.value, decimals = self.decimals))
-                                    .monospace(),
+                                RichText::new(format!(
+                                    "{:.decimals$}",
+                                    entry.value,
+                                    decimals = self.decimals
+                                ))
+                                .monospace(),
                             );
                             ui.label(RichText::new(&entry.unit).size(11.0));
                             ui.end_row();
@@ -522,9 +531,12 @@ impl DataLoggerPanel {
             std::collections::HashMap::new();
 
         for entry in &filtered {
-            let stat = channel_stats
-                .entry(entry.channel.clone())
-                .or_insert((f64::INFINITY, f64::NEG_INFINITY, 0.0, 0));
+            let stat = channel_stats.entry(entry.channel.clone()).or_insert((
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                0.0,
+                0,
+            ));
 
             stat.0 = stat.0.min(entry.value);
             stat.1 = stat.1.max(entry.value);
@@ -560,9 +572,7 @@ impl DataLoggerPanel {
                 for (channel, (min, max, sum, count)) in channels {
                     let mean = sum / *count as f64;
 
-                    ui.label(
-                        RichText::new(channel).color(Self::channel_color(channel)),
-                    );
+                    ui.label(RichText::new(channel).color(Self::channel_color(channel)));
                     ui.label(format!("{}", count));
                     ui.label(format!("{:.4}", min));
                     ui.label(format!("{:.4}", max));

@@ -32,7 +32,6 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Commands that plans yield for the RunEngine to execute
 #[derive(Debug, Clone)]
@@ -688,9 +687,291 @@ impl Plan for Count {
     }
 }
 
+/// Builder trait for creating plans from string parameters
+pub trait PlanBuilder: Send + Sync {
+    /// Build a plan instance from parameters and device mappings
+    fn build(
+        &self,
+        parameters: &HashMap<String, String>,
+        device_mapping: &HashMap<String, String>,
+    ) -> Result<Box<dyn Plan>, String>;
+
+    /// Get human-readable description of the plan type
+    fn description(&self) -> String;
+}
+
+/// Builder for Count plans
+pub struct CountBuilder;
+
+impl PlanBuilder for CountBuilder {
+    fn build(
+        &self,
+        parameters: &HashMap<String, String>,
+        device_mapping: &HashMap<String, String>,
+    ) -> Result<Box<dyn Plan>, String> {
+        // Parse count parameters
+        let num_points = parameters
+            .get("num_points")
+            .ok_or("Missing parameter: num_points")?
+            .parse::<usize>()
+            .map_err(|e| format!("Invalid num_points: {}", e))?;
+
+        // Validate parameters
+        if num_points == 0 {
+            return Err("num_points must be > 0".to_string());
+        }
+        if num_points > 10_000_000 {
+            return Err(
+                "num_points must be <= 10,000,000 to prevent resource exhaustion".to_string(),
+            );
+        }
+
+        let mut plan = Count::new(num_points);
+
+        // Optional detector
+        if let Some(detector) = device_mapping.get("detector") {
+            if detector.is_empty() {
+                return Err("detector device name cannot be empty".to_string());
+            }
+            plan = plan.with_detector(detector);
+        }
+
+        // Optional delay
+        if let Some(delay_str) = parameters.get("delay") {
+            let delay = delay_str
+                .parse::<f64>()
+                .map_err(|e| format!("Invalid delay: {}", e))?;
+            if !delay.is_finite() {
+                return Err("delay must be a finite number (not NaN or infinity)".to_string());
+            }
+            if delay < 0.0 {
+                return Err("delay must be >= 0".to_string());
+            }
+            plan = plan.with_delay(delay);
+        }
+
+        Ok(Box::new(plan))
+    }
+
+    fn description(&self) -> String {
+        "Repeated measurements at current position".to_string()
+    }
+}
+
+/// Builder for LineScan plans
+pub struct LineScanBuilder;
+
+impl PlanBuilder for LineScanBuilder {
+    fn build(
+        &self,
+        parameters: &HashMap<String, String>,
+        device_mapping: &HashMap<String, String>,
+    ) -> Result<Box<dyn Plan>, String> {
+        // Parse line scan parameters
+        let start = parameters
+            .get("start")
+            .ok_or("Missing parameter: start")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid start: {}", e))?;
+
+        let end = parameters
+            .get("end")
+            .ok_or("Missing parameter: end")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid end: {}", e))?;
+
+        let num_points = parameters
+            .get("num_points")
+            .ok_or("Missing parameter: num_points")?
+            .parse::<usize>()
+            .map_err(|e| format!("Invalid num_points: {}", e))?;
+
+        let motor = device_mapping
+            .get("motor")
+            .ok_or("Missing device mapping: motor")?;
+
+        // Validate parameters
+        if !start.is_finite() {
+            return Err("start must be a finite number (not NaN or infinity)".to_string());
+        }
+        if !end.is_finite() {
+            return Err("end must be a finite number (not NaN or infinity)".to_string());
+        }
+        if num_points == 0 {
+            return Err("num_points must be > 0".to_string());
+        }
+        if num_points > 10_000_000 {
+            return Err(
+                "num_points must be <= 10,000,000 to prevent resource exhaustion".to_string(),
+            );
+        }
+        if start == end {
+            return Err("start and end must be different for line scan".to_string());
+        }
+        if motor.is_empty() {
+            return Err("motor device name cannot be empty".to_string());
+        }
+
+        let mut plan = LineScan::new(motor, start, end, num_points);
+
+        // Optional detector
+        if let Some(detector) = device_mapping.get("detector") {
+            if detector.is_empty() {
+                return Err("detector device name cannot be empty".to_string());
+            }
+            plan = plan.with_detector(detector);
+        }
+
+        // Optional settle time
+        if let Some(settle_str) = parameters.get("settle_time") {
+            let settle = settle_str
+                .parse::<f64>()
+                .map_err(|e| format!("Invalid settle_time: {}", e))?;
+            if !settle.is_finite() {
+                return Err("settle_time must be a finite number (not NaN or infinity)".to_string());
+            }
+            if settle < 0.0 {
+                return Err("settle_time must be >= 0".to_string());
+            }
+            plan = plan.with_settle_time(settle);
+        }
+
+        Ok(Box::new(plan))
+    }
+
+    fn description(&self) -> String {
+        "1D linear scan along a motor axis".to_string()
+    }
+}
+
+/// Builder for GridScan plans
+pub struct GridScanBuilder;
+
+impl PlanBuilder for GridScanBuilder {
+    fn build(
+        &self,
+        parameters: &HashMap<String, String>,
+        device_mapping: &HashMap<String, String>,
+    ) -> Result<Box<dyn Plan>, String> {
+        // Parse grid scan parameters
+        let x_start = parameters
+            .get("x_start")
+            .ok_or("Missing parameter: x_start")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid x_start: {}", e))?;
+
+        let x_end = parameters
+            .get("x_end")
+            .ok_or("Missing parameter: x_end")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid x_end: {}", e))?;
+
+        let x_points = parameters
+            .get("x_points")
+            .ok_or("Missing parameter: x_points")?
+            .parse::<usize>()
+            .map_err(|e| format!("Invalid x_points: {}", e))?;
+
+        let y_start = parameters
+            .get("y_start")
+            .ok_or("Missing parameter: y_start")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid y_start: {}", e))?;
+
+        let y_end = parameters
+            .get("y_end")
+            .ok_or("Missing parameter: y_end")?
+            .parse::<f64>()
+            .map_err(|e| format!("Invalid y_end: {}", e))?;
+
+        let y_points = parameters
+            .get("y_points")
+            .ok_or("Missing parameter: y_points")?
+            .parse::<usize>()
+            .map_err(|e| format!("Invalid y_points: {}", e))?;
+
+        let x_motor = device_mapping
+            .get("x_motor")
+            .ok_or("Missing device mapping: x_motor")?;
+
+        let y_motor = device_mapping
+            .get("y_motor")
+            .ok_or("Missing device mapping: y_motor")?;
+
+        // Validate parameters
+        if !x_start.is_finite() {
+            return Err("x_start must be a finite number (not NaN or infinity)".to_string());
+        }
+        if !x_end.is_finite() {
+            return Err("x_end must be a finite number (not NaN or infinity)".to_string());
+        }
+        if !y_start.is_finite() {
+            return Err("y_start must be a finite number (not NaN or infinity)".to_string());
+        }
+        if !y_end.is_finite() {
+            return Err("y_end must be a finite number (not NaN or infinity)".to_string());
+        }
+        if x_points == 0 {
+            return Err("x_points must be > 0".to_string());
+        }
+        if x_points > 100_000 {
+            return Err("x_points must be <= 100,000 to prevent resource exhaustion".to_string());
+        }
+        if y_points == 0 {
+            return Err("y_points must be > 0".to_string());
+        }
+        if y_points > 100_000 {
+            return Err("y_points must be <= 100,000 to prevent resource exhaustion".to_string());
+        }
+        if x_start == x_end {
+            return Err("x_start and x_end must be different for grid scan".to_string());
+        }
+        if y_start == y_end {
+            return Err("y_start and y_end must be different for grid scan".to_string());
+        }
+        if x_motor.is_empty() {
+            return Err("x_motor device name cannot be empty".to_string());
+        }
+        if y_motor.is_empty() {
+            return Err("y_motor device name cannot be empty".to_string());
+        }
+        if x_motor == y_motor {
+            return Err("x_motor and y_motor must be different".to_string());
+        }
+
+        // Note: GridScan takes (outer/slow, inner/fast) axes
+        // Convention: y is outer (slow), x is inner (fast)
+        let mut plan = GridScan::new(
+            y_motor, y_start, y_end, y_points, x_motor, x_start, x_end, x_points,
+        );
+
+        // Optional detector
+        if let Some(detector) = device_mapping.get("detector") {
+            if detector.is_empty() {
+                return Err("detector device name cannot be empty".to_string());
+            }
+            plan = plan.with_detector(detector);
+        }
+
+        // Optional snake scanning
+        if let Some(snake_str) = parameters.get("snake") {
+            let snake = snake_str
+                .parse::<bool>()
+                .map_err(|e| format!("Invalid snake: {}", e))?;
+            plan = plan.with_snake(snake);
+        }
+
+        Ok(Box::new(plan))
+    }
+
+    fn description(&self) -> String {
+        "2D grid scan over two motor axes".to_string()
+    }
+}
+
 /// Plan registry for looking up and creating plans by type
 pub struct PlanRegistry {
-    factories: HashMap<String, Arc<dyn Fn() -> Box<dyn Plan> + Send + Sync>>,
+    builders: HashMap<String, Box<dyn PlanBuilder>>,
 }
 
 impl Default for PlanRegistry {
@@ -703,27 +984,45 @@ impl PlanRegistry {
     /// Create a new PlanRegistry
     pub fn new() -> Self {
         Self {
-            factories: HashMap::new(),
+            builders: HashMap::new(),
         }
     }
 
-    /// Register a plan factory
-    pub fn register<F>(&mut self, plan_type: &str, factory: F)
+    /// Register a plan builder
+    pub fn register<B>(&mut self, plan_type: &str, builder: B)
     where
-        F: Fn() -> Box<dyn Plan> + Send + Sync + 'static,
+        B: PlanBuilder + 'static,
     {
-        self.factories
-            .insert(plan_type.to_string(), Arc::new(factory));
+        self.builders
+            .insert(plan_type.to_string(), Box::new(builder));
     }
 
-    /// List available plan types
-    pub fn list_types(&self) -> Vec<String> {
-        self.factories.keys().cloned().collect()
+    /// List available plan types with descriptions
+    pub fn list_types(&self) -> Vec<(String, String)> {
+        self.builders
+            .iter()
+            .map(|(k, v)| (k.clone(), v.description()))
+            .collect()
     }
 
     /// Check if a plan type is registered
     pub fn has_type(&self, plan_type: &str) -> bool {
-        self.factories.contains_key(plan_type)
+        self.builders.contains_key(plan_type)
+    }
+
+    /// Create a plan instance
+    pub fn create_plan(
+        &self,
+        plan_type: &str,
+        parameters: &HashMap<String, String>,
+        device_mapping: &HashMap<String, String>,
+    ) -> Result<Box<dyn Plan>, String> {
+        let builder = self
+            .builders
+            .get(plan_type)
+            .ok_or_else(|| format!("Unknown plan type: {}", plan_type))?;
+
+        builder.build(parameters, device_mapping)
     }
 }
 

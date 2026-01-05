@@ -69,6 +69,7 @@ impl Default for RunConfig {
 
 impl RunConfig {
     /// Set maximum run duration.
+    #[must_use]
     pub fn with_max_duration(mut self, secs: f64) -> Self {
         self.max_duration_secs = Some(secs);
         self
@@ -76,8 +77,10 @@ impl RunConfig {
 
     /// Add metadata.
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl serde::Serialize) -> Self {
-        self.metadata
-            .insert(key.into(), serde_json::to_value(value).unwrap());
+        self.metadata.insert(
+            key.into(),
+            serde_json::to_value(value).expect("Metadata value should be JSON-serializable"),
+        );
         self
     }
 }
@@ -185,6 +188,7 @@ impl StagedModules {
     }
 
     /// Get the list of staged module IDs.
+    #[must_use]
     pub fn staged_ids(&self) -> &[String] {
         &self.staged_ids
     }
@@ -398,7 +402,7 @@ impl RunEngine {
 fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("System clock should not be before UNIX epoch")
         .as_nanos() as u64
 }
 

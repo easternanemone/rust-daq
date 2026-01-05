@@ -17,12 +17,12 @@
 //! ui_channels.send_command(BackendCommand::Connect { address: "localhost:50051".into() });
 //! ```
 
+pub mod app;
 pub mod backend;
-pub mod platform;
 pub mod channels;
+pub mod platform;
 pub mod types;
 pub mod widgets;
-pub mod app;
 
 // Re-export commonly used types
 pub use backend::spawn_backend;

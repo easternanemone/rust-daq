@@ -70,7 +70,13 @@ impl GateSource {
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::Internal, Self::PFI0, Self::PFI1, Self::RTSI0, Self::RTSI1]
+        &[
+            Self::Internal,
+            Self::PFI0,
+            Self::PFI1,
+            Self::RTSI0,
+            Self::RTSI1,
+        ]
     }
 }
 
@@ -151,7 +157,10 @@ impl CounterPanel {
         ui.horizontal(|ui| {
             ui.heading("Counter/Timer");
             ui.separator();
-            ui.label(format!("Device: {} ({} counters)", self.device_id, self.n_counters));
+            ui.label(format!(
+                "Device: {} ({} counters)",
+                self.device_id, self.n_counters
+            ));
         });
 
         ui.separator();
@@ -167,22 +176,24 @@ impl CounterPanel {
         ui.separator();
 
         // Control bar - capture button clicks and handle after closure
-        let (read_all, reset_all) = ui.horizontal(|ui| {
-            ui.checkbox(&mut self.auto_refresh, "Auto-refresh");
-            if self.auto_refresh {
-                ui.add(
-                    egui::DragValue::new(&mut self.refresh_interval_ms)
-                        .range(50..=1000)
-                        .suffix(" ms"),
-                );
-            }
+        let (read_all, reset_all) = ui
+            .horizontal(|ui| {
+                ui.checkbox(&mut self.auto_refresh, "Auto-refresh");
+                if self.auto_refresh {
+                    ui.add(
+                        egui::DragValue::new(&mut self.refresh_interval_ms)
+                            .range(50..=1000)
+                            .suffix(" ms"),
+                    );
+                }
 
-            ui.separator();
+                ui.separator();
 
-            let read = ui.button("Read All").clicked();
-            let reset = ui.button("Reset All").clicked();
-            (read, reset)
-        }).inner;
+                let read = ui.button("Read All").clicked();
+                let reset = ui.button("Reset All").clicked();
+                (read, reset)
+            })
+            .inner;
 
         if read_all {
             self.read_all_counters(runtime);
@@ -241,7 +252,11 @@ impl CounterPanel {
                     .selected_text(current_mode.label())
                     .show_ui(ui, |ui| {
                         for mode in CounterMode::all() {
-                            ui.selectable_value(&mut self.counters[counter_idx].mode, *mode, mode.label());
+                            ui.selectable_value(
+                                &mut self.counters[counter_idx].mode,
+                                *mode,
+                                mode.label(),
+                            );
                         }
                     });
             });
@@ -254,7 +269,11 @@ impl CounterPanel {
                     .selected_text(current_gate.label())
                     .show_ui(ui, |ui| {
                         for src in GateSource::all() {
-                            ui.selectable_value(&mut self.counters[counter_idx].gate_source, *src, src.label());
+                            ui.selectable_value(
+                                &mut self.counters[counter_idx].gate_source,
+                                *src,
+                                src.label(),
+                            );
                         }
                     });
             });
@@ -337,9 +356,12 @@ impl CounterPanel {
                     ui.horizontal(|ui| {
                         ui.label("Duty Cycle:");
                         ui.add(
-                            egui::Slider::new(&mut self.counters[counter_idx].duty_cycle, 1.0..=99.0)
-                                .suffix("%")
-                                .clamping(egui::SliderClamping::Always),
+                            egui::Slider::new(
+                                &mut self.counters[counter_idx].duty_cycle,
+                                1.0..=99.0,
+                            )
+                            .suffix("%")
+                            .clamping(egui::SliderClamping::Always),
                         );
                     });
 

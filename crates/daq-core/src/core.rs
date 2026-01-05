@@ -211,7 +211,7 @@ impl Roi {
 }
 
 /// Image metadata (exposure, gain, etc.)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ImageMetadata {
     /// Exposure time in milliseconds.
     ///
@@ -248,20 +248,6 @@ pub struct ImageMetadata {
     /// `None` if ROI matches full sensor area. Useful for reconstructing position in full frame.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roi_origin: Option<(u32, u32)>,
-}
-
-impl Default for ImageMetadata {
-    fn default() -> Self {
-        Self {
-            exposure_ms: None,
-            gain: None,
-            binning: None,
-            temperature_c: None,
-            hardware_timestamp_us: None,
-            readout_ms: None,
-            roi_origin: None,
-        }
-    }
 }
 
 /// Represents spectrum data from FFT or other frequency analysis.

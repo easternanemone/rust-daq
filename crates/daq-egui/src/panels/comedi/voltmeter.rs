@@ -106,7 +106,13 @@ impl DisplayMode {
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::DC, Self::AC, Self::ACPlusDC, Self::Peak, Self::PeakToPeak]
+        &[
+            Self::DC,
+            Self::AC,
+            Self::ACPlusDC,
+            Self::Peak,
+            Self::PeakToPeak,
+        ]
     }
 }
 
@@ -367,7 +373,10 @@ impl VoltmeterPanel {
             }
 
             // Relative mode
-            if ui.button(if self.relative_mode { "REL ON" } else { "REL" }).clicked() {
+            if ui
+                .button(if self.relative_mode { "REL ON" } else { "REL" })
+                .clicked()
+            {
                 if self.relative_mode {
                     self.relative_mode = false;
                 } else {
@@ -443,7 +452,11 @@ impl VoltmeterPanel {
         ui.vertical_centered(|ui| {
             // Mode indicator
             ui.horizontal(|ui| {
-                ui.label(RichText::new(self.mode.label()).size(14.0).color(Color32::GRAY));
+                ui.label(
+                    RichText::new(self.mode.label())
+                        .size(14.0)
+                        .color(Color32::GRAY),
+                );
                 if self.hold {
                     ui.label(RichText::new("HOLD").size(14.0).color(Color32::YELLOW));
                 }
@@ -456,12 +469,7 @@ impl VoltmeterPanel {
             let sign = if display_value < 0.0 { "-" } else { " " };
             let abs_value = display_value.abs();
 
-            let value_text = format!(
-                "{}{:.decimals$}",
-                sign,
-                abs_value,
-                decimals = self.decimals
-            );
+            let value_text = format!("{}{:.decimals$}", sign, abs_value, decimals = self.decimals);
 
             ui.horizontal(|ui| {
                 ui.add_space(ui.available_width() / 4.0);
@@ -471,7 +479,11 @@ impl VoltmeterPanel {
                     RichText::new(&value_text)
                         .size(48.0)
                         .monospace()
-                        .color(if self.hold { Color32::YELLOW } else { Color32::WHITE }),
+                        .color(if self.hold {
+                            Color32::YELLOW
+                        } else {
+                            Color32::WHITE
+                        }),
                 );
 
                 // Unit
@@ -507,23 +519,14 @@ impl VoltmeterPanel {
             let available_width = ui.available_width() - 80.0;
             let bar_width = (available_width * normalized as f32).max(2.0);
 
-            let (rect, _response) = ui.allocate_exact_size(
-                egui::vec2(available_width, 20.0),
-                egui::Sense::hover(),
-            );
+            let (rect, _response) =
+                ui.allocate_exact_size(egui::vec2(available_width, 20.0), egui::Sense::hover());
 
             // Background
-            ui.painter().rect_filled(
-                rect,
-                2.0,
-                Color32::from_gray(40),
-            );
+            ui.painter().rect_filled(rect, 2.0, Color32::from_gray(40));
 
             // Fill
-            let fill_rect = egui::Rect::from_min_size(
-                rect.min,
-                egui::vec2(bar_width, 20.0),
-            );
+            let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(bar_width, 20.0));
 
             let fill_color = if voltage < 0.0 {
                 Color32::from_rgb(100, 150, 255)
@@ -537,7 +540,10 @@ impl VoltmeterPanel {
             if min < 0.0 && max > 0.0 {
                 let zero_x = rect.min.x + (available_width * (-min / range) as f32);
                 ui.painter().line_segment(
-                    [egui::pos2(zero_x, rect.min.y), egui::pos2(zero_x, rect.max.y)],
+                    [
+                        egui::pos2(zero_x, rect.min.y),
+                        egui::pos2(zero_x, rect.max.y),
+                    ],
                     egui::Stroke::new(1.0, Color32::WHITE),
                 );
             }

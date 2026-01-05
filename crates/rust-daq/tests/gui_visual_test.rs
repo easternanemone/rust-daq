@@ -1,7 +1,7 @@
 #![cfg(feature = "gui_egui")]
 #![cfg(not(target_arch = "wasm32"))]
-use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use egui_kittest::Harness;
 use rust_daq::gui::{app::DaqGuiApp, create_channels};
 
 #[test]
@@ -24,7 +24,7 @@ fn test_gui_visual_elements() {
 
     // Verify buttons exist
     harness.get_by_label("Connect");
-    
+
     // Verify input field exists (by its value or label)
     harness.get_by_label("Daemon:");
 }

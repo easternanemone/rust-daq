@@ -1,6 +1,8 @@
 pub mod custom_health_service;
 pub mod hardware_service;
 pub mod health_service;
+#[cfg(feature = "metrics")]
+pub mod metrics_service;
 pub mod module_service;
 pub mod plugin_service;
 pub mod preset_service;
@@ -61,6 +63,8 @@ pub mod proto {
 
 pub use hardware_service::HardwareServiceImpl;
 pub use health_service::HealthServiceImpl;
+#[cfg(feature = "metrics")]
+pub use metrics_service::{DaqMetrics, MetricsServerHandle, start_metrics_server};
 pub use module_service::ModuleServiceImpl;
 pub use plugin_service::PluginServiceImpl;
 pub use preset_service::{PresetServiceImpl, default_preset_storage_path};

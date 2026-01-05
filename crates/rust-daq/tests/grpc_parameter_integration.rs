@@ -152,11 +152,14 @@ async fn test_maitai_parameter_integration() -> Result<()> {
     use rust_daq::hardware::capabilities::Parameterized;
     use rust_daq::hardware::maitai::MaiTaiDriver;
     use std::io::Write;
+    // use tempfile::NamedTempFile; // Unused if test skipped
+    #[allow(unused_imports)]
     use tempfile::NamedTempFile;
 
     // Create a mock serial port using pty (Unix-like systems only)
     #[cfg(unix)]
     {
+        #[allow(unused_imports)]
         use std::os::unix::io::AsRawFd;
 
         // Create pseudo-terminal pair
@@ -172,7 +175,8 @@ async fn test_maitai_parameter_integration() -> Result<()> {
         // bd-d7uw: Use into_raw_fd() to transfer ownership, preventing double-close
         use std::os::unix::io::IntoRawFd;
         let master_fd = master.into_raw_fd();
-        tokio::spawn(async move {
+        // bd-9thk: Use spawn_blocking for blocking PTY I/O to avoid blocking the async runtime
+        tokio::task::spawn_blocking(move || {
             use std::os::unix::io::FromRawFd;
             // SAFETY: master_fd ownership was transferred via into_raw_fd(), so no double-close
             let mut file = unsafe { std::fs::File::from_raw_fd(master_fd) };
@@ -200,9 +204,26 @@ async fn test_maitai_parameter_integration() -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Create MaiTai driver with mock serial port
-        let driver = MaiTaiDriver::new_async(slave_path_str).await?;
+        // bd-9thk: Handle macOS PTY limitation (Not a typewriter/ENOTTY)
+        let driver = match MaiTaiDriver::new_async(slave_path_str).await {
+            Ok(d) => d,
+            Err(e) => {
+                // Use Debug format to check the full error chain (context + root cause)
+                let msg = format!("{:?}", e);
+                if msg.contains("Not a typewriter")
+                    || msg.contains("Inappropriate ioctl for device")
+                {
+                    println!(
+                        "Skipping test: PTY not supported by tokio-serial on this OS (ENOTTY)"
+                    );
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        };
 
         // Create registry and register driver
+        #[allow(unused_mut, unused_variables)]
         let mut registry = DeviceRegistry::new();
 
         // Get parameters from driver

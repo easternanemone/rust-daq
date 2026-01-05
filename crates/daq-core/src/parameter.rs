@@ -106,6 +106,32 @@ use crate::error::DaqError;
 use crate::observable::{Observable, ParameterAny, ParameterBase as ObservableParameterBase};
 
 // =============================================================================
+// Type Aliases for Complex Callback/Future Types
+// =============================================================================
+
+/// Hardware write callback type.
+///
+/// A function that takes a value and returns a future that writes to hardware.
+/// Used by [`Parameter::connect_to_hardware_write`].
+pub type HardwareWriter<T> =
+    Arc<dyn Fn(T) -> BoxFuture<'static, Result<(), DaqError>> + Send + Sync>;
+
+/// Hardware read callback type.
+///
+/// A function that returns a future that reads from hardware.
+/// Used by [`Parameter::connect_to_hardware_read`].
+pub type HardwareReader<T> = Arc<dyn Fn() -> BoxFuture<'static, Result<T, DaqError>> + Send + Sync>;
+
+/// Change listener callback type.
+///
+/// A synchronous function called after parameter value changes.
+/// Used for side effects like storage logging or dependent parameter updates.
+pub type ChangeListener<T> = Arc<dyn Fn(&T) + Send + Sync>;
+
+/// Collection of change listeners with concurrent access.
+pub type ChangeListeners<T> = Arc<RwLock<Vec<ChangeListener<T>>>>;
+
+// =============================================================================
 // Parameter<T> - Hardware-connected Observable
 // =============================================================================
 
@@ -146,21 +172,20 @@ where
     ///
     /// When set, calling `set()` will write to hardware before updating
     /// the internal value. Function should return error if write fails.
-    hardware_writer:
-        Option<Arc<dyn Fn(T) -> BoxFuture<'static, Result<(), DaqError>> + Send + Sync>>,
+    hardware_writer: Option<HardwareWriter<T>>,
 
     /// Hardware read function (optional)
     ///
     /// When set, calling `read_from_hardware()` will fetch the current
     /// hardware value and update the internal value.
-    hardware_reader: Option<Arc<dyn Fn() -> BoxFuture<'static, Result<T, DaqError>> + Send + Sync>>,
+    hardware_reader: Option<HardwareReader<T>>,
 
     /// Change listeners (called after value changes)
     ///
     /// Useful for side effects like updating dependent parameters or
     /// logging changes to storage. These are called AFTER Observable
     /// has notified all subscribers.
-    change_listeners: Arc<RwLock<Vec<Arc<dyn Fn(&T) + Send + Sync>>>>,
+    change_listeners: ChangeListeners<T>,
 }
 
 impl<T> Parameter<T>
@@ -450,7 +475,10 @@ where
             constraints.insert("max".to_string(), serde_json::json!(max));
         }
         if !metadata.enum_values.is_empty() {
-            constraints.insert("enum_values".to_string(), serde_json::json!(metadata.enum_values));
+            constraints.insert(
+                "enum_values".to_string(),
+                serde_json::json!(metadata.enum_values),
+            );
         }
         if !metadata.dtype.is_empty() {
             constraints.insert("dtype".to_string(), serde_json::json!(metadata.dtype));
@@ -954,7 +982,11 @@ mod tests {
         );
 
         // Value should remain unchanged
-        assert_eq!(param.get(), 50.0, "Parameter value should not change on failed set");
+        assert_eq!(
+            param.get(),
+            50.0,
+            "Parameter value should not change on failed set"
+        );
 
         // Now try a VALID value
         hardware_write_called.store(false, Ordering::SeqCst);

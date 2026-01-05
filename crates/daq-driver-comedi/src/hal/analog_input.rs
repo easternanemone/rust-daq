@@ -100,7 +100,7 @@ impl ReadableAnalogInput {
     fn get_range(&self) -> Result<Range> {
         // Check cache first
         if let Some(ref range) = *self.range.read() {
-            return Ok(range.clone());
+            return Ok(*range);
         }
 
         // Fetch and cache range info
@@ -109,7 +109,7 @@ impl ReadableAnalogInput {
             .range_info(self.channel, self.range_index)
             .map_err(|e| anyhow::anyhow!("Failed to get range info: {}", e))?;
 
-        *self.range.write() = Some(range.clone());
+        *self.range.write() = Some(range);
         Ok(range)
     }
 }

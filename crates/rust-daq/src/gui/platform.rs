@@ -1,6 +1,6 @@
+use futures::StreamExt;
 use std::future::Future;
 use std::time::Duration;
-use futures::StreamExt;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;

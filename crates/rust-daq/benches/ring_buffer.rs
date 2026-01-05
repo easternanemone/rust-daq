@@ -203,11 +203,7 @@ fn ring_buffer_tap_latency(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring_buffer_tap_latency");
 
     // Test different data sizes
-    let sizes = vec![
-        ("1KB", 1024),
-        ("16KB", 16 * 1024),
-        ("256KB", 256 * 1024),
-    ];
+    let sizes = vec![("1KB", 1024), ("16KB", 16 * 1024), ("256KB", 256 * 1024)];
 
     for (name, size) in sizes {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -273,10 +269,9 @@ fn ring_buffer_tap_throughput(c: &mut Criterion) {
             // Drain tap receiver
             rt.block_on(async {
                 for _ in 0..frames_per_iter {
-                    if let Ok(Some(frame)) = tokio::time::timeout(
-                        Duration::from_millis(10),
-                        rx.recv(),
-                    ).await {
+                    if let Ok(Some(frame)) =
+                        tokio::time::timeout(Duration::from_millis(10), rx.recv()).await
+                    {
                         black_box(frame);
                     }
                 }
@@ -323,10 +318,9 @@ fn ring_buffer_multiple_taps(c: &mut Criterion) {
                     // Drain all taps
                     rt.block_on(async {
                         for rx in &mut receivers {
-                            if let Ok(Some(frame)) = tokio::time::timeout(
-                                Duration::from_millis(10),
-                                rx.recv(),
-                            ).await {
+                            if let Ok(Some(frame)) =
+                                tokio::time::timeout(Duration::from_millis(10), rx.recv()).await
+                            {
                                 black_box(frame);
                             }
                         }
@@ -381,10 +375,9 @@ fn ring_buffer_tap_decimation(c: &mut Criterion) {
                     // Receive decimated frames
                     rt.block_on(async {
                         for _ in 0..expected_frames {
-                            if let Ok(Some(frame)) = tokio::time::timeout(
-                                Duration::from_millis(50),
-                                rx.recv(),
-                            ).await {
+                            if let Ok(Some(frame)) =
+                                tokio::time::timeout(Duration::from_millis(50), rx.recv()).await
+                            {
                                 black_box(frame);
                             }
                         }

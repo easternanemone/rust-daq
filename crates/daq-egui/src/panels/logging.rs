@@ -161,6 +161,25 @@ pub enum ConnectionStatus {
     Error,
 }
 
+/// Connection diagnostics for the logging panel (bd-j3xz.3.3).
+///
+/// Captures connection health metrics for UI display.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionDiagnostics {
+    /// RTT of last successful health check in milliseconds.
+    pub last_rtt_ms: Option<f64>,
+    /// Total number of errors since connection established.
+    pub total_errors: u32,
+    /// Seconds since last error occurred (None if no errors).
+    pub secs_since_last_error: Option<f64>,
+    /// The last error message.
+    pub last_error_message: Option<String>,
+    /// Seconds since last successful health check.
+    pub secs_since_last_success: Option<f64>,
+    /// Number of consecutive health check failures.
+    pub consecutive_failures: u32,
+}
+
 impl ConnectionStatus {
     pub fn label(&self) -> &'static str {
         match self {
@@ -294,6 +313,10 @@ pub struct LoggingPanel {
     pub experiment_name: Option<String>,
     /// Optional progress (0.0-1.0)
     pub experiment_progress: Option<f32>,
+    /// Connection diagnostics (bd-j3xz.3.3)
+    pub connection_diagnostics: ConnectionDiagnostics,
+    /// Whether to show the diagnostics panel (bd-j3xz.3.3)
+    show_diagnostics: bool,
 }
 
 impl Default for LoggingPanel {
@@ -318,6 +341,8 @@ impl Default for LoggingPanel {
             experiment_status: ExperimentStatus::default(),
             experiment_name: None,
             experiment_progress: None,
+            connection_diagnostics: ConnectionDiagnostics::default(),
+            show_diagnostics: false,
         }
     }
 }
@@ -444,8 +469,7 @@ impl LoggingPanel {
         }
 
         let line_count = content.lines().count().saturating_sub(4); // Subtract header lines
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        std::fs::write(path, content).map_err(|e| format!("Failed to write file: {}", e))?;
 
         Ok((line_count, path.to_string()))
     }
@@ -475,7 +499,8 @@ impl LoggingPanel {
         if let Some(rx) = &self.export_rx {
             match rx.try_recv() {
                 Ok(Ok((count, path))) => {
-                    self.export_status = Some((format!("Exported {} entries to {}", count, path), true));
+                    self.export_status =
+                        Some((format!("Exported {} entries to {}", count, path), true));
                     self.export_in_progress = false;
                     self.export_rx = None;
                 }
@@ -497,14 +522,30 @@ impl LoggingPanel {
     }
 
     /// Render the status bar at the top
-    fn show_status_bar(&self, ui: &mut egui::Ui) {
+    fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Connection status
+            // Connection status with diagnostics toggle (bd-j3xz.3.3)
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     let color = self.connection_status.color();
                     ui.colored_label(color, "●");
                     ui.label(self.connection_status.label());
+                    // Show RTT if available
+                    if let Some(rtt) = self.connection_diagnostics.last_rtt_ms {
+                        ui.label(
+                            egui::RichText::new(format!("{:.0}ms", rtt))
+                                .small()
+                                .color(egui::Color32::from_gray(160)),
+                        );
+                    }
+                    // Diagnostics toggle button
+                    if ui
+                        .small_button(if self.show_diagnostics { "▼" } else { "▶" })
+                        .on_hover_text("Toggle connection diagnostics")
+                        .clicked()
+                    {
+                        self.show_diagnostics = !self.show_diagnostics;
+                    }
                 });
             });
 
@@ -540,6 +581,96 @@ impl LoggingPanel {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("{} entries", self.entries.len()));
             });
+        });
+
+        // Show expanded diagnostics panel (bd-j3xz.3.3)
+        if self.show_diagnostics {
+            self.show_diagnostics_panel(ui);
+        }
+    }
+
+    /// Render the connection diagnostics panel (bd-j3xz.3.3)
+    fn show_diagnostics_panel(&self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Connection Diagnostics")
+                        .strong()
+                        .small(),
+                );
+            });
+
+            ui.horizontal(|ui| {
+                // RTT
+                ui.label("RTT:");
+                if let Some(rtt) = self.connection_diagnostics.last_rtt_ms {
+                    let color = if rtt < 50.0 {
+                        egui::Color32::GREEN
+                    } else if rtt < 200.0 {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::RED
+                    };
+                    ui.colored_label(color, format!("{:.1}ms", rtt));
+                } else {
+                    ui.label("--");
+                }
+
+                ui.separator();
+
+                // Last success
+                ui.label("Last OK:");
+                if let Some(secs) = self.connection_diagnostics.secs_since_last_success {
+                    ui.label(format!("{:.0}s ago", secs));
+                } else {
+                    ui.label("--");
+                }
+
+                ui.separator();
+
+                // Total errors
+                ui.label("Errors:");
+                let error_color = if self.connection_diagnostics.total_errors == 0 {
+                    egui::Color32::GREEN
+                } else if self.connection_diagnostics.total_errors < 5 {
+                    egui::Color32::YELLOW
+                } else {
+                    egui::Color32::RED
+                };
+                ui.colored_label(
+                    error_color,
+                    format!("{}", self.connection_diagnostics.total_errors),
+                );
+
+                ui.separator();
+
+                // Consecutive failures
+                ui.label("Consecutive:");
+                let consec_color = if self.connection_diagnostics.consecutive_failures == 0 {
+                    egui::Color32::GREEN
+                } else {
+                    egui::Color32::RED
+                };
+                ui.colored_label(
+                    consec_color,
+                    format!("{}", self.connection_diagnostics.consecutive_failures),
+                );
+            });
+
+            // Show last error if any
+            if let Some(ref msg) = self.connection_diagnostics.last_error_message {
+                ui.horizontal(|ui| {
+                    ui.label("Last error:");
+                    if let Some(secs) = self.connection_diagnostics.secs_since_last_error {
+                        ui.label(
+                            egui::RichText::new(format!("({:.0}s ago)", secs))
+                                .small()
+                                .color(egui::Color32::GRAY),
+                        );
+                    }
+                    ui.colored_label(egui::Color32::from_rgb(255, 150, 150), msg);
+                });
+            }
         });
     }
 
@@ -670,7 +801,10 @@ impl LoggingPanel {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Export button (bd-tjwm.8: non-blocking export)
                 let export_enabled = !self.export_in_progress;
-                if ui.add_enabled(export_enabled, egui::Button::new("Export")).clicked() {
+                if ui
+                    .add_enabled(export_enabled, egui::Button::new("Export"))
+                    .clicked()
+                {
                     self.start_async_export();
                 }
 
@@ -713,9 +847,12 @@ impl LoggingPanel {
 
         // Log table (takes remaining space)
         let available = ui.available_height() - 30.0; // Reserve space for bottom controls
-        ui.allocate_ui(egui::vec2(ui.available_width(), available.max(100.0)), |ui| {
-            self.show_log_table(ui);
-        });
+        ui.allocate_ui(
+            egui::vec2(ui.available_width(), available.max(100.0)),
+            |ui| {
+                self.show_log_table(ui);
+            },
+        );
 
         ui.separator();
 
@@ -727,7 +864,10 @@ impl LoggingPanel {
     #[allow(dead_code)]
     pub fn add_demo_entries(&mut self) {
         self.info("System", "rust-daq logging panel initialized");
-        self.info("Connection", "Attempting to connect to daemon at 127.0.0.1:50051");
+        self.info(
+            "Connection",
+            "Attempting to connect to daemon at 127.0.0.1:50051",
+        );
         self.warn("Connection", "Connection timeout, retrying...");
         self.info("Connection", "Connected to daemon successfully");
         self.debug("Hardware", "Discovered mock_stage (MockStage v1.0)");
@@ -740,7 +880,10 @@ impl LoggingPanel {
         self.debug("PowerMeter", "Reading: 1.23 mW");
         self.debug("Experiment", "Moving stage to position 1.0");
         self.debug("PowerMeter", "Reading: 1.45 mW");
-        self.warn("PowerMeter", "Reading fluctuation detected: 0.15 mW variance");
+        self.warn(
+            "PowerMeter",
+            "Reading fluctuation detected: 0.15 mW variance",
+        );
         self.debug("Experiment", "Moving stage to position 2.0");
         self.error("Stage", "Motion controller timeout at position 2.0");
         self.warn("Experiment", "Retrying motion command...");

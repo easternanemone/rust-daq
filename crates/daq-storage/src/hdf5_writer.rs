@@ -164,15 +164,21 @@ impl HDF5Writer {
                 let json_str = serde_json::to_string(&record)?;
 
                 // Overwrite existing attribute if present
-                if params_group.attr_exists(name) {
-                    params_group
-                        .attr(name)?
-                        .write_scalar(&VarLenUnicode::from(json_str.as_str()))?;
+                if params_group.attr(name).is_ok() {
+                    params_group.attr(name)?.write_scalar(
+                        &json_str
+                            .parse::<VarLenUnicode>()
+                            .expect("Parse VarLenUnicode"),
+                    )?;
                 } else {
                     params_group
                         .new_attr::<VarLenUnicode>()
-                        .create(name)?
-                        .write_scalar(&VarLenUnicode::from(json_str.as_str()))?;
+                        .create(&name[..])?
+                        .write_scalar(
+                            &json_str
+                                .parse::<VarLenUnicode>()
+                                .expect("Parse VarLenUnicode"),
+                        )?;
                 }
             }
 
@@ -224,7 +230,7 @@ impl HDF5Writer {
                 return Ok(0);
             }
             use hdf5::File;
-            use prost::Message;
+            // use prost::Message;
 
             // Open or create HDF5 file
             let file = if output_path.exists() {
@@ -255,7 +261,8 @@ impl HDF5Writer {
                 // Fallback: Write raw bytes when networking feature is disabled
                 batch_group
                     .new_dataset::<u8>()
-                    .create("raw_data", snapshot.len())?
+                    .shape(snapshot.len())
+                    .create("raw_data")?
                     .write(&snapshot)?;
                 snapshot.len()
             };
@@ -270,10 +277,10 @@ impl HDF5Writer {
                 .new_attr::<u64>()
                 .create("timestamp_ns")?
                 .write_scalar(
-                    &std::time::SystemTime::now()
+                    &(std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
-                        .as_nanos() as u64,
+                        .as_nanos() as u64),
                 )?;
 
             Ok(bytes_processed)
@@ -372,7 +379,10 @@ impl HDF5Writer {
             group
                 .new_attr::<hdf5::types::VarLenUnicode>()
                 .create("scan_id")?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(id.as_str()))?;
+                .write_scalar(
+                    &id.parse::<hdf5::types::VarLenUnicode>()
+                        .expect("Parse VarLenUnicode"),
+                )?;
         }
 
         // Write timestamps
@@ -528,21 +538,34 @@ impl HDF5Writer {
             manifest_group
                 .new_attr::<hdf5::types::VarLenUnicode>()
                 .create("run_uid")?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(manifest.run_uid.as_str()))?;
+                .write_scalar(
+                    &manifest
+                        .run_uid
+                        .parse::<hdf5::types::VarLenUnicode>()
+                        .expect("Parse VarLenUnicode"),
+                )?;
 
             manifest_group
                 .new_attr::<hdf5::types::VarLenUnicode>()
                 .create("plan_type")?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(
-                    manifest.plan_type.as_str(),
-                ))?;
+                .write_scalar(
+                    &manifest
+                        .plan_type
+                        .as_str()
+                        .parse::<hdf5::types::VarLenUnicode>()
+                        .expect("Parse VarLenUnicode"),
+                )?;
 
             manifest_group
                 .new_attr::<hdf5::types::VarLenUnicode>()
                 .create("plan_name")?
-                .write_scalar(&hdf5::types::VarLenUnicode::from(
-                    manifest.plan_name.as_str(),
-                ))?;
+                .write_scalar(
+                    &manifest
+                        .plan_name
+                        .as_str()
+                        .parse::<hdf5::types::VarLenUnicode>()
+                        .expect("Parse VarLenUnicode"),
+                )?;
 
             // Create parameters subgroup
             let params_group = if manifest_group.group("parameters").is_ok() {
@@ -564,8 +587,12 @@ impl HDF5Writer {
                     let json_str = serde_json::to_string(param_value)?;
                     device_group
                         .new_attr::<hdf5::types::VarLenUnicode>()
-                        .create(param_name)?
-                        .write_scalar(&hdf5::types::VarLenUnicode::from(json_str.as_str()))?;
+                        .create(&param_name[..])?
+                        .write_scalar(
+                            &json_str
+                                .parse::<hdf5::types::VarLenUnicode>()
+                                .expect("Parse VarLenUnicode"),
+                        )?;
                 }
             }
 
@@ -579,8 +606,12 @@ impl HDF5Writer {
             for (key, value) in &manifest.system_info {
                 system_group
                     .new_attr::<hdf5::types::VarLenUnicode>()
-                    .create(key)?
-                    .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+                    .create(&key[..])?
+                    .write_scalar(
+                        &value
+                            .parse::<hdf5::types::VarLenUnicode>()
+                            .expect("Parse VarLenUnicode"),
+                    )?;
             }
 
             // Create metadata subgroup
@@ -593,8 +624,12 @@ impl HDF5Writer {
             for (key, value) in &manifest.metadata {
                 metadata_group
                     .new_attr::<hdf5::types::VarLenUnicode>()
-                    .create(key)?
-                    .write_scalar(&hdf5::types::VarLenUnicode::from(value.as_str()))?;
+                    .create(&key[..])?
+                    .write_scalar(
+                        &value
+                            .parse::<hdf5::types::VarLenUnicode>()
+                            .expect("Parse VarLenUnicode"),
+                    )?;
             }
 
             Ok(())
@@ -611,6 +646,17 @@ impl HDF5Writer {
         _manifest: &daq_core::experiment::document::ExperimentManifest,
     ) -> Result<()> {
         // Gracefully degrade when HDF5 not available
+        Ok(())
+    }
+
+    /// Helper to write a string as a VarLenUnicode attribute
+    #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
+    fn write_string_attr(container: &hdf5::Container, name: &str, value: &str) -> Result<()> {
+        use hdf5::types::VarLenUnicode;
+        container
+            .new_attr::<VarLenUnicode>()
+            .create(name)?
+            .write_scalar(&value.parse::<VarLenUnicode>().expect("Parse VarLenUnicode"))?;
         Ok(())
     }
 

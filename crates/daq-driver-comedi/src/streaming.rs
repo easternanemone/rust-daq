@@ -93,20 +93,15 @@ impl TriggerSource {
 }
 
 /// Stop condition for acquisition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StopCondition {
     /// Acquire indefinitely until stopped
+    #[default]
     Continuous,
     /// Acquire fixed number of samples per channel
     Count(u64),
     /// Acquire for specified duration
     Duration(Duration),
-}
-
-impl Default for StopCondition {
-    fn default() -> Self {
-        Self::Continuous
-    }
 }
 
 /// Channel configuration for streaming acquisition.
@@ -385,7 +380,9 @@ impl StreamAcquisition {
 
         // Find AI subdevice that supports commands
         let subdevice = config.subdevice.unwrap_or_else(|| {
-            device.find_subdevice(SubdeviceType::AnalogInput).unwrap_or(0)
+            device
+                .find_subdevice(SubdeviceType::AnalogInput)
+                .unwrap_or(0)
         });
 
         // Verify subdevice supports commands
@@ -412,12 +409,7 @@ impl StreamAcquisition {
             .iter()
             .map(|ch| {
                 let ptr = unsafe {
-                    comedi_sys::comedi_get_range(
-                        device.handle(),
-                        subdevice,
-                        ch.channel,
-                        ch.range,
-                    )
+                    comedi_sys::comedi_get_range(device.handle(), subdevice, ch.channel, ch.range)
                 };
                 unsafe { Range::from_ptr(ch.range, ptr) }
                     .unwrap_or_else(|| Range::new(ch.range, -10.0, 10.0))
@@ -477,9 +469,9 @@ impl StreamAcquisition {
         self.test_command(&mut state)?;
 
         // Execute the command
-        let result = self.device.with_handle(|handle| unsafe {
-            comedi_sys::comedi_command(handle, &mut state.cmd)
-        });
+        let result = self
+            .device
+            .with_handle(|handle| unsafe { comedi_sys::comedi_command(handle, &mut state.cmd) });
 
         if result < 0 {
             return Err(unsafe { ComediError::from_errno() });
@@ -506,9 +498,9 @@ impl StreamAcquisition {
 
         let state = self.state.lock();
 
-        let result = self.device.with_handle(|handle| unsafe {
-            comedi_sys::comedi_cancel(handle, state.subdevice)
-        });
+        let result = self
+            .device
+            .with_handle(|handle| unsafe { comedi_sys::comedi_cancel(handle, state.subdevice) });
 
         if result < 0 {
             warn!("Error cancelling acquisition: {}", unsafe {
@@ -724,7 +716,11 @@ impl StreamAcquisition {
 
         state.cmd = comedi_cmd {
             subdev: state.subdevice,
-            flags: if self.config.priority { CMDF_PRIORITY } else { 0 },
+            flags: if self.config.priority {
+                CMDF_PRIORITY
+            } else {
+                0
+            },
 
             // Start: software trigger by default
             start_src: self.config.start_trigger.to_raw(),
@@ -735,11 +731,7 @@ impl StreamAcquisition {
             scan_begin_arg: scan_interval_ns,
 
             // Convert: follow scan or timer
-            convert_src: if n_channels > 1 {
-                TRIG_TIMER
-            } else {
-                TRIG_NOW
-            },
+            convert_src: if n_channels > 1 { TRIG_TIMER } else { TRIG_NOW },
             convert_arg: convert_interval_ns,
 
             // Scan end: count channels
@@ -783,7 +775,7 @@ impl StreamAcquisition {
                     debug!(pass = pass, "Command test passed");
                     return Ok(());
                 }
-                1 | 2 | 3 | 4 | 5 => {
+                1..=5 => {
                     // Command was modified, try again
                     debug!(
                         pass = pass,
