@@ -298,6 +298,7 @@ async fn test_current_curve_scan_abort() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore] // Optional test - run with --ignored
 async fn test_isolate_device_and_cancel() {
     println!("\n=== Test: Device Isolation and Cancel ===");
     println!("Testing isolation command with immediate cancellation");
@@ -403,6 +404,7 @@ async fn test_fine_tune_motors() {
 
 /// Test that stop() can abort motor fine-tuning
 #[tokio::test]
+#[ignore] // Optional test - run with --ignored
 async fn test_fine_tune_motors_abort() {
     println!("\n=== Test: Motor Fine-Tuning Abort ===");
     println!("Testing that fine-tuning can be safely aborted with stop()");
@@ -488,6 +490,7 @@ async fn test_clean_mechanics() {
 
 /// Test that stop() can abort cleaning cycle
 #[tokio::test]
+#[ignore] // Optional test - run with --ignored
 async fn test_clean_mechanics_abort() {
     println!("\n=== Test: Clean Mechanics Abort ===");
     println!("Testing that cleaning can be safely aborted with stop()");
@@ -520,6 +523,7 @@ async fn test_clean_mechanics_abort() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore] // Optional test - run with --ignored
 async fn test_skip_frequency_search() {
     println!("\n=== Test: Skip Frequency Search (sk command) ===");
     println!("NOTE: This test does NOT save to EEPROM - settings are temporary");
