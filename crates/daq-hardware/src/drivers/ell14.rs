@@ -406,17 +406,18 @@ impl Ell14Driver {
         let mut driver = Self::build(shared_port, address_owned, Self::DEFAULT_PULSES_PER_DEGREE);
 
         // Query device for actual calibration
-        // Per ELLx protocol manual: PULSES/M.U. = pulses per measurement unit
-        // For rotation stages (ELL14), M.U. = degrees, so this is pulses/degree directly
+        // The IN response contains "pulses_per_unit" which is TOTAL pulses for full travel
+        // For ELL14 rotation stages, full travel = 360°, so divide by 360 to get pulses/degree
         match driver.get_device_info().await {
             Ok(info) => {
                 if info.pulses_per_unit > 0 {
-                    // PULSES/M.U. is pulses per measurement unit (degrees for ELL14)
-                    // Use the value directly - do NOT divide by 360!
-                    let pulses_per_degree = info.pulses_per_unit as f64;
+                    // pulses_per_unit is total pulses for full 360° rotation
+                    // Divide by 360 to get pulses per degree
+                    let pulses_per_degree = info.pulses_per_unit as f64 / 360.0;
                     tracing::info!(
-                        "ELL14 device calibration: {} pulses/degree (from device)",
-                        pulses_per_degree
+                        "ELL14 device calibration: {:.4} pulses/degree (from device: {} total pulses / 360°)",
+                        pulses_per_degree,
+                        info.pulses_per_unit
                     );
                     driver.pulses_per_degree = pulses_per_degree;
                 } else {
@@ -951,8 +952,8 @@ impl Ell14Driver {
     /// - Year (4): "2023" (ASCII, not hex)
     /// - Firmware (2): "17"
     /// - Thread type (1): "0"
-    /// - Travel (8): "10168000" hex
-    /// - Pulses/unit (8): "00023000" hex
+    /// - Travel (5): "10168" hex (pulses)
+    /// - Pulses/unit (8): "00023000" hex (total pulses for full 360° rotation)
     pub async fn get_device_info(&self) -> Result<DeviceInfo> {
         let resp = self.transaction("in").await?;
 
@@ -985,16 +986,19 @@ impl Ell14Driver {
                     None
                 };
 
-                // Travel in pulses (8 hex chars starting at 17)
-                let travel = if data.len() >= 25 {
-                    u32::from_str_radix(&data[17..25], 16).unwrap_or(0)
+                // Travel in pulses (5 hex chars starting at 17)
+                // Note: Original format spec said 8 chars, but actual devices send 5
+                let travel = if data.len() >= 22 {
+                    u32::from_str_radix(&data[17..22], 16).unwrap_or(0)
                 } else {
                     0
                 };
 
-                // Pulses per unit (8 hex chars starting at 25)
-                let pulses_per_unit = if data.len() >= 33 {
-                    u32::from_str_radix(&data[25..33], 16).unwrap_or(0)
+                // Pulses per unit (8 hex chars starting at 22)
+                // This is total pulses for full travel, NOT pulses per degree
+                // To get pulses/degree for rotation stages: divide by 360
+                let pulses_per_unit = if data.len() >= 30 {
+                    u32::from_str_radix(&data[22..30], 16).unwrap_or(0)
                 } else {
                     0
                 };
