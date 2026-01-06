@@ -172,6 +172,226 @@ pub struct MotorPeriods {
     pub backward_period: u16,
 }
 
+/// ELL14 status/error codes returned in GS responses
+///
+/// The device returns status codes in format `{addr}GS{XX}` where XX is a hex code.
+/// Code 00 indicates success; all other codes indicate errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Ell14StatusCode {
+    /// No error - command completed successfully
+    Ok = 0x00,
+    /// Communication timeout - no response from motor
+    CommunicationTimeout = 0x01,
+    /// Mechanical timeout - motor didn't reach target position in time
+    MechanicalTimeout = 0x02,
+    /// Command error - invalid or malformed command
+    CommandError = 0x03,
+    /// Value out of range - parameter outside valid bounds
+    ValueOutOfRange = 0x04,
+    /// Module isolated - device in isolation mode
+    ModuleIsolated = 0x05,
+    /// Module out of isolation - device exiting isolation
+    ModuleOutOfIsolation = 0x06,
+    /// Initialization error - startup failed
+    InitializationError = 0x07,
+    /// Thermal error - overtemperature protection
+    ThermalError = 0x08,
+    /// Busy - device is processing another command
+    Busy = 0x09,
+    /// Sensor error - position sensor malfunction
+    SensorError = 0x0A,
+    /// Motor error - motor driver fault
+    MotorError = 0x0B,
+    /// Out of range - position outside travel limits
+    OutOfRange = 0x0C,
+    /// Over current error - excessive motor current
+    OverCurrentError = 0x0D,
+    /// Unknown error code
+    Unknown = 0xFF,
+}
+
+impl Ell14StatusCode {
+    /// Parse status code from hex string (e.g., "00", "02")
+    pub fn from_hex(hex: &str) -> Self {
+        match u8::from_str_radix(hex, 16) {
+            Ok(code) => Self::from_u8(code),
+            Err(_) => Self::Unknown,
+        }
+    }
+
+    /// Convert from u8 code value
+    pub fn from_u8(code: u8) -> Self {
+        match code {
+            0x00 => Self::Ok,
+            0x01 => Self::CommunicationTimeout,
+            0x02 => Self::MechanicalTimeout,
+            0x03 => Self::CommandError,
+            0x04 => Self::ValueOutOfRange,
+            0x05 => Self::ModuleIsolated,
+            0x06 => Self::ModuleOutOfIsolation,
+            0x07 => Self::InitializationError,
+            0x08 => Self::ThermalError,
+            0x09 => Self::Busy,
+            0x0A => Self::SensorError,
+            0x0B => Self::MotorError,
+            0x0C => Self::OutOfRange,
+            0x0D => Self::OverCurrentError,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Check if this status indicates success
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok)
+    }
+
+    /// Check if this status indicates an error
+    pub fn is_error(&self) -> bool {
+        !self.is_ok()
+    }
+
+    /// Get human-readable description of the status
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Ok => "No error",
+            Self::CommunicationTimeout => "Communication timeout",
+            Self::MechanicalTimeout => "Mechanical timeout - motor didn't reach target",
+            Self::CommandError => "Command error - invalid command",
+            Self::ValueOutOfRange => "Value out of range",
+            Self::ModuleIsolated => "Module isolated",
+            Self::ModuleOutOfIsolation => "Module out of isolation",
+            Self::InitializationError => "Initialization error",
+            Self::ThermalError => "Thermal error - overtemperature",
+            Self::Busy => "Busy - device processing",
+            Self::SensorError => "Sensor error",
+            Self::MotorError => "Motor error",
+            Self::OutOfRange => "Position out of range",
+            Self::OverCurrentError => "Over current error",
+            Self::Unknown => "Unknown error",
+        }
+    }
+}
+
+impl std::fmt::Display for Ell14StatusCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (0x{:02X})", self.description(), *self as u8)
+    }
+}
+
+/// ELL14 command types for protocol operations
+///
+/// Each command has a 2-character code sent after the device address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ell14Command {
+    // === Movement Commands ===
+    /// Move to absolute position (ma)
+    MoveAbsolute,
+    /// Move relative distance (mr)
+    MoveRelative,
+    /// Home to mechanical zero (ho)
+    Home,
+    /// Move forward continuously (fw)
+    JogForward,
+    /// Move backward continuously (bw)
+    JogBackward,
+    /// Stop movement (st)
+    Stop,
+
+    // === Query Commands ===
+    /// Get current position (gp)
+    GetPosition,
+    /// Get status (gs)
+    GetStatus,
+    /// Get device information (in)
+    GetInfo,
+    /// Get jog step size (gj)
+    GetJogStep,
+    /// Get velocity (gv)
+    GetVelocity,
+    /// Get home offset (go)
+    GetHomeOffset,
+    /// Get motor 1 info (i1)
+    GetMotor1Info,
+    /// Get motor 2 info (i2)
+    GetMotor2Info,
+
+    // === Configuration Commands ===
+    /// Set jog step size (sj)
+    SetJogStep,
+    /// Set velocity (sv)
+    SetVelocity,
+    /// Set home offset (so)
+    SetHomeOffset,
+    /// Save parameters to EEPROM (us)
+    SaveUserData,
+
+    // === Motor Tuning Commands ===
+    /// Search motor frequencies (s1/s2)
+    SearchFrequency,
+    /// Scan motor current curve (c1/c2)
+    ScanCurrentCurve,
+    /// Get motor forward period (f1/f2)
+    GetForwardPeriod,
+    /// Get motor backward period (b1/b2)
+    GetBackwardPeriod,
+    /// Set motor forward period (p1/p2 with direction)
+    SetForwardPeriod,
+    /// Set motor backward period
+    SetBackwardPeriod,
+
+    // === Advanced Commands ===
+    /// Isolate device from bus (is)
+    IsolateDevice,
+    /// Clean mechanics (cm)
+    CleanMechanics,
+    /// Fine-tune motors (ft)
+    FineTuneMotors,
+}
+
+impl Ell14Command {
+    /// Get the 2-character command code
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::MoveAbsolute => "ma",
+            Self::MoveRelative => "mr",
+            Self::Home => "ho",
+            Self::JogForward => "fw",
+            Self::JogBackward => "bw",
+            Self::Stop => "st",
+            Self::GetPosition => "gp",
+            Self::GetStatus => "gs",
+            Self::GetInfo => "in",
+            Self::GetJogStep => "gj",
+            Self::GetVelocity => "gv",
+            Self::GetHomeOffset => "go",
+            Self::GetMotor1Info => "i1",
+            Self::GetMotor2Info => "i2",
+            Self::SetJogStep => "sj",
+            Self::SetVelocity => "sv",
+            Self::SetHomeOffset => "so",
+            Self::SaveUserData => "us",
+            Self::SearchFrequency => "s1", // s1 or s2 depending on motor
+            Self::ScanCurrentCurve => "c1", // c1 or c2 depending on motor
+            Self::GetForwardPeriod => "f1", // f1 or f2 depending on motor
+            Self::GetBackwardPeriod => "b1", // b1 or b2 depending on motor
+            Self::SetForwardPeriod => "p1", // with FWD prefix
+            Self::SetBackwardPeriod => "p1", // with BWD prefix
+            Self::IsolateDevice => "is",
+            Self::CleanMechanics => "cm",
+            Self::FineTuneMotors => "ft",
+        }
+    }
+
+    /// Check if this command expects a response
+    pub fn expects_response(&self) -> bool {
+        !matches!(
+            self,
+            Self::Home | Self::Stop | Self::JogForward | Self::JogBackward
+        )
+    }
+}
+
 /// Current curve data point
 #[derive(Debug, Clone)]
 pub struct CurrentCurvePoint {
@@ -596,12 +816,38 @@ impl Ell14Driver {
         }
 
         if response_buf.is_empty() {
+            tracing::debug!(
+                address = %self.active_address,
+                command = %command,
+                "ELL14 returned empty response"
+            );
             return Err(anyhow!("ELL14 returned empty response"));
         }
 
         let response = std::str::from_utf8(&response_buf)
             .context("Invalid UTF-8 from ELL14")?
             .trim();
+
+        // Log the response for debugging
+        tracing::debug!(
+            address = %self.active_address,
+            command = %command,
+            response = %response,
+            "ELL14 transaction complete"
+        );
+
+        // Check for error status in response
+        if let Err(e) = self.check_error_response(response) {
+            tracing::warn!(
+                address = %self.active_address,
+                command = %command,
+                response = %response,
+                error = %e,
+                "ELL14 returned error status"
+            );
+            // Don't fail here - let caller decide what to do with errors
+            // Some commands return status codes that aren't fatal
+        }
 
         Ok(response.to_string())
     }
@@ -623,6 +869,14 @@ impl Ell14Driver {
         let mut port = self.port.lock().await;
 
         let payload = format!("{}{}", self.active_address, command);
+
+        tracing::debug!(
+            address = %self.active_address,
+            command = %command,
+            payload = %payload,
+            "ELL14 sending command (no response expected)"
+        );
+
         port.write_all(payload.as_bytes())
             .await
             .context("ELL14 write failed")?;
@@ -652,30 +906,9 @@ impl Ell14Driver {
                     status_str
                 };
 
-                if let Ok(status_code) = u8::from_str_radix(hex_part, 16) {
-                    if status_code != 0 {
-                        let error_msg = match status_code {
-                            0x01 => "Communication timeout",
-                            0x02 => "Mechanical timeout",
-                            0x03 => "Command error",
-                            0x04 => "Value out of range",
-                            0x05 => "Module isolated",
-                            0x06 => "Module out of isolation",
-                            0x07 => "Initialization error",
-                            0x08 => "Thermal error",
-                            0x09 => "Busy",
-                            0x0A => "Sensor error",
-                            0x0B => "Motor error",
-                            0x0C => "Out of range",
-                            0x0D => "Over current error",
-                            _ => "Unknown error",
-                        };
-                        return Err(anyhow!(
-                            "ELL14 error (code 0x{:02X}): {}",
-                            status_code,
-                            error_msg
-                        ));
-                    }
+                let status = Ell14StatusCode::from_hex(hex_part);
+                if status.is_error() {
+                    return Err(anyhow!("ELL14 error: {}", status));
                 }
             }
         }
