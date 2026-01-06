@@ -994,6 +994,76 @@ async fn test_save_user_data() {
     }
 }
 
+/// Optimize all slow rotators and save settings
+///
+/// This test is IGNORED by default - run explicitly to optimize rotators:
+/// cargo test --features hardware_tests test_optimize_all_rotators -- --nocapture --ignored
+#[tokio::test]
+#[ignore]
+async fn test_optimize_all_rotators() {
+    println!("\n=== Test: Optimize All Rotators and Save Settings ===");
+    println!("WARNING: This will permanently save new motor frequencies to device EEPROM");
+
+    for addr in ADDRESSES {
+        println!("\n--- Optimizing Rotator {} ---", addr);
+        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+
+        // Get initial speed measurement
+        let initial = driver.position().await.expect("Failed to get position");
+        let target = (initial + 90.0) % 360.0;
+        let start = std::time::Instant::now();
+        driver.move_abs(target).await.expect("Failed to move");
+        driver.wait_settled().await.ok();
+        let pre_opt_time = start.elapsed();
+        let pre_opt_speed = 90.0 / pre_opt_time.as_secs_f64();
+        println!("Pre-optimization speed: {:.1}°/s", pre_opt_speed);
+
+        // Optimize motors
+        println!("Running motor frequency search...");
+        let start = std::time::Instant::now();
+        driver.optimize_motors().await.expect("Failed to optimize");
+        println!("Optimization completed in {:.1}s", start.elapsed().as_secs_f64());
+
+        // Measure post-optimization speed
+        driver.move_abs(initial).await.expect("Failed to return");
+        driver.wait_settled().await.ok();
+
+        let start = std::time::Instant::now();
+        driver.move_abs(target).await.expect("Failed to move");
+        driver.wait_settled().await.ok();
+        let post_opt_time = start.elapsed();
+        let post_opt_speed = 90.0 / post_opt_time.as_secs_f64();
+        println!("Post-optimization speed: {:.1}°/s", post_opt_speed);
+
+        let improvement = ((post_opt_speed - pre_opt_speed) / pre_opt_speed) * 100.0;
+        println!("Improvement: {:+.1}%", improvement);
+
+        // Save settings to EEPROM
+        println!("Saving settings to EEPROM...");
+        driver.save_user_data().await.expect("Failed to save");
+        println!("Settings saved!");
+
+        // Return to initial position
+        driver.move_abs(initial).await.ok();
+        driver.wait_settled().await.ok();
+    }
+
+    println!("\n=== Final Speed Comparison ===");
+    for addr in ADDRESSES {
+        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let initial = driver.position().await.expect("Failed to get position");
+        let target = (initial + 90.0) % 360.0;
+        let start = std::time::Instant::now();
+        driver.move_abs(target).await.expect("Failed to move");
+        driver.wait_settled().await.ok();
+        let elapsed = start.elapsed();
+        let speed = 90.0 / elapsed.as_secs_f64();
+        println!("Rotator {}: {:.1}°/s", addr, speed);
+        driver.move_abs(initial).await.ok();
+        driver.wait_settled().await.ok();
+    }
+}
+
 // =============================================================================
 // Phase 7: Extended Relative Movement Tests (bd-e52e.7)
 // =============================================================================
