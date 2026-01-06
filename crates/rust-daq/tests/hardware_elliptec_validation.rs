@@ -733,6 +733,46 @@ async fn test_all_velocities() {
 }
 
 #[tokio::test]
+async fn test_compare_rotator_speeds() {
+    println!("\n=== Test: Compare All Rotator Movement Speeds ===");
+    println!("Moving each rotator 90° and timing the movement\n");
+
+    use std::time::Instant;
+
+    for addr in ADDRESSES {
+        let driver =
+            Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+
+        // Get initial position
+        let initial = driver.position().await.expect("Failed to get position");
+
+        // Move 90 degrees
+        let target = (initial + 90.0) % 360.0;
+        let start = Instant::now();
+        driver.move_abs(target).await.expect("Failed to move");
+        driver.wait_settled().await.ok();
+        let elapsed = start.elapsed();
+
+        // Get final position
+        let final_pos = driver.position().await.expect("Failed to get position");
+        let actual_move = (final_pos - initial + 360.0) % 360.0;
+        let speed = actual_move / elapsed.as_secs_f64();
+
+        println!(
+            "Rotator {}: moved {:.1}° in {:.2}s = {:.1}°/s",
+            addr,
+            actual_move,
+            elapsed.as_secs_f64(),
+            speed
+        );
+
+        // Return to start
+        driver.move_abs(initial).await.ok();
+        driver.wait_settled().await.ok();
+    }
+}
+
+#[tokio::test]
 async fn test_velocity_get_set() {
     println!("\n=== Test: Velocity Get/Set ===");
 
