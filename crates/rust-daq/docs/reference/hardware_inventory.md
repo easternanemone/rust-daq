@@ -57,7 +57,8 @@ let camera = PvcamDriver::new_async("PrimeBSI".to_string()).await?;
 
 ### 3. Spectra-Physics MaiTai Ti:Sapphire Laser ✅
 
-**Port:** `/dev/ttyUSB5` (USB-Serial via Silicon_Labs CP2102)
+**Port:** `/dev/ttyUSB5` (USB-Serial via FTDI 4-port cable, interface 3)
+**Stable Path:** `/dev/serial/by-id/usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if03-port0`
 **Status:** OPERATIONAL
 **Wavelength:** 820 nm (configured default)
 
@@ -96,6 +97,7 @@ Spectra Physics,MaiTai,3227/51054/40856,0245-2.00.34 / CD00000019 / 214-00.004.0
 ### 4. Thorlabs Elliptec ELL14 Rotation Mounts (3 Units) ✅
 
 **Port:** `/dev/ttyUSB1` (USB-Serial via FTDI FT230X Basic UART)
+**Stable Path:** `/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0`
 **Status:** OPERATIONAL (All 3 devices responding)
 **Bus Type:** Multidrop addressable bus (0-F)
 
@@ -147,7 +149,8 @@ Spectra Physics,MaiTai,3227/51054/40856,0245-2.00.34 / CD00000019 / 214-00.004.0
 
 ### 5. Newport ESP300 Motion Controller ❌
 
-**Port:** `/dev/ttyUSB1` (USB-Serial via FTDI "USB <-> Serial Cable" FT1RALWL)
+**Port:** `/dev/ttyUSB2` (USB-Serial via FTDI 4-port cable, interface 0)
+**Stable Path:** `/dev/serial/by-id/usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if00-port0`
 **Status:** NOT RESPONDING (likely powered off)
 **Last Verified:** 2025-11-20
 
@@ -169,13 +172,27 @@ Spectra Physics,MaiTai,3227/51054/40856,0245-2.00.34 / CD00000019 / 214-00.004.0
 
 ## Device Mapping
 
-| Device | Interface | Identifier | Status | Notes |
-|--------|-----------|------------|--------|-------|
-| Prime BSI Camera | USB 3.0 (PVCAM) | `PrimeBSI` | ✅ Working | 2048×2048, 16-bit |
-| Newport 1830-C | `/dev/ttyS0` | Native RS-232 | ✅ Working | - |
-| ELL14 Bus (3 units) | `/dev/ttyUSB1` | FTDI_FT230X_Basic_UART | ✅ Working | Addr: 2, 3, 8 |
-| ESP300 | `/dev/ttyUSB1` | FTDI_USB_-_Serial_Cable | ❌ Not responding | Powered off |
-| MaiTai Laser | `/dev/ttyUSB5` | Silicon_Labs_CP2102 | ✅ Working | - |
+| Device | Port | Stable Path (by-id) | Status |
+|--------|------|---------------------|--------|
+| Prime BSI Camera | USB 3.0 | `PrimeBSI` (PVCAM name) | ✅ Working |
+| Newport 1830-C | `/dev/ttyS0` | Native RS-232 (no by-id) | ✅ Working |
+| ELL14 Bus (3 units) | `/dev/ttyUSB1` | `usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0` | ✅ Working |
+| MaiTai Laser | `/dev/ttyUSB5` | `usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if03-port0` | ✅ Working |
+| ESP300 | `/dev/ttyUSB2` | `usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if00-port0` | ❌ Powered off |
+
+### Using Stable Paths (Recommended)
+
+The stable paths in `/dev/serial/by-id/` do not change between reboots, unlike `/dev/ttyUSBN` which depends on enumeration order.
+
+```rust
+use daq_hardware::drivers::ell14::Ell14Bus;
+
+// Using stable by-id path (recommended)
+let bus = Ell14Bus::open("/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0").await?;
+
+// Or just the by-id name (without full path)
+let bus = Ell14Bus::open("usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0").await?;
+```
 
 ---
 

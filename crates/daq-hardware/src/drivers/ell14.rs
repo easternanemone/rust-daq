@@ -89,6 +89,7 @@
 //! ```
 
 use crate::capabilities::{Movable, Parameterized};
+use crate::port_resolver::resolve_port;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use daq_core::error::DaqError;
@@ -473,28 +474,41 @@ impl Ell14Bus {
     /// The connection is shared among all devices on the bus.
     ///
     /// # Arguments
-    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    /// * `port_path` - Serial port path. Accepts:
+    ///   - Direct path: `/dev/ttyUSB0`, `COM3`
+    ///   - By-ID symlink: `/dev/serial/by-id/usb-FTDI_FT230X_...`
+    ///   - Short by-ID: `usb-FTDI_FT230X_Basic_UART_DJ00XXXX-if00-port0`
+    ///
+    /// Using by-ID paths is recommended as they are stable across reboots.
     ///
     /// # Errors
-    /// Returns error if the serial port cannot be opened.
+    /// Returns error if the serial port cannot be opened or path cannot be resolved.
     ///
     /// # Example
     /// ```rust,ignore
+    /// // Using by-ID path (recommended - stable across reboots)
+    /// let bus = Ell14Bus::open("/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DJ00XXXX-if00-port0").await?;
+    ///
+    /// // Using direct path (may change between reboots)
     /// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
     /// ```
     pub async fn open(port_path: &str) -> Result<Self> {
-        let port_path_owned = port_path.to_string();
+        // Resolve the port path (handles by-id symlinks, etc.)
+        let resolved_path = resolve_port(port_path)
+            .map_err(|e| anyhow!("Failed to resolve port '{}': {}", port_path, e))?;
+
+        let port_path_for_open = resolved_path.clone();
 
         // Open port in blocking task to avoid blocking async runtime
         let port = tokio::task::spawn_blocking(move || {
-            Ell14Driver::open_port(&port_path_owned)
+            Ell14Driver::open_port(&port_path_for_open)
         })
         .await
         .context("spawn_blocking for ELL14 port opening failed")??;
 
         Ok(Self {
             port: Arc::new(Mutex::new(port)),
-            port_path: port_path.to_string(),
+            port_path: resolved_path,
         })
     }
 
