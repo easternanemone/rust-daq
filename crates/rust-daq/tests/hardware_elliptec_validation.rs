@@ -23,6 +23,17 @@ fn get_elliptec_port() -> String {
 const ADDRESSES: [&str; 3] = ["2", "3", "8"];
 const POSITION_TOLERANCE_DEG: f64 = 1.0;
 
+/// Create driver with device-specific calibration
+///
+/// CRITICAL: This reads pulses_per_degree from the device's `IN` response
+/// rather than using a hardcoded default. Each ELL14 unit has device-specific
+/// calibration stored in firmware.
+async fn create_driver(addr: &str) -> Ell14Driver {
+    Ell14Driver::new_async_with_device_calibration(&get_elliptec_port(), addr)
+        .await
+        .expect(&format!("Failed to create calibrated driver for address {}", addr))
+}
+
 // =============================================================================
 // Phase 1: Basic Connectivity Tests
 // =============================================================================
@@ -32,8 +43,7 @@ async fn test_all_rotators_respond_to_position_query() {
     println!("\n=== Test: Position Query for All Rotators ===");
 
     for addr in ADDRESSES {
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr)
-            .expect(&format!("Failed to create driver for address {}", addr));
+        let driver = create_driver(addr).await;
 
         let position = driver.position().await;
         match position {
@@ -136,7 +146,7 @@ async fn test_absolute_movement_single_rotator() {
     println!("\n=== Test: Absolute Movement (Single Rotator) ===");
 
     // Test with rotator at address 2
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial position
     let initial = driver
@@ -186,7 +196,7 @@ async fn test_absolute_movement_single_rotator() {
 async fn test_relative_movement() {
     println!("\n=== Test: Relative Movement ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
 
     // Get initial position
     let initial = driver
@@ -240,7 +250,7 @@ async fn test_relative_movement() {
 async fn test_home_command() {
     println!("\n=== Test: Home Command ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
 
     // Get initial position
     let initial = driver
@@ -283,7 +293,7 @@ async fn test_sequential_queries_all_devices() {
     println!("\n=== Test: Sequential Queries All Devices ===");
 
     for addr in ADDRESSES {
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         let pos = driver.position().await.expect("Failed to get position");
         println!("Rotator {} at {:.2}°", addr, pos);
@@ -309,7 +319,7 @@ async fn test_move_all_devices_sequentially() {
     for addr in ADDRESSES {
         // Add delay between device queries to avoid RS-485 bus contention
         sleep(Duration::from_millis(200)).await;
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
         sleep(Duration::from_millis(100)).await;
 
         // Retry logic for position query
@@ -340,7 +350,7 @@ async fn test_move_all_devices_sequentially() {
     for (i, addr) in ADDRESSES.iter().enumerate() {
         // Add delay between creating drivers for different devices
         sleep(Duration::from_millis(200)).await;
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
         let target = targets[i];
 
         println!("Moving rotator {} to {:.2}°...", addr, target);
@@ -381,7 +391,7 @@ async fn test_move_all_devices_sequentially() {
     println!("\nReturning to initial positions...");
     for (addr, initial) in &initial_positions {
         sleep(Duration::from_millis(100)).await;
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
         driver.move_abs(*initial).await.ok();
         driver.wait_settled().await.ok();
     }
@@ -395,7 +405,7 @@ async fn test_move_all_devices_sequentially() {
 async fn test_position_repeatability() {
     println!("\n=== Test: Position Repeatability ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
     let target = 45.0;
     let num_trials = 5;
     let mut positions = Vec::new();
@@ -452,7 +462,7 @@ async fn test_position_repeatability() {
 async fn test_full_rotation_accuracy() {
     println!("\n=== Test: Full Rotation Accuracy ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
     let initial = driver
         .position()
         .await
@@ -494,7 +504,7 @@ async fn test_full_rotation_accuracy() {
 async fn test_rapid_position_queries() {
     println!("\n=== Test: Rapid Position Queries ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
     let num_queries = 20;
     let mut success_count = 0;
 
@@ -538,7 +548,7 @@ async fn test_bus_contention_resilience() {
     for round in 1..=num_rounds {
         println!("Round {}:", round);
         for addr in ADDRESSES {
-            let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+            let driver = create_driver(addr).await;
             match driver.position().await {
                 Ok(pos) => {
                     println!("  Rotator {}: {:.2}°", addr, pos);
@@ -568,7 +578,7 @@ async fn test_device_info() {
     println!("\n=== Test: Device Info ===");
 
     for addr in ADDRESSES {
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         match driver.get_device_info().await {
             Ok(info) => {
@@ -601,7 +611,7 @@ async fn test_device_info() {
 async fn test_jog_step_get_set() {
     println!("\n=== Test: Jog Step Get/Set ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial jog step
     let initial_jog = driver.get_jog_step().await.expect("Failed to get jog step");
@@ -639,7 +649,7 @@ async fn test_jog_step_get_set() {
 async fn test_jog_forward_backward() {
     println!("\n=== Test: Jog Forward/Backward ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -680,7 +690,7 @@ async fn test_jog_forward_backward() {
 async fn test_stop_command() {
     println!("\n=== Test: Stop Command ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -715,17 +725,13 @@ async fn test_all_velocities() {
     println!("Expected: All should be near 64 (100%) for full speed\n");
 
     for addr in ADDRESSES {
-        let driver =
-            Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         match driver.get_velocity().await {
             Ok(velocity) => {
                 // velocity is already a percentage (60-100%)
                 let status = if velocity >= 90 { "OK" } else { "SLOW!" };
-                println!(
-                    "Rotator {}: velocity = {}% - {}",
-                    addr, velocity, status
-                );
+                println!("Rotator {}: velocity = {}% - {}", addr, velocity, status);
             }
             Err(e) => println!("Rotator {}: Error getting velocity - {}", addr, e),
         }
@@ -740,8 +746,7 @@ async fn test_compare_rotator_speeds() {
     use std::time::Instant;
 
     for addr in ADDRESSES {
-        let driver =
-            Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         // Get initial position
         let initial = driver.position().await.expect("Failed to get position");
@@ -776,7 +781,7 @@ async fn test_compare_rotator_speeds() {
 async fn test_velocity_get_set() {
     println!("\n=== Test: Velocity Get/Set ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
 
     // Get current velocity
     match driver.get_velocity().await {
@@ -816,7 +821,7 @@ async fn test_velocity_get_set() {
 async fn test_home_offset_get() {
     println!("\n=== Test: Home Offset Get ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     match driver.get_home_offset().await {
         Ok(offset) => {
@@ -845,8 +850,7 @@ async fn test_compare_motor_frequencies() {
     println!("Checking motor 1 and motor 2 frequencies for addresses 2, 3, 8\n");
 
     for addr in ADDRESSES {
-        let driver =
-            Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         println!("Rotator {} (address {}):", addr, addr);
 
@@ -854,7 +858,11 @@ async fn test_compare_motor_frequencies() {
             Ok(info) => {
                 // Convert frequency to kHz for readability
                 let freq_khz = info.frequency as f64 / 1000.0;
-                let status = if freq_khz >= 50.0 && freq_khz <= 150.0 { "OK" } else { "CHECK!" };
+                let status = if freq_khz >= 50.0 && freq_khz <= 150.0 {
+                    "OK"
+                } else {
+                    "CHECK!"
+                };
                 println!(
                     "  Motor 1: freq={:.1} kHz, fwd_period={}, bwd_period={} - {}",
                     freq_khz, info.forward_period, info.backward_period, status
@@ -866,7 +874,11 @@ async fn test_compare_motor_frequencies() {
         match driver.get_motor2_info().await {
             Ok(info) => {
                 let freq_khz = info.frequency as f64 / 1000.0;
-                let status = if freq_khz >= 50.0 && freq_khz <= 150.0 { "OK" } else { "CHECK!" };
+                let status = if freq_khz >= 50.0 && freq_khz <= 150.0 {
+                    "OK"
+                } else {
+                    "CHECK!"
+                };
                 println!(
                     "  Motor 2: freq={:.1} kHz, fwd_period={}, bwd_period={} - {}",
                     freq_khz, info.forward_period, info.backward_period, status
@@ -877,14 +889,16 @@ async fn test_compare_motor_frequencies() {
         println!();
     }
 
-    println!("NOTE: If frequencies differ significantly, run optimize_motors() on the slow rotator");
+    println!(
+        "NOTE: If frequencies differ significantly, run optimize_motors() on the slow rotator"
+    );
 }
 
 #[tokio::test]
 async fn test_motor_info() {
     println!("\n=== Test: Motor Info ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
 
     // Test motor 1 info
     match driver.get_motor1_info().await {
@@ -930,7 +944,7 @@ async fn test_motor_frequency_search() {
     println!("\n=== Test: Motor Frequency Search (Motor Optimization) ===");
     println!("WARNING: This test takes 15-30 seconds to complete");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -980,7 +994,7 @@ async fn test_motor_frequency_search() {
 async fn test_save_user_data() {
     println!("\n=== Test: Save User Data ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
 
     // Just test that the command works - we won't actually persist changes
     match driver.save_user_data().await {
@@ -1006,7 +1020,7 @@ async fn test_optimize_all_rotators() {
 
     for addr in ADDRESSES {
         println!("\n--- Optimizing Rotator {} ---", addr);
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
 
         // Get initial speed measurement
         let initial = driver.position().await.expect("Failed to get position");
@@ -1022,7 +1036,10 @@ async fn test_optimize_all_rotators() {
         println!("Running motor frequency search...");
         let start = std::time::Instant::now();
         driver.optimize_motors().await.expect("Failed to optimize");
-        println!("Optimization completed in {:.1}s", start.elapsed().as_secs_f64());
+        println!(
+            "Optimization completed in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
 
         // Measure post-optimization speed
         driver.move_abs(initial).await.expect("Failed to return");
@@ -1050,7 +1067,7 @@ async fn test_optimize_all_rotators() {
 
     println!("\n=== Final Speed Comparison ===");
     for addr in ADDRESSES {
-        let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+        let driver = create_driver(addr).await;
         let initial = driver.position().await.expect("Failed to get position");
         let target = (initial + 90.0) % 360.0;
         let start = std::time::Instant::now();
@@ -1072,7 +1089,7 @@ async fn test_optimize_all_rotators() {
 async fn test_relative_movement_cumulative() {
     println!("\n=== Test: Relative Movement Cumulative Tracking (bd-e52e.7) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial position
     let initial = driver
@@ -1130,7 +1147,7 @@ async fn test_relative_movement_cumulative() {
 async fn test_relative_movement_large_angles() {
     println!("\n=== Test: Relative Movement Large Angles (bd-e52e.7) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
 
     // Home first to have a known starting point
     driver.home().await.expect("Failed to home");
@@ -1176,7 +1193,7 @@ async fn test_relative_movement_large_angles() {
 async fn test_relative_movement_wraparound() {
     println!("\n=== Test: Relative Movement 360° Wraparound (bd-e52e.7) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
 
     // Home first
     driver.home().await.expect("Failed to home");
@@ -1230,7 +1247,7 @@ async fn test_relative_movement_wraparound() {
 async fn test_position_accuracy_multiple_targets() {
     println!("\n=== Test: Position Accuracy Multiple Targets (bd-e52e.9) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Test positions at 30° intervals
@@ -1273,7 +1290,7 @@ async fn test_position_accuracy_multiple_targets() {
 async fn test_repeatability_extended() {
     println!("\n=== Test: Extended Repeatability (10 trials) (bd-e52e.9) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     let target = 90.0;
@@ -1336,7 +1353,7 @@ async fn test_repeatability_extended() {
 async fn test_mechanical_backlash() {
     println!("\n=== Test: Mechanical Backlash Measurement (bd-e52e.9) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     let target = 45.0;
@@ -1407,8 +1424,8 @@ async fn test_simultaneous_movement_two_devices() {
     println!("\n=== Test: Simultaneous Movement Two Devices (bd-e52e.10) ===");
 
     // Create two drivers for concurrent control
-    let driver_2 = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver 2");
-    let driver_3 = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver 3");
+    let driver_2 = create_driver("2").await;
+    let driver_3 = create_driver("3").await;
 
     // Get initial positions
     let initial_2 = driver_2.position().await.expect("Failed to get position 2");
@@ -1504,11 +1521,11 @@ async fn test_simultaneous_movement_all_three() {
     println!("\n=== Test: Simultaneous Movement All Three Devices (bd-e52e.10) ===");
 
     // Create drivers for all three rotators
-    let driver_2 = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver 2");
+    let driver_2 = create_driver("2").await;
     sleep(Duration::from_millis(50)).await;
-    let driver_3 = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver 3");
+    let driver_3 = create_driver("3").await;
     sleep(Duration::from_millis(50)).await;
-    let driver_8 = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver 8");
+    let driver_8 = create_driver("8").await;
 
     // Get initial positions (with delays to avoid contention)
     let initial_2 = driver_2.position().await.expect("Failed to get position 2");
@@ -1615,7 +1632,7 @@ async fn test_concurrent_position_queries() {
         let round_start = std::time::Instant::now();
 
         for addr in ADDRESSES {
-            let driver = Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+            let driver = create_driver(addr).await;
             if driver.position().await.is_ok() {
                 success_count += 1;
             }
@@ -1651,7 +1668,7 @@ async fn test_concurrent_position_queries() {
 async fn test_position_updates_during_movement() {
     println!("\n=== Test: Position Updates During Movement (bd-e52e.16) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -1743,7 +1760,7 @@ async fn test_position_updates_during_movement() {
 async fn test_continuous_position_monitoring() {
     println!("\n=== Test: Continuous Position Monitoring (bd-e52e.16) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Monitor multiple consecutive movements
@@ -1815,7 +1832,7 @@ async fn test_continuous_position_monitoring() {
 async fn test_position_smoothness() {
     println!("\n=== Test: Position Smoothness During Movement (bd-e52e.16) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Start a move
@@ -1885,11 +1902,11 @@ async fn test_position_smoothness() {
 async fn test_continuous_polling_all_devices() {
     println!("\n=== Test: Continuous Polling All Devices (bd-e52e.11) ===");
 
-    // Create drivers for all three devices
-    let drivers: Vec<_> = ADDRESSES
-        .iter()
-        .map(|addr| Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver"))
-        .collect();
+    // Create drivers for all three devices with device calibration
+    let mut drivers = Vec::new();
+    for addr in ADDRESSES {
+        drivers.push(create_driver(addr).await);
+    }
 
     // Poll all devices continuously for 10 seconds
     let poll_duration = Duration::from_secs(10);
@@ -1985,7 +2002,7 @@ async fn test_data_broadcast_simulation() {
     println!("\n=== Test: Data Broadcast Simulation (bd-e52e.11) ===");
 
     // Simulate what the data distributor does: read positions and "broadcast" them
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
 
     let mut broadcast_data = Vec::new();
     let test_duration = Duration::from_secs(5);
@@ -2062,11 +2079,11 @@ async fn test_stability_long() {
 }
 
 async fn run_stability_test(duration: Duration) {
-    // Create drivers
-    let drivers: Vec<_> = ADDRESSES
-        .iter()
-        .map(|addr| Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver"))
-        .collect();
+    // Create drivers with device calibration
+    let mut drivers = Vec::new();
+    for addr in ADDRESSES {
+        drivers.push(create_driver(addr).await);
+    }
 
     // Statistics tracking
     let mut total_queries = 0usize;
@@ -2209,7 +2226,7 @@ async fn run_stability_test(duration: Duration) {
 async fn test_movement_speed_and_settling_time() {
     println!("\n=== Test: Movement Speed and Settling Time (bd-e52e.18) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+    let driver = create_driver("2").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Test different movement distances
@@ -2270,7 +2287,7 @@ async fn test_movement_speed_and_settling_time() {
 async fn test_command_latency() {
     println!("\n=== Test: Command Latency (bd-e52e.21) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "3").expect("Failed to create driver");
+    let driver = create_driver("3").await;
     let num_queries = 50;
     let mut latencies = Vec::new();
 
@@ -2316,7 +2333,7 @@ async fn test_command_latency() {
 async fn test_throughput() {
     println!("\n=== Test: Command Throughput (bd-e52e.21) ===");
 
-    let driver = Ell14Driver::new(&get_elliptec_port(), "8").expect("Failed to create driver");
+    let driver = create_driver("8").await;
 
     // Measure how many queries per second we can sustain
     let test_duration = Duration::from_secs(5);
@@ -2363,7 +2380,7 @@ async fn test_graceful_disconnect() {
         println!("Round {}:", round);
 
         // Create driver
-        let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create driver");
+        let driver = create_driver("2").await;
 
         // Use it
         let pos = driver.position().await.expect("Failed to get position");
@@ -2378,7 +2395,7 @@ async fn test_graceful_disconnect() {
     }
 
     // Verify we can still communicate after all the creates/drops
-    let driver = Ell14Driver::new(&get_elliptec_port(), "2").expect("Failed to create final driver");
+    let driver = create_driver("2").await;
     let final_pos = driver
         .position()
         .await
