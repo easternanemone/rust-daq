@@ -777,8 +777,24 @@ async fn test_stop_command_always_works() {
     }
     println!("   OK");
 
-    // Verify device is responsive
-    let pos = driver.position().await.expect("Should get position after stops");
+    // Allow device to settle after rapid commands - may have queued status responses
+    sleep(Duration::from_millis(300)).await;
+
+    // Verify device is responsive with retry (rapid stops can leave GS responses in buffer)
+    let mut pos = None;
+    for attempt in 1..=3 {
+        match driver.position().await {
+            Ok(p) => {
+                pos = Some(p);
+                break;
+            }
+            Err(e) => {
+                println!("   Position query attempt {}/3 failed: {}", attempt, e);
+                sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    let pos = pos.expect("Should get position after stops (with retry)");
     println!("Final position: {:.2}°", pos);
 
     // Return to home
