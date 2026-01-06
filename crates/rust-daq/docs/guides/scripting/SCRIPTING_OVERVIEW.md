@@ -225,6 +225,6 @@ Scripts run on the **headless server**, not the GUI client:
 
 ## See Also
 
-- [V5 Architecture](../architecture/V5_ARCHITECTURE.md)
+- [System Architecture](../../../../docs/architecture/ARCHITECTURE.md)
 - [Hardware Capability Traits](../../src/hardware/capabilities.rs)
 - [Rhai Language Reference](https://rhai.rs/book/)

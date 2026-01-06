@@ -36,9 +36,6 @@ High-level design documents explaining the core principles of the V5 "Headless-F
 - [Configuration](./architecture/02_configuration.md): How configuration is handled (Figment, layering).
 - [Hardware Communication](./architecture/03_hardware_communication.md): Protocols and patterns.
 - [gRPC API](./architecture/04_grpc_api.md): The remote control interface.
-- [V5 Architecture](./architecture/V5_ARCHITECTURE.md): Complete V5 architecture specification.
-- [V5 Implementation Status](./architecture/V5_IMPLEMENTATION_STATUS.md): Current implementation status.
-- [Reactive Parameters ADR](./architecture/ADR_005_REACTIVE_PARAMETERS.md): Design decisions for Parameter<T>.
 
 ### 📚 [Guides](./guides/)
 Practical how-to guides for users and developers.

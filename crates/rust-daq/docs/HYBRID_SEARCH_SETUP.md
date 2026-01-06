@@ -242,11 +242,10 @@ rm -rf .docker-data
 
 ```bash
 # Find architecture documentation
-./scripts/search_hybrid.py --query "V5 headless-first architecture design decisions"
+./scripts/search_hybrid.py --query "headless-first architecture design decisions"
 
 # Results show:
-# - docs/architecture/V5_ARCHITECTURE.md
-# - docs/architecture/ARCHITECTURAL_FLAW_ANALYSIS.md
+# - docs/architecture/ARCHITECTURE.md
 # - Related ADRs (Architecture Decision Records)
 # - Key concepts: headless-first, capability traits, gRPC
 ```

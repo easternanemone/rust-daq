@@ -165,5 +165,5 @@ bd close <id>     # Close completed issue
 ## Links
 
 - [Full Morph Documentation](docs/MORPH_INTEGRATION.md)
-- [Architecture Overview](docs/architecture/ARCHITECTURAL_FLAW_ANALYSIS.md)
+- [Architecture Overview](../../../../docs/architecture/ARCHITECTURE.md)
 - [Morph Dashboard](https://morphllm.com/dashboard)
