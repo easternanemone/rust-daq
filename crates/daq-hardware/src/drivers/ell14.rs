@@ -412,6 +412,190 @@ pub struct CurrentCurveScan {
     pub data_points: Vec<CurrentCurvePoint>,
 }
 
+// =============================================================================
+// Ell14Bus - Primary API for RS-485 Multidrop Bus
+// =============================================================================
+
+/// RS-485 bus manager for Thorlabs Elliptec ELL14 devices
+///
+/// This is the **primary API** for working with ELL14 rotation mounts.
+/// It accurately models the RS-485 multidrop architecture where multiple
+/// devices share a single serial connection with address-based multiplexing.
+///
+/// # Why Use Ell14Bus?
+///
+/// The ELL14 uses RS-485, which is a shared bus protocol. All devices on the bus
+/// share the same physical serial connection. This struct enforces that model:
+///
+/// - **One bus = one serial port** - The bus owns the connection
+/// - **Multiple devices per bus** - Get device handles via [`device()`]
+/// - **Impossible to misuse** - Can't accidentally open multiple ports
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use daq_hardware::drivers::ell14::Ell14Bus;
+///
+/// // Open the RS-485 bus (one connection for all devices)
+/// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+///
+/// // Get handles to individual devices on the bus
+/// let rotator_2 = bus.device("2").await?;
+/// let rotator_3 = bus.device("3").await?;
+/// let rotator_8 = bus.device("8").await?;
+///
+/// // All devices share the connection - no contention issues
+/// rotator_2.move_abs(45.0).await?;
+/// rotator_3.move_abs(90.0).await?;
+/// rotator_8.move_abs(135.0).await?;
+///
+/// // Discover all devices on the bus
+/// let devices = bus.discover().await?;
+/// for info in devices {
+///     println!("Found {} at address {}", info.device_type, info.address);
+/// }
+/// ```
+///
+/// # Thread Safety
+///
+/// `Ell14Bus` is `Clone` and thread-safe. The underlying serial port is protected
+/// by a mutex, so multiple tasks can safely share the bus.
+#[derive(Clone)]
+pub struct Ell14Bus {
+    port: SharedPort,
+    port_path: String,
+}
+
+impl Ell14Bus {
+    /// Open an RS-485 bus connection to ELL14 devices
+    ///
+    /// This opens the serial port with ELL14 settings (9600 baud, 8N1).
+    /// The connection is shared among all devices on the bus.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    ///
+    /// # Errors
+    /// Returns error if the serial port cannot be opened.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+    /// ```
+    pub async fn open(port_path: &str) -> Result<Self> {
+        let port_path_owned = port_path.to_string();
+
+        // Open port in blocking task to avoid blocking async runtime
+        let port = tokio::task::spawn_blocking(move || {
+            Ell14Driver::open_port(&port_path_owned)
+        })
+        .await
+        .context("spawn_blocking for ELL14 port opening failed")??;
+
+        Ok(Self {
+            port: Arc::new(Mutex::new(port)),
+            port_path: port_path.to_string(),
+        })
+    }
+
+    /// Get a calibrated device handle for an address on this bus
+    ///
+    /// This queries the device for its actual calibration value (pulses per degree),
+    /// ensuring accurate positioning. Each ELL14 unit has device-specific calibration
+    /// stored in firmware.
+    ///
+    /// # Arguments
+    /// * `address` - Device address on the bus (0-9, A-F)
+    ///
+    /// # Errors
+    /// Returns error if the device doesn't respond or calibration query fails.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+    /// let rotator = bus.device("2").await?;
+    /// println!("Calibration: {:.2} pulses/degree", rotator.get_pulses_per_degree());
+    /// ```
+    pub async fn device(&self, address: &str) -> Result<Ell14Driver> {
+        Ell14Driver::with_shared_port_calibrated(self.port.clone(), address).await
+    }
+
+    /// Get a device handle without querying calibration
+    ///
+    /// Uses the default calibration value (398.22 pulses/degree). This is faster
+    /// but may be less accurate if the device has non-standard calibration.
+    ///
+    /// # Arguments
+    /// * `address` - Device address on the bus (0-9, A-F)
+    pub fn device_uncalibrated(&self, address: &str) -> Ell14Driver {
+        Ell14Driver::with_shared_port(self.port.clone(), address)
+    }
+
+    /// Discover all ELL14 devices on this bus
+    ///
+    /// Scans addresses 0-9 and A-F, returning info for devices that respond.
+    /// This can take several seconds as each address must be queried.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+    /// let devices = bus.discover().await?;
+    /// for info in devices {
+    ///     println!("Address {}: {} (serial: {})",
+    ///         info.address, info.device_type, info.serial_number);
+    /// }
+    /// ```
+    pub async fn discover(&self) -> Result<Vec<DiscoveredDevice>> {
+        let addresses = [
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
+        ];
+
+        let mut devices = Vec::new();
+
+        for addr in addresses {
+            // Try to get device info - if it responds, it exists
+            let driver = Ell14Driver::with_shared_port(self.port.clone(), addr);
+            match driver.get_device_info().await {
+                Ok(info) => {
+                    tracing::debug!(address = %addr, device_type = %info.device_type, "Found device");
+                    devices.push(DiscoveredDevice {
+                        address: addr.to_string(),
+                        info,
+                    });
+                }
+                Err(_) => {
+                    // No device at this address - continue scanning
+                    tracing::trace!(address = %addr, "No device found");
+                }
+            }
+        }
+
+        Ok(devices)
+    }
+
+    /// Get the serial port path this bus is connected to
+    pub fn port_path(&self) -> &str {
+        &self.port_path
+    }
+
+    /// Get the underlying shared port (for advanced use cases)
+    ///
+    /// This is useful if you need to create drivers with custom calibration
+    /// or perform low-level operations.
+    pub fn shared_port(&self) -> SharedPort {
+        self.port.clone()
+    }
+}
+
+/// Information about a discovered device on the bus
+#[derive(Debug, Clone)]
+pub struct DiscoveredDevice {
+    /// Device address (0-9, A-F)
+    pub address: String,
+    /// Device information from the IN command
+    pub info: DeviceInfo,
+}
+
 /// Driver for Thorlabs Elliptec ELL14 Rotation Mount
 ///
 /// Implements the Movable capability trait for controlling rotation.
@@ -501,16 +685,20 @@ impl Ell14Driver {
 
     /// Create a new ELL14 driver instance (opens dedicated serial port)
     ///
+    /// # Deprecated
+    /// Use [`Ell14Bus::open()`] instead for the recommended bus-centric API that
+    /// correctly models RS-485 multidrop architecture.
+    ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0" on Linux, "COM3" on Windows)
     /// * `address` - Device address (usually "0")
     ///
     /// # Errors
     /// Returns error if serial port cannot be opened
-    ///
-    /// # Note
-    /// For multidrop bus configurations with multiple devices on the same port,
-    /// use [`open_shared_port`] + [`with_shared_port`] instead.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use Ell14Bus::open() and bus.device() instead. This opens a dedicated port which fails for multidrop configurations."
+    )]
     pub fn new(port_path: &str, address: &str) -> Result<Self> {
         let port = Self::open_port(port_path)?;
         Ok(Self::build(
@@ -629,11 +817,11 @@ impl Ell14Driver {
 
     /// Create a new ELL14 driver instance asynchronously with default calibration
     ///
+    /// # Deprecated
+    /// Use [`Ell14Bus::open()`] instead for the recommended bus-centric API.
+    ///
     /// Uses `spawn_blocking` to avoid blocking the async runtime during serial
     /// port opening. Uses default calibration of 398.2222 pulses/degree.
-    ///
-    /// For accurate calibration from the device itself, use
-    /// [`new_async_with_device_calibration`] instead.
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0" on Linux, "COM3" on Windows)
@@ -641,6 +829,10 @@ impl Ell14Driver {
     ///
     /// # Errors
     /// Returns error if serial port cannot be opened
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use Ell14Bus::open() and bus.device_uncalibrated() instead."
+    )]
     pub async fn new_async(port_path: &str, address: &str) -> Result<Self> {
         let port_path = port_path.to_string();
         let address = address.to_string();
@@ -659,8 +851,11 @@ impl Ell14Driver {
 
     /// Create a new ELL14 driver and query device for actual calibration
     ///
-    /// **Recommended constructor** - queries the device for its actual
-    /// `pulses_per_unit` calibration value rather than using a hardcoded default.
+    /// # Deprecated
+    /// Use [`Ell14Bus::open()`] and [`Ell14Bus::device()`] instead for the
+    /// recommended bus-centric API that correctly models RS-485 architecture.
+    ///
+    /// Queries the device for its actual `pulses_per_unit` calibration value.
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0" on Linux, "COM3" on Windows)
@@ -671,9 +866,17 @@ impl Ell14Driver {
     ///
     /// # Example
     /// ```rust,ignore
+    /// // Old way (deprecated):
     /// let driver = Ell14Driver::new_async_with_device_calibration("/dev/ttyUSB0", "0").await?;
-    /// println!("Calibration: {:.4} pulses/degree", driver.get_pulses_per_degree());
+    ///
+    /// // New way (recommended):
+    /// let bus = Ell14Bus::open("/dev/ttyUSB0").await?;
+    /// let driver = bus.device("0").await?;
     /// ```
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use Ell14Bus::open() and bus.device() instead. This opens a dedicated port which fails for multidrop configurations."
+    )]
     pub async fn new_async_with_device_calibration(port_path: &str, address: &str) -> Result<Self> {
         let port_path_owned = port_path.to_string();
         let address_owned = address.to_string();

@@ -14,10 +14,10 @@
 
 #![cfg(all(feature = "hardware_tests", feature = "instrument_thorlabs"))]
 
-use once_cell::sync::OnceCell;
 use rust_daq::hardware::capabilities::Movable;
-use rust_daq::hardware::ell14::{Ell14Driver, SharedPort};
+use rust_daq::hardware::ell14::{Ell14Bus, Ell14Driver};
 use std::time::Duration;
+use tokio::sync::OnceCell;
 use tokio::time::sleep;
 
 // TODO: Implement HWID-based discovery instead of hardcoded port
@@ -28,23 +28,24 @@ fn get_elliptec_port() -> String {
 const ADDRESSES: [&str; 3] = ["2", "3", "8"];
 const POSITION_TOLERANCE_DEG: f64 = 1.0;
 
-/// Global shared serial port for all ELL14 devices on the RS-485 bus
+/// Global ELL14 bus for all tests
 ///
 /// This ensures all tests and all device addresses share a single serial connection,
 /// avoiding "Device or resource busy" errors from multiple open attempts.
-static SHARED_PORT: OnceCell<SharedPort> = OnceCell::new();
+/// Uses the bus-centric API that accurately models RS-485 multidrop architecture.
+static BUS: OnceCell<Ell14Bus> = OnceCell::const_new();
 
-/// Get or initialize the shared serial port
-fn get_shared_port() -> SharedPort {
-    SHARED_PORT
-        .get_or_init(|| {
-            Ell14Driver::open_shared_port(&get_elliptec_port())
-                .expect("Failed to open shared ELL14 serial port")
-        })
-        .clone()
+/// Get or initialize the ELL14 bus
+async fn get_bus() -> &'static Ell14Bus {
+    BUS.get_or_init(|| async {
+        Ell14Bus::open(&get_elliptec_port())
+            .await
+            .expect("Failed to open ELL14 bus")
+    })
+    .await
 }
 
-/// Create driver with device-specific calibration using shared port
+/// Create driver with device-specific calibration using the bus
 ///
 /// CRITICAL: This reads pulses_per_degree from the device's `IN` response
 /// rather than using a hardcoded default. Each ELL14 unit has device-specific
@@ -52,8 +53,9 @@ fn get_shared_port() -> SharedPort {
 ///
 /// All drivers share the same serial port connection (RS-485 multidrop bus).
 async fn create_driver(addr: &str) -> Ell14Driver {
-    let shared_port = get_shared_port();
-    Ell14Driver::with_shared_port_calibrated(shared_port, addr)
+    get_bus()
+        .await
+        .device(addr)
         .await
         .expect(&format!(
             "Failed to create calibrated driver for address {}",
