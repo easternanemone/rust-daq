@@ -940,41 +940,30 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetShutterResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
+        let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
 
-            let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no shutter control",
-                    req.device_id
-                ))
-            })?;
-
-            let open = req.open;
-            match if open {
-                shutter_ctrl.open_shutter().await
-            } else {
-                shutter_ctrl.close_shutter().await
-            } {
-                Ok(()) => Ok(Response::new(SetShutterResponse {
-                    success: true,
-                    error_message: String::new(),
-                    is_open: open,
-                })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to set shutter: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Shutter control requires instrument_spectra_physics feature",
+        let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no shutter control",
+                req.device_id
             ))
+        })?;
+
+        let open = req.open;
+        match if open {
+            shutter_ctrl.open_shutter().await
+        } else {
+            shutter_ctrl.close_shutter().await
+        } {
+            Ok(()) => Ok(Response::new(SetShutterResponse {
+                success: true,
+                error_message: String::new(),
+                is_open: open,
+            })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to set shutter: {}",
+                e
+            ))),
         }
     }
 
@@ -984,32 +973,21 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetShutterResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
+        let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
 
-            let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no shutter control",
-                    req.device_id
-                ))
-            })?;
-
-            match shutter_ctrl.is_shutter_open().await {
-                Ok(is_open) => Ok(Response::new(GetShutterResponse { is_open })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to get shutter state: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Shutter control requires instrument_spectra_physics feature",
+        let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no shutter control",
+                req.device_id
             ))
+        })?;
+
+        match shutter_ctrl.is_shutter_open().await {
+            Ok(is_open) => Ok(Response::new(GetShutterResponse { is_open })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to get shutter state: {}",
+                e
+            ))),
         }
     }
 
@@ -1019,37 +997,26 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetWavelengthResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
+        let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
 
-            let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no wavelength control",
-                    req.device_id
-                ))
-            })?;
-
-            let requested_nm = req.wavelength_nm;
-            match wavelength_ctrl.set_wavelength(requested_nm).await {
-                Ok(()) => Ok(Response::new(SetWavelengthResponse {
-                    success: true,
-                    error_message: String::new(),
-                    actual_wavelength_nm: requested_nm,
-                })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to set wavelength: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Wavelength control requires instrument_spectra_physics feature",
+        let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no wavelength control",
+                req.device_id
             ))
+        })?;
+
+        let requested_nm = req.wavelength_nm;
+        match wavelength_ctrl.set_wavelength(requested_nm).await {
+            Ok(()) => Ok(Response::new(SetWavelengthResponse {
+                success: true,
+                error_message: String::new(),
+                actual_wavelength_nm: requested_nm,
+            })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to set wavelength: {}",
+                e
+            ))),
         }
     }
 
@@ -1059,32 +1026,21 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetWavelengthResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
+        let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
 
-            let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no wavelength control",
-                    req.device_id
-                ))
-            })?;
-
-            match wavelength_ctrl.get_wavelength().await {
-                Ok(nm) => Ok(Response::new(GetWavelengthResponse { wavelength_nm: nm })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to get wavelength: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Wavelength control requires instrument_spectra_physics feature",
+        let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no wavelength control",
+                req.device_id
             ))
+        })?;
+
+        match wavelength_ctrl.get_wavelength().await {
+            Ok(nm) => Ok(Response::new(GetWavelengthResponse { wavelength_nm: nm })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to get wavelength: {}",
+                e
+            ))),
         }
     }
 
@@ -1094,41 +1050,30 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetEmissionResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let emission_ctrl = self.registry.get_emission_control(&req.device_id);
+        let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
-            let emission_ctrl = emission_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no emission control",
-                    req.device_id
-                ))
-            })?;
-
-            let enabled = req.enabled;
-            match if enabled {
-                emission_ctrl.enable_emission().await
-            } else {
-                emission_ctrl.disable_emission().await
-            } {
-                Ok(()) => Ok(Response::new(SetEmissionResponse {
-                    success: true,
-                    error_message: String::new(),
-                    is_enabled: enabled,
-                })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to set emission: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Emission control requires instrument_spectra_physics feature",
+        let emission_ctrl = emission_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no emission control",
+                req.device_id
             ))
+        })?;
+
+        let enabled = req.enabled;
+        match if enabled {
+            emission_ctrl.enable_emission().await
+        } else {
+            emission_ctrl.disable_emission().await
+        } {
+            Ok(()) => Ok(Response::new(SetEmissionResponse {
+                success: true,
+                error_message: String::new(),
+                is_enabled: enabled,
+            })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to set emission: {}",
+                e
+            ))),
         }
     }
 
@@ -1138,32 +1083,21 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetEmissionResponse>, Status> {
         let req = request.into_inner();
 
-        #[cfg(feature = "instrument_spectra_physics")]
-        {
-            let emission_ctrl = self.registry.get_emission_control(&req.device_id);
+        let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
-            let emission_ctrl = emission_ctrl.ok_or_else(|| {
-                Status::not_found(format!(
-                    "Device '{}' not found or has no emission control",
-                    req.device_id
-                ))
-            })?;
-
-            match emission_ctrl.is_emission_enabled().await {
-                Ok(is_enabled) => Ok(Response::new(GetEmissionResponse { is_enabled })),
-                Err(e) => Err(map_hardware_error_to_status(&format!(
-                    "Failed to get emission state: {}",
-                    e
-                ))),
-            }
-        }
-
-        #[cfg(not(feature = "instrument_spectra_physics"))]
-        {
-            let _ = req;
-            Err(Status::unimplemented(
-                "Emission control requires instrument_spectra_physics feature",
+        let emission_ctrl = emission_ctrl.ok_or_else(|| {
+            Status::not_found(format!(
+                "Device '{}' not found or has no emission control",
+                req.device_id
             ))
+        })?;
+
+        match emission_ctrl.is_emission_enabled().await {
+            Ok(is_enabled) => Ok(Response::new(GetEmissionResponse { is_enabled })),
+            Err(e) => Err(map_hardware_error_to_status(&format!(
+                "Failed to get emission state: {}",
+                e
+            ))),
         }
     }
 

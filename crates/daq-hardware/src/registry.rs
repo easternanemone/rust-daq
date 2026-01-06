@@ -73,11 +73,9 @@
 //! ```
 
 use daq_core::capabilities::{
-    Commandable, ExposureControl, FrameProducer, Movable, Parameterized, Readable, Settable,
-    Stageable, Triggerable,
+    Commandable, EmissionControl, ExposureControl, FrameProducer, Movable, Parameterized,
+    Readable, Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
 };
-#[cfg(feature = "driver-spectra-physics")]
-use daq_core::capabilities::{EmissionControl, ShutterControl, WavelengthTunable};
 use daq_core::data::Frame;
 use daq_core::pipeline::MeasurementSource;
 
@@ -369,7 +367,9 @@ impl DriverType {
     pub fn capabilities(&self) -> Vec<Capability> {
         match self {
             #[cfg(feature = "serial")]
-            DriverType::Newport1830C { .. } => vec![Capability::Readable],
+            DriverType::Newport1830C { .. } => {
+                vec![Capability::Readable, Capability::WavelengthTunable]
+            }
             #[cfg(feature = "serial")]
             DriverType::MaiTai { .. } => vec![Capability::Readable],
             #[cfg(feature = "serial")]
@@ -522,13 +522,10 @@ struct RegisteredDevice {
     /// Populated during device registration if driver implements Parameterized trait.
     parameterized: Option<Arc<dyn Parameterized>>,
     /// ShutterControl implementation (if supported) - laser shutter
-    #[cfg(feature = "driver-spectra-physics")]
     shutter_control: Option<Arc<dyn ShutterControl>>,
     /// EmissionControl implementation (if supported) - laser on/off
-    #[cfg(feature = "driver-spectra-physics")]
     emission_control: Option<Arc<dyn EmissionControl>>,
     /// WavelengthTunable implementation (if supported) - tunable laser wavelength (bd-pwjo)
-    #[cfg(feature = "driver-spectra-physics")]
     wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
     /// Device metadata (units, ranges, etc.)
     metadata: DeviceMetadata,
@@ -813,13 +810,11 @@ impl DeviceRegistry {
             .and_then(|d| d.parameterized.clone())
     }
 
-    #[cfg(feature = "driver-spectra-physics")]
     /// Get a device as ShutterControl (if it supports this capability)
     pub fn get_shutter_control(&self, id: &str) -> Option<Arc<dyn ShutterControl>> {
         self.devices.get(id).and_then(|d| d.shutter_control.clone())
     }
 
-    #[cfg(feature = "driver-spectra-physics")]
     /// Get a device as EmissionControl (if it supports this capability)
     pub fn get_emission_control(&self, id: &str) -> Option<Arc<dyn EmissionControl>> {
         self.devices
@@ -827,7 +822,6 @@ impl DeviceRegistry {
             .and_then(|d| d.emission_control.clone())
     }
 
-    #[cfg(feature = "driver-spectra-physics")]
     /// Get a device as WavelengthTunable (if it supports this capability) - bd-pwjo
     pub fn get_wavelength_tunable(&self, id: &str) -> Option<Arc<dyn WavelengthTunable>> {
         self.devices
@@ -890,11 +884,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
@@ -919,11 +910,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
@@ -946,11 +934,8 @@ impl DeviceRegistry {
                     stageable: Some(driver.clone()),
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
@@ -984,11 +969,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: Some(driver.clone()),
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
@@ -1036,11 +1018,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("degrees".to_string()),
@@ -1056,6 +1035,8 @@ impl DeviceRegistry {
                 let driver = Arc::new(crate::drivers::newport_1830c::Newport1830CDriver::new(
                     &port,
                 )?);
+                // Newport1830C implements WavelengthTunable (bd-3xw2.5)
+                let wavelength_range = driver.wavelength_range();
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
@@ -1068,14 +1049,13 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
-                    wavelength_tunable: None,
+                    wavelength_tunable: Some(driver),
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
+                        min_wavelength_nm: Some(wavelength_range.0),
+                        max_wavelength_nm: Some(wavelength_range.1),
                         ..Default::default()
                     },
                 })
@@ -1096,11 +1076,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: Some(driver.clone()),
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: Some(driver),
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
@@ -1124,11 +1101,8 @@ impl DeviceRegistry {
                     stageable: None,
                     commandable: None,
                     parameterized: Some(driver),
-                    #[cfg(feature = "driver-spectra-physics")]
                     shutter_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     emission_control: None,
-                    #[cfg(feature = "driver-spectra-physics")]
                     wavelength_tunable: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
@@ -1276,11 +1250,8 @@ impl DeviceRegistry {
             stageable: None,
             commandable: None,
             parameterized: Some(driver.clone()), // bd-plb6: Wire Parameterized for plugin devices
-            #[cfg(feature = "driver-spectra-physics")]
             shutter_control: None,
-            #[cfg(feature = "driver-spectra-physics")]
             emission_control: None,
-            #[cfg(feature = "driver-spectra-physics")]
             wavelength_tunable: None,
             metadata,
         })
