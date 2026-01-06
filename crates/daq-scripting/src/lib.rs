@@ -3,7 +3,10 @@ pub mod comedi_bindings;
 pub mod engine;
 pub mod plan_bindings;
 pub mod rhai_engine;
+pub mod script_runner;
 pub mod traits;
+pub mod yield_bindings;
+pub mod yield_handle;
 
 #[cfg(feature = "python")]
 pub mod pyo3_engine;
@@ -14,7 +17,9 @@ pub use comedi_bindings::{
     Counter, CounterHandle, DigitalIO, DigitalIOHandle,
 };
 pub use rhai_engine::RhaiEngine;
+pub use script_runner::{ScriptPlanRunner, ScriptRunConfig, ScriptRunReport};
 pub use traits::{ScriptEngine, ScriptError, ScriptValue};
+pub use yield_handle::{YieldChannelBuilder, YieldHandle, YieldResult, YieldedValue};
 
 #[cfg(feature = "python")]
 pub use pyo3_engine::PyO3Engine;

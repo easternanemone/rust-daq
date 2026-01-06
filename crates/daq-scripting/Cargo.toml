@@ -13,6 +13,8 @@ tokio = { version = "1.36", features = ["sync", "time", "rt", "rt-multi-thread",
 chrono = "0.4"
 rhai = { version = "1.19", features = ["sync"] }
 pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
+tracing = "0.1"
+anyhow = "1.0"
 
 [features]
 default = []

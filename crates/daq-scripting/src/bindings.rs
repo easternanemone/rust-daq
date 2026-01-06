@@ -230,9 +230,18 @@ pub fn register_hardware(engine: &mut Engine) {
 
     // stage.move_abs(10.0) - Move to absolute position
     // SAFETY (bd-jnfu.4): Validates against soft limits BEFORE hardware command
+    // DEPRECATED (bd-94zq.4): Use yield_move() instead for Document emission
     engine.register_fn(
         "move_abs",
         move |stage: &mut StageHandle, pos: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Deprecation warning (bd-94zq.4) - emitted once per call
+            tracing::warn!(
+                target: "daq_scripting::deprecation",
+                "Direct stage.move_abs() is DEPRECATED (v0.7.0). \
+                 Use yield_move(device_id, position) instead for proper Document emission. \
+                 Direct hardware commands will be removed in v0.9.0."
+            );
+
             // Validate soft limits BEFORE issuing hardware command (bd-jnfu.4)
             if let Err(e) = stage.soft_limits.validate(pos) {
                 return Err(Box::new(EvalAltResult::ErrorRuntime(
@@ -264,9 +273,18 @@ pub fn register_hardware(engine: &mut Engine) {
     // SAFETY (bd-jnfu.4): Validates resulting position against soft limits
     // FIX (bd-jnfu.17): Convert to atomic move_abs to prevent TOCTOU race condition
     // If position changes between read and move, we still land at a validated position
+    // DEPRECATED (bd-94zq.4): Use yield_move() instead for Document emission
     engine.register_fn(
         "move_rel",
         move |stage: &mut StageHandle, dist: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Deprecation warning (bd-94zq.4)
+            tracing::warn!(
+                target: "daq_scripting::deprecation",
+                "Direct stage.move_rel() is DEPRECATED (v0.7.0). \
+                 Use yield_move(device_id, position) with absolute positioning instead. \
+                 Direct hardware commands will be removed in v0.9.0."
+            );
+
             // Get current position to calculate target, then validate soft limits (bd-jnfu.4)
             let current_pos = run_blocking("Stage position", stage.driver.position())?;
             let target_pos = current_pos + dist;
@@ -311,18 +329,36 @@ pub fn register_hardware(engine: &mut Engine) {
     // =========================================================================
 
     // camera.arm() - Prepare camera for trigger
+    // DEPRECATED (bd-94zq.4): Use yield-based plans instead for Document emission
     engine.register_fn(
         "arm",
         move |camera: &mut CameraHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Deprecation warning (bd-94zq.4)
+            tracing::warn!(
+                target: "daq_scripting::deprecation",
+                "Direct camera.arm() is DEPRECATED (v0.7.0). \
+                 Use yield-based plans (e.g., yield_plan(count(...))) instead for proper Document emission. \
+                 Direct hardware commands will be removed in v0.9.0."
+            );
+
             run_blocking("Camera arm", camera.driver.arm())?;
             Ok(Dynamic::UNIT)
         },
     );
 
     // camera.trigger() - Capture frame
+    // DEPRECATED (bd-94zq.4): Use yield_trigger() instead for Document emission
     engine.register_fn(
         "trigger",
         move |camera: &mut CameraHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Deprecation warning (bd-94zq.4)
+            tracing::warn!(
+                target: "daq_scripting::deprecation",
+                "Direct camera.trigger() is DEPRECATED (v0.7.0). \
+                 Use yield_trigger(device_id) instead for proper Document emission. \
+                 Direct hardware commands will be removed in v0.9.0."
+            );
+
             run_blocking("Camera trigger", camera.driver.trigger())?;
 
             // Send measurement to broadcast channel if sender available

@@ -158,6 +158,58 @@ impl RhaiEngine {
         })
     }
 
+    /// Create a new RhaiEngine with yield-based plan scripting support (bd-94zq.4)
+    ///
+    /// This constructor registers:
+    /// - Hardware bindings (stage, camera)
+    /// - Plan bindings (line_scan, grid_scan, etc.)
+    /// - Yield bindings (yield_plan, yield_move, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut engine = RhaiEngine::with_yield_support()?;
+    ///
+    /// // Set up yield channels
+    /// let (handle, rx, tx) = YieldChannelBuilder::new().build();
+    /// engine.set_yield_handle(handle)?;
+    ///
+    /// // Scripts can use yield-based syntax:
+    /// let script = r#"
+    ///     let result = yield_plan(line_scan("x", 0, 10, 11, "det"));
+    ///     if result.data["det"] > threshold {
+    ///         yield_plan(high_res_scan(...));
+    ///     }
+    /// "#;
+    /// ```
+    pub fn with_yield_support() -> Result<Self, ScriptError> {
+        let mut engine = Engine::new();
+
+        // Safety: Limit operations to prevent infinite loops
+        engine.on_progress(|count| {
+            if count > 100_000 {
+                // Higher limit for yield scripts
+                Some("Safety limit exceeded: maximum 100,000 operations".into())
+            } else {
+                None
+            }
+        });
+
+        // Register hardware bindings
+        crate::bindings::register_hardware(&mut engine);
+
+        // Register plan bindings
+        crate::plan_bindings::register_plans(&mut engine);
+
+        // Register yield bindings (bd-94zq.4)
+        crate::yield_bindings::register_yield_bindings(&mut engine);
+
+        Ok(Self {
+            engine: Arc::new(engine),
+            scope: Arc::new(Mutex::new(Scope::new())),
+        })
+    }
+
     /// Create a new RhaiEngine with hardware bindings registered
     ///
     /// This constructor calls [`crate::scripting::bindings::register_hardware`]
@@ -248,6 +300,44 @@ impl RhaiEngine {
         handle: crate::plan_bindings::RunEngineHandle,
     ) -> Result<(), ScriptError> {
         self.set_global("run_engine", ScriptValue::new(handle))
+    }
+
+    /// Set a YieldHandle for yield-based plan scripting (bd-94zq.4)
+    ///
+    /// This enables scripts to use `yield_plan()` and related functions.
+    /// The handle is set as `__yield_handle` in the global scope.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let (handle, rx, tx) = YieldChannelBuilder::new().build();
+    /// engine.set_yield_handle(handle)?;
+    ///
+    /// // Scripts can now use:
+    /// // let result = yield_plan(line_scan(...));
+    /// // yield_move("stage", 10.0);
+    /// ```
+    pub fn set_yield_handle(
+        &mut self,
+        handle: Arc<crate::yield_handle::YieldHandle>,
+    ) -> Result<(), ScriptError> {
+        // Store in scope as Dynamic
+        let mut scope = self.scope.lock().unwrap();
+        scope.push("__yield_handle", handle);
+        Ok(())
+    }
+
+    /// Synchronous evaluation (for use in spawn_blocking)
+    ///
+    /// This is used by ScriptPlanRunner to execute scripts in a blocking context.
+    pub fn eval<T>(&mut self, script: &str) -> Result<T, ScriptError>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        let mut scope_guard = self.scope.lock().unwrap();
+        self.engine
+            .eval_with_scope::<T>(&mut scope_guard, script)
+            .map_err(Self::convert_rhai_error)
     }
 
     /// Convert a Rhai Dynamic to ScriptValue

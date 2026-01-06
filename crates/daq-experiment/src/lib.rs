@@ -31,6 +31,7 @@
 
 pub mod plans;
 pub mod plans_daq;
+pub mod plans_imperative;
 pub mod run_engine;
 
 // Re-export document types from daq-core
@@ -42,4 +43,5 @@ pub use plans_daq::{
     TimeSeries, TimeSeriesBuilder, TriggeredAcquisition, TriggeredAcquisitionBuilder, VoltageScan,
     VoltageScanBuilder,
 };
-pub use run_engine::{EngineState, RunEngine};
+pub use plans_imperative::ImperativePlan;
+pub use run_engine::{EngineState, RunEngine, RunResult};

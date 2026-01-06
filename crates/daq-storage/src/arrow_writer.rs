@@ -22,12 +22,12 @@
 //! - `storage_arrow`: Enables Arrow IPC writer
 //! - `storage_parquet`: Enables Parquet writer (includes Arrow)
 
-use anyhow::{anyhow, Result};
-use daq_core::experiment::document::Document;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "storage_arrow")]
+use anyhow::Result;
 #[cfg(feature = "storage_arrow")]
 use arrow::array::{ArrayRef, Float64Builder, StringBuilder, UInt64Builder};
 #[cfg(feature = "storage_arrow")]
@@ -36,6 +36,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 
 /// Internal state for an active run
+#[cfg(feature = "storage_arrow")]
 struct ActiveArrowRun {
     run_uid: String,
     file_path: PathBuf,
@@ -50,6 +51,7 @@ struct ActiveArrowRun {
     metadata: HashMap<String, String>,
 }
 
+#[cfg(feature = "storage_arrow")]
 #[derive(Clone)]
 struct DataKeyInfo {
     dtype: String,
@@ -57,6 +59,7 @@ struct DataKeyInfo {
     source: String,
 }
 
+#[cfg(feature = "storage_arrow")]
 struct BufferedEvent {
     seq_num: u64,
     time_ns: u64,

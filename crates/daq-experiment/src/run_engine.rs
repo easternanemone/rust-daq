@@ -760,6 +760,113 @@ impl RunEngine {
             .as_ref()
             .map(|ctx| ctx.seq_num)
     }
+
+    /// Execute a single plan and return results (for yield-based scripting)
+    ///
+    /// This is a convenience method that:
+    /// 1. Subscribes to documents before queueing
+    /// 2. Queues the plan
+    /// 3. Starts execution
+    /// 4. Collects documents until Stop
+    /// 5. Returns the result
+    ///
+    /// # Arguments
+    /// * `plan` - The plan to execute
+    /// * `timeout` - Maximum time to wait for completion
+    ///
+    /// # Returns
+    /// A `RunResult` containing:
+    /// - `run_uid`: Unique identifier for this run
+    /// - `exit_status`: "success", "abort", or "fail"
+    /// - `data`: Last event's scalar data
+    /// - `positions`: Last event's positions
+    /// - `num_events`: Total number of events emitted
+    pub async fn queue_and_execute(
+        &self,
+        plan: Box<dyn Plan>,
+        timeout: Duration,
+    ) -> anyhow::Result<RunResult> {
+        // Subscribe before queueing to ensure we catch all documents
+        let mut doc_rx = self.subscribe();
+
+        // Queue the plan
+        let run_uid = self.queue(plan).await;
+        debug!(run_uid = %run_uid, "Queued plan for queue_and_execute");
+
+        // Start execution
+        self.start().await?;
+
+        // Collect documents until Stop
+        let mut last_event_data = HashMap::new();
+        let mut last_event_positions = HashMap::new();
+        let mut num_events = 0u32;
+
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                anyhow::bail!("Timeout waiting for plan completion");
+            }
+
+            match tokio::time::timeout(remaining, doc_rx.recv()).await {
+                Ok(Ok(doc)) => {
+                    match doc {
+                        Document::Event(event) if event.run_uid == run_uid => {
+                            num_events += 1;
+                            last_event_data = event.data.clone();
+                            last_event_positions = event.positions.clone();
+                        }
+                        Document::Stop(stop) if stop.run_uid == run_uid => {
+                            debug!(
+                                run_uid = %run_uid,
+                                exit_status = %stop.exit_status,
+                                num_events = %num_events,
+                                "queue_and_execute completed"
+                            );
+
+                            return Ok(RunResult {
+                                run_uid,
+                                exit_status: stop.exit_status,
+                                reason: stop.reason,
+                                data: last_event_data,
+                                positions: last_event_positions,
+                                num_events,
+                            });
+                        }
+                        _ => {
+                            // Ignore documents from other runs or other doc types
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    // Broadcast channel lagged
+                    warn!("Document channel error in queue_and_execute: {}", e);
+                }
+                Err(_) => {
+                    // Timeout
+                    anyhow::bail!("Timeout waiting for plan completion");
+                }
+            }
+        }
+    }
+}
+
+/// Result from executing a plan via `queue_and_execute`
+#[derive(Debug, Clone)]
+pub struct RunResult {
+    /// Unique identifier for this run
+    pub run_uid: String,
+    /// Exit status: "success", "abort", or "fail"
+    pub exit_status: String,
+    /// Exit reason (empty for success)
+    pub reason: String,
+    /// Last event's scalar data
+    pub data: HashMap<String, f64>,
+    /// Last event's positions
+    pub positions: HashMap<String, f64>,
+    /// Total number of events emitted
+    pub num_events: u32,
 }
 
 #[cfg(test)]

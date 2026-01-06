@@ -2565,6 +2565,7 @@ dependencies = [
 name = "daq-scripting"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "daq-core",
@@ -2574,6 +2575,7 @@ dependencies = [
  "rhai",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2629,6 +2631,7 @@ dependencies = [
  "daq-proto",
  "hdf5-metno",
  "memmap2 0.9.9",
+ "parquet 57.1.0",
  "prost 0.12.6",
  "serde",
  "serde_json",
@@ -7503,6 +7506,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "parquet"
+version = "57.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be3e4f6d320dd92bfa7d612e265d7d08bba0a240bab86af3425e1d255a511d89"
+dependencies = [
+ "ahash",
+ "arrow-array 57.1.0",
+ "arrow-buffer 57.1.0",
+ "arrow-cast 57.1.0",
+ "arrow-data 57.1.0",
+ "arrow-ipc 57.1.0",
+ "arrow-schema 57.1.0",
+ "arrow-select 57.1.0",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "half",
+ "hashbrown 0.16.1",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "paste",
+ "seq-macro",
+ "snap",
+ "thrift",
+ "tokio",
+ "twox-hash",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8788,7 +8822,7 @@ dependencies = [
  "memmap2 0.9.9",
  "notify 8.2.0",
  "parking_lot 0.12.5",
- "parquet",
+ "parquet 56.1.0",
  "rayon",
  "re_arrow_util",
  "re_build_info",
