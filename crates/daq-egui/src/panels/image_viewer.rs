@@ -273,8 +273,19 @@ enum ImageViewerAction {
     CamerasLoaded(Vec<String>),
     /// Error from async operation
     Error(String),
-    /// Reconnection attempt result (bd-12qt)
+    /// Reconnection attempt result (bd-12qt) - construction TODO
+    #[allow(dead_code)]
     ReconnectResult { device_id: String, success: bool },
+    /// Recording started (bd-3pdi.5.3)
+    RecordingStarted { output_path: String },
+    /// Recording stopped (bd-3pdi.5.3)
+    RecordingStopped {
+        output_path: String,
+        file_size_bytes: u64,
+        total_samples: u64,
+    },
+    /// Recording status update (bd-3pdi.5.3)
+    RecordingStatus(Option<daq_proto::daq::RecordingStatus>),
 }
 
 /// Connection state for camera device (bd-12qt)
@@ -289,6 +300,20 @@ pub enum ConnectionState {
     Disconnected,
     /// Attempting to reconnect
     Reconnecting,
+}
+
+/// Recording state for camera frames (bd-3pdi.5.3)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecordingState {
+    /// Not recording
+    #[default]
+    Idle,
+    /// Actively recording frames
+    Recording,
+    /// Starting recording (async in progress)
+    Starting,
+    /// Stopping recording (async in progress)
+    Stopping,
 }
 
 /// Image Viewer Panel state
@@ -388,6 +413,18 @@ pub struct ImageViewerPanel {
     last_disconnect: Option<Instant>,
     /// Enable automatic reconnection attempts
     auto_reconnect: bool,
+
+    // -- Recording Fields (bd-3pdi.5.3) --
+    /// Current recording state
+    recording_state: RecordingState,
+    /// Recording name input
+    recording_name: String,
+    /// Current output path (when recording)
+    recording_output_path: Option<String>,
+    /// Recording status from server
+    recording_status: Option<daq_proto::daq::RecordingStatus>,
+    /// Last recording status poll time
+    last_recording_poll: Option<Instant>,
 }
 
 impl Default for ImageViewerPanel {
@@ -443,6 +480,13 @@ impl Default for ImageViewerPanel {
             retry_count: 0,
             last_disconnect: None,
             auto_reconnect: true,
+
+            // Recording (bd-3pdi.5.3)
+            recording_state: RecordingState::Idle,
+            recording_name: String::new(),
+            recording_output_path: None,
+            recording_status: None,
+            last_recording_poll: None,
         }
     }
 }
@@ -484,6 +528,37 @@ impl ImageViewerPanel {
                         self.retry_count += 1;
                         self.status =
                             Some(format!("Reconnect failed (attempt {})", self.retry_count));
+                    }
+                }
+                // bd-3pdi.5.3: Recording action handlers
+                ImageViewerAction::RecordingStarted { output_path } => {
+                    self.recording_state = RecordingState::Recording;
+                    self.recording_output_path = Some(output_path.clone());
+                    self.status = Some(format!("Recording to {}", output_path));
+                    self.error = None;
+                }
+                ImageViewerAction::RecordingStopped {
+                    output_path,
+                    file_size_bytes,
+                    total_samples,
+                } => {
+                    self.recording_state = RecordingState::Idle;
+                    let size_mb = file_size_bytes as f64 / 1_000_000.0;
+                    self.status = Some(format!(
+                        "Saved: {} ({:.2} MB, {} frames)",
+                        output_path, size_mb, total_samples
+                    ));
+                    self.error = None;
+                }
+                ImageViewerAction::RecordingStatus(status) => {
+                    if let Some(s) = status {
+                        self.recording_status = Some(s);
+                        // Update recording state based on status
+                        self.recording_state = match self.recording_status.as_ref().map(|s| s.state)
+                        {
+                            Some(2) => RecordingState::Recording, // RECORDING_ACTIVE
+                            _ => RecordingState::Idle,
+                        };
                     }
                 }
             }
@@ -1100,6 +1175,110 @@ impl ImageViewerPanel {
         self.status = Some("Stream stopped".to_string());
     }
 
+    // -- Recording Methods (bd-3pdi.5.3) --
+
+    /// Start recording camera frames to HDF5
+    fn start_recording(&mut self, client: &mut DaqClient, runtime: &Runtime) {
+        if self.recording_state != RecordingState::Idle {
+            return;
+        }
+
+        self.recording_state = RecordingState::Starting;
+        self.error = None;
+
+        let action_tx = self.action_tx.clone();
+        let mut client = client.clone();
+        let name = if self.recording_name.is_empty() {
+            // Generate name with device ID and timestamp
+            let device_suffix = self
+                .device_id
+                .as_ref()
+                .map(|d| format!("_{}", d.replace('/', "_")))
+                .unwrap_or_default();
+            format!(
+                "camera{}_{}",
+                device_suffix,
+                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+            )
+        } else {
+            self.recording_name.clone()
+        };
+
+        runtime.spawn(async move {
+            match client.start_recording(&name).await {
+                Ok(response) => {
+                    let _ = action_tx.send(ImageViewerAction::RecordingStarted {
+                        output_path: response.output_path,
+                    });
+                }
+                Err(e) => {
+                    let _ = action_tx.send(ImageViewerAction::Error(format!(
+                        "Failed to start recording: {}",
+                        e
+                    )));
+                }
+            }
+        });
+    }
+
+    /// Stop recording camera frames
+    fn stop_recording(&mut self, client: &mut DaqClient, runtime: &Runtime) {
+        if self.recording_state != RecordingState::Recording {
+            return;
+        }
+
+        self.recording_state = RecordingState::Stopping;
+        self.error = None;
+
+        let action_tx = self.action_tx.clone();
+        let mut client = client.clone();
+
+        runtime.spawn(async move {
+            match client.stop_recording().await {
+                Ok(response) => {
+                    let _ = action_tx.send(ImageViewerAction::RecordingStopped {
+                        output_path: response.output_path,
+                        file_size_bytes: response.file_size_bytes,
+                        total_samples: response.total_samples,
+                    });
+                }
+                Err(e) => {
+                    let _ = action_tx.send(ImageViewerAction::Error(format!(
+                        "Failed to stop recording: {}",
+                        e
+                    )));
+                }
+            }
+        });
+    }
+
+    /// Poll recording status from server
+    fn poll_recording_status(&mut self, client: &mut DaqClient, runtime: &Runtime) {
+        // Only poll every 500ms to avoid spamming
+        let should_poll = self
+            .last_recording_poll
+            .map_or(true, |t| t.elapsed().as_millis() > 500);
+        if !should_poll {
+            return;
+        }
+
+        self.last_recording_poll = Some(Instant::now());
+
+        let action_tx = self.action_tx.clone();
+        let mut client = client.clone();
+
+        runtime.spawn(async move {
+            match client.get_recording_status().await {
+                Ok(status) => {
+                    let _ = action_tx.send(ImageViewerAction::RecordingStatus(Some(status)));
+                }
+                Err(_) => {
+                    // Silently ignore status poll errors
+                }
+            }
+        });
+    }
+
     /// Drain pending frame updates, keeping only the most recent
     ///
     /// Fully drains the channel to prevent latency buildup.
@@ -1367,6 +1546,8 @@ impl ImageViewerPanel {
         let mut start_stream_device: Option<String> = None;
         let mut stop_stream = false;
         let mut refresh_cameras = false;
+        let mut start_recording = false;
+        let mut stop_recording = false;
 
         // Toolbar
         ui.horizontal(|ui| {
@@ -1448,6 +1629,45 @@ impl ImageViewerPanel {
                 // Auto-reconnect toggle
                 ui.checkbox(&mut self.auto_reconnect, "Auto")
                     .on_hover_text("Automatically attempt reconnection");
+            }
+
+            // Recording controls (bd-3pdi.5.3)
+            ui.separator();
+            match self.recording_state {
+                RecordingState::Idle => {
+                    // Only show record button when streaming
+                    if is_streaming {
+                        if ui
+                            .button("⏺ Record")
+                            .on_hover_text("Start recording frames to HDF5")
+                            .clicked()
+                        {
+                            start_recording = true;
+                        }
+                    }
+                }
+                RecordingState::Recording => {
+                    if ui
+                        .add(egui::Button::new("⏹ Stop Rec").fill(egui::Color32::DARK_RED))
+                        .on_hover_text("Stop recording")
+                        .clicked()
+                    {
+                        stop_recording = true;
+                    }
+                    // Show recording indicator
+                    ui.colored_label(egui::Color32::RED, "●");
+                    if let Some(status) = &self.recording_status {
+                        ui.label(format!("{} frames", status.samples_recorded));
+                    }
+                }
+                RecordingState::Starting => {
+                    ui.add_enabled(false, egui::Button::new("Starting..."));
+                    ui.spinner();
+                }
+                RecordingState::Stopping => {
+                    ui.add_enabled(false, egui::Button::new("Stopping..."));
+                    ui.spinner();
+                }
             }
 
             // Colormap selector
@@ -1607,9 +1827,31 @@ impl ImageViewerPanel {
             None
         };
 
-        // Handle stop stream
-        if stop_stream {
-            self.stop_stream(client, runtime);
+        // Handle stop stream and recording actions
+        if let Some(client) = client {
+            if stop_stream {
+                self.stop_stream(Some(client), runtime);
+            } else {
+                // Handle recording actions (bd-3pdi.5.3)
+                if start_recording {
+                    self.start_recording(client, runtime);
+                }
+                if stop_recording {
+                    self.stop_recording(client, runtime);
+                }
+                // Poll recording status while recording
+                if matches!(self.recording_state, RecordingState::Recording) {
+                    let should_poll = self
+                        .last_recording_poll
+                        .map(|t| t.elapsed() > std::time::Duration::from_millis(500))
+                        .unwrap_or(true);
+                    if should_poll {
+                        self.poll_recording_status(client, runtime);
+                    }
+                }
+            }
+        } else if stop_stream {
+            self.stop_stream(None, runtime);
         }
 
         ui.separator();
@@ -1664,7 +1906,11 @@ impl ImageViewerPanel {
         let has_controls_panel = self.show_controls && !self.camera_params.is_empty();
 
         let stats_panel_width = if has_roi_panel || has_histogram_panel || has_controls_panel {
-            if has_controls_panel { 280.0 } else { 200.0 }
+            if has_controls_panel {
+                280.0
+            } else {
+                200.0
+            }
         } else {
             0.0
         };

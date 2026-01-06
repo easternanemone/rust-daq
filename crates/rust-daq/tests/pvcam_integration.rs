@@ -20,16 +20,15 @@ async fn test_pvcam_with_run_engine() -> anyhow::Result<()> {
         .await?;
 
     // 3. Initialize RunEngine
-    let registry_arc = Arc::new(tokio::sync::RwLock::new(registry));
+    let registry_arc = Arc::new(registry);
     let run_engine = Arc::new(RunEngine::new(registry_arc.clone()));
 
     // 4. Subscribe to events
     let mut _rx = run_engine.subscribe();
 
     // 5. Verify driver from registry
-    // RunEngine keeps the registry locked internally during ops, but we can access it here since we hold the Arc
-    let registry_guard = registry_arc.read().await;
-    let _camera = registry_guard
+    // DeviceRegistry is now internally thread-safe via DashMap (bd-834p)
+    let _camera = registry_arc
         .get_frame_producer("camera")
         .expect("Camera not found");
 

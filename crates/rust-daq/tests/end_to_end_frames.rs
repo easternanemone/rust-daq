@@ -20,7 +20,7 @@ async fn test_end_to_end_frames() -> anyhow::Result<()> {
             },
         })
         .await?;
-    let registry_arc = Arc::new(tokio::sync::RwLock::new(registry));
+    let registry_arc = Arc::new(registry);
 
     // 2. Setup RunEngine
     let run_engine = Arc::new(RunEngine::new(registry_arc.clone()));

@@ -80,7 +80,6 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -90,7 +89,7 @@ use tonic::{Request, Response, Status};
 /// Provides direct access to hardware devices through the DeviceRegistry.
 /// All hardware operations are delegated to the appropriate capability traits.
 pub struct HardwareServiceImpl {
-    registry: Arc<RwLock<DeviceRegistry>>,
+    registry: Arc<DeviceRegistry>,
     /// Broadcast sender for parameter changes (enables real-time GUI synchronization)
     param_change_tx: tokio::sync::broadcast::Sender<ParameterChange>,
 }
@@ -115,7 +114,7 @@ impl HardwareServiceImpl {
     }
 
     /// Create a new HardwareService with the given device registry
-    pub fn new(registry: Arc<RwLock<DeviceRegistry>>) -> Self {
+    pub fn new(registry: Arc<DeviceRegistry>) -> Self {
         // Create broadcast channel for parameter changes (capacity 256 in-flight messages)
         let (param_change_tx, _) = tokio::sync::broadcast::channel(256);
 
@@ -130,13 +129,12 @@ impl HardwareServiceImpl {
             // Give registry time to fully initialize
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            let reg = registry_clone.read().await;
-
             // Iterate all devices and spawn monitors for parameters
-            for device_info in reg.list_devices() {
+            for device_info in registry_clone.list_devices() {
                 let device_id = device_info.id.clone();
 
-                if let Some(param_set) = reg.get_parameters(&device_id) {
+                if let Some(parameterized) = registry_clone.get_parameterized(&device_id) {
+                    let param_set = parameterized.parameters();
                     // Found a Parameterized device - monitor all its parameters
                     for param_name in param_set.names() {
                         let tx = tx_clone.clone();
@@ -184,7 +182,7 @@ impl HardwareServiceImpl {
     /// Create a new HardwareService with an existing parameter change broadcast sender
     /// (useful when sharing the sender across multiple services)
     pub fn with_param_broadcast(
-        registry: Arc<RwLock<DeviceRegistry>>,
+        registry: Arc<DeviceRegistry>,
         param_change_tx: tokio::sync::broadcast::Sender<ParameterChange>,
     ) -> Self {
         Self {
@@ -213,9 +211,7 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<ListDevicesRequest>,
     ) -> Result<Response<ListDevicesResponse>, Status> {
         let req = request.into_inner();
-        println!("DEBUG: list_devices: Acquiring registry read lock...");
-        let registry = self.registry.read().await;
-        println!("DEBUG: list_devices: Acquired registry read lock.");
+        println!("DEBUG: list_devices: Accessing registry...");
 
         let devices: Vec<DeviceInfo> = if let Some(capability_filter) = req.capability_filter {
             // Filter by capability
@@ -233,15 +229,15 @@ impl HardwareService for HardwareServiceImpl {
                 }
             };
 
-            registry
+            self.registry
                 .devices_with_capability(cap)
                 .iter()
-                .filter_map(|id| registry.get_device_info(id))
+                .filter_map(|id| self.registry.get_device_info(id))
                 .map(|info| device_info_to_proto(&info))
                 .collect()
         } else {
             // Return all devices
-            registry
+            self.registry
                 .list_devices()
                 .iter()
                 .map(device_info_to_proto)
@@ -257,19 +253,16 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<DeviceStateResponse>, Status> {
         let req = request.into_inner();
 
-        // Acquire lock, extract Arc references, then release lock before awaiting
+        // Acquire device references without lock
         // This prevents deadlock when hardware operations take time
-        let (movable, readable, triggerable, frame_producer, exposure_control, exists) = {
-            let registry = self.registry.read().await;
-            (
-                registry.get_movable(&req.device_id),
-                registry.get_readable(&req.device_id),
-                registry.get_triggerable(&req.device_id),
-                registry.get_frame_producer(&req.device_id),
-                registry.get_exposure_control(&req.device_id),
-                registry.contains(&req.device_id),
-            )
-        }; // Lock released here
+        let (movable, readable, triggerable, frame_producer, exposure_control, exists) = (
+            self.registry.get_movable(&req.device_id),
+            self.registry.get_readable(&req.device_id),
+            self.registry.get_triggerable(&req.device_id),
+            self.registry.get_frame_producer(&req.device_id),
+            self.registry.get_exposure_control(&req.device_id),
+            self.registry.contains(&req.device_id),
+        );
 
         if !exists {
             return Err(Status::not_found(format!(
@@ -330,26 +323,23 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Determine device list and validate device IDs exist
-        let device_ids: Vec<String> = {
-            let registry = self.registry.read().await;
-            if req.device_ids.is_empty() {
-                registry
-                    .list_devices()
-                    .iter()
-                    .map(|d| d.id.clone())
-                    .collect()
-            } else {
-                // Validate all requested device IDs exist
-                for device_id in &req.device_ids {
-                    if !registry.contains(device_id) {
-                        return Err(Status::not_found(format!(
-                            "Device '{}' not found",
-                            device_id
-                        )));
-                    }
+        let device_ids: Vec<String> = if req.device_ids.is_empty() {
+            self.registry
+                .list_devices()
+                .iter()
+                .map(|d| d.id.clone())
+                .collect()
+        } else {
+            // Validate all requested device IDs exist
+            for device_id in &req.device_ids {
+                if !self.registry.contains(device_id) {
+                    return Err(Status::not_found(format!(
+                        "Device '{}' not found",
+                        device_id
+                    )));
                 }
-                req.device_ids.clone()
             }
+            req.device_ids.clone()
         };
 
         if device_ids.is_empty() {
@@ -432,17 +422,13 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<MoveResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
+        // Extract Arc without lock before awaiting hardware
         println!(
-            "DEBUG: move_absolute: Acquiring registry read lock for device lookup {}...",
+            "DEBUG: move_absolute: Accessing registry for device lookup {}...",
             req.device_id
         );
-        let movable = {
-            let registry = self.registry.read().await;
-            println!("DEBUG: move_absolute: Acquired registry read lock.");
-            registry.get_movable(&req.device_id)
-        };
-        println!("DEBUG: move_absolute: Released registry read lock.");
+        let movable = self.registry.get_movable(&req.device_id);
+        println!("DEBUG: move_absolute: Got device reference.");
 
         let movable = movable.ok_or_else(|| {
             Status::not_found(format!(
@@ -503,11 +489,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<MoveResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let movable = {
-            let registry = self.registry.read().await;
-            registry.get_movable(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let movable = self.registry.get_movable(&req.device_id);
 
         let movable = movable.ok_or_else(|| {
             Status::not_found(format!(
@@ -568,11 +551,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<StopMotionResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let movable = {
-            let registry = self.registry.read().await;
-            registry.get_movable(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let movable = self.registry.get_movable(&req.device_id);
 
         let movable = movable.ok_or_else(|| {
             Status::not_found(format!(
@@ -597,11 +577,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<WaitSettledResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let movable = {
-            let registry = self.registry.read().await;
-            registry.get_movable(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let movable = self.registry.get_movable(&req.device_id);
 
         let movable = movable.ok_or_else(|| {
             Status::not_found(format!(
@@ -652,14 +629,11 @@ impl HardwareService for HardwareServiceImpl {
         let rate_hz = req.rate_hz.max(1); // Minimum 1 Hz
 
         // Verify device exists and is movable
-        {
-            let reg = registry.read().await;
-            if reg.get_movable(&device_id).is_none() {
-                return Err(Status::not_found(format!(
-                    "Device '{}' not found or not movable",
-                    device_id
-                )));
-            }
+        if self.registry.get_movable(&device_id).is_none() {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found or not movable",
+                device_id
+            )));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -672,11 +646,8 @@ impl HardwareService for HardwareServiceImpl {
             loop {
                 ticker.tick().await;
 
-                // Extract Arc and release lock before awaiting hardware
-                let movable = {
-                    let reg = registry.read().await;
-                    reg.get_movable(&device_id)
-                };
+                // Get movable directly from registry
+                let movable = registry.get_movable(&device_id);
 
                 if let Some(movable) = movable {
                     let position = movable.position().await.unwrap_or(f64::NAN);
@@ -717,16 +688,13 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<ReadValueResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and metadata, then release lock before awaiting hardware
-        let (readable, units) = {
-            let registry = self.registry.read().await;
-            let readable = registry.get_readable(&req.device_id);
-            let units = registry
-                .get_device_info(&req.device_id)
-                .and_then(|info| info.metadata.measurement_units.clone())
-                .unwrap_or_default();
-            (readable, units)
-        };
+        // Extract Arc and metadata without lock before awaiting hardware
+        let readable = self.registry.get_readable(&req.device_id);
+        let units = self
+            .registry
+            .get_device_info(&req.device_id)
+            .and_then(|info| info.metadata.measurement_units.clone())
+            .unwrap_or_default();
 
         let readable = readable.ok_or_else(|| {
             Status::not_found(format!(
@@ -763,14 +731,11 @@ impl HardwareService for HardwareServiceImpl {
         let rate_hz = req.rate_hz.max(1);
 
         // Verify device exists and is readable
-        {
-            let reg = registry.read().await;
-            if reg.get_readable(&device_id).is_none() {
-                return Err(Status::not_found(format!(
-                    "Device '{}' not found or not readable",
-                    device_id
-                )));
-            }
+        if self.registry.get_readable(&device_id).is_none() {
+            return Err(Status::not_found(format!(
+                "Device '{}' not found or not readable",
+                device_id
+            )));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -782,16 +747,12 @@ impl HardwareService for HardwareServiceImpl {
             loop {
                 ticker.tick().await;
 
-                // Extract Arc and metadata, release lock before awaiting hardware
-                let (readable, units) = {
-                    let reg = registry.read().await;
-                    let readable = reg.get_readable(&device_id);
-                    let units = reg
-                        .get_device_info(&device_id)
-                        .and_then(|info| info.metadata.measurement_units.clone())
-                        .unwrap_or_default();
-                    (readable, units)
-                };
+                // Get readable and metadata directly from registry
+                let readable = registry.get_readable(&device_id);
+                let units = registry
+                    .get_device_info(&device_id)
+                    .and_then(|info| info.metadata.measurement_units.clone())
+                    .unwrap_or_default();
 
                 if let Some(readable) = readable {
                     if let Ok(value) = readable.read().await {
@@ -827,11 +788,8 @@ impl HardwareService for HardwareServiceImpl {
     async fn arm(&self, request: Request<ArmRequest>) -> Result<Response<ArmResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let triggerable = {
-            let registry = self.registry.read().await;
-            registry.get_triggerable(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let triggerable = self.registry.get_triggerable(&req.device_id);
 
         let triggerable = triggerable.ok_or_else(|| {
             Status::not_found(format!(
@@ -860,11 +818,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<TriggerResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let triggerable = {
-            let registry = self.registry.read().await;
-            registry.get_triggerable(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let triggerable = self.registry.get_triggerable(&req.device_id);
 
         let triggerable = triggerable.ok_or_else(|| {
             Status::not_found(format!(
@@ -902,11 +857,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetExposureResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let exposure_ctrl = {
-            let registry = self.registry.read().await;
-            registry.get_exposure_control(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let exposure_ctrl = self.registry.get_exposure_control(&req.device_id);
 
         let exposure_ctrl = exposure_ctrl.ok_or_else(|| {
             Status::not_found(format!(
@@ -956,11 +908,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetExposureResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let exposure_ctrl = {
-            let registry = self.registry.read().await;
-            registry.get_exposure_control(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let exposure_ctrl = self.registry.get_exposure_control(&req.device_id);
 
         let exposure_ctrl = exposure_ctrl.ok_or_else(|| {
             Status::not_found(format!(
@@ -993,10 +942,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let shutter_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_shutter_control(&req.device_id)
-            };
+            let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
 
             let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1040,10 +986,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let shutter_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_shutter_control(&req.device_id)
-            };
+            let shutter_ctrl = self.registry.get_shutter_control(&req.device_id);
 
             let shutter_ctrl = shutter_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1078,10 +1021,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let wavelength_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_wavelength_tunable(&req.device_id)
-            };
+            let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
 
             let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1121,10 +1061,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let wavelength_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_wavelength_tunable(&req.device_id)
-            };
+            let wavelength_ctrl = self.registry.get_wavelength_tunable(&req.device_id);
 
             let wavelength_ctrl = wavelength_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1159,10 +1096,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let emission_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_emission_control(&req.device_id)
-            };
+            let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
             let emission_ctrl = emission_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1206,10 +1140,7 @@ impl HardwareService for HardwareServiceImpl {
 
         #[cfg(feature = "instrument_spectra_physics")]
         {
-            let emission_ctrl = {
-                let registry = self.registry.read().await;
-                registry.get_emission_control(&req.device_id)
-            };
+            let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
             let emission_ctrl = emission_ctrl.ok_or_else(|| {
                 Status::not_found(format!(
@@ -1246,11 +1177,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<StartStreamResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let frame_producer = {
-            let registry = self.registry.read().await;
-            registry.get_frame_producer(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let frame_producer = self.registry.get_frame_producer(&req.device_id);
 
         let frame_producer = frame_producer.ok_or_else(|| {
             Status::not_found(format!(
@@ -1290,11 +1218,8 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<StopStreamResponse>, Status> {
         let req = request.into_inner();
 
-        // Extract Arc and release lock before awaiting hardware
-        let frame_producer = {
-            let registry = self.registry.read().await;
-            registry.get_frame_producer(&req.device_id)
-        };
+        // Extract Arc without lock before awaiting hardware
+        let frame_producer = self.registry.get_frame_producer(&req.device_id);
 
         let frame_producer = frame_producer.ok_or_else(|| {
             Status::not_found(format!(
@@ -1334,10 +1259,7 @@ impl HardwareService for HardwareServiceImpl {
         let max_fps = req.max_fps;
 
         // Get frame producer and subscribe to frame broadcast
-        let frame_producer = {
-            let registry = self.registry.read().await;
-            registry.get_frame_producer(&device_id)
-        };
+        let frame_producer = self.registry.get_frame_producer(&device_id);
 
         let frame_producer = frame_producer.ok_or_else(|| {
             Status::not_found(format!(
@@ -1475,13 +1397,8 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<StageDeviceRequest>,
     ) -> Result<Response<StageDeviceResponse>, Status> {
         let req = request.into_inner();
-        let (stageable, exists) = {
-            let registry = self.registry.read().await;
-            (
-                registry.get_stageable(&req.device_id),
-                registry.contains(&req.device_id),
-            )
-        };
+        let stageable = self.registry.get_stageable(&req.device_id);
+        let exists = self.registry.contains(&req.device_id);
 
         // Verify device exists
         if !exists {
@@ -1527,13 +1444,8 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<UnstageDeviceRequest>,
     ) -> Result<Response<UnstageDeviceResponse>, Status> {
         let req = request.into_inner();
-        let (stageable, exists) = {
-            let registry = self.registry.read().await;
-            (
-                registry.get_stageable(&req.device_id),
-                registry.contains(&req.device_id),
-            )
-        };
+        let stageable = self.registry.get_stageable(&req.device_id);
+        let exists = self.registry.contains(&req.device_id);
 
         // Verify device exists
         if !exists {
@@ -1575,10 +1487,9 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<DeviceCommandRequest>,
     ) -> Result<Response<DeviceCommandResponse>, Status> {
         let req = request.into_inner();
-        let registry = self.registry.read().await;
 
         // Try the new generic Commandable interface first
-        if let Some(device) = registry.get_commandable(&req.device_id) {
+        if let Some(device) = self.registry.get_commandable(&req.device_id) {
             // Parse arguments as JSON
             const MAX_ARGS_LEN: usize = 64 * 1024; // 64KB
             if req.args.len() > MAX_ARGS_LEN {
@@ -1628,10 +1539,9 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<ListParametersRequest>,
     ) -> Result<Response<ListParametersResponse>, Status> {
         let req = request.into_inner();
-        let registry = self.registry.read().await;
 
         // Check if device exists
-        if !registry.contains(&req.device_id) {
+        if !self.registry.contains(&req.device_id) {
             return Err(Status::not_found(format!(
                 "Device '{}' not found",
                 req.device_id
@@ -1641,7 +1551,8 @@ impl HardwareService for HardwareServiceImpl {
         let mut parameters = Vec::new();
 
         // 1. Get V5 parameters from Parameterized devices
-        if let Some(param_set) = registry.get_parameters(&req.device_id) {
+        if let Some(parameterized) = self.registry.get_parameterized(&req.device_id) {
+            let param_set = parameterized.parameters();
             for param_name in param_set.names() {
                 if let Some(param) = param_set.get(param_name) {
                     let metadata = param.metadata();
@@ -1699,11 +1610,7 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Try legacy Settable trait first (backwards compatibility)
-        let registry = self.registry.read().await;
-
-        if let Some(settable) = registry.get_settable(&req.device_id) {
-            drop(registry); // Release lock before async operations
-
+        if let Some(settable) = self.registry.get_settable(&req.device_id) {
             // Get the parameter value
             let value = settable.get_value(&req.parameter_name).await.map_err(|e| {
                 map_hardware_error_to_status(&format!("Failed to get parameter: {}", e))
@@ -1725,24 +1632,25 @@ impl HardwareService for HardwareServiceImpl {
         }
 
         // New path - use Parameterized trait
-        if let Some(params) = registry.get_parameters(&req.device_id)
-            && let Some(param) = params.get(&req.parameter_name)
-        {
-            let value = param.get_json().map_err(|e| {
-                map_hardware_error_to_status(&format!("Failed to get parameter: {}", e))
-            })?;
-            let timestamp_ns = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0);
+        if let Some(parameterized) = self.registry.get_parameterized(&req.device_id) {
+            let params = parameterized.parameters();
+            if let Some(param) = params.get(&req.parameter_name) {
+                let value = param.get_json().map_err(|e| {
+                    map_hardware_error_to_status(&format!("Failed to get parameter: {}", e))
+                })?;
+                let timestamp_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
 
-            return Ok(Response::new(ParameterValue {
-                device_id: req.device_id,
-                name: req.parameter_name,
-                value: value.to_string(),
-                units: String::new(), // Could extract from metadata
-                timestamp_ns,
-            }));
+                return Ok(Response::new(ParameterValue {
+                    device_id: req.device_id,
+                    name: req.parameter_name,
+                    value: value.to_string(),
+                    units: String::new(), // Could extract from metadata
+                    timestamp_ns,
+                }));
+            }
         }
 
         // Neither Settable nor Parameterized - device not found
@@ -1759,11 +1667,7 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Try legacy Settable trait first (backwards compatibility)
-        let registry = self.registry.read().await;
-
-        if let Some(settable) = registry.get_settable(&req.device_id) {
-            drop(registry); // Release lock before async operations
-
+        if let Some(settable) = self.registry.get_settable(&req.device_id) {
             // Get old value before setting (for change notification)
             let old_value = settable
                 .get_value(&req.parameter_name)
@@ -1811,8 +1715,8 @@ impl HardwareService for HardwareServiceImpl {
         }
 
         // New path - use Parameterized trait
-        if let Some(params) = registry.get_parameters(&req.device_id) {
-            // Note: Cannot drop registry here as params borrows from it
+        if let Some(parameterized) = self.registry.get_parameterized(&req.device_id) {
+            let params = parameterized.parameters();
 
             if let Some(param) = params.get(&req.parameter_name) {
                 let old_value = param.get_json().map(|v| v.to_string()).unwrap_or_default();
@@ -1956,30 +1860,33 @@ impl HardwareService for HardwareServiceImpl {
             let mut subscriptions: Vec<(
                 String,                            // device_id
                 String,                            // observable_name
+                String,                            // units
                 tokio::sync::watch::Receiver<f64>, // subscription
                 std::time::Instant,                // last_sent
                 f64,                               // last_value (for change detection)
             )> = Vec::new();
 
-            {
-                let registry = registry.read().await;
-                for device_id in &device_ids {
-                    if let Some(param_set) = registry.get_parameters(device_id) {
-                        for obs_name in &observable_names {
-                            // Try to get Observable<f64> for this name
-                            if let Some(observable) =
-                                param_set.get_typed::<Observable<f64>>(obs_name)
-                            {
-                                let rx = observable.subscribe();
-                                let initial_value = *rx.borrow();
-                                subscriptions.push((
-                                    device_id.clone(),
-                                    obs_name.clone(),
-                                    rx,
-                                    std::time::Instant::now(),
-                                    initial_value,
-                                ));
-                            }
+            for device_id in &device_ids {
+                if let Some(parameterized) = registry.get_parameterized(device_id) {
+                    let param_set = parameterized.parameters();
+                    for obs_name in &observable_names {
+                        // Try to get Observable<f64> for this name
+                        if let Some(observable) = param_set.get_typed::<Observable<f64>>(obs_name) {
+                            let rx = observable.subscribe();
+                            let initial_value = *rx.borrow();
+                            let units = observable
+                                .metadata()
+                                .units
+                                .clone()
+                                .unwrap_or_default();
+                            subscriptions.push((
+                                device_id.clone(),
+                                obs_name.clone(),
+                                units,
+                                rx,
+                                std::time::Instant::now(),
+                                initial_value,
+                            ));
                         }
                     }
                 }
@@ -2013,7 +1920,7 @@ impl HardwareService for HardwareServiceImpl {
                 }
 
                 // Check each subscription for new values
-                for (device_id, obs_name, rx, last_sent, last_value) in &mut subscriptions {
+                for (device_id, obs_name, units, rx, last_sent, last_value) in &mut subscriptions {
                     // Get current value from watch receiver
                     let current_value = *rx.borrow();
 
@@ -2025,7 +1932,7 @@ impl HardwareService for HardwareServiceImpl {
                             device_id: device_id.clone(),
                             observable_name: obs_name.clone(),
                             value: current_value,
-                            units: String::new(), // TODO: Get units from observable metadata
+                            units: units.clone(),
                             timestamp_ns: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_nanos() as u64)
@@ -2052,22 +1959,18 @@ impl HardwareService for HardwareServiceImpl {
 
 // Helper: fetch current device state (shared by SubscribeDeviceState)
 async fn fetch_device_state(
-    registry: &Arc<RwLock<DeviceRegistry>>,
+    registry: &Arc<DeviceRegistry>,
     device_id: &str,
 ) -> Result<DeviceStateResponse, Status> {
-    // log::info!("fetch_device_state: Acquiring registry read lock for {}...", device_id);
-    let (movable, readable, triggerable, frame_producer, exposure_control, exists) = {
-        let registry = registry.read().await;
-        // log::info!("fetch_device_state: Acquired registry read lock.");
-        (
-            registry.get_movable(device_id),
-            registry.get_readable(device_id),
-            registry.get_triggerable(device_id),
-            registry.get_frame_producer(device_id),
-            registry.get_exposure_control(device_id),
-            registry.contains(device_id),
-        )
-    };
+    // No global lock needed with DashMap
+    let (movable, readable, triggerable, frame_producer, exposure_control, exists) = (
+        registry.get_movable(device_id),
+        registry.get_readable(device_id),
+        registry.get_triggerable(device_id),
+        registry.get_frame_producer(device_id),
+        registry.get_exposure_control(device_id),
+        registry.contains(device_id),
+    );
 
     if !exists {
         return Err(Status::not_found(format!(
@@ -2327,7 +2230,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_devices() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(ListDevicesRequest {
             capability_filter: None,
@@ -2347,7 +2250,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_devices_with_filter() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         // Filter for movable devices
         let request = Request::new(ListDevicesRequest {
@@ -2363,7 +2266,7 @@ mod tests {
     #[tokio::test]
     async fn test_move_absolute() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(MoveRequest {
             device_id: "mock_stage".to_string(),
@@ -2381,7 +2284,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_value() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(ReadValueRequest {
             device_id: "mock_power_meter".to_string(),
@@ -2396,7 +2299,7 @@ mod tests {
     #[tokio::test]
     async fn test_device_not_found() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(MoveRequest {
             device_id: "nonexistent".to_string(),
@@ -2413,7 +2316,7 @@ mod tests {
     #[tokio::test]
     async fn test_wrong_capability() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         // Try to move the power meter (not movable)
         let request = Request::new(MoveRequest {
@@ -2431,7 +2334,7 @@ mod tests {
     #[tokio::test]
     async fn test_move_with_wait_for_completion() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(MoveRequest {
             device_id: "mock_stage".to_string(),
@@ -2454,7 +2357,7 @@ mod tests {
     #[tokio::test]
     async fn test_stage_device_success() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(StageDeviceRequest {
             device_id: "mock_stage".to_string(),
@@ -2470,7 +2373,7 @@ mod tests {
     #[tokio::test]
     async fn test_stage_device_not_found() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(StageDeviceRequest {
             device_id: "nonexistent".to_string(),
@@ -2484,7 +2387,7 @@ mod tests {
     #[tokio::test]
     async fn test_unstage_device_success() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(UnstageDeviceRequest {
             device_id: "mock_power_meter".to_string(),
@@ -2499,7 +2402,7 @@ mod tests {
     #[tokio::test]
     async fn test_unstage_device_not_found() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(UnstageDeviceRequest {
             device_id: "nonexistent".to_string(),
@@ -2519,7 +2422,7 @@ mod tests {
         use tokio_stream::StreamExt;
 
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(DeviceStateSubscribeRequest {
             device_ids: vec!["mock_stage".to_string()],
@@ -2543,7 +2446,7 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe_device_state_not_found() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         let request = Request::new(DeviceStateSubscribeRequest {
             device_ids: vec!["nonexistent".to_string()],
@@ -2562,7 +2465,7 @@ mod tests {
         use tokio_stream::StreamExt;
 
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         // Get the parameter change sender to simulate changes
         let param_sender = service.param_change_sender();
@@ -2605,7 +2508,7 @@ mod tests {
         use tokio_stream::StreamExt;
 
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
         let param_sender = service.param_change_sender();
 
         // Start streaming with device filter
@@ -2654,7 +2557,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_parameters_v5() {
         let registry = create_mock_registry().await.unwrap();
-        let service = HardwareServiceImpl::new(Arc::new(RwLock::new(registry)));
+        let service = HardwareServiceImpl::new(Arc::new(registry));
 
         // List parameters for mock_stage
         let request = Request::new(ListParametersRequest {

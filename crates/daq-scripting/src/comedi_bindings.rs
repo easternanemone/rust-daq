@@ -38,7 +38,8 @@ use tokio::task::block_in_place;
 
 use daq_core::core::Measurement;
 
-// Re-use the run_blocking helper pattern
+// Re-use the run_blocking helper pattern (for future async Comedi operations)
+#[allow(dead_code)]
 fn run_blocking<Fut, T, E>(label: &str, fut: Fut) -> Result<T, Box<EvalAltResult>>
 where
     Fut: std::future::Future<Output = Result<T, E>> + Send,
