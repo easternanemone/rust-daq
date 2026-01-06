@@ -45,6 +45,10 @@ issue-prefix: "bd"
 #     - ~/beads-planning  # Personal planning repo
 #     - ~/work-planning   # Work planning repo
 
+# Sync branch configuration
+# When set, beads commits go to this branch instead of the working branch
+sync-branch: "beads-sync"
+
 # Integration settings (access with 'bd config get/set')
 # These are stored in the database, not in this file:
 # - jira.url
