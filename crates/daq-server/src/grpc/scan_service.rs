@@ -1,5 +1,34 @@
 //! ScanService implementation for coordinated multi-axis scans (bd-4le6)
 //!
+//! # DEPRECATED in v0.7.0
+//!
+//! **This service is deprecated.** Use [`RunEngineService`] instead for all new
+//! experiment workflows. ScanService will be removed in v0.8.0.
+//!
+//! ## Migration Guide
+//!
+//! | ScanService Method | RunEngineService Equivalent |
+//! |--------------------|----------------------------|
+//! | `create_scan` | `queue_plan` (with plan type and parameters) |
+//! | `start_scan` | Plans execute automatically after `queue_plan` |
+//! | `pause_scan` | `pause_engine` |
+//! | `resume_scan` | `resume_engine` |
+//! | `stop_scan` | `abort_plan` |
+//! | `get_scan_status` | `get_engine_status` |
+//! | `list_scans` | `get_engine_status` (check `queued_plans`) |
+//! | `stream_scan_progress` | `stream_documents` |
+//!
+//! ## Key Differences
+//!
+//! - **Plan-based**: RunEngine uses declarative `Plan` types instead of imperative scan configs
+//! - **Document stream**: Progress is reported via structured `Document` events (Start/Descriptor/Event/Stop)
+//! - **Richer metadata**: Plans capture full provenance and reproducibility information
+//! - **Pause/resume**: RunEngine supports pausing mid-experiment with state preservation
+//!
+//! ---
+//!
+//! # Legacy Documentation
+//!
 //! This module provides gRPC endpoints for creating and executing coordinated
 //! scans across multiple motion axes with synchronized data acquisition.
 //!
@@ -113,6 +142,13 @@ impl ScanExecution {
 
 /// ScanService gRPC implementation
 ///
+/// # Deprecated
+///
+/// **This service is deprecated since v0.7.0.** Use [`crate::grpc::run_engine_service::RunEngineServiceImpl`]
+/// instead for all new experiment workflows. See the module documentation for migration guidance.
+///
+/// ## Legacy Documentation
+///
 /// Coordinates multi-axis scans with synchronized data acquisition.
 ///
 /// # Data Persistence
@@ -122,6 +158,10 @@ impl ScanExecution {
 /// - Fast writes to memory-mapped ring buffer during scan
 /// - HDF5Writer background task flushes to disk at 1 Hz
 /// - Scientists see HDF5 files compatible with Python/MATLAB/Igor
+#[deprecated(
+    since = "0.7.0",
+    note = "Use RunEngineService instead. See scan_service module docs for migration guide."
+)]
 pub struct ScanServiceImpl {
     registry: Arc<DeviceRegistry>,
     scans: Arc<Mutex<HashMap<String, ScanExecution>>>,
@@ -130,6 +170,8 @@ pub struct ScanServiceImpl {
     ring_buffer: Option<Arc<RingBuffer>>,
 }
 
+// Allow self-referential deprecation warnings within the deprecated module
+#[allow(deprecated)]
 impl ScanServiceImpl {
     const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -725,13 +767,14 @@ impl ScanServiceImpl {
 }
 
 #[tonic::async_trait]
+#[allow(deprecated)]
 impl ScanService for ScanServiceImpl {
     async fn create_scan(
         &self,
         request: Request<CreateScanRequest>,
     ) -> Result<Response<CreateScanResponse>, Status> {
         tracing::warn!(
-            "ScanService.CreateScan is DEPRECATED (v0.6.0). \
+            "ScanService.CreateScan is DEPRECATED (v0.7.0). \
              Use RunEngineService.QueuePlan instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -745,7 +788,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<StartScanRequest>,
     ) -> Result<Response<StartScanResponse>, Status> {
         tracing::warn!(
-            "ScanService.StartScan is DEPRECATED (v0.6.0). \
+            "ScanService.StartScan is DEPRECATED (v0.7.0). \
              Use RunEngineService.StartEngine instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -759,7 +802,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<PauseScanRequest>,
     ) -> Result<Response<PauseScanResponse>, Status> {
         tracing::warn!(
-            "ScanService.PauseScan is DEPRECATED (v0.6.0). \
+            "ScanService.PauseScan is DEPRECATED (v0.7.0). \
              Use RunEngineService.PauseEngine instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -773,7 +816,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<ResumeScanRequest>,
     ) -> Result<Response<ResumeScanResponse>, Status> {
         tracing::warn!(
-            "ScanService.ResumeScan is DEPRECATED (v0.6.0). \
+            "ScanService.ResumeScan is DEPRECATED (v0.7.0). \
              Use RunEngineService.ResumeEngine instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -787,7 +830,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<StopScanRequest>,
     ) -> Result<Response<StopScanResponse>, Status> {
         tracing::warn!(
-            "ScanService.StopScan is DEPRECATED (v0.6.0). \
+            "ScanService.StopScan is DEPRECATED (v0.7.0). \
              Use RunEngineService.AbortPlan instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -801,7 +844,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<GetScanStatusRequest>,
     ) -> Result<Response<ScanStatus>, Status> {
         tracing::warn!(
-            "ScanService.GetScanStatus is DEPRECATED (v0.6.0). \
+            "ScanService.GetScanStatus is DEPRECATED (v0.7.0). \
              Use RunEngineService.GetEngineStatus instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -820,7 +863,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<ListScansRequest>,
     ) -> Result<Response<ListScansResponse>, Status> {
         tracing::warn!(
-            "ScanService.ListScans is DEPRECATED (v0.6.0). \
+            "ScanService.ListScans is DEPRECATED (v0.7.0). \
              Use RunEngineService APIs instead. \
              ScanService will be removed in v0.8.0."
         );
@@ -850,7 +893,7 @@ impl ScanService for ScanServiceImpl {
         request: Request<StreamScanProgressRequest>,
     ) -> Result<Response<Self::StreamScanProgressStream>, Status> {
         tracing::warn!(
-            "ScanService.StreamScanProgress is DEPRECATED (v0.6.0). \
+            "ScanService.StreamScanProgress is DEPRECATED (v0.7.0). \
              Use RunEngineService.StreamDocuments instead for structured experiment data. \
              ScanService will be removed in v0.8.0."
         );
