@@ -569,7 +569,14 @@ let driver = Ell14Driver::new_async_with_device_calibration("/dev/ttyUSB0", "0")
 let driver = Ell14Driver::new_async("/dev/ttyUSB0", "0").await?;
 ```
 
-**Protocol Note:** The `IN` command returns `PULSES/M.U.` (pulses per measurement unit). For rotation stages, M.U. = degrees, so this value is pulses/degree directly.
+**Protocol Note:** The `IN` command returns `PULSES/M.U.` (pulses per measurement unit), which is the **total pulses for full 360° rotation**. To get pulses/degree, divide by 360:
+- Example: Device returns 143360 → 143360 / 360 = 398.22 pulses/degree
+
+**Firmware Versions:** The `IN` response length varies by firmware:
+- Older firmware (v15-v17): 30 data chars - Travel at `[17:22]`, Pulses/unit at `[22:30]`
+- Newer firmware: 33 data chars - Travel at `[17:25]`, Pulses/unit at `[25:33]`
+
+The driver auto-detects the format and parses accordingly.
 
 **Multidrop Bus:** Multiple ELL14 devices can share one serial port:
 
