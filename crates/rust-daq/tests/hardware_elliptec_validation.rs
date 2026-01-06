@@ -709,6 +709,32 @@ async fn test_stop_command() {
 }
 
 #[tokio::test]
+async fn test_all_velocities() {
+    println!("\n=== Test: All Rotator Velocities ===");
+    println!("Checking velocities for addresses 2, 3, 8");
+    println!("Expected: All should be near 64 (100%) for full speed\n");
+
+    for addr in ADDRESSES {
+        let driver =
+            Ell14Driver::new(&get_elliptec_port(), addr).expect("Failed to create driver");
+
+        match driver.get_velocity().await {
+            Ok(velocity) => {
+                let status = if velocity >= 60 { "OK" } else { "SLOW!" };
+                println!(
+                    "Rotator {}: velocity = {} ({}% of max) - {}",
+                    addr,
+                    velocity,
+                    velocity * 100 / 64,
+                    status
+                );
+            }
+            Err(e) => println!("Rotator {}: Error getting velocity - {}", addr, e),
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_velocity_get_set() {
     println!("\n=== Test: Velocity Get/Set ===");
 
