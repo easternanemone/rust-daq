@@ -443,7 +443,7 @@ impl PluginService for PluginServiceImpl {
                             device_id,
                         }));
                     }
-                    drop(registry); // Release registry lock
+                    // Registry lock already released by register_plugin_instance
 
                     // 3. Store instance locally in PluginService
                     let instance = PluginInstance {
