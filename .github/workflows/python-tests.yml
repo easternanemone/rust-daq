@@ -3,13 +3,13 @@ name: Python Bindings Tests
 on:
   push:
     paths:
-      - "python/**"
-      - "src/**"
+      - "crates/rust-daq/clients/python/**"
+      - "crates/**"
       - ".github/workflows/python-tests.yml"
   pull_request:
     paths:
-      - "python/**"
-      - "src/**"
+      - "crates/rust-daq/clients/python/**"
+      - "crates/**"
       - ".github/workflows/python-tests.yml"
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
 
       - name: Build Python extension with maturin
         run: maturin develop --release
-        working-directory: python
+        working-directory: crates/rust-daq/clients/python
 
       - name: Report toolchain versions
         run: |
@@ -61,16 +61,16 @@ jobs:
       - name: Run pytest with coverage
         run: >-
           pytest
-          python/tests
+          crates/rust-daq/clients/python/tests
           --maxfail=1
           --disable-warnings
           --cov=rust_daq
           --cov-report=term-missing
-          --cov-report=xml:python/coverage.xml
+          --cov-report=xml:crates/rust-daq/clients/python/coverage.xml
 
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: python-coverage-${{ matrix.python-version }}
-          path: python/coverage.xml
+          path: crates/rust-daq/clients/python/coverage.xml

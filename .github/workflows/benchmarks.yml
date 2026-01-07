@@ -6,13 +6,13 @@ on:
     branches:
       - main
     paths:
-      - 'python/**'
-      - 'src/**'
+      - 'crates/rust-daq/clients/python/**'
+      - 'crates/**'
       - '.github/workflows/benchmarks.yml'
   pull_request:
     paths:
-      - 'python/**'
-      - 'src/**'
+      - 'crates/rust-daq/clients/python/**'
+      - 'crates/**'
       - '.github/workflows/benchmarks.yml'
 
 jobs:
@@ -38,8 +38,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            python/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('python/Cargo.lock', 'Cargo.lock') }}
+            crates/rust-daq/clients/python/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('crates/rust-daq/clients/python/Cargo.lock', 'Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -52,32 +52,32 @@ jobs:
         run: pip install maturin
 
       - name: Rust micro-benchmarks
-        run: cargo bench --manifest-path python/Cargo.toml
+        run: cargo bench --manifest-path crates/rust-daq/clients/python/Cargo.toml
 
       - name: Build Python extension
-        run: maturin develop --manifest-path python/Cargo.toml --release
+        run: maturin develop --manifest-path crates/rust-daq/clients/python/Cargo.toml --release
 
       - name: Python comparison benchmarks
         run: |
-          python python/benchmarks/compare_alternatives.py \
+          python crates/rust-daq/clients/python/benchmarks/compare_alternatives.py \
             --samples 30000 \
             --repeats 5 \
             --runs 3 \
             --rate 1000 \
             --duration 12 \
-            --json python/benchmarks/results/ci.json
+            --json crates/rust-daq/clients/python/benchmarks/results/ci.json
 
       - name: Upload Criterion report
         uses: actions/upload-artifact@v4
         with:
           name: criterion-report
-          path: python/target/criterion
+          path: crates/rust-daq/clients/python/target/criterion
 
       - name: Upload benchmark summary
         uses: actions/upload-artifact@v4
         with:
           name: python-benchmark-summary
-          path: python/benchmarks/results
+          path: crates/rust-daq/clients/python/benchmarks/results
 
       - name: Publish summary
         run: |
