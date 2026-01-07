@@ -3,6 +3,7 @@
 //! Provides DAC control with voltage sliders and optional waveform generation.
 
 use eframe::egui::{self, Color32, RichText, Ui};
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
@@ -175,14 +176,14 @@ impl AnalogOutputPanel {
             .inner;
 
         if zero_clicked {
-            self.zero_all_outputs(runtime);
+            self.zero_all_outputs(runtime, client.as_deref().cloned());
         }
 
         ui.separator();
 
         // Channel controls
         for ch in 0..self.n_channels as usize {
-            self.render_channel_control(ui, ch, runtime);
+            self.render_channel_control(ui, ch, runtime, client.as_deref().cloned());
             ui.separator();
         }
 
@@ -194,7 +195,13 @@ impl AnalogOutputPanel {
     }
 
     /// Render control for a single channel.
-    fn render_channel_control(&mut self, ui: &mut Ui, ch: usize, runtime: &Runtime) {
+    fn render_channel_control(
+        &mut self,
+        ui: &mut Ui,
+        ch: usize,
+        runtime: &Runtime,
+        client: Option<DaqClient>,
+    ) {
         let range = NI_VOLTAGE_RANGES[self.channels[ch].range_index];
 
         // Collect actions to perform after UI rendering to avoid borrow conflicts
@@ -293,7 +300,7 @@ impl AnalogOutputPanel {
 
         // Execute queued voltage writes after UI is done
         for (channel, voltage) in actions {
-            self.write_voltage(channel, voltage, runtime);
+            self.write_voltage(channel, voltage, runtime, client.clone());
         }
     }
 
@@ -367,23 +374,57 @@ impl AnalogOutputPanel {
     }
 
     /// Write voltage to a channel.
-    fn write_voltage(&self, channel: u32, voltage: f64, runtime: &Runtime) {
+    fn write_voltage(
+        &self,
+        channel: u32,
+        voltage: f64,
+        runtime: &Runtime,
+        client: Option<DaqClient>,
+    ) {
         let tx = self.action_tx.clone();
+        let device_id = self.device_id.clone();
 
         runtime.spawn(async move {
-            // TODO: Implement actual gRPC call
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            let _ = tx
-                .send(ActionResult::WriteSuccess { channel, voltage })
-                .await;
+            if let Some(mut client) = client {
+                let args = json!({
+                    "channel": channel,
+                    "voltage": voltage
+                })
+                .to_string();
+
+                match client
+                    .execute_device_command(&device_id, "write_voltage", &args)
+                    .await
+                {
+                    Ok(_) => {
+                        let _ = tx
+                            .send(ActionResult::WriteSuccess { channel, voltage })
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(ActionResult::WriteError {
+                                channel,
+                                error: e.to_string(),
+                            })
+                            .await;
+                    }
+                }
+            } else {
+                // Simulation
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                let _ = tx
+                    .send(ActionResult::WriteSuccess { channel, voltage })
+                    .await;
+            }
         });
     }
 
     /// Zero all outputs.
-    fn zero_all_outputs(&mut self, runtime: &Runtime) {
+    fn zero_all_outputs(&mut self, runtime: &Runtime, client: Option<DaqClient>) {
         for ch in 0..self.n_channels as usize {
             self.channels[ch].voltage = 0.0;
-            self.write_voltage(ch as u32, 0.0, runtime);
+            self.write_voltage(ch as u32, 0.0, runtime, client.clone());
         }
 
         let tx = self.action_tx.clone();
