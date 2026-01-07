@@ -1,4 +1,9 @@
 #![cfg(not(target_arch = "wasm32"))]
+#![allow(
+    clippy::unwrap_used,
+    clippy::new_without_default,
+    clippy::must_use_candidate
+)]
 //! End-to-End Acquisition Tests
 //!
 //! Tests that simulate full acquisition sessions with multiple instruments,
