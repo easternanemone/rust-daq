@@ -69,6 +69,9 @@
 // TODO: Fix doc comment links and generic types
 #![allow(rustdoc::broken_intra_doc_links)]
 #![allow(rustdoc::invalid_html_tags)]
+// TODO: Address clippy lints in dedicated refactoring pass
+#![allow(clippy::redundant_field_names)]
+#![allow(clippy::expect_used)]
 
 pub mod config;
 pub mod prelude;

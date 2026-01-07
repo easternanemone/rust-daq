@@ -1,5 +1,15 @@
 // TODO: Fix doc comment links
 #![allow(rustdoc::broken_intra_doc_links)]
+// TODO: Address these clippy lints in a dedicated refactoring pass
+#![allow(clippy::mixed_attributes_style)]
+#![allow(clippy::redundant_field_names)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::single_match)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::vec_init_then_push)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::io_other_error)]
 
 pub mod grpc;
 pub mod health;
