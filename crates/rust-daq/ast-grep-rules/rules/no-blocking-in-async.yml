@@ -10,6 +10,9 @@ rule:
     - pattern: std::fs::write($$$)
     - pattern: std::fs::File::open($$$)
     - pattern: std::fs::create_dir($$$)
+    - pattern: $X.open($$$)
+    - pattern: $X.write_all($$$)
+    - pattern: $X.read_exact($$$)
   inside:
     kind: function_item
     pattern: async fn $NAME($$$) { $$$ }

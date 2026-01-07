@@ -1,0 +1,10 @@
+# ast-grep ignore file
+target/
+.git/
+.venv/
+node_modules/
+dist/
+**/archive/**
+**/*.json
+**/*.xml
+**/*.md

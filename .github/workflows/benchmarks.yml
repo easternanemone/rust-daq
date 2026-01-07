@@ -52,20 +52,23 @@ jobs:
         run: pip install maturin
 
       - name: Rust micro-benchmarks
-        run: cargo bench --manifest-path crates/rust-daq/clients/python/Cargo.toml
+        run: cargo bench --release
+        working-directory: crates/rust-daq/clients/python
 
       - name: Build Python extension
-        run: maturin develop --manifest-path crates/rust-daq/clients/python/Cargo.toml --release
+        run: maturin develop --release
+        working-directory: crates/rust-daq/clients/python
 
       - name: Python comparison benchmarks
         run: |
-          python crates/rust-daq/clients/python/benchmarks/compare_alternatives.py \
+          python benchmarks/compare_alternatives.py \
             --samples 30000 \
             --repeats 5 \
             --runs 3 \
             --rate 1000 \
             --duration 12 \
-            --json crates/rust-daq/clients/python/benchmarks/results/ci.json
+            --json benchmarks/results/ci.json
+        working-directory: crates/rust-daq/clients/python
 
       - name: Upload Criterion report
         uses: actions/upload-artifact@v4

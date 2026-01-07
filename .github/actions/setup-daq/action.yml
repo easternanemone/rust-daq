@@ -29,6 +29,19 @@ runs:
         sudo apt-get install -y libudev-dev pkg-config libhdf5-dev protobuf-compiler \
           libxkbcommon-dev libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
+    - name: Install system dependencies (macOS)
+      shell: bash
+      if: runner.os == 'macOS'
+      run: |
+        brew install hdf5 protobuf
+
+    - name: Install system dependencies (Windows)
+      shell: bash
+      if: runner.os == 'Windows'
+      run: |
+        vcpkg install hdf5:x64-windows protobuf:x64-windows
+        echo "HDF5_DIR=C:/vcpkg/installed/x64-windows" >> $GITHUB_ENV
+
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:

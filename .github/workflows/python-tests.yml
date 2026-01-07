@@ -61,12 +61,13 @@ jobs:
       - name: Run pytest with coverage
         run: >-
           pytest
-          crates/rust-daq/clients/python/tests
+          tests
           --maxfail=1
           --disable-warnings
           --cov=rust_daq
           --cov-report=term-missing
-          --cov-report=xml:crates/rust-daq/clients/python/coverage.xml
+          --cov-report=xml:coverage.xml
+        working-directory: crates/rust-daq/clients/python
 
       - name: Upload coverage artifact
         if: always()
