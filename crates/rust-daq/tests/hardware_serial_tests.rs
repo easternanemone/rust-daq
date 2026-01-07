@@ -3,6 +3,7 @@
     clippy::unwrap_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
+    clippy::needless_range_loop,
     missing_docs
 )]
 //! Integration tests for hardware serial drivers
