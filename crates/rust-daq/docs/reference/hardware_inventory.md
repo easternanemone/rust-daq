@@ -1,8 +1,44 @@
 # Hardware Inventory - Laboratory Instruments
 
 **System:** maitai@100.117.5.12 (laboratory hardware system)
-**Last Verified:** 2025-11-20
+**Last Verified:** 2026-01-06
 **Detection Tool:** `cargo run --bin quick_test --features instrument_serial`
+
+---
+
+## Device Discovery Mechanisms
+
+This system uses two different discovery mechanisms depending on device type:
+
+### Serial Devices (ELL14, MaiTai, ESP300, Newport 1830-C)
+
+Serial devices use OS-level paths (`/dev/ttyUSBN`) that can change between reboots
+based on USB enumeration order. **Use stable `/dev/serial/by-id/` paths** for
+reliability:
+
+```rust
+use daq_hardware::port_resolver::resolve_port;
+use daq_hardware::drivers::ell14::Ell14Bus;
+
+// Stable path (recommended) - survives reboots
+let bus = Ell14Bus::open("/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0").await?;
+
+// Direct path (fragile) - may change after reboot
+let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+```
+
+### PVCAM Cameras (Prime BSI)
+
+PVCAM cameras are discovered via the SDK's internal enumeration. The camera name
+(e.g., `"PrimeBSI"`) is stored in camera firmware and is **inherently stable** -
+no special path handling required:
+
+```rust
+use daq_driver_pvcam::PvcamDriver;
+
+// Camera name from firmware - always stable regardless of USB port
+let camera = PvcamDriver::new_async("PrimeBSI".to_string()).await?;
+```
 
 ---
 
@@ -11,7 +47,7 @@
 ### 1. Photometrics Prime BSI sCMOS Camera ✅
 
 **Interface:** USB 3.0 (via PVCAM SDK)
-**Camera Name:** `PrimeBSI`
+**Camera Name:** `PrimeBSI` (firmware-reported, inherently stable)
 **Status:** OPERATIONAL
 **Sensor:** GS2020 (2048×2048 pixels, 16-bit)
 
@@ -26,10 +62,9 @@ use daq_driver_pvcam::PvcamDriver;
 let camera = PvcamDriver::new_async("PrimeBSI".to_string()).await?;
 ```
 
-**Notes:**
-- Not a serial device - uses Teledyne PVCAM SDK over USB
-- Requires PVCAM runtime libraries installed
-- Camera name "PrimeBSI" is reported by PVCAM enumeration
+**Discovery Note:** Unlike serial devices, PVCAM cameras don't need stable path
+handling. The camera name is read from firmware during SDK enumeration and remains
+constant regardless of which USB port the camera is connected to.
 
 ---
 

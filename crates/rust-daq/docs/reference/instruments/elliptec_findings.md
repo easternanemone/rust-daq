@@ -3,8 +3,9 @@
 ## Summary
 
 **Status**: ✅ **WORKING** - All three rotators operational with bus-centric API
-**Last Updated**: 2025-01-06
+**Last Updated**: 2026-01-06
 **Port**: `/dev/ttyUSB1` (FTDI FT230X)
+**Stable Path**: `/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0`
 **Baud Rate**: 9600, 8N1, no flow control
 **Device Addresses**: 2, 3, 8
 **Known Issue**: Rotator 2 occasionally returns GS02 (mechanical timeout) - suspected hardware issue
@@ -19,8 +20,11 @@ The ELL14 uses RS-485 multidrop architecture where all devices share one serial 
 use daq_hardware::drivers::ell14::Ell14Bus;
 use daq_hardware::capabilities::Movable;
 
-// Open the RS-485 bus (one connection for all devices)
-let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+// Open the RS-485 bus using stable by-id path (recommended)
+let bus = Ell14Bus::open("/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0").await?;
+
+// Or using direct path (may change between reboots)
+// let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
 
 // Get calibrated device handles (queries device for pulses/degree)
 let rotator_2 = bus.device("2").await?;
