@@ -65,6 +65,9 @@ use daq_proto::daq::{
     DeviceCommandRequest,
     DeviceStateRequest,
     FrameData,
+    run_engine_service_client::RunEngineServiceClient,
+    QueuePlanRequest,
+    QueuePlanResponse,
     GetParameterRequest,
     GetRecordingStatusRequest,
     // Storage types
@@ -117,6 +120,7 @@ pub struct DaqClient {
     scan: ScanServiceClient<Channel>,
     storage: StorageServiceClient<Channel>,
     module: ModuleServiceClient<Channel>,
+    run_engine: RunEngineServiceClient<Channel>,
 }
 
 /// Maximum message size for gRPC (16 MB for high-resolution camera frames)
@@ -175,7 +179,8 @@ impl DaqClient {
                 .max_decoding_message_size(MAX_MESSAGE_SIZE),
             scan: ScanServiceClient::new(channel.clone()),
             storage: StorageServiceClient::new(channel.clone()),
-            module: ModuleServiceClient::new(channel),
+            module: ModuleServiceClient::new(channel.clone()),
+            run_engine: RunEngineServiceClient::new(channel),
         })
     }
 
@@ -738,6 +743,30 @@ impl DaqClient {
         };
         // Use hardware_streaming client (no request timeout) for long-lived streams
         let response = self.hardware_streaming.stream_observables(request).await?;
+        Ok(response.into_inner())
+    }
+
+    // =========================================================================
+    // RunEngine Service
+    // =========================================================================
+
+    /// Queue a plan for execution
+    pub async fn queue_plan(
+        &mut self,
+        plan_type: &str,
+        parameters: std::collections::HashMap<String, String>,
+        device_mapping: std::collections::HashMap<String, String>,
+        metadata: std::collections::HashMap<String, String>,
+    ) -> Result<QueuePlanResponse> {
+        let response = self
+            .run_engine
+            .queue_plan(QueuePlanRequest {
+                plan_type: plan_type.to_string(),
+                parameters,
+                device_mapping,
+                metadata,
+            })
+            .await?;
         Ok(response.into_inner())
     }
 }
