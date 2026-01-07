@@ -35,11 +35,12 @@ jobs:
 
       - name: cargo clippy
         # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
-        run: cargo clippy --workspace --all-targets --features full -- -D warnings
+        # Exclude daq-egui which requires full desktop environment (X11/Wayland runtime)
+        run: cargo clippy --workspace --all-targets --features full --exclude daq-egui -- -D warnings
 
       - name: cargo clippy (SARIF)
         run: |
-          cargo clippy --workspace --all-targets --features full --message-format=json -- -D warnings | \
+          cargo clippy --workspace --all-targets --features full --exclude daq-egui --message-format=json -- -D warnings | \
           clippy-sarif | tee clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
@@ -141,7 +142,8 @@ jobs:
 
       - name: Check documentation builds
         # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
-        run: cargo doc --workspace --features full --no-deps --document-private-items
+        # Exclude daq-egui which requires full desktop environment (X11/Wayland runtime)
+        run: cargo doc --workspace --features full --no-deps --document-private-items --exclude daq-egui
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -347,7 +349,8 @@ jobs:
         run: |
           mkdir -p coverage
           # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
-          cargo llvm-cov --workspace --features full --lcov --output-path coverage/lcov.info --html --output-dir coverage/html
+          # Exclude daq-egui which requires full desktop environment (X11/Wayland runtime)
+          cargo llvm-cov --workspace --features full --exclude daq-egui --lcov --output-path coverage/lcov.info --html --output-dir coverage/html
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
