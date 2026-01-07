@@ -34,11 +34,12 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
+        run: cargo clippy --workspace --all-targets --features full -- -D warnings
 
       - name: cargo clippy (SARIF)
         run: |
-          cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings | \
+          cargo clippy --workspace --all-targets --features full --message-format=json -- -D warnings | \
           clippy-sarif | tee clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
@@ -138,7 +139,8 @@ jobs:
         uses: ./.github/actions/setup-daq
 
       - name: Check documentation builds
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
+        # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
+        run: cargo doc --workspace --features full --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -343,7 +345,8 @@ jobs:
       - name: Generate coverage report
         run: |
           mkdir -p coverage
-          cargo llvm-cov --workspace --all-features --lcov --output-path coverage/lcov.info --html --output-dir coverage/html
+          # Use 'full' feature set (excludes pvcam_hardware, storage_hdf5 which need native SDKs)
+          cargo llvm-cov --workspace --features full --lcov --output-path coverage/lcov.info --html --output-dir coverage/html
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
