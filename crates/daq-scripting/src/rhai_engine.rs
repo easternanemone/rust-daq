@@ -404,6 +404,7 @@ impl RhaiEngine {
     }
 
     /// Convert Rhai error to ScriptError
+    #[allow(clippy::boxed_local)] // Box is required as this is how Rhai returns errors
     fn convert_rhai_error(err: Box<EvalAltResult>) -> ScriptError {
         match *err {
             EvalAltResult::ErrorParsing(parse_error, pos) => ScriptError::SyntaxError {
