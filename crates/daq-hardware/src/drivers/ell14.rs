@@ -509,11 +509,9 @@ impl Ell14Bus {
         let port_path_for_open = resolved_path.clone();
 
         // Open port in blocking task to avoid blocking async runtime
-        let port = tokio::task::spawn_blocking(move || {
-            Ell14Driver::open_port(&port_path_for_open)
-        })
-        .await
-        .context("spawn_blocking for ELL14 port opening failed")??;
+        let port = tokio::task::spawn_blocking(move || Ell14Driver::open_port(&port_path_for_open))
+            .await
+            .context("spawn_blocking for ELL14 port opening failed")??;
 
         Ok(Self {
             port: Arc::new(Mutex::new(port)),
@@ -1577,9 +1575,9 @@ impl Ell14Driver {
 
             // Validate response length - support both older (30 char) and newer (33 char) formats
             // Common fields (first 17 chars) are the same in both formats
-            const MIN_LEN: usize = 25;  // Minimum for basic parsing
-            const OLD_FW_LEN: usize = 30;  // Older firmware (v15-v17)
-            const NEW_FW_LEN: usize = 33;  // Newer firmware (original spec)
+            const MIN_LEN: usize = 25; // Minimum for basic parsing
+            const OLD_FW_LEN: usize = 30; // Older firmware (v15-v17)
+            const NEW_FW_LEN: usize = 33; // Newer firmware (original spec)
 
             if data.len() < MIN_LEN {
                 return Err(anyhow!(
@@ -1963,8 +1961,7 @@ impl Ell14Driver {
             // 87 points × 6 bytes = 522 bytes
             for i in 0..87 {
                 let offset = i * 6;
-                let period =
-                    u16::from_be_bytes([raw_data[offset], raw_data[offset + 1]]) as u32;
+                let period = u16::from_be_bytes([raw_data[offset], raw_data[offset + 1]]) as u32;
                 let fwd_adc =
                     u16::from_be_bytes([raw_data[offset + 2], raw_data[offset + 3]]) as f64;
                 let bwd_adc =

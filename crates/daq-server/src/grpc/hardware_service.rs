@@ -1277,10 +1277,8 @@ impl HardwareService for HardwareServiceImpl {
                         let current_fps = fps_window.len() as f64;
 
                         if frame.timestamp_ns > 0 {
-                            let latency_ms = now_ns()
-                                .saturating_sub(frame.timestamp_ns)
-                                as f64
-                                / 1_000_000.0;
+                            let latency_ms =
+                                now_ns().saturating_sub(frame.timestamp_ns) as f64 / 1_000_000.0;
                             latency_samples = latency_samples.saturating_add(1);
                             avg_latency_ms +=
                                 (latency_ms - avg_latency_ms) / latency_samples as f64;

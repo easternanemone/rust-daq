@@ -200,9 +200,7 @@ pub fn resolve_port(port_or_spec: &str) -> Result<String, PortResolveError> {
         let path = Path::new(port_or_spec);
         if path.exists() {
             // Canonicalize to resolve symlinks
-            return Ok(std::fs::canonicalize(path)?
-                .to_string_lossy()
-                .into_owned());
+            return Ok(std::fs::canonicalize(path)?.to_string_lossy().into_owned());
         } else {
             return Err(PortResolveError::PortNotFound(port_or_spec.to_string()));
         }
@@ -225,9 +223,7 @@ pub fn resolve_port(port_or_spec: &str) -> Result<String, PortResolveError> {
     // Otherwise, treat as a direct path and check existence
     let path = Path::new(port_or_spec);
     if path.exists() {
-        Ok(std::fs::canonicalize(path)?
-            .to_string_lossy()
-            .into_owned())
+        Ok(std::fs::canonicalize(path)?.to_string_lossy().into_owned())
     } else {
         Err(PortResolveError::PortNotFound(port_or_spec.to_string()))
     }
@@ -349,10 +345,7 @@ mod tests {
         let (vendor, model, serial) =
             parse_by_id_name("usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_0001-if00-port0");
         assert_eq!(vendor, Some("Silicon".to_string())); // Note: underscore in vendor name
-        assert_eq!(
-            model,
-            Some("Labs_CP2102_USB_to_UART_Bridge".to_string())
-        );
+        assert_eq!(model, Some("Labs_CP2102_USB_to_UART_Bridge".to_string()));
         assert_eq!(serial, Some("0001".to_string()));
     }
 

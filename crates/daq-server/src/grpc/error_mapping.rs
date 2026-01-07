@@ -39,9 +39,10 @@ pub fn map_daq_error_to_status(err: DaqError) -> Status {
         // Configuration errors → InvalidArgument
         // Client provided bad configuration that cannot be accepted
         DaqError::Config(e) => Status::new(Code::InvalidArgument, format!("Config error: {}", e)),
-        DaqError::Configuration(msg) => {
-            Status::new(Code::InvalidArgument, format!("Configuration error: {}", msg))
-        }
+        DaqError::Configuration(msg) => Status::new(
+            Code::InvalidArgument,
+            format!("Configuration error: {}", msg),
+        ),
 
         // Hardware/connection errors → Unavailable
         // Resource is temporarily unavailable, client may retry
@@ -96,9 +97,10 @@ pub fn map_daq_error_to_status(err: DaqError) -> Status {
         ),
 
         // Module state errors → FailedPrecondition or Unimplemented
-        DaqError::ModuleOperationNotSupported(op) => {
-            Status::new(Code::Unimplemented, format!("Operation not supported: {}", op))
-        }
+        DaqError::ModuleOperationNotSupported(op) => Status::new(
+            Code::Unimplemented,
+            format!("Operation not supported: {}", op),
+        ),
         DaqError::CameraNotAssigned => {
             Status::new(Code::FailedPrecondition, "Camera not assigned to module")
         }

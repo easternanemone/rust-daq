@@ -1395,7 +1395,9 @@ impl HardwareConfig {
 /// plugin_id = "my-sensor-v1"
 /// address = "/dev/ttyUSB2"
 /// ```
-pub async fn create_registry_from_config(config: &HardwareConfig) -> Result<DeviceRegistry, DaqError> {
+pub async fn create_registry_from_config(
+    config: &HardwareConfig,
+) -> Result<DeviceRegistry, DaqError> {
     let registry = DeviceRegistry::new();
 
     // Validate all device configurations first (fail fast)

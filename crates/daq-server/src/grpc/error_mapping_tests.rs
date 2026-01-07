@@ -171,7 +171,10 @@ mod tests {
 
         #[test]
         fn parameter_no_hardware_reader_maps_to_failed_precondition() {
-            assert_status_code(DaqError::ParameterNoHardwareReader, Code::FailedPrecondition);
+            assert_status_code(
+                DaqError::ParameterNoHardwareReader,
+                Code::FailedPrecondition,
+            );
         }
     }
 

@@ -78,7 +78,7 @@ pub use server::{DaqServer, start_server, start_server_with_hardware};
 pub use storage_service::StorageServiceImpl;
 
 // Error mapping (bd-cxvg)
-pub use error_mapping::{map_daq_error_to_status, DaqResultExt};
+pub use error_mapping::{DaqResultExt, map_daq_error_to_status};
 
 // Re-export commonly used proto types - ControlService
 pub use proto::control_service_client::ControlServiceClient;

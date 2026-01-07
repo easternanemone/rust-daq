@@ -168,8 +168,9 @@ impl TiffWriter {
 
     /// Write an 8-bit grayscale frame.
     fn write_8bit_frame(frame: &Frame, path: &Path) -> Result<()> {
-        let img: GrayImage = ImageBuffer::from_raw(frame.width, frame.height, frame.data.clone())
-            .ok_or_else(|| anyhow!("Failed to create image buffer from frame data"))?;
+        let img: GrayImage =
+            ImageBuffer::from_raw(frame.width, frame.height, frame.data.clone())
+                .ok_or_else(|| anyhow!("Failed to create image buffer from frame data"))?;
 
         let file = File::create(path).with_context(|| format!("Failed to create {:?}", path))?;
         let writer = BufWriter::new(file);
@@ -211,11 +212,7 @@ impl TiffWriter {
         let writer = BufWriter::new(file);
 
         // Convert u16 data back to bytes for the encoder
-        let bytes: Vec<u8> = img
-            .as_raw()
-            .iter()
-            .flat_map(|&v| v.to_le_bytes())
-            .collect();
+        let bytes: Vec<u8> = img.as_raw().iter().flat_map(|&v| v.to_le_bytes()).collect();
 
         let encoder = image::codecs::tiff::TiffEncoder::new(writer);
         encoder

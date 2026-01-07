@@ -53,14 +53,10 @@ async fn get_bus() -> &'static Ell14Bus {
 ///
 /// All drivers share the same serial port connection (RS-485 multidrop bus).
 async fn create_driver(addr: &str) -> Ell14Driver {
-    get_bus()
-        .await
-        .device(addr)
-        .await
-        .expect(&format!(
-            "Failed to create calibrated driver for address {}",
-            addr
-        ))
+    get_bus().await.device(addr).await.expect(&format!(
+        "Failed to create calibrated driver for address {}",
+        addr
+    ))
 }
 
 // =============================================================================
@@ -2452,10 +2448,7 @@ async fn test_diagnose_rotator2_move_issue() {
         .open_native_async()
         .expect("Failed to open serial port");
 
-    async fn raw_transact(
-        port: &mut tokio_serial::SerialStream,
-        cmd: &str,
-    ) -> String {
+    async fn raw_transact(port: &mut tokio_serial::SerialStream, cmd: &str) -> String {
         port.write_all(cmd.as_bytes()).await.unwrap();
         sleep(Duration::from_millis(100)).await;
 

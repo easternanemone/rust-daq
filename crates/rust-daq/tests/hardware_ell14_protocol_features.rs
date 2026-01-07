@@ -56,7 +56,10 @@ async fn create_driver() -> Ell14Driver {
 async fn verify_device_responsive(driver: &Ell14Driver) -> bool {
     match driver.get_device_info().await {
         Ok(info) => {
-            println!("  Device verified: {} (SN: {})", info.device_type, info.serial);
+            println!(
+                "  Device verified: {} (SN: {})",
+                info.device_type, info.serial
+            );
             true
         }
         Err(e) => {
@@ -90,18 +93,34 @@ async fn test_motor_periods_get() {
     match driver.get_motor1_periods().await {
         Ok(periods) => {
             println!("Motor 1 periods:");
-            println!("  Forward: {} (freq: {} Hz)",
+            println!(
+                "  Forward: {} (freq: {} Hz)",
                 periods.forward_period,
-                if periods.forward_period > 0 { 14_740_000 / periods.forward_period as u32 } else { 0 }
+                if periods.forward_period > 0 {
+                    14_740_000 / periods.forward_period as u32
+                } else {
+                    0
+                }
             );
-            println!("  Backward: {} (freq: {} Hz)",
+            println!(
+                "  Backward: {} (freq: {} Hz)",
                 periods.backward_period,
-                if periods.backward_period > 0 { 14_740_000 / periods.backward_period as u32 } else { 0 }
+                if periods.backward_period > 0 {
+                    14_740_000 / periods.backward_period as u32
+                } else {
+                    0
+                }
             );
 
             // Verify periods are in reasonable range for piezo motors
-            assert!(periods.forward_period > 0, "Forward period should not be zero");
-            assert!(periods.backward_period > 0, "Backward period should not be zero");
+            assert!(
+                periods.forward_period > 0,
+                "Forward period should not be zero"
+            );
+            assert!(
+                periods.backward_period > 0,
+                "Backward period should not be zero"
+            );
         }
         Err(e) => {
             println!("Failed to get motor 1 periods: {}", e);
@@ -115,13 +134,23 @@ async fn test_motor_periods_get() {
     match driver.get_motor2_periods().await {
         Ok(periods) => {
             println!("Motor 2 periods:");
-            println!("  Forward: {} (freq: {} Hz)",
+            println!(
+                "  Forward: {} (freq: {} Hz)",
                 periods.forward_period,
-                if periods.forward_period > 0 { 14_740_000 / periods.forward_period as u32 } else { 0 }
+                if periods.forward_period > 0 {
+                    14_740_000 / periods.forward_period as u32
+                } else {
+                    0
+                }
             );
-            println!("  Backward: {} (freq: {} Hz)",
+            println!(
+                "  Backward: {} (freq: {} Hz)",
                 periods.backward_period,
-                if periods.backward_period > 0 { 14_740_000 / periods.backward_period as u32 } else { 0 }
+                if periods.backward_period > 0 {
+                    14_740_000 / periods.backward_period as u32
+                } else {
+                    0
+                }
             );
         }
         Err(e) => {
@@ -130,7 +159,10 @@ async fn test_motor_periods_get() {
     }
 
     // Verify device is still responsive
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after test");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after test"
+    );
 }
 
 #[tokio::test]
@@ -163,7 +195,10 @@ async fn test_motor_periods_set_and_restore() {
         original.forward_period + 5
     };
 
-    println!("Setting test period: {} (original: {})", test_period, original.forward_period);
+    println!(
+        "Setting test period: {} (original: {})",
+        test_period, original.forward_period
+    );
 
     match driver.set_motor1_forward_period(test_period).await {
         Ok(_) => {
@@ -182,9 +217,15 @@ async fn test_motor_periods_set_and_restore() {
 
     // RESTORE ORIGINAL VALUE - CRITICAL
     println!("\nRestoring original period...");
-    match driver.set_motor1_forward_period(original.forward_period).await {
+    match driver
+        .set_motor1_forward_period(original.forward_period)
+        .await
+    {
         Ok(_) => {
-            println!("Restored motor 1 forward period to {}", original.forward_period);
+            println!(
+                "Restored motor 1 forward period to {}",
+                original.forward_period
+            );
         }
         Err(e) => {
             println!("WARNING: Failed to restore original period: {}", e);
@@ -199,8 +240,10 @@ async fn test_motor_periods_set_and_restore() {
     match driver.get_motor1_periods().await {
         Ok(restored) => {
             let diff = (restored.forward_period as i32 - original.forward_period as i32).abs();
-            println!("Verified: Forward period = {} (diff from original: {})",
-                restored.forward_period, diff);
+            println!(
+                "Verified: Forward period = {} (diff from original: {})",
+                restored.forward_period, diff
+            );
             assert!(diff <= 1, "Period should be restored to original value");
         }
         Err(e) => {
@@ -209,7 +252,10 @@ async fn test_motor_periods_set_and_restore() {
     }
 
     // Final device check
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after restore");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after restore"
+    );
 }
 
 // =============================================================================
@@ -233,22 +279,29 @@ async fn test_current_curve_scan_motor1() {
     let start = std::time::Instant::now();
 
     // Run the scan with timeout protection
-    let scan_result = tokio::time::timeout(
-        Duration::from_secs(20),
-        driver.scan_current_curve_motor1()
-    ).await;
+    let scan_result =
+        tokio::time::timeout(Duration::from_secs(20), driver.scan_current_curve_motor1()).await;
 
     match scan_result {
         Ok(Ok(scan)) => {
             println!("Scan completed in {:.1}s", start.elapsed().as_secs_f64());
-            println!("Motor {}: {} data points", scan.motor_number, scan.data_points.len());
+            println!(
+                "Motor {}: {} data points",
+                scan.motor_number,
+                scan.data_points.len()
+            );
 
             if !scan.data_points.is_empty() {
                 let first = &scan.data_points[0];
                 let last = &scan.data_points[scan.data_points.len() - 1];
-                println!("  Frequency range: {} Hz - {} Hz", first.frequency_hz, last.frequency_hz);
-                println!("  First point current: fwd={:.3}A, bwd={:.3}A",
-                    first.forward_current_amps, first.backward_current_amps);
+                println!(
+                    "  Frequency range: {} Hz - {} Hz",
+                    first.frequency_hz, last.frequency_hz
+                );
+                println!(
+                    "  First point current: fwd={:.3}A, bwd={:.3}A",
+                    first.forward_current_amps, first.backward_current_amps
+                );
             }
 
             assert_eq!(scan.data_points.len(), 87, "Should have 87 data points");
@@ -272,7 +325,10 @@ async fn test_current_curve_scan_motor1() {
     driver.wait_settled().await.ok();
 
     // Verify device is responsive
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after scan");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after scan"
+    );
 }
 
 /// Test that stop() can abort a current curve scan
@@ -297,7 +353,10 @@ async fn test_current_curve_scan_abort() {
     sleep(Duration::from_millis(200)).await;
 
     // Verify device is responsive
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after abort");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after abort"
+    );
 }
 
 // =============================================================================
@@ -321,7 +380,10 @@ async fn test_isolate_device_and_cancel() {
             // Verify device still responds to individual address
             sleep(Duration::from_millis(100)).await;
             let pos = driver.position().await;
-            println!("Device still responds to individual address: {:?}", pos.is_ok());
+            println!(
+                "Device still responds to individual address: {:?}",
+                pos.is_ok()
+            );
 
             // CANCEL ISOLATION IMMEDIATELY
             println!("Canceling isolation...");
@@ -337,7 +399,10 @@ async fn test_isolate_device_and_cancel() {
 
     // Verify device is fully responsive
     sleep(Duration::from_millis(100)).await;
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after cancel");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after cancel"
+    );
 }
 
 // =============================================================================
@@ -369,12 +434,16 @@ async fn test_fine_tune_motors() {
     // Run fine-tuning with timeout protection
     let result = tokio::time::timeout(
         Duration::from_secs(360), // 6 minute timeout
-        driver.fine_tune_motors()
-    ).await;
+        driver.fine_tune_motors(),
+    )
+    .await;
 
     match result {
         Ok(Ok(_)) => {
-            println!("Fine-tuning completed in {:.1}s", start.elapsed().as_secs_f64());
+            println!(
+                "Fine-tuning completed in {:.1}s",
+                start.elapsed().as_secs_f64()
+            );
 
             // Check new motor info
             if let Ok(new_info) = driver.get_motor1_info().await {
@@ -404,7 +473,10 @@ async fn test_fine_tune_motors() {
     driver.move_abs(initial_pos).await.ok();
     driver.wait_settled().await.ok();
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after fine-tuning");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after fine-tuning"
+    );
 }
 
 /// Test that stop() can abort motor fine-tuning
@@ -429,7 +501,10 @@ async fn test_fine_tune_motors_abort() {
     sleep(Duration::from_millis(200)).await;
 
     // Verify device is responsive
-    let pos = driver.position().await.expect("Should get position after stop");
+    let pos = driver
+        .position()
+        .await
+        .expect("Should get position after stop");
     println!("Position after stop: {:.2}°", pos);
 
     // Return to initial if needed
@@ -438,7 +513,10 @@ async fn test_fine_tune_motors_abort() {
         driver.wait_settled().await.ok();
     }
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after abort");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after abort"
+    );
 }
 
 // =============================================================================
@@ -465,12 +543,16 @@ async fn test_clean_mechanics() {
     // Run cleaning with timeout protection
     let result = tokio::time::timeout(
         Duration::from_secs(360), // 6 minute timeout
-        driver.clean_mechanics()
-    ).await;
+        driver.clean_mechanics(),
+    )
+    .await;
 
     match result {
         Ok(Ok(_)) => {
-            println!("Cleaning completed in {:.1}s", start.elapsed().as_secs_f64());
+            println!(
+                "Cleaning completed in {:.1}s",
+                start.elapsed().as_secs_f64()
+            );
         }
         Ok(Err(e)) => {
             println!("Cleaning failed: {}", e);
@@ -488,7 +570,10 @@ async fn test_clean_mechanics() {
     driver.move_abs(initial_pos).await.ok();
     driver.wait_settled().await.ok();
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after cleaning");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after cleaning"
+    );
 }
 
 /// Test that stop() can abort cleaning cycle
@@ -509,7 +594,10 @@ async fn test_clean_mechanics_abort() {
     sleep(Duration::from_millis(200)).await;
 
     // Verify device is responsive and return to initial
-    let pos = driver.position().await.expect("Should get position after stop");
+    let pos = driver
+        .position()
+        .await
+        .expect("Should get position after stop");
     println!("Position after stop: {:.2}°", pos);
 
     if (pos - initial_pos).abs() > POSITION_TOLERANCE_DEG {
@@ -517,7 +605,10 @@ async fn test_clean_mechanics_abort() {
         driver.wait_settled().await.ok();
     }
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after abort");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after abort"
+    );
 }
 
 // =============================================================================
@@ -544,7 +635,10 @@ async fn test_skip_frequency_search() {
     }
 
     // Verify device is still responsive
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after skip_frequency_search");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after skip_frequency_search"
+    );
 }
 
 // =============================================================================
@@ -561,7 +655,11 @@ async fn test_home_with_direction_clockwise() {
     println!("Initial position: {:.2}°", initial_pos);
 
     // Move away from current position first
-    let target = if initial_pos < 180.0 { initial_pos + 45.0 } else { initial_pos - 45.0 };
+    let target = if initial_pos < 180.0 {
+        initial_pos + 45.0
+    } else {
+        initial_pos - 45.0
+    };
     driver.move_abs(target).await.expect("Failed to move");
     driver.wait_settled().await.expect("Failed to settle");
     let moved_pos = driver.position().await.expect("Failed to get position");
@@ -571,7 +669,10 @@ async fn test_home_with_direction_clockwise() {
     println!("Homing clockwise...");
     let start = std::time::Instant::now();
 
-    match driver.home_with_direction(Some(HomeDirection::Clockwise)).await {
+    match driver
+        .home_with_direction(Some(HomeDirection::Clockwise))
+        .await
+    {
         Ok(_) => {
             println!("Homing completed in {:.2}s", start.elapsed().as_secs_f64());
 
@@ -584,10 +685,16 @@ async fn test_home_with_direction_clockwise() {
 
             // Home should be repeatable - do it again
             sleep(Duration::from_millis(200)).await;
-            driver.home_with_direction(Some(HomeDirection::Clockwise)).await.ok();
+            driver
+                .home_with_direction(Some(HomeDirection::Clockwise))
+                .await
+                .ok();
             let home_pos2 = driver.position().await.expect("Failed to get position");
             let repeatability = (home_pos2 - home_pos).abs();
-            println!("Homing repeatability: {:.3}° (second home: {:.2}°)", repeatability, home_pos2);
+            println!(
+                "Homing repeatability: {:.3}° (second home: {:.2}°)",
+                repeatability, home_pos2
+            );
             assert!(repeatability < 1.0, "Homing should be repeatable within 1°");
         }
         Err(e) => {
@@ -602,7 +709,10 @@ async fn test_home_with_direction_clockwise() {
     driver.move_abs(initial_pos).await.ok();
     driver.wait_settled().await.ok();
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after homing");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after homing"
+    );
 }
 
 #[tokio::test]
@@ -615,7 +725,11 @@ async fn test_home_with_direction_counter_clockwise() {
     println!("Initial position: {:.2}°", initial_pos);
 
     // Move away from current position
-    let target = if initial_pos < 180.0 { initial_pos + 45.0 } else { initial_pos - 45.0 };
+    let target = if initial_pos < 180.0 {
+        initial_pos + 45.0
+    } else {
+        initial_pos - 45.0
+    };
     driver.move_abs(target).await.expect("Failed to move");
     driver.wait_settled().await.expect("Failed to settle");
     let moved_pos = driver.position().await.expect("Failed to get position");
@@ -625,7 +739,10 @@ async fn test_home_with_direction_counter_clockwise() {
     println!("Homing counter-clockwise...");
     let start = std::time::Instant::now();
 
-    match driver.home_with_direction(Some(HomeDirection::CounterClockwise)).await {
+    match driver
+        .home_with_direction(Some(HomeDirection::CounterClockwise))
+        .await
+    {
         Ok(_) => {
             println!("Homing completed in {:.2}s", start.elapsed().as_secs_f64());
 
@@ -638,10 +755,16 @@ async fn test_home_with_direction_counter_clockwise() {
 
             // Home should be repeatable
             sleep(Duration::from_millis(200)).await;
-            driver.home_with_direction(Some(HomeDirection::CounterClockwise)).await.ok();
+            driver
+                .home_with_direction(Some(HomeDirection::CounterClockwise))
+                .await
+                .ok();
             let home_pos2 = driver.position().await.expect("Failed to get position");
             let repeatability = (home_pos2 - home_pos).abs();
-            println!("Homing repeatability: {:.3}° (second home: {:.2}°)", repeatability, home_pos2);
+            println!(
+                "Homing repeatability: {:.3}° (second home: {:.2}°)",
+                repeatability, home_pos2
+            );
             assert!(repeatability < 1.0, "Homing should be repeatable within 1°");
         }
         Err(e) => {
@@ -655,7 +778,10 @@ async fn test_home_with_direction_counter_clockwise() {
     driver.move_abs(initial_pos).await.ok();
     driver.wait_settled().await.ok();
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after homing");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after homing"
+    );
 }
 
 #[tokio::test]
@@ -668,7 +794,11 @@ async fn test_home_with_direction_default() {
     println!("Initial position: {:.2}°", initial_pos);
 
     // Move away from current position
-    let target = if initial_pos < 180.0 { initial_pos + 30.0 } else { initial_pos - 30.0 };
+    let target = if initial_pos < 180.0 {
+        initial_pos + 30.0
+    } else {
+        initial_pos - 30.0
+    };
     driver.move_abs(target).await.expect("Failed to move");
     driver.wait_settled().await.expect("Failed to settle");
     let moved_pos = driver.position().await.expect("Failed to get position");
@@ -726,9 +856,15 @@ async fn test_full_parameter_cycle_with_restore() {
 
     println!("Initial state:");
     println!("  Position: {:.2}°", initial_pos);
-    if let Some(v) = initial_velocity { println!("  Velocity: {}%", v); }
-    if let Some(j) = initial_jog { println!("  Jog step: {:.2}°", j); }
-    if let Some(h) = initial_home_offset { println!("  Home offset: {:.3}°", h); }
+    if let Some(v) = initial_velocity {
+        println!("  Velocity: {}%", v);
+    }
+    if let Some(j) = initial_jog {
+        println!("  Jog step: {:.2}°", j);
+    }
+    if let Some(h) = initial_home_offset {
+        println!("  Home offset: {:.3}°", h);
+    }
 
     // Modify parameters
     println!("\nModifying parameters...");
@@ -778,12 +914,18 @@ async fn test_full_parameter_cycle_with_restore() {
 
     if let (Some(orig), Ok(current)) = (initial_jog, driver.get_jog_step().await) {
         let diff = (orig - current).abs();
-        println!("  Jog step: {:.2}° (diff from original: {:.2}°)", current, diff);
+        println!(
+            "  Jog step: {:.2}° (diff from original: {:.2}°)",
+            current, diff
+        );
         assert!(diff < 0.5, "Jog step should be restored");
     }
 
     // Final device verification
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after restore");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after restore"
+    );
     println!("\nAll parameters restored successfully!");
 }
 
@@ -803,7 +945,10 @@ async fn test_stop_command_always_works() {
     println!("2. Stop during movement...");
     driver.move_abs(180.0).await.expect("Start move");
     sleep(Duration::from_millis(100)).await; // Let movement start
-    driver.stop().await.expect("Stop should work during movement");
+    driver
+        .stop()
+        .await
+        .expect("Stop should work during movement");
     sleep(Duration::from_millis(200)).await;
     println!("   OK");
 
@@ -884,7 +1029,10 @@ async fn test_bus_rapid_command_sequence() {
         // NO delay between commands - stress test
     }
 
-    println!("\nResults: {} successes, {} errors", success_count, error_count);
+    println!(
+        "\nResults: {} successes, {} errors",
+        success_count, error_count
+    );
 
     // Allow some errors due to bus contention, but majority should succeed
     let success_rate = success_count as f64 / total_commands as f64;
@@ -897,7 +1045,10 @@ async fn test_bus_rapid_command_sequence() {
     );
 
     // Final verification
-    assert!(verify_device_responsive(&driver).await, "Device should recover after rapid commands");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should recover after rapid commands"
+    );
 }
 
 /// Test proper command spacing prevents errors
@@ -912,7 +1063,11 @@ async fn test_bus_command_spacing() {
     let total_commands = 15;
     let inter_command_delay = Duration::from_millis(50); // Recommended minimum
 
-    println!("Sending {} commands with {}ms spacing...", total_commands, inter_command_delay.as_millis());
+    println!(
+        "Sending {} commands with {}ms spacing...",
+        total_commands,
+        inter_command_delay.as_millis()
+    );
 
     for i in 0..total_commands {
         match driver.position().await {
@@ -927,7 +1082,10 @@ async fn test_bus_command_spacing() {
         sleep(inter_command_delay).await;
     }
 
-    println!("\nResults: {}/{} commands succeeded", success_count, total_commands);
+    println!(
+        "\nResults: {}/{} commands succeeded",
+        success_count, total_commands
+    );
 
     // With proper spacing, ALL commands should succeed
     assert_eq!(
@@ -944,7 +1102,10 @@ async fn test_bus_mixed_command_types() {
 
     let driver = create_driver().await;
 
-    let initial_pos = driver.position().await.expect("Failed to get initial position");
+    let initial_pos = driver
+        .position()
+        .await
+        .expect("Failed to get initial position");
     let inter_command_delay = Duration::from_millis(100); // Increased for reliability
 
     println!("Running mixed command sequence...");
@@ -956,7 +1117,7 @@ async fn test_bus_mixed_command_types() {
         "get_device_info",
         "get_velocity",
         "small_move",
-        "wait_settle",  // Added settle time after move
+        "wait_settle", // Added settle time after move
         "get_position",
         "get_jog_step",
         "stop",
@@ -992,7 +1153,11 @@ async fn test_bus_mixed_command_types() {
         sleep(inter_command_delay).await;
     }
 
-    println!("\nResults: {}/{} commands succeeded", success_count, commands.len());
+    println!(
+        "\nResults: {}/{} commands succeeded",
+        success_count,
+        commands.len()
+    );
 
     // Return to initial position
     ensure_stopped(&driver).await;
@@ -1019,7 +1184,10 @@ async fn test_bus_error_recovery() {
     let driver = create_driver().await;
 
     // First, verify device is working
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive initially");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive initially"
+    );
 
     // Intentionally cause potential errors with very rapid commands
     println!("Sending burst of commands to potentially cause errors...");
@@ -1051,7 +1219,10 @@ async fn test_bus_error_recovery() {
     );
 
     // Final verification
-    assert!(verify_device_responsive(&driver).await, "Device should be fully recovered");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be fully recovered"
+    );
 }
 
 /// Test that sequential operations on multiple addresses work correctly
@@ -1097,7 +1268,10 @@ async fn test_bus_sequential_multi_address() {
         sleep(inter_device_delay).await;
     }
 
-    assert!(verify_device_responsive(&driver).await, "Device should work after multi-address pattern");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should work after multi-address pattern"
+    );
     println!("\nMulti-address pattern completed successfully");
 }
 
@@ -1116,7 +1290,10 @@ async fn test_bus_long_operation_interruptibility() {
     let target = if initial_pos < 180.0 { 350.0 } else { 10.0 };
     println!("Starting move to {:.0}° (long travel)...", target);
 
-    driver.move_abs(target).await.expect("Move command should succeed");
+    driver
+        .move_abs(target)
+        .await
+        .expect("Move command should succeed");
 
     // Wait briefly then interrupt
     sleep(Duration::from_millis(200)).await;
@@ -1152,7 +1329,10 @@ async fn test_bus_long_operation_interruptibility() {
     driver.move_abs(initial_pos).await.ok();
     driver.wait_settled().await.ok();
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after interrupt");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after interrupt"
+    );
 }
 
 /// Test bus doesn't lock up under sustained load
@@ -1170,7 +1350,10 @@ async fn test_bus_sustained_load() {
     let mut query_count = 0;
     let mut error_count = 0;
 
-    println!("Running sustained load for {}s at ~10 queries/sec...", test_duration.as_secs());
+    println!(
+        "Running sustained load for {}s at ~10 queries/sec...",
+        test_duration.as_secs()
+    );
 
     while start.elapsed() < test_duration {
         match driver.position().await {
@@ -1186,7 +1369,10 @@ async fn test_bus_sustained_load() {
 
     println!("\nResults:");
     println!("  Duration: {:.1}s", elapsed);
-    println!("  Queries: {} successful, {} errors", query_count, error_count);
+    println!(
+        "  Queries: {} successful, {} errors",
+        query_count, error_count
+    );
     println!("  Rate: {:.1} queries/sec", queries_per_sec);
     println!("  Error rate: {:.1}%", error_rate * 100.0);
 
@@ -1196,7 +1382,10 @@ async fn test_bus_sustained_load() {
         error_rate * 100.0
     );
 
-    assert!(verify_device_responsive(&driver).await, "Device should be responsive after sustained load");
+    assert!(
+        verify_device_responsive(&driver).await,
+        "Device should be responsive after sustained load"
+    );
 }
 
 // =============================================================================

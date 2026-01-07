@@ -6,7 +6,11 @@
 //! TDD: This test is designed to FAIL when blocking patterns exist in the codebase.
 
 // Guard: Requires server+scripting, but NOT storage_hdf5 (different DaqServer constructor)
-#![cfg(all(feature = "server", feature = "scripting", not(feature = "storage_hdf5")))]
+#![cfg(all(
+    feature = "server",
+    feature = "scripting",
+    not(feature = "storage_hdf5")
+))]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,12 +18,12 @@ use tokio::sync::Barrier;
 use tonic::transport::Server;
 use tonic::Request;
 
-use daq_server::grpc::server::DaqServer;
-use daq_hardware::registry::DeviceRegistry;
 use daq_experiment::RunEngine;
+use daq_hardware::registry::DeviceRegistry;
+use daq_proto::daq::control_service_client::ControlServiceClient;
 use daq_proto::daq::control_service_server::ControlServiceServer;
 use daq_proto::daq::DaemonInfoRequest;
-use daq_proto::daq::control_service_client::ControlServiceClient;
+use daq_server::grpc::server::DaqServer;
 
 /// Timeout for individual gRPC requests to prevent test hangs.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -54,8 +58,9 @@ async fn run_benchmark_case(
         // Light-weight call to measure responsiveness, with timeout
         let result = tokio::time::timeout(
             REQUEST_TIMEOUT,
-            client.get_daemon_info(Request::new(DaemonInfoRequest {}))
-        ).await;
+            client.get_daemon_info(Request::new(DaemonInfoRequest {})),
+        )
+        .await;
 
         match result {
             Ok(Ok(_)) => latencies.push(start.elapsed()),
@@ -95,7 +100,7 @@ fn calc_percentiles(latencies: &[Duration]) -> (Duration, Duration, Duration) {
 /// It is designed to demonstrate the catastrophic effect of blocking code (std::thread::sleep)
 /// in an async runtime compared to proper async code (tokio::time::sleep).
 ///
-/// It will FAIL initially if the blocking code issues are present/simulated, 
+/// It will FAIL initially if the blocking code issues are present/simulated,
 /// or properly asserted to show degradation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn benchmark_grpc_latency_under_load() {
@@ -124,15 +129,15 @@ async fn benchmark_grpc_latency_under_load() {
     // Simulate background tasks incorrectly using blocking I/O or sleep.
     // We launch tasks equal to worker_threads to saturate the runtime.
     println!("Starting Case B: Blocking Load...");
-    
+
     let barrier = Arc::new(Barrier::new(5)); // 4 workers + main thread
-    
+
     // Spawn tasks that periodically block
     let keep_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let keep_running_clone = keep_running.clone();
-    
+
     // Spawn 4 tasks (equal to worker count) to maximize chance of starvation
-    for _ in 0..4 { 
+    for _ in 0..4 {
         let kr = keep_running_clone.clone();
         let b = barrier.clone();
         tokio::spawn(async move {
@@ -148,7 +153,7 @@ async fn benchmark_grpc_latency_under_load() {
 
     // Wait for all blocking tasks to be ready
     barrier.wait().await;
-    
+
     // Give tasks a moment to start clogging the runtime
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -158,7 +163,7 @@ async fn benchmark_grpc_latency_under_load() {
         "Case B (Blocking): P50={:?}, P90={:?}, P99={:?}",
         p50_b, p90_b, p99_b
     );
-    
+
     // Stop blocking tasks
     keep_running.store(false, std::sync::atomic::Ordering::Relaxed);
     tokio::time::sleep(Duration::from_millis(100)).await; // Cooldown
@@ -166,11 +171,12 @@ async fn benchmark_grpc_latency_under_load() {
     // === Case C: Target (Async Load) ===
     // Simulate heavy background activity using proper async await
     println!("Starting Case C: Async Load...");
-    
+
     let keep_running_c = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let keep_running_c_clone = keep_running_c.clone();
 
-    for _ in 0..20 { // More tasks, well-behaved
+    for _ in 0..20 {
+        // More tasks, well-behaved
         let kr = keep_running_c_clone.clone();
         tokio::spawn(async move {
             while kr.load(std::sync::atomic::Ordering::Relaxed) {
@@ -189,7 +195,7 @@ async fn benchmark_grpc_latency_under_load() {
         "Case C (Async):    P50={:?}, P90={:?}, P99={:?}",
         p50_c, p90_c, p99_c
     );
-    
+
     keep_running_c.store(false, std::sync::atomic::Ordering::Relaxed);
 
     // === Assertions ===
@@ -204,7 +210,9 @@ async fn benchmark_grpc_latency_under_load() {
     assert!(
         p99_b > p99_a * 2 || degradation_vs_baseline > min_degradation,
         "Case B (Blocking) P99 {:?} should be worse than Baseline P99 {:?} (degradation: {:?})",
-        p99_b, p99_a, degradation_vs_baseline
+        p99_b,
+        p99_a,
+        degradation_vs_baseline
     );
 
     // Check if Case B is slower than Case C
@@ -217,6 +225,12 @@ async fn benchmark_grpc_latency_under_load() {
     );
 
     println!("\n=== Summary ===");
-    println!("Blocking degradation vs Baseline: {:?}", degradation_vs_baseline);
-    println!("Blocking degradation vs Async:    {:?}", degradation_vs_async);
+    println!(
+        "Blocking degradation vs Baseline: {:?}",
+        degradation_vs_baseline
+    );
+    println!(
+        "Blocking degradation vs Async:    {:?}",
+        degradation_vs_async
+    );
 }
