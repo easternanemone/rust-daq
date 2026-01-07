@@ -53,7 +53,7 @@ for i in 0..num_points {
     // NOTE: Requires ReadableHandle binding (v0.6.0)
     let power = power_meter.read();
 
-    print(`[${i+1}/${num_points}] Position: ${position:0.2} mm → Power: ${power:0.3e} W`);
+    print(`[${i+1}/${num_points}] Position: ${position} mm → Power: ${power} W`);
 
     sleep(0.1);
 }

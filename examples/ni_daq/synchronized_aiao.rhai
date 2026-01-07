@@ -117,7 +117,7 @@ for i in 0..total_samples {
     // Display every 10th sample
     if i % 10 == 0 {
         let diff_mv = (v_out - v_in) * 1000.0;
-        print(`   ${i:4}  |   ${t:6.3}   | ${v_out:8.4}  | ${v_in:8.4}  | ${diff_mv:+8.2}`);
+        print(`   ${i}  |   ${t}   | ${v_out}  | ${v_in}  | ${diff_mv}`);
     }
 
     // Maintain sample timing
@@ -172,10 +172,10 @@ for i in 0..n {
 }
 let rms_error = sqrt(sum_err_sq / n);
 
-print(`  Correlation:     ${correlation:.6}`);
-print(`  Gain:            ${gain:.6}`);
-print(`  Offset:          ${intercept:.6} V`);
-print(`  RMS Error:       ${rms_error * 1000.0:.3} mV`);
+print(`  Correlation:     ${correlation}`);
+print(`  Gain:            ${gain}`);
+print(`  Offset:          ${intercept} V`);
+print(`  RMS Error:       ${rms_error * 1000.0} mV`);
 print("─────────────────────────────────────────────────────────");
 print("");
 
@@ -201,7 +201,7 @@ for level in step_levels {
 
         // Show progress
         if j < 5 || j >= settle_samples - 2 {
-            print(`    t=${j * sample_period * 1000.0:5.1} ms: ${v:7.4} V (error: ${error * 1000.0:+6.2} mV)`);
+            print(`    t=${j * sample_period * 1000.0} ms: ${v} V (error: ${error * 1000.0} mV)`);
         } else if j == 5 {
             print(`    ...`);
         }
@@ -248,7 +248,7 @@ for i in 0..triangle_samples {
     let ai_diff = ai0 - ai1;
 
     if i % 5 == 0 {
-        print(`   ${i:4}  | ${(offset + v_triangle):8.4}  | ${(offset + amplitude - v_triangle):8.4}  | ${ai0:8.4}  | ${ai1:8.4}  | ${ai_diff:+7.4}`);
+        print(`   ${i}  | ${offset + v_triangle}  | ${offset + amplitude - v_triangle}  | ${ai0}  | ${ai1}  | ${ai_diff}`);
     }
 }
 

@@ -100,7 +100,7 @@ while trigger_count < num_triggers {
 
         // Display results
         let trig_str = if trigger_count < 10 { ` ${trigger_count}` } else { `${trigger_count}` };
-        print(`   ${trig_str}   |  ${readings[0]:7.4}  |  ${readings[1]:7.4}  |  ${readings[2]:7.4}  |  ${readings[3]:7.4}`);
+        print(`   ${trig_str}   |  ${readings[0]}  |  ${readings[1]}  |  ${readings[2]}  |  ${readings[3]}`);
     }
 
     // Small delay to avoid CPU spinning
@@ -147,7 +147,7 @@ if data.len() > 0 {
         let variance = (sum_sq / n) - (mean * mean);
         let std_dev = if variance > 0.0 { sqrt(variance) } else { 0.0 };
 
-        print(`  AI${ai_channels[ch_idx]}  | ${mean:9.5} | ${std_dev:9.5} | ${min_v:9.5} | ${max_v:9.5}`);
+        print(`  AI${ai_channels[ch_idx]}  | ${mean} | ${std_dev} | ${min_v} | ${max_v}`);
     }
 
     print("─────────────────────────────────────────────────────────");

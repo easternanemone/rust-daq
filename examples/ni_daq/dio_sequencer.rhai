@@ -79,7 +79,7 @@ for i in 0..16 {
         bin_str += if (i & (1 << b)) != 0 { "1" } else { "0" };
     }
 
-    print(`  Count ${i:2}: [${bin_str}] (0x${i:02X})`);
+    print(`  Count ${i}: [${bin_str}]`);
     sleep(step_delay);
 }
 

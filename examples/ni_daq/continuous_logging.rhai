@@ -118,7 +118,7 @@ while samples_acquired < total_samples {
         let v0 = ai.read(ai_channels[0]);
         let v1 = if ai_channels.len() > 1 { ai.read(ai_channels[1]) } else { 0.0 };
 
-        print(`  ${total_elapsed:7.2}  |   ${samples_acquired:5}   |    ${current_rate:6.1}   |  ${v0:7.4}  |  ${v1:7.4}`);
+        print(`  ${total_elapsed}  |   ${samples_acquired}   |    ${current_rate}   |  ${v0}  |  ${v1}`);
 
         last_display_time = timestamp();
         display_count += 1;
@@ -156,7 +156,7 @@ for ch_idx in 0..ai_channels.len() {
     let max_v = channel_maxs[ch_idx];
     let range_v = max_v - min_v;
 
-    print(`  AI${ai_channels[ch_idx]}  | ${mean:9.5} | ${std_dev:9.5} | ${min_v:9.5} | ${max_v:9.5} | ${range_v:9.5}`);
+    print(`  AI${ai_channels[ch_idx]}  | ${mean} | ${std_dev} | ${min_v} | ${max_v} | ${range_v}`);
 }
 
 print("─────────────────────────────────────────────────────────");

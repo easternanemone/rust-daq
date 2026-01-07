@@ -96,7 +96,7 @@ for i in 0..num_points {
 
     // Display progress
     let idx_str = if i < 9 { `  ${i+1}` } else { ` ${i+1}` };
-    print(`  ${idx_str}    |  ${v_out:6.3}   |  ${v_in:6.3}   |  ${diff_mv:+7.2}`);
+    print(`  ${idx_str}    |  ${v_out}   |  ${v_in}   |  ${diff_mv}`);
 }
 
 print("─────────────────────────────────────────────────────────");
@@ -123,11 +123,11 @@ let std_dev = if variance > 0.0 { sqrt(variance) } else { 0.0 };
 
 print("");
 print("Scan Statistics:");
-print(`  Mean:      ${mean:6.4} V`);
-print(`  Std Dev:   ${std_dev:6.4} V`);
-print(`  Min:       ${min_v:6.4} V`);
-print(`  Max:       ${max_v:6.4} V`);
-print(`  Range:     ${(max_v - min_v):6.4} V`);
+print(`  Mean:      ${mean} V`);
+print(`  Std Dev:   ${std_dev} V`);
+print(`  Min:       ${min_v} V`);
+print(`  Max:       ${max_v} V`);
+print(`  Range:     ${max_v - min_v} V`);
 
 // =============================================================================
 // Cleanup - Zero the output
