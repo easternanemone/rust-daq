@@ -18,6 +18,9 @@ arrow = { version = "57", optional = true, features = ["ipc"] }
 parquet = { version = "57", optional = true, default-features = false, features = ["arrow", "async", "snap"] }
 memmap2 = "0.9"
 
+# Image formats
+image = { version = "0.25", optional = true, default-features = false, features = ["tiff"] }
+
 # Async & Logging
 tokio = { version = "1.36", features = ["sync", "fs"] }
 tracing = "0.1"
@@ -34,6 +37,7 @@ default = []
 storage_hdf5 = ["dep:hdf5"]
 storage_arrow = ["dep:arrow"]
 storage_parquet = ["dep:parquet", "dep:arrow"]
+storage_tiff = ["dep:image"]
 networking = []
 
 # Examples that require specific features (bd-jnfu.13)

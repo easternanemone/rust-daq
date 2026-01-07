@@ -5,6 +5,8 @@ pub mod hdf5_writer;
 pub mod ring_buffer;
 pub mod ring_buffer_reader;
 pub mod tap_registry;
+#[cfg(feature = "storage_tiff")]
+pub mod tiff_writer;
 
 pub use comedi_writer::{
     AcquisitionMetadata, ChannelConfig, ComediStreamWriter, ComediStreamWriterBuilder,
@@ -19,3 +21,5 @@ pub use ring_buffer_reader::{ReaderStats, RingBufferReader};
 pub use arrow_writer::ArrowDocumentWriter;
 #[cfg(feature = "storage_parquet")]
 pub use arrow_writer::ParquetDocumentWriter;
+#[cfg(feature = "storage_tiff")]
+pub use tiff_writer::TiffWriter;
