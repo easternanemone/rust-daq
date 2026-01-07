@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
-// Standalone test to verify scripting engine works correctly
-// This test is independent of the rest of the codebase
+#![allow(clippy::unwrap_used, clippy::unwrap_err_used, clippy::missing_docs_in_private_items)]
+//! Standalone test to verify scripting engine works correctly.
+//! This test is independent of the rest of the codebase.
 
 use daq_scripting::rhai::{Dynamic, Engine, EvalAltResult, Scope};
 
