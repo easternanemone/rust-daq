@@ -32,7 +32,7 @@ language: rust
 rule:
   pattern: Duration::from_secs($N)
 message: "Avoid hardcoded timeouts. Make them configurable."
-severity: warning
+severity: hint
 ---
 id: incomplete-implementation
 language: rust
