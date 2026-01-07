@@ -54,6 +54,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use tracing::instrument;
 
 /// Driver for Spectra-Physics MaiTai tunable Ti:Sapphire laser
 ///
@@ -247,6 +248,7 @@ impl MaiTaiDriver {
     ///
     /// # Errors
     /// Returns error if wavelength is out of range or command fails
+    #[instrument(skip(self), fields(wavelength_nm), err)]
     pub async fn set_wavelength(&self, wavelength_nm: f64) -> Result<()> {
         self.wavelength_nm.set(wavelength_nm).await
     }
@@ -255,6 +257,7 @@ impl MaiTaiDriver {
     ///
     /// # Returns
     /// Wavelength in nanometers
+    #[instrument(skip(self), err)]
     pub async fn wavelength(&self) -> Result<f64> {
         let response = self.query("WAVELENGTH?").await?;
         // Response format: "820nm" - strip "nm" suffix if present
@@ -280,6 +283,7 @@ impl MaiTaiDriver {
     /// # Command Format
     /// MaiTai uses `SHUTter:1` and `SHUTter:0` with colon separator
     /// (verified from hardware test examples)
+    #[instrument(skip(self), fields(open), err)]
     pub async fn set_shutter(&self, open: bool) -> Result<()> {
         let cmd = if open { "SHUTter:1" } else { "SHUTter:0" };
         self.send_command(cmd).await
@@ -293,6 +297,7 @@ impl MaiTaiDriver {
     /// # Note
     /// Both `SHUTTER?` (uppercase) and `SHUTter?` (mixed case) work for queries.
     /// Using uppercase for consistency with other query commands.
+    #[instrument(skip(self), err)]
     pub async fn shutter(&self) -> Result<bool> {
         let response = self.query("SHUTTER?").await?;
         // Response format: "0" or "1" (no prefix)
@@ -321,6 +326,7 @@ impl MaiTaiDriver {
     /// This method will refuse to enable emission if the shutter is open or
     /// if shutter state cannot be determined. This prevents accidental laser
     /// exposure. Always close the shutter before enabling emission.
+    #[instrument(skip(self), fields(on), err)]
     pub async fn set_emission(&self, on: bool) -> Result<()> {
         // Safety: never enable emission with shutter open
         if on {
@@ -354,6 +360,7 @@ impl MaiTaiDriver {
     ///
     /// # Returns
     /// Laser model and serial number string
+    #[instrument(skip(self), err)]
     pub async fn identify(&self) -> Result<String> {
         self.query("*IDN?").await
     }
@@ -463,6 +470,7 @@ impl Parameterized for MaiTaiDriver {
 
 #[async_trait]
 impl Readable for MaiTaiDriver {
+    #[instrument(skip(self), err)]
     async fn read(&self) -> Result<f64> {
         self.query_power().await
     }
@@ -470,11 +478,13 @@ impl Readable for MaiTaiDriver {
 
 #[async_trait]
 impl WavelengthTunable for MaiTaiDriver {
+    #[instrument(skip(self), fields(wavelength_nm), err)]
     async fn set_wavelength(&self, wavelength_nm: f64) -> Result<()> {
         // Just delegate to parameter - callback handles hardware
         self.wavelength_nm.set(wavelength_nm).await
     }
 
+    #[instrument(skip(self), err)]
     async fn get_wavelength(&self) -> Result<f64> {
         // Query hardware for actual wavelength
         self.wavelength().await
@@ -488,14 +498,17 @@ impl WavelengthTunable for MaiTaiDriver {
 
 #[async_trait]
 impl ShutterControl for MaiTaiDriver {
+    #[instrument(skip(self), err)]
     async fn open_shutter(&self) -> Result<()> {
         self.set_shutter(true).await
     }
 
+    #[instrument(skip(self), err)]
     async fn close_shutter(&self) -> Result<()> {
         self.set_shutter(false).await
     }
 
+    #[instrument(skip(self), err)]
     async fn is_shutter_open(&self) -> Result<bool> {
         self.shutter().await
     }
@@ -503,10 +516,12 @@ impl ShutterControl for MaiTaiDriver {
 
 #[async_trait]
 impl EmissionControl for MaiTaiDriver {
+    #[instrument(skip(self), err)]
     async fn enable_emission(&self) -> Result<()> {
         self.set_emission(true).await
     }
 
+    #[instrument(skip(self), err)]
     async fn disable_emission(&self) -> Result<()> {
         self.set_emission(false).await
     }

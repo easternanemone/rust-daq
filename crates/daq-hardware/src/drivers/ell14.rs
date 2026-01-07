@@ -104,6 +104,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
+use tracing::instrument;
 
 pub trait SerialPortIO: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> SerialPortIO for T {}
@@ -1012,6 +1013,7 @@ impl Ell14Driver {
     /// Send home command to find mechanical zero
     ///
     /// Should be called on initialization to establish reference position
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     pub async fn home(&self) -> Result<()> {
         // Home command doesn't return immediate response - just starts homing
         self.send_command("ho").await?;
@@ -1241,6 +1243,7 @@ impl Ell14Driver {
     ///
     /// The step size can be configured with `set_jog_step()`.
     /// Default jog step is device-dependent.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     pub async fn jog_forward(&self) -> Result<()> {
         self.send_command("fw").await
     }
@@ -1248,11 +1251,13 @@ impl Ell14Driver {
     /// Jog backward by the configured jog step size
     ///
     /// The step size can be configured with `set_jog_step()`.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     pub async fn jog_backward(&self) -> Result<()> {
         self.send_command("bw").await
     }
 
     /// Get the current jog step size in degrees
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     pub async fn get_jog_step(&self) -> Result<f64> {
         let resp = self.transaction("gj").await?;
 
@@ -1282,6 +1287,7 @@ impl Ell14Driver {
     ///
     /// This sets the distance the device moves when `jog_forward()` or
     /// `jog_backward()` is called.
+    #[instrument(skip(self), fields(address = %self.physical_address, degrees), err)]
     pub async fn set_jog_step(&self, degrees: f64) -> Result<()> {
         // Round to nearest pulse to avoid truncation errors
         let pulses = (degrees * self.pulses_per_degree).abs().round() as u32;
@@ -1300,6 +1306,7 @@ impl Ell14Driver {
     /// Stop any ongoing motion immediately
     ///
     /// Useful for emergency stops or to halt motion mid-jog.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     pub async fn stop(&self) -> Result<()> {
         // st is a fire-and-forget command
         self.send_command("st").await
@@ -2384,10 +2391,12 @@ impl Parameterized for Ell14Driver {
 
 #[async_trait]
 impl Movable for Ell14Driver {
+    #[instrument(skip(self), fields(address = %self.physical_address, position_deg), err)]
     async fn move_abs(&self, position_deg: f64) -> Result<()> {
         self.position_deg.set(position_deg).await
     }
 
+    #[instrument(skip(self), fields(address = %self.physical_address, distance_deg), err)]
     async fn move_rel(&self, distance_deg: f64) -> Result<()> {
         // Command: mr (Move Relative)
         // Round to nearest pulse to avoid truncation errors
@@ -2400,6 +2409,7 @@ impl Movable for Ell14Driver {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     async fn position(&self) -> Result<f64> {
         // Command: gp (Get Position)
         let resp = self.transaction("gp").await?;
@@ -2411,6 +2421,7 @@ impl Movable for Ell14Driver {
         Ok(pos)
     }
 
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     async fn wait_settled(&self) -> Result<()> {
         // Poll 'gs' (Get Status) until motion stops
         // Status byte logic from manual:
@@ -2481,6 +2492,7 @@ impl Movable for Ell14Driver {
         }
     }
 
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
     async fn stop(&self) -> Result<()> {
         // ELL14 supports immediate stop via 'st' command
         self.send_command("st").await

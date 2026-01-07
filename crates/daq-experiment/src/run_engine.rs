@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{sleep, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use super::plans::{Plan, PlanCommand};
 use daq_core::data::Frame;
@@ -201,6 +201,7 @@ impl RunEngine {
     }
 
     /// Start executing queued plans
+    #[instrument(skip(self), err)]
     pub async fn start(&self) -> anyhow::Result<()> {
         let current_state = *self.state.read().await;
         if current_state != EngineState::Idle {
@@ -228,6 +229,7 @@ impl RunEngine {
     }
 
     /// Request pause at next checkpoint
+    #[instrument(skip(self), err)]
     pub async fn pause(&self) -> anyhow::Result<()> {
         let current_state = *self.state.read().await;
         if current_state != EngineState::Running {
@@ -240,6 +242,7 @@ impl RunEngine {
     }
 
     /// Resume from paused state
+    #[instrument(skip(self), err)]
     pub async fn resume(&self) -> anyhow::Result<()> {
         let current_state = *self.state.read().await;
         if current_state != EngineState::Paused {
@@ -258,11 +261,13 @@ impl RunEngine {
     /// - If `run_uid` matches the current run, aborts it
     /// - If `run_uid` matches a queued plan, removes it from the queue
     /// - Returns error if `run_uid` is specified but not found
+    #[instrument(skip(self), fields(reason), err)]
     pub async fn abort(&self, reason: &str) -> anyhow::Result<()> {
         self.abort_run(None, reason).await
     }
 
     /// Abort a specific run by run_uid, or current if None/empty (bd-vi16.3)
+    #[instrument(skip(self), fields(run_uid, reason), err)]
     pub async fn abort_run(&self, run_uid: Option<&str>, reason: &str) -> anyhow::Result<()> {
         let target_uid = run_uid.filter(|s| !s.is_empty());
 
@@ -319,6 +324,7 @@ impl RunEngine {
     }
 
     /// Execute a single plan
+    #[instrument(skip(self, queued), fields(run_uid = %queued.run_uid, plan_type = %queued.plan.plan_type()), err)]
     async fn execute_plan(&self, mut queued: QueuedPlan) -> anyhow::Result<()> {
         let plan = &mut queued.plan;
 

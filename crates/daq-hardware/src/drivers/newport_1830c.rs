@@ -56,6 +56,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio_serial::SerialPortBuilderExt;
+use tracing::instrument;
 
 pub trait SerialPortIO: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> SerialPortIO for T {}
@@ -203,6 +204,7 @@ impl Newport1830CDriver {
     ///
     /// # Command Format
     /// Sends `Wxxxx` where xxxx is the 4-digit wavelength (e.g., W0800 for 800nm)
+    #[instrument(skip(self), fields(wavelength_nm), err)]
     pub async fn set_wavelength_nm(&self, wavelength_nm: f64) -> Result<()> {
         self.wavelength_nm.set(wavelength_nm).await
     }
@@ -211,6 +213,7 @@ impl Newport1830CDriver {
     ///
     /// # Returns
     /// Range value (1-8 typically)
+    #[instrument(skip(self), err)]
     pub async fn query_range(&self) -> Result<u8> {
         let response = self.query("R?").await?;
         response
@@ -223,6 +226,7 @@ impl Newport1830CDriver {
     ///
     /// # Returns
     /// Units value (0=W, 1=dBm, 2=dB)
+    #[instrument(skip(self), err)]
     pub async fn query_units(&self) -> Result<u8> {
         let response = self.query("U?").await?;
         response
@@ -334,6 +338,7 @@ impl Parameterized for Newport1830CDriver {
 
 #[async_trait]
 impl Readable for Newport1830CDriver {
+    #[instrument(skip(self), err)]
     async fn read(&self) -> Result<f64> {
         self.query_power().await
     }
@@ -341,10 +346,12 @@ impl Readable for Newport1830CDriver {
 
 #[async_trait]
 impl WavelengthTunable for Newport1830CDriver {
+    #[instrument(skip(self), fields(wavelength_nm), err)]
     async fn set_wavelength(&self, wavelength_nm: f64) -> Result<()> {
         self.set_wavelength_nm(wavelength_nm).await
     }
 
+    #[instrument(skip(self), err)]
     async fn get_wavelength(&self) -> Result<f64> {
         self.query_wavelength().await
     }

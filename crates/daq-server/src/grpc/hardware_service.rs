@@ -84,6 +84,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, interval};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
+use tracing::instrument;
 
 /// Hardware gRPC service implementation
 ///
@@ -207,6 +208,7 @@ impl HardwareService for HardwareServiceImpl {
     // Discovery and Introspection
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "list_devices"))]
     async fn list_devices(
         &self,
         request: Request<ListDevicesRequest>,
@@ -248,6 +250,7 @@ impl HardwareService for HardwareServiceImpl {
         Ok(Response::new(ListDevicesResponse { devices }))
     }
 
+    #[instrument(skip(self, request), fields(method = "get_device_state"))]
     async fn get_device_state(
         &self,
         request: Request<DeviceStateRequest>,
@@ -417,6 +420,7 @@ impl HardwareService for HardwareServiceImpl {
     // Motion Control
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "move_absolute"))]
     async fn move_absolute(
         &self,
         request: Request<MoveRequest>,
@@ -484,6 +488,7 @@ impl HardwareService for HardwareServiceImpl {
         }))
     }
 
+    #[instrument(skip(self, request), fields(method = "move_relative"))]
     async fn move_relative(
         &self,
         request: Request<MoveRequest>,
@@ -546,6 +551,7 @@ impl HardwareService for HardwareServiceImpl {
         }))
     }
 
+    #[instrument(skip(self, request), fields(method = "stop_motion"))]
     async fn stop_motion(
         &self,
         request: Request<StopMotionRequest>,
@@ -683,6 +689,7 @@ impl HardwareService for HardwareServiceImpl {
     // Scalar Readout
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "read_value"))]
     async fn read_value(
         &self,
         request: Request<ReadValueRequest>,
@@ -786,6 +793,7 @@ impl HardwareService for HardwareServiceImpl {
     // Trigger Control
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "arm"))]
     async fn arm(&self, request: Request<ArmRequest>) -> Result<Response<ArmResponse>, Status> {
         let req = request.into_inner();
 
@@ -813,6 +821,7 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
+    #[instrument(skip(self, request), fields(method = "trigger"))]
     async fn trigger(
         &self,
         request: Request<TriggerRequest>,
@@ -852,6 +861,7 @@ impl HardwareService for HardwareServiceImpl {
     // Exposure Control
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "set_exposure"))]
     async fn set_exposure(
         &self,
         request: Request<SetExposureRequest>,
@@ -935,6 +945,7 @@ impl HardwareService for HardwareServiceImpl {
     // Laser Control (bd-pwjo)
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "set_shutter"))]
     async fn set_shutter(
         &self,
         request: Request<SetShutterRequest>,
@@ -992,6 +1003,7 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
+    #[instrument(skip(self, request), fields(method = "set_wavelength"))]
     async fn set_wavelength(
         &self,
         request: Request<SetWavelengthRequest>,
@@ -1045,6 +1057,7 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
+    #[instrument(skip(self, request), fields(method = "set_emission"))]
     async fn set_emission(
         &self,
         request: Request<SetEmissionRequest>,
@@ -1106,6 +1119,7 @@ impl HardwareService for HardwareServiceImpl {
     // Frame Streaming
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "start_stream"))]
     async fn start_stream(
         &self,
         request: Request<StartStreamRequest>,
@@ -1147,6 +1161,7 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
+    #[instrument(skip(self, request), fields(method = "stop_stream"))]
     async fn stop_stream(
         &self,
         request: Request<StopStreamRequest>,
@@ -1363,6 +1378,7 @@ impl HardwareService for HardwareServiceImpl {
     ///
     /// If the device implements Stageable, calls device.stage(). Otherwise,
     /// staging is a no-op that validates the device exists.
+    #[instrument(skip(self, request), fields(method = "stage_device"))]
     async fn stage_device(
         &self,
         request: Request<StageDeviceRequest>,
@@ -1410,6 +1426,7 @@ impl HardwareService for HardwareServiceImpl {
     ///
     /// If the device implements Stageable, calls device.unstage(). Otherwise,
     /// unstaging is a no-op that validates the device exists.
+    #[instrument(skip(self, request), fields(method = "unstage_device"))]
     async fn unstage_device(
         &self,
         request: Request<UnstageDeviceRequest>,
@@ -1453,6 +1470,7 @@ impl HardwareService for HardwareServiceImpl {
     // Passthrough Commands (escape hatch for device-specific features)
     // =========================================================================
 
+    #[instrument(skip(self, request), fields(method = "execute_device_command"))]
     async fn execute_device_command(
         &self,
         request: Request<DeviceCommandRequest>,
@@ -1631,6 +1649,7 @@ impl HardwareService for HardwareServiceImpl {
         )))
     }
 
+    #[instrument(skip(self, request), fields(method = "set_parameter"))]
     async fn set_parameter(
         &self,
         request: Request<SetParameterRequest>,

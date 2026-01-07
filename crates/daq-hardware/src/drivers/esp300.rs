@@ -46,6 +46,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
+use tracing::instrument;
 
 pub trait SerialPortIO: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> SerialPortIO for T {}
@@ -217,6 +218,7 @@ impl Esp300Driver {
     ///
     /// # Arguments
     /// * `velocity` - Velocity in mm/s
+    #[instrument(skip(self), fields(axis = self.axis, velocity), err)]
     pub async fn set_velocity(&self, velocity: f64) -> Result<()> {
         self.send_command(&format!("{}VA{:.6}", self.axis, velocity))
             .await?;
@@ -227,6 +229,7 @@ impl Esp300Driver {
     ///
     /// # Arguments
     /// * `acceleration` - Acceleration in mm/s²
+    #[instrument(skip(self), fields(axis = self.axis, acceleration), err)]
     pub async fn set_acceleration(&self, acceleration: f64) -> Result<()> {
         self.send_command(&format!("{}AC{:.6}", self.axis, acceleration))
             .await?;
@@ -234,6 +237,7 @@ impl Esp300Driver {
     }
 
     /// Get velocity for this axis
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     pub async fn velocity(&self) -> Result<f64> {
         let response = self.query(&format!("{}VA?", self.axis)).await?;
         response
@@ -243,6 +247,7 @@ impl Esp300Driver {
     }
 
     /// Get acceleration for this axis
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     pub async fn acceleration(&self) -> Result<f64> {
         let response = self.query(&format!("{}AC?", self.axis)).await?;
         response
@@ -252,12 +257,14 @@ impl Esp300Driver {
     }
 
     /// Home this axis (find mechanical zero)
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     pub async fn home(&self) -> Result<()> {
         self.send_command(&format!("{}OR", self.axis)).await?;
         self.wait_settled().await
     }
 
     /// Stop motion on this axis
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     pub async fn stop(&self) -> Result<()> {
         self.send_command(&format!("{}ST", self.axis)).await
     }
@@ -332,16 +339,19 @@ impl Parameterized for Esp300Driver {
 
 #[async_trait]
 impl Movable for Esp300Driver {
+    #[instrument(skip(self), fields(axis = self.axis, position), err)]
     async fn move_abs(&self, position: f64) -> Result<()> {
         self.position_mm.set(position).await
     }
 
+    #[instrument(skip(self), fields(axis = self.axis, distance), err)]
     async fn move_rel(&self, distance: f64) -> Result<()> {
         // PR command: Position Relative
         self.send_command(&format!("{}PR{:.6}", self.axis, distance))
             .await
     }
 
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     async fn position(&self) -> Result<f64> {
         // TP command: Tell Position
         let response = self.query(&format!("{}TP?", self.axis)).await?;
@@ -355,6 +365,7 @@ impl Movable for Esp300Driver {
         Ok(pos)
     }
 
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     async fn wait_settled(&self) -> Result<()> {
         // Poll motion status until stationary
         let timeout = Duration::from_secs(60);
@@ -374,6 +385,7 @@ impl Movable for Esp300Driver {
         }
     }
 
+    #[instrument(skip(self), fields(axis = self.axis), err)]
     async fn stop(&self) -> Result<()> {
         // ST command: Stop motion on this axis
         self.send_command(&format!("{}ST", self.axis)).await
