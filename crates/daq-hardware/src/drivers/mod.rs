@@ -1,5 +1,9 @@
 #[cfg(feature = "driver-thorlabs")]
 pub mod ell14;
+
+#[cfg(all(test, feature = "driver-thorlabs"))]
+mod ell14_polling;
+
 #[cfg(feature = "driver-newport")]
 pub mod esp300;
 #[cfg(feature = "driver-spectra-physics")]

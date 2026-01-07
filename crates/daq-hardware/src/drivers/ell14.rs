@@ -101,7 +101,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
 use tracing::instrument;
@@ -110,6 +110,14 @@ pub trait SerialPortIO: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> SerialPortIO for T {}
 pub type DynSerial = Box<dyn SerialPortIO>;
 pub type SharedPort = Arc<Mutex<DynSerial>>;
+
+/// Represents the state of the Elliptec device
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElliptecState {
+    pub position: f64,
+    pub status: u32,
+    pub error_code: Option<u32>,
+}
 
 /// Device information returned by the `in` command
 #[derive(Debug, Clone)]
@@ -639,6 +647,7 @@ pub struct DiscoveredDevice {
 /// // Revert slave to individual control
 /// slave.revert_from_group_slave().await?;
 /// ```
+#[derive(Clone)]
 pub struct Ell14Driver {
     /// Serial port protected by Arc<Mutex> for shared access across multiple drivers
     port: SharedPort,
@@ -652,11 +661,13 @@ pub struct Ell14Driver {
     /// Rotation position parameter (degrees)
     position_deg: Parameter<f64>,
     /// Parameter registry
-    params: ParameterSet,
+    params: Arc<ParameterSet>,
     /// Whether this rotator is configured as a slave in a group
     is_slave_in_group: bool,
     /// Offset applied when in group mode (degrees)
     group_offset_degrees: f64,
+    /// Broadcast channel for state updates
+    state_tx: broadcast::Sender<ElliptecState>,
 }
 
 impl Ell14Driver {
@@ -959,6 +970,7 @@ impl Ell14Driver {
     }
 
     fn build(port: SharedPort, address: String, pulses_per_degree: f64) -> Self {
+        let (state_tx, _) = broadcast::channel(16);
         let mut params = ParameterSet::new();
         let address_clone = address.clone();
 
@@ -999,15 +1011,61 @@ impl Ell14Driver {
             active_address: address,
             pulses_per_degree,
             position_deg: position,
-            params,
+            params: Arc::new(params),
             is_slave_in_group: false,
             group_offset_degrees: 0.0,
+            state_tx,
         }
     }
 
     #[cfg(test)]
-    fn with_test_port(port: SharedPort, address: &str, pulses_per_degree: f64) -> Self {
+    pub(crate) fn with_test_port(port: SharedPort, address: &str, pulses_per_degree: f64) -> Self {
         Self::build(port, address.to_string(), pulses_per_degree)
+    }
+
+    /// Subscribe to state updates
+    pub fn subscribe(&self) -> broadcast::Receiver<ElliptecState> {
+        self.state_tx.subscribe()
+    }
+
+    /// Starts a background task to poll the device state
+    pub fn start_polling(&self, interval: Duration) {
+        let driver = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+                if let Err(e) = driver.poll_state().await {
+                    eprintln!("Failed to poll Elliptec state: {}", e);
+                }
+            }
+        });
+    }
+
+    /// Polls the current state and broadcasts it
+    async fn poll_state(&self) -> Result<()> {
+        let position = self.position().await?;
+        let status = self.status().await?;
+        let error_code = self.error_code().await?;
+        let state = ElliptecState {
+            position,
+            status,
+            error_code,
+        };
+        self.state_tx.send(state).ok(); // Ignore error if no subscribers
+        Ok(())
+    }
+
+    /// Get the current status of the device
+    pub async fn status(&self) -> Result<u32> {
+        let resp = self.transaction("gs").await?;
+        self.parse_status_response(&resp)
+    }
+
+    /// Get the last error code from the device
+    pub async fn error_code(&self) -> Result<Option<u32>> {
+        let resp = self.transaction("ge").await?;
+        self.parse_error_response(&resp)
     }
 
     /// Send home command to find mechanical zero
@@ -1233,6 +1291,37 @@ impl Ell14Driver {
         }
 
         Err(anyhow!("Unexpected position format: {}", response))
+    }
+
+    /// Parse status from hex string response
+    fn parse_status_response(&self, response: &str) -> Result<u32> {
+        self.parse_hex_response(response, "GS", 2)
+    }
+
+    /// Parse error from hex string response
+    fn parse_error_response(&self, response: &str) -> Result<Option<u32>> {
+        let error_code = self.parse_hex_response(response, "GE", 2)?;
+        if error_code == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(error_code))
+        }
+    }
+
+    /// Helper to parse a hex response with a given prefix and length
+    fn parse_hex_response(&self, response: &str, prefix: &str, len: usize) -> Result<u32> {
+        if let Some(idx) = response.find(prefix) {
+            let hex_str = &response[idx + prefix.len()..].trim();
+            let hex_clean = if hex_str.len() > len {
+                &hex_str[..len]
+            } else {
+                hex_str
+            };
+            u32::from_str_radix(hex_clean, 16)
+                .context(format!("Failed to parse {} hex: {}", prefix, hex_clean))
+        } else {
+            Err(anyhow!("Unexpected {} format: {}", prefix, response))
+        }
     }
 
     // =========================================================================
@@ -2385,7 +2474,7 @@ impl Ell14Driver {
 
 impl Parameterized for Ell14Driver {
     fn parameters(&self) -> &ParameterSet {
-        &self.params
+        &*self.params
     }
 }
 
