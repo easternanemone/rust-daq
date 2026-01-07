@@ -62,6 +62,7 @@ use crate::grpc::proto::{
     StreamParameterChangesRequest,
     StreamPositionRequest,
     StreamValuesRequest,
+    StreamingMetrics,
     TriggerRequest,
     TriggerResponse,
     UnstageDeviceRequest,
@@ -76,7 +77,7 @@ use daq_core::observable::Observable;
 use daq_core::parameter::Parameter;
 use daq_hardware::registry::{Capability, DeviceRegistry};
 use serde_json;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1229,6 +1230,10 @@ impl HardwareService for HardwareServiceImpl {
                 None => std::time::Instant::now(),
             };
             let mut frames_sent = 0u64;
+            let mut frames_dropped = 0u64;
+            let mut fps_window: VecDeque<std::time::Instant> = VecDeque::new();
+            let mut avg_latency_ms = 0.0f64;
+            let mut latency_samples = 0u64;
 
             tracing::info!(device_id = %device_id_clone, "Starting frame stream forwarding task");
 
@@ -1239,10 +1244,40 @@ impl HardwareService for HardwareServiceImpl {
                         if let Some(interval) = min_interval {
                             let elapsed = last_frame_time.elapsed();
                             if elapsed < interval {
+                                frames_dropped = frames_dropped.saturating_add(1);
                                 continue; // Skip this frame
                             }
                         }
                         last_frame_time = std::time::Instant::now();
+
+                        let now_instant = std::time::Instant::now();
+                        fps_window.push_back(now_instant);
+                        while let Some(front) = fps_window.front() {
+                            if now_instant.duration_since(*front) > Duration::from_secs(1) {
+                                fps_window.pop_front();
+                            } else {
+                                break;
+                            }
+                        }
+                        let current_fps = fps_window.len() as f64;
+
+                        if frame.timestamp_ns > 0 {
+                            let latency_ms = now_ns()
+                                .saturating_sub(frame.timestamp_ns)
+                                as f64
+                                / 1_000_000.0;
+                            latency_samples = latency_samples.saturating_add(1);
+                            avg_latency_ms +=
+                                (latency_ms - avg_latency_ms) / latency_samples as f64;
+                        }
+
+                        frames_sent = frames_sent.saturating_add(1);
+                        let metrics = StreamingMetrics {
+                            current_fps,
+                            frames_sent,
+                            frames_dropped,
+                            avg_latency_ms,
+                        };
 
                         // Convert Arc<Frame> to FrameData proto (bd-183h: propagate driver metadata)
                         // Use driver-provided timestamps and frame numbers for accurate timing
@@ -1283,6 +1318,7 @@ impl HardwareService for HardwareServiceImpl {
                                 .as_ref()
                                 .map(|m| m.extra.clone())
                                 .unwrap_or_default(),
+                            metrics: Some(metrics),
                         };
 
                         if tx.send(Ok(frame_data)).await.is_err() {
@@ -1297,6 +1333,7 @@ impl HardwareService for HardwareServiceImpl {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         // Frames were dropped due to slow consumer
+                        frames_dropped = frames_dropped.saturating_add(n as u64);
                         tracing::warn!(
                             device_id = %device_id_clone,
                             frames_dropped = n,

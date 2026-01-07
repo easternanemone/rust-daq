@@ -11,11 +11,14 @@ mod camera_integration_tests {
     use daq_proto::daq::hardware_service_server::HardwareService;
     use daq_proto::daq::{
         ArmRequest, DeviceStateRequest, ListDevicesRequest, StartStreamRequest, StopStreamRequest,
-        TriggerRequest,
+        StreamFramesRequest, TriggerRequest,
     };
     use daq_server::grpc::hardware_service::HardwareServiceImpl;
     use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::time::timeout;
+    use tokio_stream::StreamExt;
     use tonic::Request;
 
     /// Create a registry with MockCamera for testing
@@ -272,9 +275,112 @@ mod camera_integration_tests {
         assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     }
 
-    // NOTE: stream_frames() test is not included because MockCamera doesn't
-    // implement take_frame_receiver(). This would require enhancing MockCamera
-    // to support frame streaming, which is tracked in a separate issue.
+    /// Test: stream_frames rate limiting and metrics exposure
+    #[tokio::test]
+    async fn test_stream_frames_rate_limiting_and_metrics() {
+        let registry = create_camera_registry().await;
+        let service = HardwareServiceImpl::new(Arc::new(registry));
+
+        service
+            .start_stream(Request::new(StartStreamRequest {
+                device_id: "test_camera".to_string(),
+                frame_count: None,
+            }))
+            .await
+            .unwrap();
+
+        let request = Request::new(StreamFramesRequest {
+            device_id: "test_camera".to_string(),
+            max_fps: 10,
+        });
+        let mut stream = service.stream_frames(request).await.unwrap().into_inner();
+
+        let start = Instant::now();
+        let mut frames = Vec::new();
+        let mut last_metrics = None;
+
+        while start.elapsed() < Duration::from_secs(3) {
+            match timeout(Duration::from_millis(300), stream.next()).await {
+                Ok(Some(Ok(frame))) => {
+                    last_metrics = frame.metrics.clone();
+                    frames.push(frame);
+                }
+                Ok(Some(Err(err))) => panic!("stream error: {}", err),
+                Ok(None) => break,
+                Err(_) => {}
+            }
+        }
+
+        let elapsed = start.elapsed().as_secs_f64().max(0.1);
+        let fps = frames.len() as f64 / elapsed;
+        assert!(fps <= 14.0, "rate limiter should cap fps, got {}", fps);
+        assert!(fps >= 6.0, "expected some frames, got {}", fps);
+
+        let metrics = last_metrics.expect("streaming metrics should be present");
+        assert!(metrics.frames_sent >= frames.len() as u64);
+        assert!(metrics.current_fps > 0.0);
+        assert!(metrics.avg_latency_ms >= 0.0);
+        assert!(
+            metrics.frames_dropped > 0,
+            "expected dropped/limited frames reported"
+        );
+
+        service
+            .stop_stream(Request::new(StopStreamRequest {
+                device_id: "test_camera".to_string(),
+            }))
+            .await
+            .unwrap();
+    }
+
+    /// Stress test: 60s sustained streaming (ignored by default).
+    #[tokio::test]
+    #[ignore]
+    async fn test_stream_frames_sustained_60s() {
+        let registry = create_camera_registry().await;
+        let service = HardwareServiceImpl::new(Arc::new(registry));
+
+        service
+            .start_stream(Request::new(StartStreamRequest {
+                device_id: "test_camera".to_string(),
+                frame_count: None,
+            }))
+            .await
+            .unwrap();
+
+        let request = Request::new(StreamFramesRequest {
+            device_id: "test_camera".to_string(),
+            max_fps: 10,
+        });
+        let mut stream = service.stream_frames(request).await.unwrap().into_inner();
+
+        let start = Instant::now();
+        let mut last_metrics = None;
+        let mut frames_received = 0u64;
+
+        while start.elapsed() < Duration::from_secs(60) {
+            match timeout(Duration::from_millis(500), stream.next()).await {
+                Ok(Some(Ok(frame))) => {
+                    last_metrics = frame.metrics.clone();
+                    frames_received = frames_received.saturating_add(1);
+                }
+                Ok(Some(Err(err))) => panic!("stream error: {}", err),
+                Ok(None) => break,
+                Err(_) => {}
+            }
+        }
+
+        assert!(frames_received > 0, "expected frames over 60s window");
+        let metrics = last_metrics.expect("streaming metrics should be present");
+        assert!(metrics.current_fps > 0.0);
+
+        service
+            .stop_stream(Request::new(StopStreamRequest {
+                device_id: "test_camera".to_string(),
+            }))
+            .await
+            .unwrap();
+    }
 }
 
 #[cfg(feature = "server")]

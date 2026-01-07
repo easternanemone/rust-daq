@@ -567,6 +567,14 @@ message StreamFramesRequest {
   uint32 max_fps = 2;  // Rate limit for GUI rendering (0 = no limit)
 }
 
+// Streaming performance metrics for GUI clients
+message StreamingMetrics {
+  double current_fps = 1;
+  uint64 frames_sent = 2;
+  uint64 frames_dropped = 3;
+  double avg_latency_ms = 4;
+}
+
 // Single frame of image data (bd-183h: extended metadata)
 message FrameData {
   string device_id = 1;
@@ -590,6 +598,7 @@ message FrameData {
   optional uint32 binning_x = 24;        // Horizontal binning factor
   optional uint32 binning_y = 25;        // Vertical binning factor
   map<string, string> metadata = 30;     // Extensible key-value metadata
+  optional StreamingMetrics metrics = 40; // Streaming performance metrics
 }
 
 // Arrow Flight ticket for zero-copy bulk data transfer

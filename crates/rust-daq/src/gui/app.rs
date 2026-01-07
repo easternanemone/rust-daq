@@ -536,6 +536,13 @@ impl DaqGuiApp {
                 ui.small(format!("Frame Time: {:.2}ms", metrics.ui_frame_ms));
                 ui.small(format!("Dropped Frames: {}", metrics.frames_dropped));
                 ui.small(format!("Streams Restarted: {}", metrics.stream_restarts));
+                ui.small(format!("Stream FPS: {:.1}", metrics.stream_current_fps));
+                ui.small(format!("Stream Sent: {}", metrics.stream_frames_sent));
+                ui.small(format!("Stream Dropped: {}", metrics.stream_frames_dropped));
+                ui.small(format!(
+                    "Stream Latency: {:.1}ms",
+                    metrics.stream_avg_latency_ms
+                ));
             });
 
         // ---------------------------------------------------------------------

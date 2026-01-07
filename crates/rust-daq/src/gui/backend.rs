@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -36,6 +36,15 @@ use super::types::{
 };
 use futures::StreamExt;
 
+/// Streaming metrics snapshot pulled from gRPC frames.
+#[derive(Debug, Clone, Default)]
+struct StreamMetricsSnapshot {
+    current_fps: f64,
+    frames_sent: u64,
+    frames_dropped: u64,
+    avg_latency_ms: f64,
+}
+
 /// Statistics tracked by the backend.
 #[derive(Debug, Default)]
 struct BackendStats {
@@ -43,6 +52,7 @@ struct BackendStats {
     #[allow(dead_code)]
     plots_dropped: AtomicU64,
     stream_restarts: AtomicU64,
+    stream_metrics: Mutex<StreamMetricsSnapshot>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -704,6 +714,16 @@ impl Backend {
                                 update = stream.message() => {
                                     match update {
                                         Ok(Some(frame)) => {
+                                            if let Some(metrics) = frame.metrics.as_ref() {
+                                                if let Ok(mut guard) = stats.stream_metrics.lock()
+                                                {
+                                                    guard.current_fps = metrics.current_fps;
+                                                    guard.frames_sent = metrics.frames_sent;
+                                                    guard.frames_dropped = metrics.frames_dropped;
+                                                    guard.avg_latency_ms = metrics.avg_latency_ms;
+                                                }
+                                            }
+
                                             // Handle frame
                                             // FrameData has width, height, data
                                             let w = frame.width as usize;
@@ -774,9 +794,19 @@ impl Backend {
 
     /// Update and send metrics to UI.
     fn update_metrics(&mut self) {
+        let stream_snapshot = self
+            .stats
+            .stream_metrics
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
         let metrics = BackendMetrics {
             frames_dropped: self.stats.frames_dropped.load(Ordering::Relaxed),
             stream_restarts: self.stats.stream_restarts.load(Ordering::Relaxed),
+            stream_current_fps: stream_snapshot.current_fps,
+            stream_frames_sent: stream_snapshot.frames_sent,
+            stream_frames_dropped: stream_snapshot.frames_dropped,
+            stream_avg_latency_ms: stream_snapshot.avg_latency_ms,
             is_connected: self.client.is_some(),
             ..Default::default()
         };

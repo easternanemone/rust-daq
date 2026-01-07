@@ -112,6 +112,14 @@ pub struct BackendMetrics {
     pub grpc_rtt_ms: f32,
     /// Number of stream restarts due to errors
     pub stream_restarts: u64,
+    /// Current streaming FPS reported by server
+    pub stream_current_fps: f64,
+    /// Total frames sent in current stream
+    pub stream_frames_sent: u64,
+    /// Total frames dropped/limited in current stream
+    pub stream_frames_dropped: u64,
+    /// Average capture-to-send latency in milliseconds
+    pub stream_avg_latency_ms: f64,
     /// Connection status
     pub is_connected: bool,
 }
