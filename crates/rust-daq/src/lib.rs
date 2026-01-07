@@ -72,6 +72,8 @@
 // TODO: Address clippy lints in dedicated refactoring pass
 #![allow(clippy::redundant_field_names)]
 #![allow(clippy::expect_used)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::unwrap_used)]
 
 pub mod config;
 pub mod prelude;
