@@ -340,8 +340,9 @@ jobs:
           cache-key: feature-builds
 
       - name: cargo build ${{ matrix.feature-set }}
+        # Exclude daq-egui which requires full desktop environment (X11/Wayland runtime)
         run: |
-          cargo build --workspace ${{ matrix.args }}
+          cargo build --workspace --exclude daq-egui ${{ matrix.args }}
 
   coverage:
     name: Coverage
