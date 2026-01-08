@@ -10865,6 +10865,7 @@ dependencies = [
  "tonic-build",
  "tonic-web-wasm-client 0.5.1",
  "tracing",
+ "tracing-subscriber",
  "tracing-test",
  "tracing-wasm",
  "uuid",
