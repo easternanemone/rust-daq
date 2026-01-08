@@ -3,6 +3,9 @@
     clippy::unwrap_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
+    clippy::panic,
+    unused_imports,
+    unused_mut,
     missing_docs
 )]
 #![cfg(feature = "server")]
