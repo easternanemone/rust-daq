@@ -31,14 +31,25 @@ use tokio::time::{sleep, Duration};
 // Test Pattern Generator
 // =============================================================================
 
+/// Simple pseudo-random number generator (LCG) for reproducible noise.
+/// Uses the same algorithm as glibc for predictable cross-platform behavior.
+#[inline]
+fn prng(seed: u64) -> u64 {
+    seed.wrapping_mul(1103515245).wrapping_add(12345) & 0x7fffffff
+}
+
 /// Generates a diagnostic test pattern for camera validation.
 ///
 /// The pattern includes:
 /// - Checkerboard background for pixel alignment verification
-/// - Corner markers (triangles) for orientation detection
+/// - Corner markers (different shapes) for orientation detection
 /// - Center crosshair for centering verification
 /// - Gradient regions for colormap/intensity testing
 /// - Frame number encoded in the pattern
+/// - **Dynamic elements:**
+///   - Background noise (varies each frame)
+///   - Moving Gaussian hotspot that orbits the center
+///   - Pulsing center ring intensity
 ///
 /// # Arguments
 /// * `width` - Frame width in pixels
@@ -63,18 +74,40 @@ fn generate_test_pattern(width: u32, height: u32, frame_num: u64) -> Vec<u16> {
     let cx = w / 2;
     let cy = h / 2;
 
+    // === Dynamic elements ===
+    // Moving hotspot: orbits around center with period of ~120 frames (~4 sec at 30fps)
+    let orbit_radius = (width.min(height) / 5) as f64;
+    let angle = (frame_num as f64 * 0.05) % (2.0 * std::f64::consts::PI);
+    let hotspot_x = cx as f64 + orbit_radius * angle.cos();
+    let hotspot_y = cy as f64 + orbit_radius * angle.sin();
+    let hotspot_radius = 30.0f64; // Gaussian sigma
+
+    // Pulsing intensity for center ring (oscillates between 70% and 100%)
+    let pulse_phase = (frame_num as f64 * 0.15).sin(); // ~0.5 Hz at 30fps
+    let ring_intensity = (0.85 + 0.15 * pulse_phase) * 65535.0;
+
+    // Noise seed based on frame number
+    let frame_seed = frame_num.wrapping_mul(2654435761);
+
     for y in 0..h {
         for x in 0..w {
             let idx = y * w + x;
 
+            // Per-pixel noise seed (combines frame and position for spatial variation)
+            let noise_seed = prng(frame_seed ^ (idx as u64));
+            let noise_value = ((noise_seed & 0xFFF) as i32 - 2048) as i16; // Range: -2048 to +2047
+
             // Layer 1: Checkerboard background (alternating ~25% and ~30% intensity)
             let checker_x = x / checker_size;
             let checker_y = y / checker_size;
-            let mut pixel_value: u16 = if (checker_x + checker_y).is_multiple_of(2) {
+            let base_value: i32 = if (checker_x + checker_y).is_multiple_of(2) {
                 16384 // ~25% of 65535
             } else {
                 19660 // ~30% of 65535
             };
+
+            // Add noise to base value (small amplitude: ~3% of full scale)
+            let mut pixel_value: u16 = (base_value + noise_value as i32).clamp(0, 65535) as u16;
 
             // Layer 2: Gradient regions at top and bottom
             // Top gradient: 0% to 100% intensity (left to right)
@@ -138,14 +171,14 @@ fn generate_test_pattern(width: u32, height: u32, frame_num: u64) -> Vec<u16> {
                 pixel_value = 65535; // Full white
             }
 
-            // Layer 5: Center circle (distinguishable marker)
-            let dx = (x as i32 - cx as i32).abs();
-            let dy = (y as i32 - cy as i32).abs();
-            let dist_sq = dx * dx + dy * dy;
+            // Layer 5: Center circle (distinguishable marker) - PULSING
+            let dx_center = (x as i32 - cx as i32).abs();
+            let dy_center = (y as i32 - cy as i32).abs();
+            let dist_sq_center = dx_center * dx_center + dy_center * dy_center;
             let inner_radius = (crosshair_length / 3) as i32;
             let outer_radius = inner_radius + 4;
-            if dist_sq >= inner_radius * inner_radius && dist_sq <= outer_radius * outer_radius {
-                pixel_value = 58982; // ~90% intensity for ring
+            if dist_sq_center >= inner_radius * inner_radius && dist_sq_center <= outer_radius * outer_radius {
+                pixel_value = ring_intensity as u16; // Pulsing intensity
             }
 
             // Layer 6: Frame number indicator (small dots in top-left area below corner marker)
@@ -178,6 +211,15 @@ fn generate_test_pattern(width: u32, height: u32, frame_num: u64) -> Vec<u16> {
                 let intensity = ((patch_idx + 1) as u32 * 65535) / 8;
                 pixel_value = intensity as u16;
             }
+
+            // Layer 8: Moving Gaussian hotspot (orbits around center)
+            let dx_hotspot = x as f64 - hotspot_x;
+            let dy_hotspot = y as f64 - hotspot_y;
+            let dist_sq_hotspot = dx_hotspot * dx_hotspot + dy_hotspot * dy_hotspot;
+            let gaussian = (-dist_sq_hotspot / (2.0 * hotspot_radius * hotspot_radius)).exp();
+            // Add hotspot intensity (additive blend, max 50% of full scale)
+            let hotspot_contribution = (gaussian * 32768.0) as u32;
+            pixel_value = (pixel_value as u32 + hotspot_contribution).min(65535) as u16;
 
             buffer[idx] = pixel_value;
         }
