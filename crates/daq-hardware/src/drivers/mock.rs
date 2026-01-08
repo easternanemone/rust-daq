@@ -63,12 +63,25 @@ fn generate_test_pattern(width: u32, height: u32, frame_num: u64) -> Vec<u16> {
     let w = width as usize;
     let h = height as usize;
 
-    // Size parameters scaled to image dimensions
-    let checker_size = (width.min(height) / 32) as usize; // ~20 pixels for 640x480
-    let corner_size = (width.min(height) / 8) as usize; // ~60 pixels for 640x480
+    // For very small images, just fill with a gradient and return
+    if w < 64 || h < 64 {
+        for y in 0..h {
+            for x in 0..w {
+                let idx = y * w + x;
+                // Simple diagonal gradient for small images
+                let intensity = ((x + y) * 65535 / (w + h).max(1)) as u16;
+                buffer[idx] = intensity;
+            }
+        }
+        return buffer;
+    }
+
+    // Size parameters scaled to image dimensions (ensure non-zero for small images)
+    let checker_size = (width.min(height) / 32).max(1) as usize; // ~20 pixels for 640x480
+    let corner_size = (width.min(height) / 8).max(1) as usize; // ~60 pixels for 640x480
     let crosshair_thickness = 3usize;
-    let crosshair_length = (width.min(height) / 6) as usize; // ~80 pixels for 640x480
-    let gradient_height = (height / 10) as usize; // 10% of height for gradient bars
+    let crosshair_length = (width.min(height) / 6).max(1) as usize; // ~80 pixels for 640x480
+    let gradient_height = (height / 10).max(1) as usize; // 10% of height for gradient bars
 
     // Center coordinates
     let cx = w / 2;
