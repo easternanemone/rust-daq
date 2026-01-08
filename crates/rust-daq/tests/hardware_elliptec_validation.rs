@@ -40,23 +40,6 @@ fn get_elliptec_port() -> String {
 const ADDRESSES: [&str; 3] = ["2", "3", "8"];
 const POSITION_TOLERANCE_DEG: f64 = 1.0;
 
-/// Global ELL14 bus for all tests
-///
-/// This ensures all tests and all device addresses share a single serial connection,
-/// avoiding "Device or resource busy" errors from multiple open attempts.
-/// Uses the bus-centric API that accurately models RS-485 multidrop architecture.
-static BUS: OnceCell<Ell14Bus> = OnceCell::const_new();
-
-/// Get or initialize the ELL14 bus
-async fn get_bus() -> &'static Ell14Bus {
-    BUS.get_or_init(|| async {
-        Ell14Bus::open(&get_elliptec_port())
-            .await
-            .expect("Failed to open ELL14 bus")
-    })
-    .await
-}
-
 /// Create driver with device-specific calibration using the bus
 ///
 /// CRITICAL: This reads pulses_per_degree from the device's `IN` response
@@ -64,8 +47,8 @@ async fn get_bus() -> &'static Ell14Bus {
 /// calibration stored in firmware.
 ///
 /// All drivers share the same serial port connection (RS-485 multidrop bus).
-async fn create_driver(addr: &str) -> Ell14Driver {
-    get_bus().await.device(addr).await.expect(&format!(
+async fn create_driver(bus: &Ell14Bus, addr: &str) -> Ell14Driver {
+    bus.device(addr).await.expect(&format!(
         "Failed to create calibrated driver for address {}",
         addr
     ))
@@ -78,9 +61,12 @@ async fn create_driver(addr: &str) -> Ell14Driver {
 #[tokio::test]
 async fn test_all_rotators_respond_to_position_query() {
     println!("\n=== Test: Position Query for All Rotators ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         let position = driver.position().await;
         match position {
@@ -181,9 +167,12 @@ async fn test_rotator_info_responses() {
 #[tokio::test]
 async fn test_absolute_movement_single_rotator() {
     println!("\n=== Test: Absolute Movement (Single Rotator) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Test with rotator at address 2
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial position
     let initial = driver
@@ -232,8 +221,11 @@ async fn test_absolute_movement_single_rotator() {
 #[tokio::test]
 async fn test_relative_movement() {
     println!("\n=== Test: Relative Movement ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
 
     // Get initial position
     let initial = driver
@@ -286,8 +278,11 @@ async fn test_relative_movement() {
 #[tokio::test]
 async fn test_home_command() {
     println!("\n=== Test: Home Command ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
 
     // Get initial position
     let initial = driver
@@ -328,9 +323,12 @@ async fn test_home_command() {
 #[tokio::test]
 async fn test_sequential_queries_all_devices() {
     println!("\n=== Test: Sequential Queries All Devices ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         let pos = driver.position().await.expect("Failed to get position");
         println!("Rotator {} at {:.2}°", addr, pos);
@@ -346,6 +344,9 @@ async fn test_sequential_queries_all_devices() {
 #[tokio::test]
 async fn test_move_all_devices_sequentially() {
     println!("\n=== Test: Move All Devices Sequentially ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Clear the bus by waiting and doing a simple status query first
     sleep(Duration::from_millis(200)).await;
@@ -356,7 +357,7 @@ async fn test_move_all_devices_sequentially() {
     for addr in ADDRESSES {
         // Add delay between device queries to avoid RS-485 bus contention
         sleep(Duration::from_millis(200)).await;
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
         sleep(Duration::from_millis(100)).await;
 
         // Retry logic for position query
@@ -387,7 +388,7 @@ async fn test_move_all_devices_sequentially() {
     for (i, addr) in ADDRESSES.iter().enumerate() {
         // Add delay between creating drivers for different devices
         sleep(Duration::from_millis(200)).await;
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
         let target = targets[i];
 
         println!("Moving rotator {} to {:.2}°...", addr, target);
@@ -428,7 +429,7 @@ async fn test_move_all_devices_sequentially() {
     println!("\nReturning to initial positions...");
     for (addr, initial) in &initial_positions {
         sleep(Duration::from_millis(100)).await;
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
         driver.move_abs(*initial).await.ok();
         driver.wait_settled().await.ok();
     }
@@ -441,8 +442,11 @@ async fn test_move_all_devices_sequentially() {
 #[tokio::test]
 async fn test_position_repeatability() {
     println!("\n=== Test: Position Repeatability ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
     let target = 45.0;
     let num_trials = 5;
     let mut positions = Vec::new();
@@ -498,8 +502,11 @@ async fn test_position_repeatability() {
 #[tokio::test]
 async fn test_full_rotation_accuracy() {
     println!("\n=== Test: Full Rotation Accuracy ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
     let initial = driver
         .position()
         .await
@@ -540,8 +547,11 @@ async fn test_full_rotation_accuracy() {
 #[tokio::test]
 async fn test_rapid_position_queries() {
     println!("\n=== Test: Rapid Position Queries ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
     let num_queries = 20;
     let mut success_count = 0;
 
@@ -577,6 +587,9 @@ async fn test_rapid_position_queries() {
 #[tokio::test]
 async fn test_bus_contention_resilience() {
     println!("\n=== Test: Bus Contention Resilience ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Rapidly query all three devices
     let num_rounds = 5;
@@ -585,7 +598,7 @@ async fn test_bus_contention_resilience() {
     for round in 1..=num_rounds {
         println!("Round {}:", round);
         for addr in ADDRESSES {
-            let driver = create_driver(addr).await;
+            let driver = create_driver(&bus, addr).await;
             match driver.position().await {
                 Ok(pos) => {
                     println!("  Rotator {}: {:.2}°", addr, pos);
@@ -613,9 +626,12 @@ async fn test_bus_contention_resilience() {
 #[tokio::test]
 async fn test_device_info() {
     println!("\n=== Test: Device Info ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         match driver.get_device_info().await {
             Ok(info) => {
@@ -647,8 +663,11 @@ async fn test_device_info() {
 #[tokio::test]
 async fn test_jog_step_get_set() {
     println!("\n=== Test: Jog Step Get/Set ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial jog step
     let initial_jog = driver.get_jog_step().await.expect("Failed to get jog step");
@@ -685,8 +704,11 @@ async fn test_jog_step_get_set() {
 #[tokio::test]
 async fn test_jog_forward_backward() {
     println!("\n=== Test: Jog Forward/Backward ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -726,8 +748,11 @@ async fn test_jog_forward_backward() {
 #[tokio::test]
 async fn test_stop_command() {
     println!("\n=== Test: Stop Command ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -760,9 +785,12 @@ async fn test_all_velocities() {
     println!("\n=== Test: All Rotator Velocities ===");
     println!("Checking velocities for addresses 2, 3, 8");
     println!("Expected: All should be near 64 (100%) for full speed\n");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         match driver.get_velocity().await {
             Ok(velocity) => {
@@ -781,9 +809,12 @@ async fn test_compare_rotator_speeds() {
     println!("Moving each rotator 90° and timing the movement\n");
 
     use std::time::Instant;
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         // Get initial position
         let initial = driver.position().await.expect("Failed to get position");
@@ -817,8 +848,11 @@ async fn test_compare_rotator_speeds() {
 #[tokio::test]
 async fn test_velocity_get_set() {
     println!("\n=== Test: Velocity Get/Set ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
 
     // Get current velocity
     match driver.get_velocity().await {
@@ -857,8 +891,11 @@ async fn test_velocity_get_set() {
 #[tokio::test]
 async fn test_home_offset_get() {
     println!("\n=== Test: Home Offset Get ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     match driver.get_home_offset().await {
         Ok(offset) => {
@@ -885,9 +922,12 @@ async fn test_compare_motor_frequencies() {
     println!("Expected: Piezo resonant frequency ~78-106 kHz per Thorlabs protocol");
     println!("Formula: Hz = 14,740,000 / Period");
     println!("Checking motor 1 and motor 2 frequencies for addresses 2, 3, 8\n");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         println!("Rotator {} (address {}):", addr, addr);
 
@@ -934,8 +974,11 @@ async fn test_compare_motor_frequencies() {
 #[tokio::test]
 async fn test_motor_info() {
     println!("\n=== Test: Motor Info ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
 
     // Test motor 1 info
     match driver.get_motor1_info().await {
@@ -980,8 +1023,11 @@ async fn test_motor_info() {
 async fn test_motor_frequency_search() {
     println!("\n=== Test: Motor Frequency Search (Motor Optimization) ===");
     println!("WARNING: This test takes 15-30 seconds to complete");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -1030,8 +1076,11 @@ async fn test_motor_frequency_search() {
 #[tokio::test]
 async fn test_save_user_data() {
     println!("\n=== Test: Save User Data ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
 
     // Just test that the command works - we won't actually persist changes
     match driver.save_user_data().await {
@@ -1054,10 +1103,13 @@ async fn test_save_user_data() {
 async fn test_optimize_all_rotators() {
     println!("\n=== Test: Optimize All Rotators and Save Settings ===");
     println!("WARNING: This will permanently save new motor frequencies to device EEPROM");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     for addr in ADDRESSES {
         println!("\n--- Optimizing Rotator {} ---", addr);
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
 
         // Get initial speed measurement
         let initial = driver.position().await.expect("Failed to get position");
@@ -1104,7 +1156,7 @@ async fn test_optimize_all_rotators() {
 
     println!("\n=== Final Speed Comparison ===");
     for addr in ADDRESSES {
-        let driver = create_driver(addr).await;
+        let driver = create_driver(&bus, addr).await;
         let initial = driver.position().await.expect("Failed to get position");
         let target = (initial + 90.0) % 360.0;
         let start = std::time::Instant::now();
@@ -1125,8 +1177,11 @@ async fn test_optimize_all_rotators() {
 #[tokio::test]
 async fn test_relative_movement_cumulative() {
     println!("\n=== Test: Relative Movement Cumulative Tracking (bd-e52e.7) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial position
     let initial = driver
@@ -1183,8 +1238,11 @@ async fn test_relative_movement_cumulative() {
 #[tokio::test]
 async fn test_relative_movement_large_angles() {
     println!("\n=== Test: Relative Movement Large Angles (bd-e52e.7) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
 
     // Home first to have a known starting point
     driver.home().await.expect("Failed to home");
@@ -1229,8 +1287,11 @@ async fn test_relative_movement_large_angles() {
 #[tokio::test]
 async fn test_relative_movement_wraparound() {
     println!("\n=== Test: Relative Movement 360° Wraparound (bd-e52e.7) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
 
     // Home first
     driver.home().await.expect("Failed to home");
@@ -1283,8 +1344,11 @@ async fn test_relative_movement_wraparound() {
 #[tokio::test]
 async fn test_position_accuracy_multiple_targets() {
     println!("\n=== Test: Position Accuracy Multiple Targets (bd-e52e.9) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Test positions at 30° intervals
@@ -1326,8 +1390,11 @@ async fn test_position_accuracy_multiple_targets() {
 #[tokio::test]
 async fn test_repeatability_extended() {
     println!("\n=== Test: Extended Repeatability (10 trials) (bd-e52e.9) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     let target = 90.0;
@@ -1389,8 +1456,11 @@ async fn test_repeatability_extended() {
 #[tokio::test]
 async fn test_mechanical_backlash() {
     println!("\n=== Test: Mechanical Backlash Measurement (bd-e52e.9) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     let target = 45.0;
@@ -1459,10 +1529,13 @@ async fn test_mechanical_backlash() {
 #[tokio::test]
 async fn test_simultaneous_movement_two_devices() {
     println!("\n=== Test: Simultaneous Movement Two Devices (bd-e52e.10) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Create two drivers for concurrent control
-    let driver_2 = create_driver("2").await;
-    let driver_3 = create_driver("3").await;
+    let driver_2 = create_driver(&bus, "2").await;
+    let driver_3 = create_driver(&bus, "3").await;
 
     // Get initial positions
     let initial_2 = driver_2.position().await.expect("Failed to get position 2");
@@ -1556,13 +1629,16 @@ async fn test_simultaneous_movement_two_devices() {
 #[tokio::test]
 async fn test_simultaneous_movement_all_three() {
     println!("\n=== Test: Simultaneous Movement All Three Devices (bd-e52e.10) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Create drivers for all three rotators
-    let driver_2 = create_driver("2").await;
+    let driver_2 = create_driver(&bus, "2").await;
     sleep(Duration::from_millis(50)).await;
-    let driver_3 = create_driver("3").await;
+    let driver_3 = create_driver(&bus, "3").await;
     sleep(Duration::from_millis(50)).await;
-    let driver_8 = create_driver("8").await;
+    let driver_8 = create_driver(&bus, "8").await;
 
     // Get initial positions (with delays to avoid contention)
     let initial_2 = driver_2.position().await.expect("Failed to get position 2");
@@ -1654,6 +1730,9 @@ async fn test_simultaneous_movement_all_three() {
 #[tokio::test]
 async fn test_concurrent_position_queries() {
     println!("\n=== Test: Concurrent Position Queries (bd-e52e.10) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Test rapid alternating queries between devices
     let num_rounds = 10;
@@ -1669,7 +1748,7 @@ async fn test_concurrent_position_queries() {
         let round_start = std::time::Instant::now();
 
         for addr in ADDRESSES {
-            let driver = create_driver(addr).await;
+            let driver = create_driver(&bus, addr).await;
             if driver.position().await.is_ok() {
                 success_count += 1;
             }
@@ -1704,8 +1783,11 @@ async fn test_concurrent_position_queries() {
 #[tokio::test]
 async fn test_position_updates_during_movement() {
     println!("\n=== Test: Position Updates During Movement (bd-e52e.16) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     // Get initial position
     let initial = driver.position().await.expect("Failed to get position");
@@ -1796,8 +1878,11 @@ async fn test_position_updates_during_movement() {
 #[tokio::test]
 async fn test_continuous_position_monitoring() {
     println!("\n=== Test: Continuous Position Monitoring (bd-e52e.16) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Monitor multiple consecutive movements
@@ -1868,8 +1953,11 @@ async fn test_continuous_position_monitoring() {
 #[tokio::test]
 async fn test_position_smoothness() {
     println!("\n=== Test: Position Smoothness During Movement (bd-e52e.16) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Start a move
@@ -1938,11 +2026,14 @@ async fn test_position_smoothness() {
 #[tokio::test]
 async fn test_continuous_polling_all_devices() {
     println!("\n=== Test: Continuous Polling All Devices (bd-e52e.11) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Create drivers for all three devices with device calibration
     let mut drivers = Vec::new();
     for addr in ADDRESSES {
-        drivers.push(create_driver(addr).await);
+        drivers.push(create_driver(&bus, addr).await);
     }
 
     // Poll all devices continuously for 10 seconds
@@ -2037,9 +2128,12 @@ async fn test_continuous_polling_all_devices() {
 #[tokio::test]
 async fn test_data_broadcast_simulation() {
     println!("\n=== Test: Data Broadcast Simulation (bd-e52e.11) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Simulate what the data distributor does: read positions and "broadcast" them
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
 
     let mut broadcast_data = Vec::new();
     let test_duration = Duration::from_secs(5);
@@ -2116,10 +2210,14 @@ async fn test_stability_long() {
 }
 
 async fn run_stability_test(duration: Duration) {
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
+
     // Create drivers with device calibration
     let mut drivers = Vec::new();
     for addr in ADDRESSES {
-        drivers.push(create_driver(addr).await);
+        drivers.push(create_driver(&bus, addr).await);
     }
 
     // Statistics tracking
@@ -2262,8 +2360,11 @@ async fn run_stability_test(duration: Duration) {
 #[tokio::test]
 async fn test_movement_speed_and_settling_time() {
     println!("\n=== Test: Movement Speed and Settling Time (bd-e52e.18) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
     let initial = driver.position().await.expect("Failed to get position");
 
     // Test different movement distances
@@ -2323,8 +2424,11 @@ async fn test_movement_speed_and_settling_time() {
 #[tokio::test]
 async fn test_command_latency() {
     println!("\n=== Test: Command Latency (bd-e52e.21) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("3").await;
+    let driver = create_driver(&bus, "3").await;
     let num_queries = 50;
     let mut latencies = Vec::new();
 
@@ -2369,8 +2473,11 @@ async fn test_command_latency() {
 #[tokio::test]
 async fn test_throughput() {
     println!("\n=== Test: Command Throughput (bd-e52e.21) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
-    let driver = create_driver("8").await;
+    let driver = create_driver(&bus, "8").await;
 
     // Measure how many queries per second we can sustain
     let test_duration = Duration::from_secs(5);
@@ -2411,13 +2518,16 @@ async fn test_throughput() {
 #[tokio::test]
 async fn test_graceful_disconnect() {
     println!("\n=== Test: Graceful Disconnect (bd-e52e.34) ===");
+    let bus = Ell14Bus::open(&get_elliptec_port())
+        .await
+        .expect("Failed to open ELL14 bus");
 
     // Test that we can create, use, and drop drivers without issues
     for round in 1..=3 {
         println!("Round {}:", round);
 
         // Create driver
-        let driver = create_driver("2").await;
+        let driver = create_driver(&bus, "2").await;
 
         // Use it
         let pos = driver.position().await.expect("Failed to get position");
@@ -2432,7 +2542,7 @@ async fn test_graceful_disconnect() {
     }
 
     // Verify we can still communicate after all the creates/drops
-    let driver = create_driver("2").await;
+    let driver = create_driver(&bus, "2").await;
     let final_pos = driver
         .position()
         .await
