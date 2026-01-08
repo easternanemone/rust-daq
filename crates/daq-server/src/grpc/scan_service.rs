@@ -920,6 +920,7 @@ impl ScanService for ScanServiceImpl {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::grpc::proto::AxisConfig;
