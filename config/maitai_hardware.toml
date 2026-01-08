@@ -1,0 +1,110 @@
+# Maitai Lab Hardware Configuration for rust-daq
+#
+# Real hardware configuration for the remote machine at 100.117.5.12
+# This file configures all instruments in the maitai lab.
+#
+# Usage:
+#   rust-daq-daemon daemon --hardware-config config/maitai_hardware.toml
+#
+# Hardware Inventory:
+#   - Prime BSI Camera (PVCAM)
+#   - 3x ELL14 Rotators (RS-485 bus at /dev/ttyUSB1)
+#   - MaiTai Ti:Sapphire Laser (/dev/ttyUSB5)
+#   - Newport 1830-C Power Meter (/dev/ttyS0)
+#   - ESP300 Motion Controller (/dev/ttyUSB0)
+
+# ============================================================================
+# Photometrics Prime BSI Camera (PVCAM)
+# ============================================================================
+# Requires: pvcam_hardware feature and PVCAM SDK environment variables
+# Resolution: 2048x2048, 16-bit
+
+[[devices]]
+id = "prime_bsi"
+name = "Photometrics Prime BSI Camera"
+[devices.driver]
+type = "pvcam"
+camera_name = "PMUSBCam00"
+
+# ============================================================================
+# Thorlabs ELL14 Rotation Mounts (RS-485 Multidrop Bus)
+# ============================================================================
+# Three rotators share one serial connection at /dev/ttyUSB1
+# Addresses: 2, 3, 8 (set via Thorlabs software)
+
+[[devices]]
+id = "rotator_2"
+name = "ELL14 Rotator (Address 2)"
+[devices.driver]
+type = "ell14"
+port = "/dev/ttyUSB1"
+address = "2"
+
+[[devices]]
+id = "rotator_3"
+name = "ELL14 Rotator (Address 3)"
+[devices.driver]
+type = "ell14"
+port = "/dev/ttyUSB1"
+address = "3"
+
+[[devices]]
+id = "rotator_8"
+name = "ELL14 Rotator (Address 8)"
+[devices.driver]
+type = "ell14"
+port = "/dev/ttyUSB1"
+address = "8"
+
+# ============================================================================
+# Spectra-Physics MaiTai Ti:Sapphire Laser
+# ============================================================================
+# Serial control for wavelength tuning (690-1040nm)
+
+[[devices]]
+id = "maitai"
+name = "MaiTai Ti:Sapphire Laser"
+[devices.driver]
+type = "mai_tai"
+port = "/dev/ttyUSB5"
+
+# ============================================================================
+# Newport 1830-C Optical Power Meter
+# ============================================================================
+# Connected via built-in serial port (RS-232)
+
+[[devices]]
+id = "power_meter"
+name = "Newport 1830-C Power Meter"
+[devices.driver]
+type = "newport1830_c"
+port = "/dev/ttyS0"
+
+# ============================================================================
+# Newport ESP300 Motion Controller
+# ============================================================================
+# 3-axis motion controller - configure one device per axis
+
+[[devices]]
+id = "esp300_axis1"
+name = "ESP300 Axis 1"
+[devices.driver]
+type = "esp300"
+port = "/dev/ttyUSB0"
+axis = 1
+
+[[devices]]
+id = "esp300_axis2"
+name = "ESP300 Axis 2"
+[devices.driver]
+type = "esp300"
+port = "/dev/ttyUSB0"
+axis = 2
+
+[[devices]]
+id = "esp300_axis3"
+name = "ESP300 Axis 3"
+[devices.driver]
+type = "esp300"
+port = "/dev/ttyUSB0"
+axis = 3

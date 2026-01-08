@@ -591,6 +591,14 @@ pub struct PvcamAcquisition {
     /// Whether EOF callback is registered (for cleanup in Drop)
     #[cfg(feature = "pvcam_hardware")]
     callback_registered: Arc<AtomicBool>,
+    /// Completion signal for poll thread (bd-g6pr).
+    /// Used in Drop to synchronously wait for the poll thread to exit before calling
+    /// FFI cleanup functions. This prevents the race condition where pl_exp_stop_cont
+    /// is called while pl_exp_get_oldest_frame_ex is still executing.
+    #[cfg(feature = "pvcam_hardware")]
+    poll_thread_done_rx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>>,
+    #[cfg(feature = "pvcam_hardware")]
+    poll_thread_done_tx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>>,
 }
 
 impl PvcamAcquisition {
@@ -639,6 +647,12 @@ impl PvcamAcquisition {
             active_hcam: Arc::new(AtomicI16::new(-1)),
             #[cfg(feature = "pvcam_hardware")]
             callback_registered: Arc::new(AtomicBool::new(false)),
+            // Completion channel for poll thread synchronization (bd-g6pr)
+            // Created fresh for each acquisition in start_stream
+            #[cfg(feature = "pvcam_hardware")]
+            poll_thread_done_rx: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "pvcam_hardware")]
+            poll_thread_done_tx: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -1042,6 +1056,18 @@ impl PvcamAcquisition {
             let roi_x = roi.x;
             let roi_y = roi.y;
 
+            // bd-g6pr: Create completion channel for poll thread synchronization.
+            // Drop will wait on this receiver before calling FFI cleanup functions,
+            // preventing the race where pl_exp_stop_cont is called while
+            // pl_exp_get_oldest_frame_ex is still executing.
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            if let Ok(mut guard) = self.poll_thread_done_rx.lock() {
+                *guard = Some(done_rx);
+            }
+            if let Ok(mut guard) = self.poll_thread_done_tx.lock() {
+                *guard = Some(done_tx.clone());
+            }
+
             let poll_handle = tokio::task::spawn_blocking(move || {
                 Self::frame_loop_hardware(
                     h,
@@ -1068,6 +1094,7 @@ impl PvcamAcquisition {
                     roi_y,
                     binning,
                     metadata_tx,
+                    done_tx,
                 );
             });
 
@@ -1233,6 +1260,13 @@ impl PvcamAcquisition {
             // Clear stored state after cleanup
             self.active_hcam.store(-1, Ordering::Release); // -1 = no active handle
             *self.circ_buffer.lock().await = None;
+            // bd-g6pr: Clear completion channel so Drop doesn't try to wait again
+            if let Ok(mut guard) = self.poll_thread_done_rx.lock() {
+                *guard = None;
+            }
+            if let Ok(mut guard) = self.poll_thread_done_tx.lock() {
+                *guard = None;
+            }
         }
         Ok(())
     }
@@ -1271,6 +1305,8 @@ impl PvcamAcquisition {
     /// * `roi_x` - ROI X offset in sensor coordinates (bd-183h)
     /// * `roi_y` - ROI Y offset in sensor coordinates (bd-183h)
     /// * `binning` - Binning factors (x, y) for extended metadata (bd-183h)
+    /// * `done_tx` - Completion signal sender (bd-g6pr). Sent when the loop exits to signal
+    ///               that all SDK calls are complete and Drop can safely call FFI cleanup.
     #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
@@ -1299,6 +1335,7 @@ impl PvcamAcquisition {
         roi_y: u32,
         binning: (u16, u16),
         metadata_tx: Option<tokio::sync::mpsc::Sender<FrameMetadata>>,
+        done_tx: std::sync::mpsc::Sender<()>,
     ) {
         let mut status: i16 = 0;
         let mut bytes_arrived: uns32 = 0;
@@ -1322,10 +1359,17 @@ impl PvcamAcquisition {
         // This struct holds pointers into the frame buffer for extracting timestamps.
         // Must be created before the loop and released after.
         // bd-g9gq: Use FFI safe wrapper with explicit safety contract
+        //
+        // bd-2q8j: Allocate space for 16 ROIs (PVCAM maximum) to prevent buffer overflow.
+        // The camera can return multiple ROIs in centroids mode or with multi-ROI acquisition.
+        // If we allocate for only 1 ROI but pl_md_frame_decode finds more, it writes past
+        // the allocated buffer causing heap corruption and silent crashes (~35 frames in).
+        // 16 is the PVCAM SDK maximum for multi-ROI acquisition.
+        const MAX_ROIS: u16 = 16;
         let md_frame_ptr: *mut md_frame = if use_metadata {
-            match ffi_safe::create_md_frame(1) {
+            match ffi_safe::create_md_frame(MAX_ROIS) {
                 Some(ptr) => {
-                    tracing::debug!("Created md_frame struct for metadata decoding");
+                    tracing::debug!("Created md_frame struct for {} ROIs for metadata decoding", MAX_ROIS);
                     ptr
                 }
                 None => {
@@ -1690,6 +1734,12 @@ impl PvcamAcquisition {
         // after the poll handle is awaited. Calling it here would race with
         // stop_stream() and could cause issues. The frame loop exits gracefully
         // via the shutdown flag, then stop_stream() does cleanup.
+
+        // bd-g6pr: Signal completion to Drop so it knows all SDK calls are done.
+        // This MUST be the last thing we do before returning, ensuring no SDK
+        // calls can happen after this signal is sent.
+        let _ = done_tx.send(());
+        tracing::debug!("PVCAM frame loop signaled completion");
     }
 }
 
@@ -1713,19 +1763,54 @@ impl Drop for PvcamAcquisition {
             self.callback_context.signal_shutdown();
             tracing::debug!("Set PVCAM shutdown flag and signaled callback context in Drop");
 
-            // Also abort the handle to clean up the JoinHandle.
-            // Note: For spawn_blocking, abort() doesn't kill the thread - it just
-            // marks the task as cancelled. The thread will exit on its next
-            // check of the shutdown flag or callback wait timeout.
-            if let Ok(mut guard) = self.poll_handle.try_lock() {
-                if let Some(handle) = guard.take() {
-                    handle.abort();
-                    tracing::debug!("Aborted PVCAM frame loop handle in Drop");
+            // bd-g6pr: Wait for poll thread to fully exit before calling FFI cleanup.
+            // This fixes the race condition where pl_exp_stop_cont was called while
+            // pl_exp_get_oldest_frame_ex was still executing in the poll thread.
+            //
+            // CRITICAL: spawn_blocking tasks cannot be cancelled with abort() - they
+            // continue running until completion. We MUST wait for the thread to exit
+            // naturally (via the shutdown flag) before calling any FFI cleanup.
+            //
+            // Use recv_timeout to avoid hanging forever if something goes wrong.
+            const POLL_THREAD_TIMEOUT: Duration = Duration::from_secs(5);
+            let poll_thread_exited = if let Ok(guard) = self.poll_thread_done_rx.lock() {
+                if let Some(ref rx) = *guard {
+                    match rx.recv_timeout(POLL_THREAD_TIMEOUT) {
+                        Ok(()) => {
+                            tracing::debug!("PVCAM poll thread exited cleanly in Drop");
+                            true
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            tracing::error!(
+                                "PVCAM poll thread did not exit within {:?} - proceeding with cleanup anyway (may cause UB)",
+                                POLL_THREAD_TIMEOUT
+                            );
+                            false
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            // Sender was dropped, which means the poll thread exited
+                            // (possibly before we could receive the signal)
+                            tracing::debug!("PVCAM poll thread completion channel disconnected (thread already exited)");
+                            true
+                        }
+                    }
+                } else {
+                    // No receiver = no active poll thread (stream was never started or already stopped)
+                    tracing::debug!("No active PVCAM poll thread to wait for");
+                    true
                 }
             } else {
-                tracing::warn!(
-                    "Could not acquire poll_handle lock in Drop - frame loop may outlive connection"
-                );
+                // Lock poisoned - unusual but try to proceed
+                tracing::warn!("Could not acquire poll_thread_done_rx lock in Drop");
+                false
+            };
+
+            // Clean up the JoinHandle (optional - it will be dropped anyway, but this
+            // prevents any "task not awaited" warnings and clears the Option)
+            if let Ok(mut guard) = self.poll_handle.try_lock() {
+                // Don't abort - just drop the handle. The thread has already exited
+                // (or we timed out and are proceeding anyway).
+                let _ = guard.take();
             }
 
             // CRITICAL SAFETY: Stop camera and deregister callback BEFORE buffer/context are freed.
@@ -1737,6 +1822,13 @@ impl Drop for PvcamAcquisition {
             // If stop_stream() was called properly, active_hcam will be -1 and this is a no-op.
             let hcam = self.active_hcam.swap(-1, Ordering::AcqRel);
             if hcam >= 0 {
+                if !poll_thread_exited {
+                    // Log extra warning - we're calling FFI while thread may still be running
+                    tracing::error!(
+                        "Calling pl_exp_stop_cont while poll thread may still be active - risk of SDK race condition"
+                    );
+                }
+
                 unsafe {
                     // Stop continuous acquisition first (halts camera operation)
                     let stop_result = pl_exp_stop_cont(hcam, CCS_HALT);
