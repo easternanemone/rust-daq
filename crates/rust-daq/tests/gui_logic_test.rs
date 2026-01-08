@@ -1,11 +1,13 @@
 #![cfg(feature = "gui_egui")]
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(
     clippy::unwrap_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
     missing_docs
 )]
-#![cfg(not(target_arch = "wasm32"))]
+//! GUI logic tests
+
 use rust_daq::gui::{
     app::DaqGuiApp, create_channels, BackendCommand, BackendEvent, ConnectionStatus, DeviceInfo,
 };
