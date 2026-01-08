@@ -52,8 +52,9 @@ jobs:
 
       - name: cargo clippy (SARIF)
         run: |
-          cargo clippy --workspace --all-targets --features full --exclude daq-egui --message-format=json -- -D warnings | \
-          clippy-sarif | tee clippy-results.sarif | sarif-fmt
+          # Ensure SARIF file exists even if clippy fails (for upload step)
+          (cargo clippy --workspace --all-targets --features full --exclude daq-egui --message-format=json -- -D warnings | \
+            clippy-sarif | tee clippy-results.sarif | sarif-fmt) || touch clippy-results.sarif
         continue-on-error: true
 
       - name: Upload SARIF results to GitHub Security

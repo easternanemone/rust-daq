@@ -145,14 +145,14 @@ impl LogCategory {
     pub fn color(&self) -> egui::Color32 {
         match self {
             Self::All => egui::Color32::WHITE,
-            Self::Connection => egui::Color32::from_rgb(100, 200, 255),  // Blue
-            Self::Devices => egui::Color32::from_rgb(255, 180, 100),     // Orange
-            Self::Streaming => egui::Color32::from_rgb(180, 100, 255),   // Purple
-            Self::Scans => egui::Color32::from_rgb(100, 255, 180),       // Cyan
-            Self::Storage => egui::Color32::from_rgb(255, 255, 100),     // Yellow
-            Self::Scripts => egui::Color32::from_rgb(255, 100, 180),     // Pink
-            Self::Modules => egui::Color32::from_rgb(180, 255, 100),     // Lime
-            Self::System => egui::Color32::from_rgb(180, 180, 180),      // Gray
+            Self::Connection => egui::Color32::from_rgb(100, 200, 255), // Blue
+            Self::Devices => egui::Color32::from_rgb(255, 180, 100),    // Orange
+            Self::Streaming => egui::Color32::from_rgb(180, 100, 255),  // Purple
+            Self::Scans => egui::Color32::from_rgb(100, 255, 180),      // Cyan
+            Self::Storage => egui::Color32::from_rgb(255, 255, 100),    // Yellow
+            Self::Scripts => egui::Color32::from_rgb(255, 100, 180),    // Pink
+            Self::Modules => egui::Color32::from_rgb(180, 255, 100),    // Lime
+            Self::System => egui::Color32::from_rgb(180, 180, 180),     // Gray
         }
     }
 
@@ -828,10 +828,7 @@ impl LoggingPanel {
             ui.label("Category:");
             let cat_color = self.selected_category.color();
             egui::ComboBox::from_id_salt("log_category")
-                .selected_text(
-                    egui::RichText::new(self.selected_category.label())
-                        .color(cat_color),
-                )
+                .selected_text(egui::RichText::new(self.selected_category.label()).color(cat_color))
                 .show_ui(ui, |ui| {
                     for category in LogCategory::all_categories() {
                         let color = category.color();
@@ -915,9 +912,12 @@ impl LoggingPanel {
                                 // Category (colored badge)
                                 if self.show_category {
                                     ui.label(
-                                        egui::RichText::new(format!("[{}]", entry.category.label()))
-                                            .color(entry.category.color())
-                                            .small(),
+                                        egui::RichText::new(format!(
+                                            "[{}]",
+                                            entry.category.label()
+                                        ))
+                                        .color(entry.category.color())
+                                        .small(),
                                     );
                                 }
 
