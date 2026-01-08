@@ -1,7 +1,9 @@
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
+    clippy::panic,
     missing_docs
 )]
 //! Latency benchmark for gRPC server under async/blocking load (bd-z5s9).
