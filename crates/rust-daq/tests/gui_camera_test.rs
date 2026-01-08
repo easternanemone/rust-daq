@@ -1,8 +1,13 @@
 #![cfg(feature = "gui_egui")]
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
+    clippy::panic,
+    unsafe_code,
+    unused_mut,
+    unused_imports,
     missing_docs
 )]
 #![cfg(not(target_arch = "wasm32"))]

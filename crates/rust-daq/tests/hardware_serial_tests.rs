@@ -1,9 +1,14 @@
 #![cfg(not(target_arch = "wasm32"))]
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::new_without_default,
     clippy::must_use_candidate,
+    clippy::panic,
+    unsafe_code,
     clippy::needless_range_loop,
+    unused_mut,
+    unused_imports,
     missing_docs
 )]
 //! Integration tests for hardware serial drivers
