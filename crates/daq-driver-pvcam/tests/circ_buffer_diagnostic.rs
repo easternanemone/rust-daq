@@ -43,6 +43,11 @@ const PARAM_EXPOSURE_MODE: u32 = 151126551;    // from bindings.rs
 const PARAM_EXPOSE_OUT_MODE: u32 = 151126585;  // calculated: should be near PARAM_EXPOSURE_MODE
 const PARAM_SER_SIZE: u32 = 100794426;         // from bindings.rs
 const PARAM_PAR_SIZE: u32 = 100794425;         // from bindings.rs
+// BuildSpeedTable parameters - SDK sets these to defaults before acquisition
+const PARAM_READOUT_PORT: u32 = 117506317;     // from bindings.rs
+const PARAM_SPDTAB_INDEX: u32 = 100663574;     // from bindings.rs
+const PARAM_GAIN_INDEX: u32 = 100663575;       // from bindings.rs
+const PARAM_BIT_DEPTH: u32 = 100663579;        // from bindings.rs
 
 // Attribute constants for pl_get_param
 const ATTR_AVAIL: i16 = 8;
@@ -109,6 +114,69 @@ fn get_default_i32_param(hcam: i16, param_id: u32) -> Option<i32> {
             None
         }
     }
+}
+
+/// Set an i32 parameter value
+fn set_i32_param(hcam: i16, param_id: u32, value: i32) -> bool {
+    unsafe {
+        pl_set_param(hcam, param_id, &value as *const i32 as *const c_void) != 0
+    }
+}
+
+/// Mimic SDK BuildSpeedTable() - set readout parameters to their defaults
+/// The SDK does this in Camera::Open BEFORE any acquisition setup
+fn init_readout_params_like_sdk(hcam: i16) -> bool {
+    println!("  Setting PARAM_READOUT_PORT to default...");
+    if is_param_available(hcam, PARAM_READOUT_PORT) {
+        if let Some(def_val) = get_default_i32_param(hcam, PARAM_READOUT_PORT) {
+            if set_i32_param(hcam, PARAM_READOUT_PORT, def_val) {
+                println!("    [OK] PARAM_READOUT_PORT = {}", def_val);
+            } else {
+                println!("    [WARN] Failed to set PARAM_READOUT_PORT: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("    [SKIP] PARAM_READOUT_PORT not available");
+    }
+
+    println!("  Setting PARAM_SPDTAB_INDEX to default...");
+    if is_param_available(hcam, PARAM_SPDTAB_INDEX) {
+        if let Some(def_val) = get_default_i32_param(hcam, PARAM_SPDTAB_INDEX) {
+            if set_i32_param(hcam, PARAM_SPDTAB_INDEX, def_val) {
+                println!("    [OK] PARAM_SPDTAB_INDEX = {}", def_val);
+            } else {
+                println!("    [WARN] Failed to set PARAM_SPDTAB_INDEX: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("    [SKIP] PARAM_SPDTAB_INDEX not available");
+    }
+
+    println!("  Setting PARAM_GAIN_INDEX to default...");
+    if is_param_available(hcam, PARAM_GAIN_INDEX) {
+        if let Some(def_val) = get_default_i32_param(hcam, PARAM_GAIN_INDEX) {
+            if set_i32_param(hcam, PARAM_GAIN_INDEX, def_val) {
+                println!("    [OK] PARAM_GAIN_INDEX = {}", def_val);
+            } else {
+                println!("    [WARN] Failed to set PARAM_GAIN_INDEX: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("    [SKIP] PARAM_GAIN_INDEX not available");
+    }
+
+    // Check BIT_DEPTH to see current state
+    println!("  Checking PARAM_BIT_DEPTH...");
+    if is_param_available(hcam, PARAM_BIT_DEPTH) {
+        let mut bit_depth: i32 = 0;
+        unsafe {
+            if pl_get_param(hcam, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut bit_depth as *mut _ as *mut c_void) != 0 {
+                println!("    [OK] PARAM_BIT_DEPTH = {} bits", bit_depth);
+            }
+        }
+    }
+
+    true
 }
 
 /// Get enum entry name and value
@@ -940,6 +1008,110 @@ async fn test_circ_buffer_capabilities() {
                 }
             } else {
                 println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("[SKIP] Could not get default exposure mode");
+    }
+
+    // ========================================
+    // Test 11: SDK-STYLE INITIALIZATION (BuildSpeedTable) + CIRC_OVERWRITE
+    // The SDK calls BuildSpeedTable() which sets PARAM_READOUT_PORT,
+    // PARAM_SPDTAB_INDEX, and PARAM_GAIN_INDEX to their defaults.
+    // This might be the missing initialization step!
+    // ========================================
+    println!("\n--- Test 11: SDK-style init (BuildSpeedTable) + CIRC_OVERWRITE ---");
+    println!("     This mimics SDK Camera::Open → BuildSpeedTable()");
+    println!("     Setting PARAM_READOUT_PORT, PARAM_SPDTAB_INDEX, PARAM_GAIN_INDEX to defaults...\n");
+
+    // Initialize readout parameters like SDK does
+    init_readout_params_like_sdk(hcam);
+
+    if let Some(def_mode) = default_exp_mode {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 50;
+
+        println!("\n     Now trying CIRC_OVERWRITE with SDK-initialized camera...");
+        println!("     exp_mode = {} (camera default)", def_mode);
+
+        // Register callback (like SDK StartExp)
+        let mut callback_registered_11 = false;
+        unsafe {
+            let result = pl_cam_register_callback_ex3(
+                hcam,
+                PL_CALLBACK_EOF,
+                test_eof_callback as *mut c_void,
+                ptr::null_mut(),
+            );
+            if result != 0 {
+                println!("[OK] Callback registered");
+                callback_registered_11 = true;
+            }
+        }
+
+        // Use 512x512 region first (smaller for quick test)
+        let region = rgn_type {
+            s1: 0,
+            s2: 511,
+            sbin: 1,
+            p1: 0,
+            p2: 511,
+            pbin: 1,
+        };
+
+        unsafe {
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &region as *const _,
+                def_mode as i16,
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+
+                // Allocate 4KB-aligned buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] SDK-style init + CIRC_OVERWRITE SUCCEEDED!");
+                        println!("\n*********************************************");
+                        println!("*** SOLUTION: Initialize readout params! ***");
+                        println!("*** BuildSpeedTable() is the missing step ***");
+                        println!("*********************************************\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                } else {
+                    println!("[FAIL] Failed to allocate buffer");
+                }
+            } else {
+                println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+
+        if callback_registered_11 {
+            unsafe {
+                pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
             }
         }
     } else {
