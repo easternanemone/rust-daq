@@ -1405,14 +1405,24 @@ impl PvcamAcquisition {
             let has_frames = if use_callback {
                 // Callback mode (bd-ek9n.2): Wait on condvar with timeout
                 // Returns number of pending frames (0 on timeout/shutdown)
-                if callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS) > 0 {
+                let pending = callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
+                if pending > 0 {
+                    // bd-3gnv: Log when we get frames via callback
+                    if loop_iteration <= 5 || loop_iteration % 10 == 0 {
+                        eprintln!("[PVCAM DEBUG] iter={}: wait_for_frames returned pending={}", loop_iteration, pending);
+                    }
                     true
                 } else {
                     // Fallback: if callbacks are missed, avoid deadlock by occasionally checking status.
-                    match ffi_safe::check_cont_status(hcam) {
+                    let fallback = match ffi_safe::check_cont_status(hcam) {
                         Ok((_, _, cnt)) => cnt > 0,
                         Err(()) => false,
+                    };
+                    // bd-3gnv: Log when callback timeout occurs
+                    if loop_iteration <= 5 || loop_iteration % 10 == 0 {
+                        eprintln!("[PVCAM DEBUG] iter={}: callback timeout, fallback has_frames={}", loop_iteration, fallback);
                     }
+                    fallback
                 }
             } else {
                 // Polling mode fallback: Check status with 1ms delay
@@ -1766,8 +1776,15 @@ impl PvcamAcquisition {
                 }
             }
 
+            // bd-3gnv: Debug output after drain loop
+            eprintln!(
+                "[PVCAM DEBUG] Drain loop done: frames_processed={}, fatal_error={}, iter={}",
+                frames_processed_in_drain, fatal_error, loop_iteration
+            );
+
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
             if fatal_error {
+                eprintln!("[PVCAM DEBUG] Exiting due to fatal error");
                 tracing::error!("Exiting frame loop due to fatal acquisition error");
                 break;
             }
