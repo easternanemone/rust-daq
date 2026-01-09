@@ -24,6 +24,7 @@
 )]
 
 use pvcam_sys::*;
+use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 
@@ -707,6 +708,164 @@ async fn test_circ_buffer_capabilities() {
                 }
             } else {
                 println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("[SKIP] Could not get default exposure mode");
+    }
+
+    // ========================================
+    // Test 8: 4KB ALIGNED buffer + 50 frames + camera default mode + NO callback
+    // This matches EXACTLY what PVCamTestCli uses:
+    // - align4k allocator (4096 byte alignment)
+    // - 50 frame buffer (--buffer-frames default)
+    // - camera default exposure mode
+    // ========================================
+    println!("\n--- Test 8: 4KB ALIGNED buffer + 50 frames + DEFAULT mode + NO callback ---");
+    println!("     This matches PVCamTestCli defaults exactly!");
+
+    if let Some(def_mode) = default_exp_mode {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 50;  // SDK default
+
+        println!("     exp_mode = {} (camera default)", def_mode);
+        println!("     frame_count = {} (SDK default)", FRAME_COUNT);
+        println!("     alignment = {} bytes (SDK default)", ALIGN_4K);
+
+        unsafe {
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &region as *const _,
+                def_mode as i16,
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+
+                // Allocate 4KB-aligned buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                // Round up to 4KB boundary
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if buffer_ptr.is_null() {
+                    println!("[FAIL] Failed to allocate 4KB-aligned buffer");
+                } else {
+                    let ptr_val = buffer_ptr as usize;
+                    println!("     Buffer allocated: {} bytes at 0x{:X}", aligned_size, ptr_val);
+                    println!("     Alignment check: 0x{:X} % 4096 = {}", ptr_val, ptr_val % ALIGN_4K);
+
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,  // Original size, not padded
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] pl_exp_start_cont with 4KB ALIGNED buffer + CIRC_OVERWRITE succeeded!");
+                        println!("\n*** 4KB ALIGNMENT WORKS! ***");
+                        println!("*** SOLUTION: Use 4KB aligned buffers for CIRC_OVERWRITE! ***\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    // Free the aligned buffer
+                    dealloc(buffer_ptr, layout);
+                }
+            } else {
+                println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("[SKIP] Could not get default exposure mode");
+    }
+
+    // ========================================
+    // Test 9: 4KB ALIGNED buffer + 50 frames + DEFAULT mode + WITH callback
+    // Complete SDK-style setup
+    // ========================================
+    println!("\n--- Test 9: 4KB ALIGNED buffer + 50 frames + DEFAULT mode + WITH callback ---");
+
+    if let Some(def_mode) = default_exp_mode {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 50;
+
+        // Register callback
+        callback_registered = false;
+        unsafe {
+            let result = pl_cam_register_callback_ex3(
+                hcam,
+                PL_CALLBACK_EOF,
+                test_eof_callback as *mut c_void,
+                ptr::null_mut(),
+            );
+            if result != 0 {
+                println!("[OK] Callback registered");
+                callback_registered = true;
+            } else {
+                println!("[WARN] Failed to register callback: {}", get_error_message());
+            }
+        }
+
+        unsafe {
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &region as *const _,
+                def_mode as i16,
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] pl_exp_setup_cont succeeded");
+
+                // Allocate 4KB-aligned buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] 4KB ALIGNED buffer + callback + CIRC_OVERWRITE succeeded!");
+                        println!("\n*** COMPLETE SDK-STYLE SETUP WORKS! ***\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                } else {
+                    println!("[FAIL] Failed to allocate aligned buffer");
+                }
+            } else {
+                println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+
+        if callback_registered {
+            unsafe {
+                pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
             }
         }
     } else {
