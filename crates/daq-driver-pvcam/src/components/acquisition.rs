@@ -83,10 +83,12 @@ use tokio::task::JoinHandle;
 /// - Skips EOF callback registration (callbacks may conflict with CIRC_OVERWRITE)
 /// - Relies purely on polling via pl_exp_check_cont_status
 ///
-/// The hypothesis is that Prime BSI error 185 occurs when CIRC_OVERWRITE is used
-/// WITH callbacks registered. DynExp uses CIRC_OVERWRITE + polling successfully.
+/// RESULT: Prime BSI returns error 185 (Invalid Configuration) at pl_exp_start_cont
+/// regardless of callback registration, exposure mode (TIMED_MODE vs EXT_TRIG_INTERNAL),
+/// or buffer size (8-50 frames tested). CIRC_OVERWRITE appears unsupported on Prime BSI.
+/// Reverting to CIRC_NO_OVERWRITE + callbacks for now.
 #[cfg(feature = "pvcam_hardware")]
-const USE_CIRC_OVERWRITE_POLLING_MODE: bool = true;
+const USE_CIRC_OVERWRITE_POLLING_MODE: bool = false;
 
 /// Callback context for EOF notifications (bd-ek9n.2)
 ///
@@ -991,12 +993,7 @@ impl PvcamAcquisition {
 
             // PVCAM Best Practices (bd-ek9n.4): Use SDK-recommended buffer size
             // Query PARAM_FRAME_BUFFER_SIZE for optimal sizing, with fallback to heuristics.
-            // bd-3gnv: Override buffer count for CIRC_OVERWRITE testing (small buffer first)
-            let buffer_count = if USE_CIRC_OVERWRITE_POLLING_MODE {
-                8 // Small buffer to test if size is causing error 185
-            } else {
-                Self::calculate_buffer_count(h, actual_frame_bytes, exposure_ms)
-            };
+            let buffer_count = Self::calculate_buffer_count(h, actual_frame_bytes, exposure_ms);
             // bd-3gnv: Debug output to verify buffer count
             eprintln!(
                 "[PVCAM DEBUG] Circular buffer: {} frames, {} bytes/frame, {:.2} MB total",
