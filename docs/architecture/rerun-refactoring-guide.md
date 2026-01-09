@@ -77,6 +77,16 @@ PROBLEMS:
 
 6. **Raw Tensor for Images**: Using `Tensor` archetype for camera frames instead of `Image` or `EncodedImage`, missing colormap/contrast features.
 
+### Recent Improvements (bd-7rk0, January 2026)
+
+While the long-term goal remains consolidating to Rerun's native gRPC, the custom `StreamFrames` implementation has been improved with lessons learned from Rerun's gRPC:
+
+- **LZ4 Compression**: Frame data is now compressed with LZ4 before transmission (3-5x bandwidth reduction)
+- **Exponential Backoff**: Reconnection uses 100ms→10s exponential backoff (matching Rerun's pattern)
+- **Latency Telemetry**: Server-side streaming metrics (fps, dropped frames, latency) displayed in the GUI
+
+These improvements make the current architecture more robust until the Rerun Blueprint API stabilizes for Phase 4.
+
 ## Proposed Architecture
 
 ### Target Architecture Diagram
