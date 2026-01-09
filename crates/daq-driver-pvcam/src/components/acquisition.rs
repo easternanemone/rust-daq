@@ -398,6 +398,33 @@ mod ffi_safe {
         }
     }
 
+    /// Restart continuous acquisition on a camera (bd-3gnv).
+    ///
+    /// Used for auto-restart workaround when camera stalls at 85 frames.
+    ///
+    /// # Safety Contract
+    /// - `hcam` must be a valid, open camera handle
+    /// - `circ_ptr` must point to valid, page-aligned buffer
+    /// - `circ_size_bytes` must match the allocated buffer size
+    /// - Camera must be in stopped state (call stop_acquisition first)
+    ///
+    /// # Returns
+    /// `Ok(())` on success, `Err(String)` with error message on failure
+    pub fn restart_acquisition(hcam: i16, circ_ptr: *mut u8, circ_size_bytes: u32) -> Result<(), String> {
+        debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
+        debug_assert!(!circ_ptr.is_null(), "Circular buffer pointer is null");
+        debug_assert!(circ_size_bytes > 0, "Circular buffer size must be > 0");
+
+        // SAFETY: Caller guarantees hcam is valid, circ_ptr is valid page-aligned buffer
+        let result = unsafe { pl_exp_start_cont(hcam, circ_ptr as *mut _, circ_size_bytes) };
+        if result == 0 {
+            let err_msg = super::get_pvcam_error();
+            Err(format!("pl_exp_start_cont failed: {}", err_msg))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Deregister a callback from a camera.
     ///
     /// # Safety Contract
@@ -1181,6 +1208,8 @@ impl PvcamAcquisition {
                     binning,
                     metadata_tx,
                     done_tx,
+                    circ_ptr,       // bd-3gnv: Pass buffer for auto-restart
+                    circ_size_bytes, // bd-3gnv: Pass size for auto-restart
                 );
             });
 
@@ -1393,6 +1422,8 @@ impl PvcamAcquisition {
     /// * `binning` - Binning factors (x, y) for extended metadata (bd-183h)
     /// * `done_tx` - Completion signal sender (bd-g6pr). Sent when the loop exits to signal
     ///               that all SDK calls are complete and Drop can safely call FFI cleanup.
+    /// * `circ_ptr` - Pointer to circular buffer (for auto-restart on stall, bd-3gnv)
+    /// * `circ_size_bytes` - Size of circular buffer in bytes (for auto-restart)
     #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
@@ -1422,6 +1453,8 @@ impl PvcamAcquisition {
         binning: (u16, u16),
         metadata_tx: Option<tokio::sync::mpsc::Sender<FrameMetadata>>,
         done_tx: std::sync::mpsc::Sender<()>,
+        circ_ptr: *mut u8,
+        circ_size_bytes: u32,
     ) {
         let mut status: i16 = 0;
         let mut bytes_arrived: uns32 = 0;
@@ -1580,6 +1613,7 @@ impl PvcamAcquisition {
             let mut consecutive_duplicates: u32 = 0;
             let mut fatal_error = false;
             let mut unlock_failures: u32 = 0; // bd-3gnv: Track unlock failures
+            let mut stall_detected = false; // bd-3gnv: Flag for auto-restart
 
             // bd-3gnv: Duplicate detection is handled by immediate exit on any duplicate.
             // The drain loop breaks as soon as a duplicate is detected, returning to
@@ -1644,15 +1678,16 @@ impl PvcamAcquisition {
                 // for buffers to be unlocked (even though we are unlocking them).
                 if status == READOUT_NOT_ACTIVE && frames_processed_in_drain > 0 {
                     eprintln!(
-                        "[PVCAM DEBUG] WARNING: READOUT_NOT_ACTIVE detected mid-drain (frames_processed={}, buffer_cnt={})",
+                        "[PVCAM DEBUG] WARNING: READOUT_NOT_ACTIVE detected mid-drain (frames_processed={}, buffer_cnt={}) - will attempt restart",
                         frames_processed_in_drain, buffer_cnt
                     );
                     tracing::warn!(
-                        "PVCAM acquisition unexpectedly inactive after {} frames (buffer_cnt={}) - bd-3gnv",
+                        "PVCAM acquisition unexpectedly inactive after {} frames (buffer_cnt={}) - attempting restart (bd-3gnv)",
                         frame_count.load(Ordering::Relaxed),
                         buffer_cnt
                     );
-                    // Exit drain loop - further frames will be stale
+                    // Set flag for auto-restart after drain loop
+                    stall_detected = true;
                     break;
                 }
 
@@ -1951,6 +1986,45 @@ impl PvcamAcquisition {
             if unlock_failures > 0 {
                 eprintln!("[PVCAM DEBUG] *** CRITICAL: {} unlock failures in drain loop - camera may stall!", unlock_failures);
                 tracing::error!("PVCAM unlock failures: {} in drain loop (bd-3gnv)", unlock_failures);
+            }
+
+            // bd-3gnv: Auto-restart acquisition if stall detected (workaround for 85-frame limit)
+            // The Prime BSI camera stops producing frames after exactly 85 frames regardless of
+            // buffer size, exposure time, or unlock behavior. Restarting acquisition works around this.
+            if stall_detected {
+                eprintln!("[PVCAM DEBUG] Attempting auto-restart to recover from stall...");
+                tracing::info!("PVCAM auto-restart: stopping acquisition to recover from stall (bd-3gnv)");
+
+                // Step 1: Stop acquisition
+                ffi_safe::stop_acquisition(hcam, CCS_HALT);
+
+                // Step 2: Brief delay for camera to settle
+                std::thread::sleep(std::time::Duration::from_millis(10));
+
+                // Step 3: Restart acquisition with same buffer
+                match ffi_safe::restart_acquisition(hcam, circ_ptr, circ_size_bytes) {
+                    Ok(()) => {
+                        eprintln!("[PVCAM DEBUG] Auto-restart SUCCEEDED - resuming acquisition");
+                        tracing::info!("PVCAM auto-restart succeeded after {} frames (bd-3gnv)",
+                            frame_count.load(Ordering::Relaxed));
+
+                        // Step 4: Reset callback context (clear pending frames)
+                        callback_ctx.pending_frames.store(0, Ordering::Release);
+
+                        // Step 5: Reset frame number tracking to avoid false gap detection
+                        // Set to -1 so next frame (whatever its FrameNr) is treated as "first"
+                        last_hw_frame_nr.store(-1, Ordering::Release);
+
+                        // Continue to next iteration - acquisition should resume
+                        continue;
+                    }
+                    Err(err_msg) => {
+                        eprintln!("[PVCAM DEBUG] Auto-restart FAILED: {}", err_msg);
+                        tracing::error!("PVCAM auto-restart failed: {} (bd-3gnv)", err_msg);
+                        // Don't set fatal_error - let outer loop continue with timeout handling
+                        // The camera may recover on its own, or user can stop/restart manually
+                    }
+                }
             }
 
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
