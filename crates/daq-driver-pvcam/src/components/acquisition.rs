@@ -1496,15 +1496,20 @@ impl PvcamAcquisition {
             let mut frames_since_status_check: u32 = 0;
             const STATUS_CHECK_INTERVAL: u32 = 16;
 
+            // bd-3gnv: Track drain loop timing
+            let drain_start = std::time::Instant::now();
+            eprintln!("[PVCAM DEBUG] Drain loop ENTER: iter={}", loop_iteration);
+
             loop {
-                // bd-3gnv: Debug drain loop iteration
-                if frames_processed_in_drain % 10 == 0 && frames_processed_in_drain < 50 {
-                    eprintln!("[PVCAM DEBUG] Drain loop: processed={}", frames_processed_in_drain);
+                // bd-3gnv: Debug drain loop iteration - ALWAYS print first 10 iterations
+                if frames_processed_in_drain < 10 {
+                    eprintln!("[PVCAM DEBUG] Drain loop iter {}: elapsed={:?}", frames_processed_in_drain, drain_start.elapsed());
                 }
 
                 // Check shutdown between frames
                 if !streaming.get() || shutdown.load(Ordering::Acquire) {
-                    eprintln!("[PVCAM DEBUG] Drain loop exiting: streaming={}, shutdown={}", streaming.get(), shutdown.load(Ordering::Acquire));
+                    eprintln!("[PVCAM DEBUG] Drain loop exiting: streaming={}, shutdown={}, processed={}, elapsed={:?}",
+                        streaming.get(), shutdown.load(Ordering::Acquire), frames_processed_in_drain, drain_start.elapsed());
                     break;
                 }
 
@@ -1540,7 +1545,8 @@ impl PvcamAcquisition {
                     Ok(ptr) => ptr,
                     Err(()) => {
                         // No more frames available - exit drain loop normally
-                        eprintln!("[PVCAM DEBUG] get_oldest_frame returned no frame, exiting drain loop (processed={})", frames_processed_in_drain);
+                        eprintln!("[PVCAM DEBUG] get_oldest_frame returned no frame, exiting drain loop (processed={}, elapsed={:?})",
+                            frames_processed_in_drain, drain_start.elapsed());
                         break;
                     }
                 };
@@ -1788,8 +1794,8 @@ impl PvcamAcquisition {
 
             // bd-3gnv: Debug output after drain loop
             eprintln!(
-                "[PVCAM DEBUG] Drain loop done: frames_processed={}, fatal_error={}, iter={}",
-                frames_processed_in_drain, fatal_error, loop_iteration
+                "[PVCAM DEBUG] Drain loop done: frames_processed={}, fatal_error={}, iter={}, total_elapsed={:?}",
+                frames_processed_in_drain, fatal_error, loop_iteration, drain_start.elapsed()
             );
 
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
