@@ -991,7 +991,12 @@ impl PvcamAcquisition {
 
             // PVCAM Best Practices (bd-ek9n.4): Use SDK-recommended buffer size
             // Query PARAM_FRAME_BUFFER_SIZE for optimal sizing, with fallback to heuristics.
-            let buffer_count = Self::calculate_buffer_count(h, actual_frame_bytes, exposure_ms);
+            // bd-3gnv: Override buffer count for CIRC_OVERWRITE testing (small buffer first)
+            let buffer_count = if USE_CIRC_OVERWRITE_POLLING_MODE {
+                8 // Small buffer to test if size is causing error 185
+            } else {
+                Self::calculate_buffer_count(h, actual_frame_bytes, exposure_ms)
+            };
             // bd-3gnv: Debug output to verify buffer count
             eprintln!(
                 "[PVCAM DEBUG] Circular buffer: {} frames, {} bytes/frame, {:.2} MB total",
