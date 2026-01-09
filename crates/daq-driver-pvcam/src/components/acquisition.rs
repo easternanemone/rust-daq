@@ -1579,6 +1579,14 @@ impl PvcamAcquisition {
                             // This can happen due to race between callback and frame retrieval
                             // Skip this frame to prevent duplicates in output stream
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
+                            // bd-3gnv: Log duplicate detection rate-limited
+                            let dup_count = discontinuity_events.load(Ordering::Relaxed);
+                            if dup_count <= 10 || dup_count % 10000 == 0 {
+                                eprintln!(
+                                    "[PVCAM DEBUG] Duplicate frame detected: FrameNr {} (dup_count={}, elapsed={:?})",
+                                    current_frame_nr, dup_count, drain_start.elapsed()
+                                );
+                            }
                             tracing::warn!(
                                 "Duplicate frame detected: FrameNr {} already processed, skipping (bd-ha3w)",
                                 current_frame_nr
