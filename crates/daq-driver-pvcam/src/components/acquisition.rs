@@ -951,6 +951,13 @@ impl PvcamAcquisition {
             // PVCAM Best Practices (bd-ek9n.4): Use SDK-recommended buffer size
             // Query PARAM_FRAME_BUFFER_SIZE for optimal sizing, with fallback to heuristics.
             let buffer_count = Self::calculate_buffer_count(h, actual_frame_bytes, exposure_ms);
+            // bd-3gnv: Debug output to verify buffer count
+            eprintln!(
+                "[PVCAM DEBUG] Circular buffer: {} frames, {} bytes/frame, {:.2} MB total",
+                buffer_count,
+                actual_frame_bytes,
+                (actual_frame_bytes * buffer_count) as f64 / (1024.0 * 1024.0)
+            );
             tracing::info!(
                 "PVCAM circular buffer: {} frames ({:.2} MB)",
                 buffer_count,
