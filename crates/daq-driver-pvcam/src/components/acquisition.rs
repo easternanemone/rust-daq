@@ -1699,9 +1699,15 @@ impl PvcamAcquisition {
                             // This indicates the camera has stopped producing new frames but
                             // the SDK keeps returning stale frames. Go back to outer loop to wait.
                             if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES {
+                                // Enhanced diagnostics: check SDK state when duplicates detected
+                                let (dup_status, dup_bytes, dup_cnt) = match ffi_safe::check_cont_status(hcam) {
+                                    Ok(result) => result,
+                                    Err(()) => (-999, 0, 0),
+                                };
+                                let dup_err_code = unsafe { pl_error_code() };
                                 eprintln!(
-                                    "[PVCAM DEBUG] Exiting drain loop: {} consecutive duplicates (camera stalled?)",
-                                    consecutive_duplicates
+                                    "[PVCAM DEBUG] Exiting drain loop: {} consecutive duplicates, status={}, bytes={}, buffer_cnt={}, err_code={}, elapsed={:?}",
+                                    consecutive_duplicates, dup_status, dup_bytes, dup_cnt, dup_err_code, drain_start.elapsed()
                                 );
                                 break;
                             }
