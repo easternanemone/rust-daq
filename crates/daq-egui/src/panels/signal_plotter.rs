@@ -601,8 +601,7 @@ impl SignalPlotterPanel {
 
                 let points: PlotPoints = trace.points.iter().map(|(t, v)| [*t, *v]).collect();
 
-                let line = Line::new(points)
-                    .name(&trace.label)
+                let line = Line::new(&trace.label, points)
                     .color(trace.color)
                     .width(2.0);
 

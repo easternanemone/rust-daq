@@ -710,9 +710,8 @@ impl OscilloscopePanel {
 
                 let points = channel.visible_points(t_start, t_end);
                 if !points.is_empty() {
-                    let line = Line::new(PlotPoints::new(points))
+                    let line = Line::new(&channel.label, PlotPoints::new(points))
                         .color(channel.color)
-                        .name(&channel.label)
                         .width(1.5);
                     plot_ui.line(line);
                 }
@@ -721,7 +720,7 @@ impl OscilloscopePanel {
             // Draw trigger level line
             if self.trigger_mode != TriggerMode::Off {
                 let trigger_line =
-                    egui_plot::HLine::new(self.trigger_level).color(Color32::from_rgb(255, 0, 0));
+                    egui_plot::HLine::new("trigger", self.trigger_level).color(Color32::from_rgb(255, 0, 0));
                 plot_ui.hline(trigger_line);
             }
 
@@ -729,7 +728,7 @@ impl OscilloscopePanel {
             if let Some(trigger_time) = self.last_trigger_time {
                 if trigger_time >= t_start && trigger_time <= t_end {
                     let trigger_marker =
-                        VLine::new(trigger_time).color(Color32::from_rgb(255, 100, 0));
+                        VLine::new("trigger", trigger_time).color(Color32::from_rgb(255, 100, 0));
                     plot_ui.vline(trigger_marker);
                 }
             }

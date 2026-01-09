@@ -807,7 +807,7 @@ impl InstrumentManagerPanel {
                         device_name.clone(),
                         ContextAction::ViewParameters,
                     ));
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("🔌 Test Connection").clicked() {
                     self.pending_action = Some((
@@ -815,7 +815,7 @@ impl InstrumentManagerPanel {
                         device_name.clone(),
                         ContextAction::TestConnection,
                     ));
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("⚙️ Configure").clicked() {
                     // Configure opens parameters in edit mode
@@ -824,7 +824,7 @@ impl InstrumentManagerPanel {
                         device_name.clone(),
                         ContextAction::Configure,
                     ));
-                    ui.close_menu();
+                    ui.close();
                 }
             });
 

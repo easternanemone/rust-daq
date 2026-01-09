@@ -247,7 +247,7 @@ impl AnalogInputPanel {
                         response.context_menu(|ui| {
                             if ui.button("Read Now").clicked() {
                                 self.read_channel(channel, runtime);
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
 

@@ -6,6 +6,7 @@
 #[cfg(feature = "rerun_viewer")]
 mod rerun_app {
     use daq_egui::client::DaqClient;
+    use daq_egui::connection::{AddressSource, DaemonAddress};
     use egui_dock::{DockArea, DockState, Style, TabViewer};
     use rerun::external::re_grpc_client;
     use rerun::external::re_uri::ProxyUri;
@@ -224,9 +225,14 @@ mod rerun_app {
                             self.daq_state.connection_status = "Connecting...".to_string();
 
                             self.runtime.spawn(async move {
-                                let result = DaqClient::connect(&address)
-                                    .await
-                                    .map_err(|e| e.to_string());
+                                let result = async {
+                                    let addr = DaemonAddress::parse(&address, AddressSource::UserInput)
+                                        .map_err(|e| e.to_string())?;
+                                    DaqClient::connect(&addr)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                }
+                                .await;
                                 let _ = tx.send(RerunActionResult::Connect(result)).await;
                             });
                         }
@@ -664,12 +670,11 @@ mod rerun_app {
 
             // Top menu bar for layout control
             egui::TopBottomPanel::top("daq_menu_bar").show(ctx, |ui| {
-                #[allow(deprecated)] // egui 0.33 deprecated menu::bar, but rerun uses 0.33
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("View", |ui| {
                         if ui.button("Reset Panel Layout").clicked() {
                             self.dock_state = Self::default_dock_layout();
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                 });

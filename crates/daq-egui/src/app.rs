@@ -340,7 +340,7 @@ impl DaqApp {
                     // Mode selection buttons
                     if ui.button("Local (Mock)").clicked() {
                         self.switch_daemon_mode(DaemonMode::LocalAuto { port: 50051 });
-                        ui.close_menu();
+                        ui.close();
                     }
 
                     // Remote connection - use the address input
@@ -353,7 +353,7 @@ impl DaqApp {
                                 url: addr.to_string(),
                             });
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
 
                     // Lab Hardware - placeholder for future implementation
@@ -374,7 +374,7 @@ impl DaqApp {
                             if ui.button("Stop Daemon").clicked() {
                                 launcher.stop();
                                 self.disconnect();
-                                ui.close_menu();
+                                ui.close();
                             }
                         } else {
                             ui.colored_label(egui::Color32::RED, "● Local daemon stopped");
@@ -389,7 +389,7 @@ impl DaqApp {
                                         since: Instant::now(),
                                     };
                                 }
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     } else {
@@ -401,27 +401,27 @@ impl DaqApp {
                     if ui.button("Getting Started").clicked() {
                         self.ui_actions
                             .push(UiAction::FocusTab(Panel::GettingStarted));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Devices").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::Devices));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Scripts").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::Scripts));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Scans").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::Scans));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Storage").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::Storage));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Modules").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::Modules));
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
