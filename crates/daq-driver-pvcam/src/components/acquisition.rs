@@ -1712,8 +1712,8 @@ impl PvcamAcquisition {
                     );
 
                     // bd-3gnv: Detect 85-frame stall and auto-restart
-                    // Signature: 20+ timeouts (2s), status is READOUT_NOT_ACTIVE (0), 80+ frames received
-                    if consecutive_timeouts >= 20 && st == 0 && frame_count.load(Ordering::Relaxed) >= 80 {
+                    // Signature: 10+ timeouts (1s), status is READOUT_NOT_ACTIVE (0), 80+ frames received
+                    if consecutive_timeouts >= 10 && st == 0 && frame_count.load(Ordering::Relaxed) >= 80 {
                         eprintln!(
                             "[PVCAM DEBUG] Detected 85-frame stall (timeouts={}, status={}, frames={}) - attempting auto-restart",
                             consecutive_timeouts, st, frame_count.load(Ordering::Relaxed)
