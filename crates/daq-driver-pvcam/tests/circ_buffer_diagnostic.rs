@@ -873,6 +873,80 @@ async fn test_circ_buffer_capabilities() {
     }
 
     // ========================================
+    // Test 10: FULL FRAME (2048x2048) + 4KB aligned + DEFAULT mode + NO callback
+    // PVCamTestCli uses full sensor resolution. Maybe ROI size matters?
+    // ========================================
+    println!("\n--- Test 10: FULL FRAME (2048x2048) + 4KB aligned + DEFAULT mode ---");
+    println!("     Matching PVCamTestCli exactly: full sensor, 4KB align, 50 frames");
+
+    if let Some(def_mode) = default_exp_mode {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 50;
+
+        // Use full sensor resolution like PVCamTestCli
+        let full_region = rgn_type {
+            s1: 0,
+            s2: 2047,  // 2048 pixels wide (0-2047)
+            sbin: 1,
+            p1: 0,
+            p2: 2047,  // 2048 pixels tall (0-2047)
+            pbin: 1,
+        };
+
+        println!("     Region: full sensor 2048x2048");
+        println!("     exp_mode = {} (camera default)", def_mode);
+
+        unsafe {
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &full_region as *const _,
+                def_mode as i16,
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+
+                // Allocate 4KB-aligned buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] FULL FRAME + 4KB aligned + CIRC_OVERWRITE succeeded!");
+                        println!("\n*** FULL FRAME WORKS! ROI SIZE MATTERS! ***\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                } else {
+                    println!("[FAIL] Failed to allocate buffer");
+                }
+            } else {
+                println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("[SKIP] Could not get default exposure mode");
+    }
+
+    // ========================================
     // Query some common parameters to see what's available
     // ========================================
     println!("\n--- Checking other relevant parameters ---");
