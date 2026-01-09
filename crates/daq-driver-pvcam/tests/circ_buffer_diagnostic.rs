@@ -490,6 +490,89 @@ async fn test_circ_buffer_capabilities() {
         }
     }
 
+    // ========================================
+    // Test 5: CIRC_NO_OVERWRITE (control test - should work)
+    // ========================================
+    println!("\n--- Test 5: CIRC_NO_OVERWRITE (control test) ---");
+
+    // Register callback first
+    callback_registered = false;
+    unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            test_eof_callback as *mut c_void,
+            ptr::null_mut(),
+        );
+        if result != 0 {
+            callback_registered = true;
+            println!("[OK] Callback registered");
+        }
+    }
+
+    let exp_mode = TIMED_MODE;
+    println!("     Using exp_mode = TIMED_MODE, CIRC_NO_OVERWRITE");
+
+    unsafe {
+        let result = pl_exp_setup_cont(
+            hcam,
+            1,
+            &region as *const _,
+            exp_mode,
+            exposure_ms,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE,
+        );
+        if result != 0 {
+            println!("[OK] pl_exp_setup_cont succeeded");
+
+            let buffer_count = 20usize;
+            let buffer_size = (frame_bytes as usize) * buffer_count;
+            let mut buffer = vec![0u8; buffer_size];
+
+            let start_result = pl_exp_start_cont(
+                hcam,
+                buffer.as_mut_ptr() as *mut c_void,
+                buffer_size as uns32,
+            );
+            if start_result != 0 {
+                println!("[OK] pl_exp_start_cont with CIRC_NO_OVERWRITE succeeded!");
+                println!("\n*** CIRC_NO_OVERWRITE works (as expected) ***\n");
+                pl_exp_abort(hcam, CCS_HALT);
+            } else {
+                println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
+            }
+        } else {
+            println!("[FAIL] pl_exp_setup_cont failed: {}", get_error_message());
+        }
+    }
+
+    if callback_registered {
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        }
+    }
+
+    // ========================================
+    // Query some common parameters to see what's available
+    // ========================================
+    println!("\n--- Checking other relevant parameters ---");
+
+    // Some common PARAM IDs
+    let params_to_check: &[(u32, &str)] = &[
+        ((3 << 16) | (1 << 24) | 57, "PARAM_SER_SIZE"),        // Sensor serial size (width)
+        ((3 << 16) | (1 << 24) | 58, "PARAM_PAR_SIZE"),        // Sensor parallel size (height)
+        ((3 << 16) | (4 << 24) | 60, "PARAM_READOUT_PORT"),    // Readout port
+        ((3 << 16) | (4 << 24) | 247, "PARAM_SPDTAB_INDEX"),   // Speed table index
+        ((3 << 16) | (4 << 24) | 519, "PARAM_CLEAR_MODE"),     // Clear mode
+        ((3 << 16) | (4 << 24) | 523, "PARAM_PMODE"),          // Port mode
+    ];
+
+    for (param_id, name) in params_to_check {
+        let avail = is_param_available(hcam, *param_id);
+        println!("  {}: {}", name, if avail { "available" } else { "NOT available" });
+    }
+
     // Cleanup
     println!("\n--- Cleanup ---");
     unsafe {
