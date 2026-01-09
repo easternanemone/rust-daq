@@ -1330,13 +1330,124 @@ async fn test_circ_buffer_capabilities() {
         }
     }
 
+    // ========================================
+    // Test 14: FRESH CAMERA + frame_info_struct (mimic exact SDK Open sequence)
+    // ========================================
+    println!("\n--- Test 14: FRESH CAMERA + frame_info_struct + CIRC_OVERWRITE ---");
+    println!("     Close/reopen camera, create frame_info_struct, single CIRC_OVERWRITE attempt");
+    println!("     This tests if accumulated state from previous tests causes issues\n");
+
+    // Close current camera
+    unsafe { pl_cam_close(hcam); }
+    println!("[OK] Camera closed");
+
+    // Reopen fresh
+    let mut hcam_fresh: i16 = -1;
+    unsafe {
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam_fresh, 0) == 0 {
+            println!("[FAIL] Failed to reopen camera: {}", get_error_message());
+        } else {
+            println!("[OK] Camera reopened fresh, handle = {}", hcam_fresh);
+
+            // Create frame_info_struct like SDK does in Open
+            let mut frame_info: *mut FRAME_INFO = ptr::null_mut();
+            if pl_create_frame_info_struct(&mut frame_info) != 0 {
+                println!("[OK] frame_info_struct created (SDK Open requirement)");
+            } else {
+                println!("[WARN] Failed to create frame_info_struct: {}", get_error_message());
+            }
+
+            // Now try CIRC_OVERWRITE with fresh state
+            const ALIGN_4K: usize = 4096;
+            const FRAME_COUNT: usize = 100;
+
+            let region = rgn_type {
+                s1: 0,
+                s2: 2047,  // Full frame
+                sbin: 1,
+                p1: 0,
+                p2: 2047,
+                pbin: 1,
+            };
+
+            println!("     Region: full sensor 2048x2048");
+            println!("     exp_mode = TIMED_MODE (0)");
+
+            // Step 1: Setup FIRST
+            let mut frame_bytes: uns32 = 0;
+            let setup_result = pl_exp_setup_cont(
+                hcam_fresh,
+                1,
+                &region as *const _,
+                TIMED_MODE,
+                20,  // 20ms exposure
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+
+            if setup_result != 0 {
+                println!("[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+
+                // Step 2: Register callback AFTER setup
+                let callback_result = pl_cam_register_callback_ex3(
+                    hcam_fresh,
+                    PL_CALLBACK_EOF,
+                    test_eof_callback as *mut c_void,
+                    ptr::null_mut(),
+                );
+                if callback_result != 0 {
+                    println!("[OK] Step 2: Callback registered after setup");
+                }
+
+                // Allocate buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K).unwrap();
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    // Step 3: Start
+                    let start_result = pl_exp_start_cont(
+                        hcam_fresh,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] Step 3: pl_exp_start_cont SUCCEEDED!");
+                        println!("\n*********************************************");
+                        println!("*** SOLUTION: Fresh camera + frame_info! ***");
+                        println!("*********************************************\n");
+                        pl_exp_abort(hcam_fresh, CCS_HALT);
+                    } else {
+                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                }
+
+                pl_cam_deregister_callback(hcam_fresh, PL_CALLBACK_EOF);
+            } else {
+                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+            }
+
+            // Release frame_info_struct
+            if !frame_info.is_null() {
+                pl_release_frame_info_struct(frame_info);
+            }
+
+            pl_cam_close(hcam_fresh);
+        }
+    }
+
     // Cleanup
     println!("\n--- Cleanup ---");
     unsafe {
-        pl_cam_close(hcam);
         pl_pvcam_uninit();
     }
-    println!("[OK] Camera closed and PVCAM uninitialized");
+    println!("[OK] PVCAM uninitialized");
 
     println!("\n=== Diagnostic Test Complete ===\n");
 }
