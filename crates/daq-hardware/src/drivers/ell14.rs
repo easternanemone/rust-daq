@@ -1069,20 +1069,31 @@ impl Ell14Driver {
     /// Send home command to find mechanical zero
     ///
     /// Should be called on initialization to establish reference position.
+    /// Uses the device's default homing direction.
+    ///
+    /// For rotary stages that need a specific homing direction, use
+    /// [`home_with_direction`](Self::home_with_direction) instead.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
+    pub async fn home(&self) -> Result<()> {
+        // Home command doesn't return immediate response - just starts homing
+        self.send_command("ho").await?;
+        self.wait_settled().await
+    }
+
+    /// Home device with specified direction (for rotary stages)
     ///
     /// # Arguments
-    /// * `direction` - Optional direction for homing (rotary stages only)
-    ///   - `None` - Uses default direction
+    /// * `direction` - Direction for homing search
+    ///   - `None` - Uses default direction (same as [`home`](Self::home))
     ///   - `Some(Clockwise)` - Search clockwise
     ///   - `Some(CounterClockwise)` - Search counter-clockwise
     #[instrument(skip(self), fields(address = %self.physical_address), err)]
-    pub async fn home(&self, direction: Option<HomeDirection>) -> Result<()> {
+    pub async fn home_with_direction(&self, direction: Option<HomeDirection>) -> Result<()> {
         let cmd = match direction {
             Some(dir) => format!("ho{}", dir as u8),
             None => "ho".to_string(),
         };
 
-        // Home command doesn't return immediate response - just starts homing
         self.send_command(&cmd).await?;
         self.wait_settled().await
     }

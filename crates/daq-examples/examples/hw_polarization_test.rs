@@ -44,7 +44,7 @@ async fn get_rotator_position(addr: &str) -> Result<f64> {
 
 async fn home_rotator(addr: &str) -> Result<f64> {
     let driver = Ell14Driver::new(ELLIPTEC_PORT, addr)?;
-    driver.home(None).await?;
+    driver.home().await?;
     sleep(Duration::from_secs(2)).await;
     let pos = driver.position().await?;
     Ok(pos)

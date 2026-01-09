@@ -293,7 +293,7 @@ async fn test_home_command() {
 
     // Home the device
     println!("Homing...");
-    driver.home(None).await.expect("Failed to home");
+    driver.home().await.expect("Failed to home");
 
     // Get position after homing
     let home_pos = driver
@@ -1245,7 +1245,7 @@ async fn test_relative_movement_large_angles() {
     let driver = create_driver(&bus, "3").await;
 
     // Home first to have a known starting point
-    driver.home(None).await.expect("Failed to home");
+    driver.home().await.expect("Failed to home");
     let initial = driver.position().await.expect("Failed to get position");
     println!("Initial (home): {:.2}°", initial);
 
@@ -1281,7 +1281,7 @@ async fn test_relative_movement_large_angles() {
     }
 
     // Return to home
-    driver.home(None).await.ok();
+    driver.home().await.ok();
 }
 
 #[tokio::test]
@@ -1294,7 +1294,7 @@ async fn test_relative_movement_wraparound() {
     let driver = create_driver(&bus, "8").await;
 
     // Home first
-    driver.home(None).await.expect("Failed to home");
+    driver.home().await.expect("Failed to home");
     sleep(Duration::from_millis(200)).await;
     let home_pos = driver.position().await.expect("Failed to get position");
     println!("Home position: {:.2}°", home_pos);
@@ -1334,7 +1334,7 @@ async fn test_relative_movement_wraparound() {
     );
 
     // Return to home
-    driver.home(None).await.ok();
+    driver.home().await.ok();
 }
 
 // =============================================================================
