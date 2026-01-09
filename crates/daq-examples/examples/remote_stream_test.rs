@@ -4,6 +4,7 @@
 //! - Tailscale direct connectivity (no SSH tunnel needed)
 //! - LZ4 compression working correctly
 //! - Compression ratio metrics
+//! - Real vs mock data detection
 //!
 //! Usage:
 //! ```bash
@@ -13,7 +14,7 @@
 
 use daq_proto::daq::{
     hardware_service_client::HardwareServiceClient, ListDevicesRequest, StartStreamRequest,
-    StopStreamRequest, StreamFramesRequest,
+    StopStreamRequest, StreamFramesRequest, ListParametersRequest,
 };
 use futures::StreamExt;
 use std::env;
@@ -57,6 +58,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
 
+    // Query camera parameters to check if real hardware
+    println!("\nQuerying camera parameters...");
+    let params_resp = client
+        .list_parameters(ListParametersRequest {
+            device_id: cam.clone(),
+        })
+        .await?;
+
+    let params = &params_resp.get_ref().parameters;
+    println!("Camera has {} parameters:", params.len());
+    for p in params.iter().take(10) {
+        println!("  {} ({}) - {}", p.name, p.dtype, p.description);
+    }
+    if params.len() > 10 {
+        println!("  ... and {} more", params.len() - 10);
+    }
+
     println!("\nStarting stream from {}...", cam);
 
     // Start stream (None for frame_count = continuous)
@@ -77,9 +95,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut count = 0;
     let mut total_uncompressed = 0usize;
     let mut total_compressed = 0usize;
+    let mut prev_frame_number = 0u64;
 
     println!("\nReceiving frames (press Ctrl+C to stop):");
-    println!("{}", "─".repeat(70));
+    println!("{}", "─".repeat(90));
 
     while let Some(frame_result) = stream.next().await {
         if count >= 10 {
@@ -99,18 +118,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 total_uncompressed += uncompressed_size;
                 total_compressed += compressed_size;
 
+                // Decompress to analyze pixel data
+                let pixel_data = if compression_type == 1 {
+                    // LZ4 compressed - decompress
+                    lz4_flex::decompress_size_prepended(&frame.data).ok()
+                } else {
+                    Some(frame.data.clone())
+                };
+
+                // Analyze pixel statistics (16-bit data)
+                let (min_val, max_val, avg_val, unique_count) = if let Some(ref data) = pixel_data {
+                    if frame.bit_depth == 16 && data.len() >= 2 {
+                        let pixels: Vec<u16> = data.chunks_exact(2)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect();
+                        let min = *pixels.iter().min().unwrap_or(&0);
+                        let max = *pixels.iter().max().unwrap_or(&0);
+                        let sum: u64 = pixels.iter().map(|&x| x as u64).sum();
+                        let avg = sum as f64 / pixels.len() as f64;
+                        // Count unique values (sample first 10000 pixels)
+                        let mut unique: std::collections::HashSet<u16> = std::collections::HashSet::new();
+                        for &p in pixels.iter().take(10000) {
+                            unique.insert(p);
+                        }
+                        (min, max, avg, unique.len())
+                    } else {
+                        (0, 0, 0.0, 0)
+                    }
+                } else {
+                    (0, 0, 0.0, 0)
+                };
+
+                // Check for frame number gaps
+                let gap = if prev_frame_number > 0 && frame.frame_number > prev_frame_number {
+                    frame.frame_number - prev_frame_number - 1
+                } else {
+                    0
+                };
+                prev_frame_number = frame.frame_number;
+
                 // compression=1 means LZ4, compression=0 means none
                 let comp_str = if compression_type == 1 { "LZ4" } else { "none" };
 
                 println!(
-                    "Frame {:4}: {:4}x{:4}  {} {:6} KB → {:6} KB  ({:.1}x)",
+                    "Frame {:4}: {:4}x{:4}  {} {:6} KB → {:5} KB ({:5.1}x) | px: min={:5} max={:5} avg={:8.1} uniq={:5}{}",
                     frame.frame_number,
                     frame.width,
                     frame.height,
                     comp_str,
                     uncompressed_size / 1024,
                     compressed_size / 1024,
-                    ratio
+                    ratio,
+                    min_val,
+                    max_val,
+                    avg_val,
+                    unique_count,
+                    if gap > 0 { format!(" [GAP:{}]", gap) } else { String::new() }
                 );
                 count += 1;
             }
@@ -121,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("{}", "─".repeat(70));
+    println!("{}", "─".repeat(90));
 
     // Print summary
     if total_compressed > 0 {
