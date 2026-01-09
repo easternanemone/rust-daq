@@ -48,6 +48,14 @@ pub const CIRC_OVERWRITE: i16 = 0;
 #[cfg(feature = "pvcam-sdk")]
 pub const CIRC_NO_OVERWRITE: i16 = 1;
 
+// Exposure modes for sCMOS cameras (bd-3gnv)
+// Modern sCMOS cameras require EXT_TRIG_* modes instead of legacy TIMED_MODE.
+// These can be ORed with PL_EXPOSE_OUT_MODES values.
+#[cfg(feature = "pvcam-sdk")]
+pub const EXT_TRIG_INTERNAL: i16 = (7 + 0) << 8; // 1792 - Internal trigger, camera controls timing
+#[cfg(feature = "pvcam-sdk")]
+pub const EXPOSE_OUT_FIRST_ROW: i16 = 0; // Expose out signal on first row
+
 // Camera Control Subsystem abort modes for pl_exp_stop_cont/pl_exp_abort
 #[cfg(feature = "pvcam-sdk")]
 pub const CCS_NO_CHANGE: i16 = 0;

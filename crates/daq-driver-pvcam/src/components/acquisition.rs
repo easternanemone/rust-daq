@@ -938,6 +938,18 @@ impl PvcamAcquisition {
             };
             let mode_name = if USE_CIRC_OVERWRITE_POLLING_MODE { "CIRC_OVERWRITE" } else { "CIRC_NO_OVERWRITE" };
             eprintln!("[PVCAM DEBUG] Using buffer mode: {} (polling_mode={})", mode_name, USE_CIRC_OVERWRITE_POLLING_MODE);
+
+            // bd-3gnv Phase 5A: Select exposure mode based on buffer mode.
+            // Modern sCMOS cameras (Prime BSI) require EXT_TRIG_INTERNAL for CIRC_OVERWRITE mode.
+            // Legacy TIMED_MODE (0) causes error 185 (Invalid Configuration) at pl_exp_start_cont.
+            let exp_mode = if USE_CIRC_OVERWRITE_POLLING_MODE {
+                EXT_TRIG_INTERNAL | EXPOSE_OUT_FIRST_ROW
+            } else {
+                TIMED_MODE
+            };
+            eprintln!("[PVCAM DEBUG] Using exposure mode: {} (EXT_TRIG_INTERNAL={}, TIMED_MODE={})",
+                exp_mode, EXT_TRIG_INTERNAL, TIMED_MODE);
+
             unsafe {
 
                 // SAFETY: h is a valid camera handle; region points to initialized rgn_type; frame_bytes is writable.
@@ -945,7 +957,7 @@ impl PvcamAcquisition {
                     h,
                     1,
                     &region as *const _,
-                    TIMED_MODE,
+                    exp_mode,
                     exposure_ms as uns32,
                     &mut frame_bytes,
                     buffer_mode,
