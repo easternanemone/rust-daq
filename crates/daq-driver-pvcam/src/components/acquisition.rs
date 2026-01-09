@@ -443,6 +443,14 @@ mod ffi_safe {
         let result = unsafe { pl_exp_get_oldest_frame_ex(hcam, &mut frame_ptr, frame_info) };
 
         if result == 0 || frame_ptr.is_null() {
+            // bd-3gnv: Log error code to diagnose why get_oldest_frame is failing
+            let err_code = unsafe { pl_error_code() };
+            eprintln!(
+                "[PVCAM DEBUG] get_oldest_frame failed: result={}, err_code={}, frame_ptr_null={}",
+                result,
+                err_code,
+                frame_ptr.is_null()
+            );
             Err(())
         } else {
             Ok(frame_ptr)
@@ -1453,22 +1461,30 @@ impl PvcamAcquisition {
                         Ok(vals) => vals,
                         Err(_) => (-999, 0, 0),
                     };
+                    // bd-3gnv: Get SDK error code when status is READOUT_NOT_ACTIVE (0)
+                    let err_code = if st == 0 {
+                        unsafe { pl_error_code() }
+                    } else {
+                        0
+                    };
                     // bd-3gnv: Use eprintln for guaranteed output during debugging
                     eprintln!(
-                        "[PVCAM DEBUG] Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}, streaming: {}, callback_pending: {}",
+                        "[PVCAM DEBUG] Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}, streaming: {}, callback_pending: {}, err_code: {}",
                         consecutive_timeouts,
                         st,
                         bytes,
                         cnt,
                         streaming.get(),
-                        callback_ctx.pending_frames.load(Ordering::Acquire)
+                        callback_ctx.pending_frames.load(Ordering::Acquire),
+                        err_code
                     );
                     tracing::warn!(
-                        "DIAGNOSTIC: Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}",
+                        "DIAGNOSTIC: Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}, err_code: {}",
                         consecutive_timeouts,
                         st,
                         bytes,
-                        cnt
+                        cnt,
+                        err_code
                     );
                 }
 
