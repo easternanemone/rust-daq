@@ -1512,9 +1512,14 @@ impl PvcamAcquisition {
                 }
 
                 // bd-3gnv FIX: Check if there are actually frames available BEFORE calling get_oldest_frame.
-                // The SDK can return stale frames if we don't check buffer_cnt first.
+                // The SDK can return stale frames if we don't check properly.
                 // This prevents the 60-million-iteration busy loop caused by the SDK returning
                 // the same frame repeatedly after the camera stops producing new frames.
+                //
+                // Strategy: Use callback pending_frames as primary indicator (more reliable),
+                // but also check buffer_cnt as a secondary signal. Exit drain loop when BOTH
+                // the callback says no frames pending AND the SDK says buffer is empty.
+                let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
                 let (check_status, _, buf_cnt) = match ffi_safe::check_cont_status(hcam) {
                     Ok(result) => result,
                     Err(()) => {
@@ -1535,14 +1540,15 @@ impl PvcamAcquisition {
                     break;
                 }
 
-                // bd-3gnv FIX: Only attempt to get a frame if SDK reports frames are available.
-                // This is the critical fix - without this check, the SDK returns stale frames
-                // and we loop 60 million times detecting duplicates.
-                if buffer_cnt == 0 {
-                    // No frames available - exit drain loop and wait for callback/polling
+                // bd-3gnv FIX: Only attempt to get a frame if either:
+                // 1. Callback says frames are pending, OR
+                // 2. SDK buffer has frames available
+                // Exit if BOTH say no frames, to prevent stale frame spin.
+                if pending == 0 && buffer_cnt == 0 {
+                    // No frames available from either source - exit drain loop
                     if frames_processed_in_drain > 0 || loop_iteration <= 3 {
-                        eprintln!("[PVCAM DEBUG] No frames available (buffer_cnt=0), exiting drain loop (processed={}, elapsed={:?})",
-                            frames_processed_in_drain, drain_start.elapsed());
+                        eprintln!("[PVCAM DEBUG] No frames available (pending={}, buffer_cnt={}), exiting drain loop (processed={}, elapsed={:?})",
+                            pending, buffer_cnt, frames_processed_in_drain, drain_start.elapsed());
                     }
                     break;
                 }
