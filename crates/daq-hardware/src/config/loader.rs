@@ -90,11 +90,8 @@ pub fn load_device_config(path: &Path) -> Result<DeviceConfig> {
 
     // Run serde_valid validation
     if let Err(errors) = config.validate() {
-        let error_messages: Vec<String> = errors
-            .to_string()
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
+        let error_messages: Vec<String> =
+            errors.to_string().lines().map(|s| s.to_string()).collect();
         return Err(ConfigLoadError::SchemaValidationError(error_messages.join("\n")).into());
     }
 
@@ -151,8 +148,8 @@ pub fn load_all_devices(dir: &Path) -> Result<Vec<DeviceConfig>> {
 
     let mut configs = Vec::new();
 
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("Failed to read directory: {}", dir.display()))?;
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read directory: {}", dir.display()))?;
 
     for entry in entries {
         let entry = entry?;
@@ -173,7 +170,11 @@ pub fn load_all_devices(dir: &Path) -> Result<Vec<DeviceConfig>> {
         }
     }
 
-    info!("Loaded {} device configurations from {}", configs.len(), dir.display());
+    info!(
+        "Loaded {} device configurations from {}",
+        configs.len(),
+        dir.display()
+    );
 
     Ok(configs)
 }
@@ -197,11 +198,8 @@ pub fn load_device_config_from_str(toml_content: &str) -> Result<DeviceConfig> {
 
     // Run serde_valid validation
     if let Err(errors) = config.validate() {
-        let error_messages: Vec<String> = errors
-            .to_string()
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
+        let error_messages: Vec<String> =
+            errors.to_string().lines().map(|s| s.to_string()).collect();
         return Err(ConfigLoadError::SchemaValidationError(error_messages.join("\n")).into());
     }
 

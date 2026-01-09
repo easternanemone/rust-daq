@@ -713,7 +713,7 @@ async fn test_home_with_direction_clockwise() {
             println!("Home with direction failed: {}", e);
             // Fallback to standard home
             ensure_stopped(&driver).await;
-            driver.home().await.ok();
+            driver.home(None).await.ok();
         }
     }
 
@@ -782,7 +782,7 @@ async fn test_home_with_direction_counter_clockwise() {
         Err(e) => {
             println!("Home with direction failed: {}", e);
             ensure_stopped(&driver).await;
-            driver.home().await.ok();
+            driver.home(None).await.ok();
         }
     }
 
@@ -992,7 +992,7 @@ async fn test_stop_command_always_works() {
     println!("Final position: {:.2}°", pos);
 
     // Return to home
-    driver.home().await.ok();
+    driver.home(None).await.ok();
     driver.wait_settled().await.ok();
 
     assert!(verify_device_responsive(&driver).await);

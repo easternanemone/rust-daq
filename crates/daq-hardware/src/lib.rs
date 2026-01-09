@@ -19,4 +19,4 @@ pub use registry::{DeviceConfig, DeviceInfo, DeviceRegistry, DriverType};
 pub use config::DeviceConfig as DeclarativeDeviceConfig;
 
 // Re-export factory types for config-driven driver creation
-pub use factory::{ConfiguredDriver, ConfiguredBus, DriverFactory};
+pub use factory::{ConfiguredBus, ConfiguredDriver, DriverFactory};

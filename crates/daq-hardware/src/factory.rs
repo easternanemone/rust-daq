@@ -32,8 +32,8 @@
 // Traits used by enum_dispatch macro expansion
 #[allow(unused_imports)]
 use crate::capabilities::{Movable, Readable, ShutterControl, WavelengthTunable};
-use crate::config::schema::DeviceConfig;
 use crate::config::load_device_config;
+use crate::config::schema::DeviceConfig;
 use crate::drivers::generic_serial::{GenericSerialDriver, SharedPort};
 use anyhow::{anyhow, Context, Result};
 use enum_dispatch::enum_dispatch;
@@ -222,7 +222,9 @@ impl DriverFactory {
         let driver = GenericSerialDriver::new(config, port, address)?;
 
         // Set custom calibration
-        driver.set_parameter("pulses_per_degree", pulses_per_degree).await;
+        driver
+            .set_parameter("pulses_per_degree", pulses_per_degree)
+            .await;
 
         let configured = match protocol.as_str() {
             "elliptec" | "ell14" => ConfiguredDriver::Ell14(driver),
@@ -435,7 +437,9 @@ output_field = "pulses"
     impl Unpin for MockPort {}
 
     fn mock_port() -> SharedPort {
-        Arc::new(Mutex::new(Box::new(MockPort) as crate::drivers::generic_serial::DynSerial))
+        Arc::new(Mutex::new(
+            Box::new(MockPort) as crate::drivers::generic_serial::DynSerial
+        ))
     }
 
     #[test]

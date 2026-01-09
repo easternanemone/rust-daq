@@ -1068,11 +1068,22 @@ impl Ell14Driver {
 
     /// Send home command to find mechanical zero
     ///
-    /// Should be called on initialization to establish reference position
+    /// Should be called on initialization to establish reference position.
+    ///
+    /// # Arguments
+    /// * `direction` - Optional direction for homing (rotary stages only)
+    ///   - `None` - Uses default direction
+    ///   - `Some(Clockwise)` - Search clockwise
+    ///   - `Some(CounterClockwise)` - Search counter-clockwise
     #[instrument(skip(self), fields(address = %self.physical_address), err)]
-    pub async fn home(&self) -> Result<()> {
+    pub async fn home(&self, direction: Option<HomeDirection>) -> Result<()> {
+        let cmd = match direction {
+            Some(dir) => format!("ho{}", dir as u8),
+            None => "ho".to_string(),
+        };
+
         // Home command doesn't return immediate response - just starts homing
-        self.send_command("ho").await?;
+        self.send_command(&cmd).await?;
         self.wait_settled().await
     }
 
@@ -1403,6 +1414,27 @@ impl Ell14Driver {
     // Motor Frequency Search / Optimization Commands
     // =========================================================================
 
+    /// Skip automatic frequency search at power-up
+    ///
+    /// Bypasses the ~15s frequency search on next power-on.
+    /// Uses last saved settings instead.
+    /// Call `save_user_data()` to persist this setting.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
+    pub async fn skip_frequency_search(&self) -> Result<()> {
+        let resp = self.transaction("sk").await?;
+        self.check_error_response(&resp)
+    }
+
+    /// Enable automatic frequency search at power-up
+    ///
+    /// Restores default behavior of searching for resonant frequencies on power-on.
+    /// Call `save_user_data()` to persist this setting.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
+    pub async fn enable_frequency_search(&self) -> Result<()> {
+        let resp = self.transaction("se").await?;
+        self.check_error_response(&resp)
+    }
+
     /// Search and optimize motor 1 frequency
     ///
     /// This performs a frequency scan to find the optimal resonant frequency
@@ -1472,6 +1504,43 @@ impl Ell14Driver {
         self.search_frequency_motor1().await?;
         self.search_frequency_motor2().await?;
         Ok(())
+    }
+
+    /// Fine-tune motor resonance (Optimize Motors)
+    ///
+    /// Performs fine-tuning of motor resonance frequencies.
+    /// Should be run AFTER `search_frequency_motor1/2`.
+    ///
+    /// **WARNING:** This is a long-running operation (can take several minutes).
+    /// The motor moves during optimization.
+    #[instrument(skip(self), fields(address = %self.physical_address), err)]
+    pub async fn optimize_motors_fine(&self) -> Result<()> {
+        // om starts the optimization
+        self.send_command("om").await?;
+
+        // Wait for completion (can take several minutes)
+        // We poll GS status. Bit 0 is moving.
+        // The protocol says GS 00 is returned when complete.
+        let timeout = Duration::from_secs(300); // 5 minutes
+        let start = std::time::Instant::now();
+
+        loop {
+            if start.elapsed() > timeout {
+                return Err(anyhow!("Motor optimization timed out after 5 minutes"));
+            }
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
+            // Check if device is ready
+            if let Ok(resp) = self.transaction("gs").await {
+                if let Some(idx) = resp.find("GS") {
+                    let hex_str = resp[idx + 2..].trim();
+                    if hex_str == "0" || hex_str == "00" {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     /// Get motor 1 information
@@ -2098,44 +2167,6 @@ impl Ell14Driver {
 
     /// Skip frequency search on next power-up
     ///
-    /// When enabled, the device uses last known frequency settings instead
-    /// of performing a full frequency search at startup. Saves ~15 seconds
-    /// on power-up but may result in suboptimal performance if conditions
-    /// have changed.
-    ///
-    /// Call `save_user_data()` to persist this setting.
-    pub async fn skip_frequency_search(&self) -> Result<()> {
-        let resp = self.transaction("sk").await?;
-        self.check_error_response(&resp)?;
-        Ok(())
-    }
-
-    // =========================================================================
-    // Home Direction Enhancement
-    // =========================================================================
-
-    /// Home device with specified direction (for rotary stages)
-    ///
-    /// # Arguments
-    /// * `direction` - Optional direction to search for home
-    ///   - `None` - Uses default direction
-    ///   - `Some(Clockwise)` - Search clockwise
-    ///   - `Some(CounterClockwise)` - Search counter-clockwise
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// driver.home_with_direction(Some(HomeDirection::Clockwise)).await?;
-    /// ```
-    pub async fn home_with_direction(&self, direction: Option<HomeDirection>) -> Result<()> {
-        let cmd = match direction {
-            Some(dir) => format!("ho{}", dir as u8),
-            None => "ho".to_string(),
-        };
-
-        self.send_command(&cmd).await?;
-        self.wait_settled().await
-    }
-
     // =========================================================================
     // Configuration / Persistence Commands
     // =========================================================================
@@ -2792,7 +2823,7 @@ impl<'a> Ell14GroupController<'a> {
         }
 
         tracing::info!("Homing group");
-        self.master.home().await?;
+        self.master.home(None).await?;
 
         // Wait for all rotators to settle
         self.wait_group_settled().await?;

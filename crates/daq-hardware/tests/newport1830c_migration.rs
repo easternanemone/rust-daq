@@ -219,7 +219,10 @@ async fn test_set_wavelength_command_format() {
     let mut params = HashMap::new();
     params.insert("wavelength_nm".to_string(), 780.0);
 
-    let cmd = driver.format_command("set_wavelength", &params).await.unwrap();
+    let cmd = driver
+        .format_command("set_wavelength", &params)
+        .await
+        .unwrap();
 
     // Expected: "W0780" (4-digit format)
     assert_eq!(cmd, "W0780", "Set wavelength command format mismatch");
@@ -303,7 +306,11 @@ fn test_parse_power_response_scientific_positive() {
     // Test parsing "5E-9" -> 5e-9 W (5 nW)
     let parsed = driver.parse_response("power", "5E-9").unwrap();
     let value = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((value - 5e-9).abs() < 1e-15, "Power value mismatch: got {}", value);
+    assert!(
+        (value - 5e-9).abs() < 1e-15,
+        "Power value mismatch: got {}",
+        value
+    );
 }
 
 #[test]
@@ -322,7 +329,11 @@ fn test_parse_power_response_scientific_with_decimal() {
     // Test parsing "1.234E-6" -> 1.234e-6 W (1.234 uW)
     let parsed = driver.parse_response("power", "1.234E-6").unwrap();
     let value = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((value - 1.234e-6).abs() < 1e-12, "Power value mismatch: got {}", value);
+    assert!(
+        (value - 1.234e-6).abs() < 1e-12,
+        "Power value mismatch: got {}",
+        value
+    );
 }
 
 #[test]
@@ -341,7 +352,11 @@ fn test_parse_power_response_with_leading_sign() {
     // Test parsing "+.75E-9" -> 0.75e-9 W (0.75 nW)
     let parsed = driver.parse_response("power", "+.75E-9").unwrap();
     let value = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((value - 0.75e-9).abs() < 1e-15, "Power value mismatch: got {}", value);
+    assert!(
+        (value - 0.75e-9).abs() < 1e-15,
+        "Power value mismatch: got {}",
+        value
+    );
 }
 
 #[test]
@@ -360,7 +375,11 @@ fn test_parse_power_response_milliwatt() {
     // Test parsing "1.5E-3" -> 1.5e-3 W (1.5 mW)
     let parsed = driver.parse_response("power", "1.5E-3").unwrap();
     let value = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((value - 1.5e-3).abs() < 1e-9, "Power value mismatch: got {}", value);
+    assert!(
+        (value - 1.5e-3).abs() < 1e-9,
+        "Power value mismatch: got {}",
+        value
+    );
 }
 
 #[test]

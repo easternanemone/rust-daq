@@ -172,7 +172,10 @@ async fn test_move_absolute_command_format() {
     let mut params = HashMap::new();
     params.insert("position".to_string(), 25.5);
 
-    let cmd = driver.format_command("move_absolute", &params).await.unwrap();
+    let cmd = driver
+        .format_command("move_absolute", &params)
+        .await
+        .unwrap();
 
     // Expected: "1PA25.5" (axis 1, PA command, position)
     assert_eq!(cmd, "1PA25.5", "Move absolute command format mismatch");
@@ -195,7 +198,10 @@ async fn test_move_relative_command_format() {
     let mut params = HashMap::new();
     params.insert("distance".to_string(), -10.0);
 
-    let cmd = driver.format_command("move_relative", &params).await.unwrap();
+    let cmd = driver
+        .format_command("move_relative", &params)
+        .await
+        .unwrap();
 
     // Expected: "2PR-10" (axis 2, PR command, distance)
     assert_eq!(cmd, "2PR-10", "Move relative command format mismatch");
@@ -236,7 +242,10 @@ async fn test_stop_command_format() {
     let (port, _mock) = create_mock_port();
     let driver = GenericSerialDriver::new(config, port, "1").unwrap();
 
-    let cmd = driver.format_command("stop", &HashMap::new()).await.unwrap();
+    let cmd = driver
+        .format_command("stop", &HashMap::new())
+        .await
+        .unwrap();
 
     assert_eq!(cmd, "1ST", "Stop command format mismatch");
 }
@@ -254,7 +263,10 @@ async fn test_home_command_format() {
     let (port, _mock) = create_mock_port();
     let driver = GenericSerialDriver::new(config, port, "2").unwrap();
 
-    let cmd = driver.format_command("home", &HashMap::new()).await.unwrap();
+    let cmd = driver
+        .format_command("home", &HashMap::new())
+        .await
+        .unwrap();
 
     assert_eq!(cmd, "2OR", "Home command format mismatch");
 }
@@ -298,7 +310,10 @@ fn test_parse_negative_position_response() {
     // Test parsing "-5.678" -> -5.678mm
     let parsed = driver.parse_response("position", "-5.678").unwrap();
     let value = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((value - (-5.678)).abs() < 0.001, "Negative position value mismatch");
+    assert!(
+        (value - (-5.678)).abs() < 0.001,
+        "Negative position value mismatch"
+    );
 }
 
 #[test]

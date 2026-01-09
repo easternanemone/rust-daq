@@ -10,7 +10,7 @@ pub mod generic_serial;
 
 // Re-export key types from generic_serial
 #[cfg(feature = "tokio_serial")]
-pub use generic_serial::{GenericSerialDriver, SharedPort, DynSerial};
+pub use generic_serial::{DynSerial, GenericSerialDriver, SharedPort};
 
 #[cfg(feature = "driver-newport")]
 pub mod esp300;

@@ -109,9 +109,9 @@ pub use loader::{load_all_devices, load_device_config, load_device_config_from_s
 pub use schema::{
     AddressFormat, BusConfig, BusType, CapabilityType, CommandConfig, CommandParameterType,
     ConnectionConfig, ConnectionType, ConversionConfig, DeviceCategory, DeviceConfig,
-    DeviceIdentity, ErrorCodeConfig, FieldType, FlowControlSetting, ParameterConfig,
-    ParameterType, ParitySetting, ResponseConfig, ResponseFieldConfig, TraitMappingConfig,
-    TraitMethodMapping, ValidationRuleConfig,
+    DeviceIdentity, ErrorCodeConfig, FieldType, FlowControlSetting, ParameterConfig, ParameterType,
+    ParitySetting, ResponseConfig, ResponseFieldConfig, TraitMappingConfig, TraitMethodMapping,
+    ValidationRuleConfig,
 };
 
 /// Generate JSON schema for DeviceConfig.

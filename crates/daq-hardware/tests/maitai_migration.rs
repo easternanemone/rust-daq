@@ -134,10 +134,7 @@ fn test_maitai_config_loads_successfully() {
 
     // Verify connection settings
     assert_eq!(config.connection.baud_rate, 9600);
-    assert_eq!(
-        config.connection.flow_control,
-        FlowControlSetting::Software
-    ); // XON/XOFF
+    assert_eq!(config.connection.flow_control, FlowControlSetting::Software); // XON/XOFF
 
     // Verify key commands exist
     assert!(config.commands.contains_key("set_wavelength"));
@@ -193,10 +190,16 @@ async fn test_set_wavelength_command_format() {
     let mut params = HashMap::new();
     params.insert("wavelength".to_string(), 820.0);
 
-    let cmd = driver.format_command("set_wavelength", &params).await.unwrap();
+    let cmd = driver
+        .format_command("set_wavelength", &params)
+        .await
+        .unwrap();
 
     // Expected: "WAVELENGTH:820"
-    assert_eq!(cmd, "WAVELENGTH:820", "Set wavelength command format mismatch");
+    assert_eq!(
+        cmd, "WAVELENGTH:820",
+        "Set wavelength command format mismatch"
+    );
 }
 
 #[tokio::test]
@@ -407,7 +410,11 @@ fn test_parse_wavelength_response() {
     // Test parsing "820nm" -> 820.0
     let parsed = driver.parse_response("wavelength", "820nm").unwrap();
     let wavelength = parsed.fields.get("wavelength").unwrap().as_f64().unwrap();
-    assert!((wavelength - 820.0).abs() < 0.1, "Wavelength value mismatch: got {}", wavelength);
+    assert!(
+        (wavelength - 820.0).abs() < 0.1,
+        "Wavelength value mismatch: got {}",
+        wavelength
+    );
 }
 
 #[test]
@@ -426,7 +433,10 @@ fn test_parse_wavelength_response_uppercase() {
     // Test parsing "820NM" -> 820.0
     let parsed = driver.parse_response("wavelength", "820NM").unwrap();
     let wavelength = parsed.fields.get("wavelength").unwrap().as_f64().unwrap();
-    assert!((wavelength - 820.0).abs() < 0.1, "Wavelength value mismatch");
+    assert!(
+        (wavelength - 820.0).abs() < 0.1,
+        "Wavelength value mismatch"
+    );
 }
 
 #[test]
@@ -445,7 +455,10 @@ fn test_parse_wavelength_response_with_decimal() {
     // Test parsing "799.5nm" -> 799.5
     let parsed = driver.parse_response("wavelength", "799.5nm").unwrap();
     let wavelength = parsed.fields.get("wavelength").unwrap().as_f64().unwrap();
-    assert!((wavelength - 799.5).abs() < 0.1, "Wavelength value mismatch");
+    assert!(
+        (wavelength - 799.5).abs() < 0.1,
+        "Wavelength value mismatch"
+    );
 }
 
 // =============================================================================
@@ -510,7 +523,11 @@ fn test_parse_power_response_watts() {
     // Test parsing "3.00W" -> 3.00
     let parsed = driver.parse_response("power", "3.00W").unwrap();
     let power = parsed.fields.get("value").unwrap().as_f64().unwrap();
-    assert!((power - 3.0).abs() < 0.01, "Power value mismatch: got {}", power);
+    assert!(
+        (power - 3.0).abs() < 0.01,
+        "Power value mismatch: got {}",
+        power
+    );
 }
 
 #[test]
@@ -611,10 +628,22 @@ fn test_maitai_capabilities() {
     let config = load_device_config(&config_path).unwrap();
 
     // Verify all expected capabilities are declared
-    assert!(config.device.capabilities.contains(&CapabilityType::Readable));
-    assert!(config.device.capabilities.contains(&CapabilityType::WavelengthTunable));
-    assert!(config.device.capabilities.contains(&CapabilityType::ShutterControl));
-    assert!(config.device.capabilities.contains(&CapabilityType::Parameterized));
+    assert!(config
+        .device
+        .capabilities
+        .contains(&CapabilityType::Readable));
+    assert!(config
+        .device
+        .capabilities
+        .contains(&CapabilityType::WavelengthTunable));
+    assert!(config
+        .device
+        .capabilities
+        .contains(&CapabilityType::ShutterControl));
+    assert!(config
+        .device
+        .capabilities
+        .contains(&CapabilityType::Parameterized));
 }
 
 // =============================================================================

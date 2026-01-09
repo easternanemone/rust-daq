@@ -186,7 +186,10 @@ async fn test_move_absolute_command_format() {
     let mut params = HashMap::new();
     params.insert("position_pulses".to_string(), 17920.0);
 
-    let cmd = driver.format_command("move_absolute", &params).await.unwrap();
+    let cmd = driver
+        .format_command("move_absolute", &params)
+        .await
+        .unwrap();
 
     // Expected: "2ma00004600" (address 2, move_absolute, 8-char hex 0x4600)
     assert_eq!(cmd, "2ma00004600", "Move absolute command format mismatch");
@@ -237,7 +240,10 @@ async fn test_move_relative_command_format() {
     let mut params = HashMap::new();
     params.insert("distance_pulses".to_string(), -3982.0);
 
-    let cmd = driver.format_command("move_relative", &params).await.unwrap();
+    let cmd = driver
+        .format_command("move_relative", &params)
+        .await
+        .unwrap();
 
     // Negative value should be in two's complement hex
     assert_eq!(cmd, "3mrFFFFF072", "Relative move command format mismatch");
@@ -277,7 +283,10 @@ async fn test_stop_command_format() {
     let (port, _mock) = create_mock_port();
     let driver = GenericSerialDriver::new(config, port, "2").unwrap();
 
-    let cmd = driver.format_command("stop", &HashMap::new()).await.unwrap();
+    let cmd = driver
+        .format_command("stop", &HashMap::new())
+        .await
+        .unwrap();
 
     assert_eq!(cmd, "2st", "Stop command format mismatch");
 }

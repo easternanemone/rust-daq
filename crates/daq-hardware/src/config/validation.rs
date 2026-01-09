@@ -238,11 +238,11 @@ mod tests {
     #[test]
     fn test_invalid_regex() {
         let invalid_patterns = vec![
-            r"[",        // Unclosed bracket
-            r"(?P<>x)",  // Empty group name
-            r"(abc",     // Unclosed paren
-            r"*abc",     // Nothing to repeat
-            r"[z-a]",    // Invalid range
+            r"[",       // Unclosed bracket
+            r"(?P<>x)", // Empty group name
+            r"(abc",    // Unclosed paren
+            r"*abc",    // Nothing to repeat
+            r"[z-a]",   // Invalid range
         ];
 
         for pattern in invalid_patterns {
@@ -282,9 +282,9 @@ mod tests {
         // "1 +" is 1 (unary +), "1 + +" is also valid
         // Use formulas that actually fail the parser
         let invalid_formulas = vec![
-            "round(".to_string(),    // Unclosed parenthesis
-            "((1 + 2)".to_string(),  // Mismatched parentheses
-            ")1 + 2(".to_string(),   // Reversed parentheses
+            "round(".to_string(),   // Unclosed parenthesis
+            "((1 + 2)".to_string(), // Mismatched parentheses
+            ")1 + 2(".to_string(),  // Reversed parentheses
         ];
 
         for formula in invalid_formulas {
