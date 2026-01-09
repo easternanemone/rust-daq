@@ -620,7 +620,6 @@ mod ffi_safe {
         if result == 0 {
             // Unlock failed - this is critical for continuous acquisition
             let err_msg = super::get_pvcam_error();
-            eprintln!("[PVCAM DEBUG] WARNING: pl_exp_unlock_oldest_frame FAILED: {}", err_msg);
             tracing::error!("pl_exp_unlock_oldest_frame failed: {} (bd-3gnv)", err_msg);
             false
         } else {
@@ -1083,9 +1082,6 @@ impl PvcamAcquisition {
             } else {
                 CIRC_NO_OVERWRITE
             };
-            let mode_name = if USE_CIRC_OVERWRITE_POLLING_MODE { "CIRC_OVERWRITE" } else { "CIRC_NO_OVERWRITE" };
-            eprintln!("[PVCAM DEBUG] Using buffer mode: {} (polling_mode={})", mode_name, USE_CIRC_OVERWRITE_POLLING_MODE);
-
             // bd-3gnv Phase 5A: Select exposure mode based on buffer mode.
             // Modern sCMOS cameras (Prime BSI) require EXT_TRIG_INTERNAL for CIRC_OVERWRITE mode.
             // Legacy TIMED_MODE (0) causes error 185 (Invalid Configuration) at pl_exp_start_cont.
@@ -1094,8 +1090,6 @@ impl PvcamAcquisition {
             } else {
                 TIMED_MODE
             };
-            eprintln!("[PVCAM DEBUG] Using exposure mode: {} (EXT_TRIG_INTERNAL={}, TIMED_MODE={})",
-                exp_mode, EXT_TRIG_INTERNAL, TIMED_MODE);
 
             unsafe {
 
@@ -1112,12 +1106,10 @@ impl PvcamAcquisition {
                 {
                     // bd-3gnv: Log SDK error with full message for diagnostics
                     let err_msg = get_pvcam_error();
-                    eprintln!("[PVCAM DEBUG] pl_exp_setup_cont failed: {}", err_msg);
                     let _ = self.streaming.set(false).await;
                     return Err(anyhow!("Failed to setup continuous acquisition: {}", err_msg));
                 }
             }
-            eprintln!("[PVCAM DEBUG] pl_exp_setup_cont succeeded with {}, frame_bytes={}", mode_name, frame_bytes);
 
             // Calculate dimensions for frame construction
             let binned_width = roi.width / x_bin as u32;
@@ -1156,7 +1148,6 @@ impl PvcamAcquisition {
             // Hypothesis: Callbacks conflict with CIRC_OVERWRITE on Prime BSI (error 185).
             // DynExp uses CIRC_OVERWRITE + polling successfully.
             let use_callback = if USE_CIRC_OVERWRITE_POLLING_MODE {
-                eprintln!("[PVCAM DEBUG] Skipping callback registration (CIRC_OVERWRITE polling mode)");
                 tracing::info!("CIRC_OVERWRITE polling mode: skipping EOF callback registration");
                 false
             } else {
@@ -1222,7 +1213,6 @@ impl PvcamAcquisition {
                 if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
                     // bd-3gnv: Log SDK error with full message for diagnostics
                     let err_msg = get_pvcam_error();
-                    eprintln!("[PVCAM DEBUG] pl_exp_start_cont failed: {}", err_msg);
                     // Deregister callback on failure
                     if use_callback {
                         pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
@@ -1626,15 +1616,10 @@ impl PvcamAcquisition {
         // Check both streaming flag and shutdown signal (bd-z8q8).
         // Shutdown is set in Drop to ensure the loop exits before SDK uninit.
         // Use Acquire ordering to synchronize with Release store in Drop (bd-nfk6).
-        // bd-3gnv: Debug output for frame loop entry
-        eprintln!("[PVCAM DEBUG] Frame loop starting: use_callback={}, exposure_ms={}", use_callback, exposure_ms);
         let mut loop_iteration: u64 = 0;
 
         while streaming.get() && !shutdown.load(Ordering::Acquire) {
             loop_iteration += 1;
-            // bd-3gnv: Debug outer loop entry (every iteration)
-            eprintln!("[PVCAM DEBUG] Outer loop iter={}, streaming={}, shutdown={}",
-                loop_iteration, streaming.get(), shutdown.load(Ordering::Acquire));
             // Wait for frame notification (callback mode) or poll (fallback mode)
             // bd-g9gq: Use FFI safe wrapper with explicit safety contract
             let has_frames = if use_callback {
@@ -1642,22 +1627,13 @@ impl PvcamAcquisition {
                 // Returns number of pending frames (0 on timeout/shutdown)
                 let pending = callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
                 if pending > 0 {
-                    // bd-3gnv: Log when we get frames via callback
-                    if loop_iteration <= 5 || loop_iteration % 10 == 0 {
-                        eprintln!("[PVCAM DEBUG] iter={}: wait_for_frames returned pending={}", loop_iteration, pending);
-                    }
                     true
                 } else {
                     // Fallback: if callbacks are missed, avoid deadlock by occasionally checking status.
-                    let fallback = match ffi_safe::check_cont_status(hcam) {
+                    match ffi_safe::check_cont_status(hcam) {
                         Ok((_, _, cnt)) => cnt > 0,
                         Err(()) => false,
-                    };
-                    // bd-3gnv: Log when callback timeout occurs
-                    if loop_iteration <= 5 || loop_iteration % 10 == 0 {
-                        eprintln!("[PVCAM DEBUG] iter={}: callback timeout, fallback has_frames={}", loop_iteration, fallback);
                     }
-                    fallback
                 }
             } else {
                 // Polling mode fallback: Check status with 1ms delay
@@ -1743,16 +1719,11 @@ impl PvcamAcquisition {
                             circ_ptr,
                             circ_size_bytes,
                         ) {
-                            Ok(new_frame_bytes) => {
-                                eprintln!("[PVCAM DEBUG] Full auto-restart SUCCEEDED (frame_bytes={}) - re-registering callback", new_frame_bytes);
-
+                            Ok(_new_frame_bytes) => {
                                 // Step 4: Re-register EOF callback (setup may invalidate it)
                                 if use_callback {
                                     let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
-                                    if ffi_safe::register_eof_callback(hcam, callback_ctx_ptr) {
-                                        eprintln!("[PVCAM DEBUG] EOF callback re-registered successfully");
-                                    } else {
-                                        eprintln!("[PVCAM DEBUG] WARNING: Failed to re-register EOF callback");
+                                    if !ffi_safe::register_eof_callback(hcam, callback_ctx_ptr) {
                                         tracing::warn!("Failed to re-register EOF callback after restart (bd-3gnv)");
                                     }
                                 }
@@ -1766,7 +1737,6 @@ impl PvcamAcquisition {
                                 continue; // Resume waiting for frames
                             }
                             Err(err_msg) => {
-                                eprintln!("[PVCAM DEBUG] Full auto-restart FAILED: {}", err_msg);
                                 tracing::error!("PVCAM full auto-restart failed: {} (bd-3gnv)", err_msg);
                                 // Continue to max_consecutive_timeouts check - will eventually timeout
                             }
@@ -1803,20 +1773,9 @@ impl PvcamAcquisition {
             // bd-3gnv: Now checking buffer_cnt on every iteration to prevent stale frame loop.
             // This is necessary because the SDK returns stale frames if we don't verify availability first.
 
-            // bd-3gnv: Track drain loop timing
-            let drain_start = std::time::Instant::now();
-            eprintln!("[PVCAM DEBUG] Drain loop ENTER: iter={}", loop_iteration);
-
             loop {
-                // bd-3gnv: Debug drain loop iteration - ALWAYS print first 10 iterations
-                if frames_processed_in_drain < 10 {
-                    eprintln!("[PVCAM DEBUG] Drain loop iter {}: elapsed={:?}", frames_processed_in_drain, drain_start.elapsed());
-                }
-
                 // Check shutdown between frames
                 if !streaming.get() || shutdown.load(Ordering::Acquire) {
-                    eprintln!("[PVCAM DEBUG] Drain loop exiting: streaming={}, shutdown={}, processed={}, elapsed={:?}",
-                        streaming.get(), shutdown.load(Ordering::Acquire), frames_processed_in_drain, drain_start.elapsed());
                     break;
                 }
 
@@ -1874,10 +1833,6 @@ impl PvcamAcquisition {
                 // Exit if BOTH say no frames, to prevent stale frame spin.
                 if pending == 0 && buffer_cnt == 0 {
                     // No frames available from either source - exit drain loop
-                    if frames_processed_in_drain > 0 || loop_iteration <= 3 {
-                        eprintln!("[PVCAM DEBUG] No frames available (pending={}, buffer_cnt={}), exiting drain loop (processed={}, elapsed={:?})",
-                            pending, buffer_cnt, frames_processed_in_drain, drain_start.elapsed());
-                    }
                     break;
                 }
 
@@ -1887,8 +1842,6 @@ impl PvcamAcquisition {
                     Ok(ptr) => ptr,
                     Err(()) => {
                         // No more frames available - exit drain loop normally
-                        eprintln!("[PVCAM DEBUG] get_oldest_frame returned no frame, exiting drain loop (processed={}, elapsed={:?})",
-                            frames_processed_in_drain, drain_start.elapsed());
                         break;
                     }
                 };
@@ -1923,14 +1876,6 @@ impl PvcamAcquisition {
                             // Return to outer loop to wait for next callback signal.
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
                             consecutive_duplicates += 1;
-
-                            // Log first duplicate (subsequent ones are expected)
-                            if consecutive_duplicates == 1 {
-                                eprintln!(
-                                    "[PVCAM DEBUG] Duplicate frame {} - waiting for next callback (elapsed={:?})",
-                                    current_frame_nr, drain_start.elapsed()
-                                );
-                            }
 
                             // Release the duplicate back to SDK
                             if !ffi_safe::release_oldest_frame(hcam) {
@@ -2070,9 +2015,6 @@ impl PvcamAcquisition {
                     frame = frame.with_metadata(ext_metadata);
 
                     frame_count.fetch_add(1, Ordering::Relaxed);
-                    // bd-3gnv: Debug output for frame processed
-                    let current_count = frame_count.load(Ordering::Relaxed);
-                    eprintln!("[PVCAM DEBUG] Frame {} processed, FrameNr={}, iter={}", current_count, current_frame_nr, loop_iteration);
                     let frame_arc = Arc::new(frame);
 
                     // Deliver to channels
@@ -2154,14 +2096,8 @@ impl PvcamAcquisition {
                 }
             }
 
-            // bd-3gnv: Debug output after drain loop (include unlock failures)
-            eprintln!(
-                "[PVCAM DEBUG] Drain loop done: frames_processed={}, fatal_error={}, unlock_failures={}, iter={}, total_elapsed={:?}",
-                frames_processed_in_drain, fatal_error, unlock_failures, loop_iteration, drain_start.elapsed()
-            );
             // bd-3gnv: Critical warning if unlocks are failing - this causes buffer starvation
             if unlock_failures > 0 {
-                eprintln!("[PVCAM DEBUG] *** CRITICAL: {} unlock failures in drain loop - camera may stall!", unlock_failures);
                 tracing::error!("PVCAM unlock failures: {} in drain loop (bd-3gnv)", unlock_failures);
             }
 
@@ -2169,7 +2105,6 @@ impl PvcamAcquisition {
             // The Prime BSI camera stops producing frames after exactly 85 frames regardless of
             // buffer size, exposure time, or unlock behavior. Restarting acquisition works around this.
             if stall_detected {
-                eprintln!("[PVCAM DEBUG] Attempting auto-restart to recover from stall...");
                 tracing::info!("PVCAM auto-restart: stopping acquisition to recover from stall (bd-3gnv)");
 
                 // Step 1: Stop acquisition
@@ -2181,7 +2116,6 @@ impl PvcamAcquisition {
                 // Step 3: Restart acquisition with same buffer
                 match ffi_safe::restart_acquisition(hcam, circ_ptr, circ_size_bytes) {
                     Ok(()) => {
-                        eprintln!("[PVCAM DEBUG] Auto-restart SUCCEEDED - resuming acquisition");
                         tracing::info!("PVCAM auto-restart succeeded after {} frames (bd-3gnv)",
                             frame_count.load(Ordering::Relaxed));
 
@@ -2196,7 +2130,6 @@ impl PvcamAcquisition {
                         continue;
                     }
                     Err(err_msg) => {
-                        eprintln!("[PVCAM DEBUG] Auto-restart FAILED: {}", err_msg);
                         tracing::error!("PVCAM auto-restart failed: {} (bd-3gnv)", err_msg);
                         // Don't set fatal_error - let outer loop continue with timeout handling
                         // The camera may recover on its own, or user can stop/restart manually
@@ -2206,7 +2139,6 @@ impl PvcamAcquisition {
 
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
             if fatal_error {
-                eprintln!("[PVCAM DEBUG] Exiting due to fatal error");
                 tracing::error!("Exiting frame loop due to fatal acquisition error");
                 break;
             }
