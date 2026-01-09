@@ -1520,7 +1520,13 @@ impl PvcamAcquisition {
             // Drain loop: process all available frames to avoid losing events
             // when multiple callbacks fire while we're processing
             let mut frames_processed_in_drain: u32 = 0;
+            let mut consecutive_duplicates: u32 = 0;
             let mut fatal_error = false;
+
+            // bd-3gnv: Maximum consecutive duplicates before exiting drain loop.
+            // When the camera stops producing frames, the SDK returns stale frames.
+            // This limit prevents the drain loop from spinning indefinitely.
+            const MAX_CONSECUTIVE_DUPLICATES: u32 = 10;
 
             // Stack-allocated FRAME_INFO for pl_exp_get_oldest_frame_ex (bd-ek9n.3)
             // Using zeroed struct as PVCAM will fill in the fields on frame retrieval.
@@ -1627,12 +1633,13 @@ impl PvcamAcquisition {
                             // This can happen due to race between callback and frame retrieval
                             // Skip this frame to prevent duplicates in output stream
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
-                            // bd-3gnv: Log duplicate detection rate-limited
-                            let dup_count = discontinuity_events.load(Ordering::Relaxed);
-                            if dup_count <= 10 || dup_count % 10000 == 0 {
+                            consecutive_duplicates += 1;
+
+                            // bd-3gnv: Log duplicate detection (rate-limited)
+                            if consecutive_duplicates <= 3 {
                                 eprintln!(
-                                    "[PVCAM DEBUG] Duplicate frame detected: FrameNr {} (dup_count={}, elapsed={:?})",
-                                    current_frame_nr, dup_count, drain_start.elapsed()
+                                    "[PVCAM DEBUG] Duplicate frame detected: FrameNr {} (consecutive={}, elapsed={:?})",
+                                    current_frame_nr, consecutive_duplicates, drain_start.elapsed()
                                 );
                             }
                             tracing::warn!(
@@ -1643,6 +1650,17 @@ impl PvcamAcquisition {
                             ffi_safe::release_oldest_frame(hcam);
                             if use_callback {
                                 callback_ctx.consume_one();
+                            }
+
+                            // bd-3gnv: Exit drain loop after too many consecutive duplicates.
+                            // This indicates the camera has stopped producing new frames but
+                            // the SDK keeps returning stale frames. Go back to outer loop to wait.
+                            if consecutive_duplicates >= MAX_CONSECUTIVE_DUPLICATES {
+                                eprintln!(
+                                    "[PVCAM DEBUG] Exiting drain loop: {} consecutive duplicates (camera stalled?)",
+                                    consecutive_duplicates
+                                );
+                                break;
                             }
                             continue; // Skip to next frame in drain loop
                         } else if current_frame_nr < expected_frame_nr && current_frame_nr != 1 {
@@ -1658,6 +1676,8 @@ impl PvcamAcquisition {
                     }
                     // Update last seen frame number
                     last_hw_frame_nr.store(current_frame_nr, Ordering::Release);
+                    // bd-3gnv: Reset duplicate counter on successful new frame
+                    consecutive_duplicates = 0;
 
                     // Gemini SDK review: Decode frame metadata for hardware timestamps
                     // This must happen before copying pixel data as metadata parsing identifies
