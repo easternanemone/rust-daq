@@ -1624,6 +1624,24 @@ impl PvcamAcquisition {
                     break;
                 }
 
+                // bd-3gnv: Detect unexpected READOUT_NOT_ACTIVE condition
+                // This indicates the SDK internally stopped acquisition without an error.
+                // This can happen if the buffer fills up and the SDK times out waiting
+                // for buffers to be unlocked (even though we are unlocking them).
+                if status == READOUT_NOT_ACTIVE && frames_processed_in_drain > 0 {
+                    eprintln!(
+                        "[PVCAM DEBUG] WARNING: READOUT_NOT_ACTIVE detected mid-drain (frames_processed={}, buffer_cnt={})",
+                        frames_processed_in_drain, buffer_cnt
+                    );
+                    tracing::warn!(
+                        "PVCAM acquisition unexpectedly inactive after {} frames (buffer_cnt={}) - bd-3gnv",
+                        frame_count.load(Ordering::Relaxed),
+                        buffer_cnt
+                    );
+                    // Exit drain loop - further frames will be stale
+                    break;
+                }
+
                 // bd-3gnv FIX: Only attempt to get a frame if either:
                 // 1. Callback says frames are pending, OR
                 // 2. SDK buffer has frames available
