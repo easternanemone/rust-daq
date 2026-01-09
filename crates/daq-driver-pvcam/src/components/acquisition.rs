@@ -1181,7 +1181,16 @@ impl PvcamAcquisition {
                 *guard = Some(done_tx.clone());
             }
 
+            // bd-3gnv: Convert raw pointer to usize for cross-thread transfer.
+            // Raw pointers are not Send, but usize is. The pointer remains valid
+            // because the PageAlignedBuffer is stored in self.circ_buffer for the
+            // entire acquisition lifetime.
+            let circ_ptr_usize = circ_ptr as usize;
+
             let poll_handle = tokio::task::spawn_blocking(move || {
+                // bd-3gnv: Convert usize back to raw pointer inside the closure.
+                let circ_ptr_restored = circ_ptr_usize as *mut u8;
+
                 Self::frame_loop_hardware(
                     h,
                     streaming,
@@ -1208,8 +1217,8 @@ impl PvcamAcquisition {
                     binning,
                     metadata_tx,
                     done_tx,
-                    circ_ptr,       // bd-3gnv: Pass buffer for auto-restart
-                    circ_size_bytes, // bd-3gnv: Pass size for auto-restart
+                    circ_ptr_restored, // bd-3gnv: Pass buffer for auto-restart
+                    circ_size_bytes,   // bd-3gnv: Pass size for auto-restart
                 );
             });
 
