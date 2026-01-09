@@ -1148,6 +1148,188 @@ async fn test_circ_buffer_capabilities() {
         }
     }
 
+    // ========================================
+    // Test 12: CORRECT SDK ORDER - setup_cont THEN register_callback THEN start_cont
+    // ========================================
+    // The SDK does:
+    //   1. pl_exp_setup_cont (SetupExp)
+    //   2. pl_cam_register_callback_ex3 (StartExp, AFTER setup!)
+    //   3. pl_exp_start_cont (StartExp)
+    // Our tests have been registering the callback BEFORE setup - that may be the issue!
+    println!("\n--- Test 12: CORRECT SDK ORDER (setup → callback → start) ---");
+    println!("     SDK registers callback AFTER setup_cont, BEFORE start_cont!");
+    println!("     All previous tests registered callback BEFORE setup - testing fix...\n");
+
+    if let Some(def_mode) = default_exp_mode {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 100;  // Use 100 frames like PVCamTestCli --buffer-frames=100
+
+        let region = rgn_type {
+            s1: 0,
+            s2: 511,  // 512x512 for quick test
+            sbin: 1,
+            p1: 0,
+            p2: 511,
+            pbin: 1,
+        };
+
+        println!("     exp_mode = {} (camera default)", def_mode);
+        println!("     region = 512x512");
+        println!("     frame_count = {}", FRAME_COUNT);
+
+        unsafe {
+            // Step 1: SETUP FIRST (no callback yet!)
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &region as *const _,
+                def_mode as i16,
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+
+                // Step 2: REGISTER CALLBACK AFTER SETUP (SDK order!)
+                let callback_result = pl_cam_register_callback_ex3(
+                    hcam,
+                    PL_CALLBACK_EOF,
+                    test_eof_callback as *mut c_void,
+                    ptr::null_mut(),
+                );
+                if callback_result != 0 {
+                    println!("[OK] Step 2: Callback registered AFTER setup (SDK order!)");
+                } else {
+                    println!("[WARN] Failed to register callback: {}", get_error_message());
+                }
+
+                // Allocate 4KB-aligned buffer
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    // Step 3: START (after callback registration)
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] Step 3: pl_exp_start_cont SUCCEEDED!");
+                        println!("\n*********************************************");
+                        println!("*** SOLUTION FOUND: CALLBACK ORDER MATTERS! ***");
+                        println!("*** Register callback AFTER setup_cont! ***");
+                        println!("*********************************************\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                } else {
+                    println!("[FAIL] Failed to allocate buffer");
+                }
+
+                // Cleanup callback
+                pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            } else {
+                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    } else {
+        println!("[SKIP] Could not get default exposure mode");
+    }
+
+    // ========================================
+    // Test 13: Correct SDK order + TIMED_MODE (0) instead of camera default
+    // ========================================
+    println!("\n--- Test 13: SDK ORDER + TIMED_MODE (0) ---");
+    println!("     PVCamTestCli default trigger mode is TIMED_MODE (0), not EXT_TRIG_INTERNAL");
+    println!("     Testing with explicit TIMED_MODE = 0...\n");
+
+    {
+        const ALIGN_4K: usize = 4096;
+        const FRAME_COUNT: usize = 100;
+
+        let region = rgn_type {
+            s1: 0,
+            s2: 511,
+            sbin: 1,
+            p1: 0,
+            p2: 511,
+            pbin: 1,
+        };
+
+        println!("     exp_mode = TIMED_MODE (0)");
+
+        unsafe {
+            // Step 1: SETUP with TIMED_MODE = 0
+            let result = pl_exp_setup_cont(
+                hcam,
+                1,
+                &region as *const _,
+                TIMED_MODE,  // Explicit 0, like PVCamTestCli default
+                exposure_ms,
+                &mut frame_bytes,
+                CIRC_OVERWRITE,
+            );
+            if result != 0 {
+                println!("[OK] Step 1: pl_exp_setup_cont with TIMED_MODE succeeded");
+
+                // Step 2: Register callback AFTER setup
+                let callback_result = pl_cam_register_callback_ex3(
+                    hcam,
+                    PL_CALLBACK_EOF,
+                    test_eof_callback as *mut c_void,
+                    ptr::null_mut(),
+                );
+                if callback_result != 0 {
+                    println!("[OK] Step 2: Callback registered after setup");
+                }
+
+                let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
+                let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
+
+                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
+                    .expect("Invalid layout");
+                let buffer_ptr = alloc_zeroed(layout);
+
+                if !buffer_ptr.is_null() {
+                    // Step 3: START
+                    let start_result = pl_exp_start_cont(
+                        hcam,
+                        buffer_ptr as *mut c_void,
+                        buffer_size as uns32,
+                    );
+
+                    if start_result != 0 {
+                        println!("[OK] Step 3: TIMED_MODE + SDK order WORKS!");
+                        println!("\n*** TIMED_MODE with correct callback order works! ***\n");
+                        pl_exp_abort(hcam, CCS_HALT);
+                    } else {
+                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        let err_code = pl_error_code();
+                        println!("       Error code: {}", err_code);
+                    }
+
+                    dealloc(buffer_ptr, layout);
+                }
+
+                pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            } else {
+                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+            }
+        }
+    }
+
     // Cleanup
     println!("\n--- Cleanup ---");
     unsafe {
