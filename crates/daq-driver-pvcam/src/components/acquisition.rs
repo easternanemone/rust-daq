@@ -1497,8 +1497,14 @@ impl PvcamAcquisition {
             const STATUS_CHECK_INTERVAL: u32 = 16;
 
             loop {
+                // bd-3gnv: Debug drain loop iteration
+                if frames_processed_in_drain % 10 == 0 && frames_processed_in_drain < 50 {
+                    eprintln!("[PVCAM DEBUG] Drain loop: processed={}", frames_processed_in_drain);
+                }
+
                 // Check shutdown between frames
                 if !streaming.get() || shutdown.load(Ordering::Acquire) {
+                    eprintln!("[PVCAM DEBUG] Drain loop exiting: streaming={}, shutdown={}", streaming.get(), shutdown.load(Ordering::Acquire));
                     break;
                 }
 
@@ -1534,6 +1540,7 @@ impl PvcamAcquisition {
                     Ok(ptr) => ptr,
                     Err(()) => {
                         // No more frames available - exit drain loop normally
+                        eprintln!("[PVCAM DEBUG] get_oldest_frame returned no frame, exiting drain loop (processed={})", frames_processed_in_drain);
                         break;
                     }
                 };
