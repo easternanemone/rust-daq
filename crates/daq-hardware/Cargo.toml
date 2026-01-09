@@ -53,6 +53,11 @@ tempfile = "3.10"
 version = "6.1"
 optional = true
 
+[dependencies.rhai]
+version = "1.19"
+features = ["sync"]
+optional = true
+
 [features]
 default = ["tokio_serial", "serial"]
 serial = ["dep:serialport"]
@@ -71,3 +76,5 @@ pvcam_hardware = ["driver_pvcam", "daq-driver-pvcam/pvcam_hardware"]
 instrument_photometrics = ["driver_pvcam"]
 simulator = []
 plugins_hot_reload = ["dep:notify"]
+# Enable Rhai scripting for config-driven drivers
+scripting = ["dep:rhai"]

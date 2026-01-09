@@ -82,6 +82,10 @@ pub struct DeviceConfig {
     #[serde(default)]
     #[validate]
     pub default_retry: Option<RetryConfig>,
+
+    /// Rhai script definitions for complex logic that can't be expressed declaratively
+    #[serde(default)]
+    pub scripts: HashMap<String, ScriptDefinition>,
 }
 
 // =============================================================================
@@ -441,6 +445,82 @@ impl Default for RetryConfig {
             no_retry_on_errors: Vec::new(),
         }
     }
+}
+
+// =============================================================================
+// Script Configuration
+// =============================================================================
+
+/// Rhai script definition for complex device operations.
+///
+/// Scripts extend the declarative config system for edge cases that can't be
+/// expressed as simple command/response patterns. Use sparingly - prefer
+/// declarative definitions when possible.
+///
+/// # Example
+///
+/// ```toml
+/// [scripts.safe_move_with_correction]
+/// description = "Move with automatic overshoot correction"
+/// timeout_ms = 15000
+/// script = """
+///     let target = input;
+///     driver.move_abs(target);
+///     driver.wait_settled();
+///     let actual = driver.position();
+///     if abs(actual - target) > 1.0 {
+///         driver.move_abs(target);  // Correction move
+///     }
+///     actual
+/// """
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct ScriptDefinition {
+    /// Rhai script source code
+    #[validate(min_length = 1)]
+    #[validate(max_length = 65536)]
+    pub script: String,
+
+    /// Human-readable description of what the script does
+    #[serde(default)]
+    #[validate(max_length = 500)]
+    pub description: String,
+
+    /// Execution timeout in milliseconds (default: 30000 = 30 seconds)
+    #[serde(default = "default_script_timeout_ms")]
+    #[validate(minimum = 100)]
+    #[validate(maximum = 300000)]
+    pub timeout_ms: u32,
+
+    /// Names of input parameters the script expects (for documentation/validation)
+    #[serde(default)]
+    pub inputs: Vec<String>,
+
+    /// Expected return type for documentation (string, float, bool, none)
+    #[serde(default)]
+    pub returns: ScriptReturnType,
+}
+
+fn default_script_timeout_ms() -> u32 {
+    30000 // 30 seconds
+}
+
+/// Expected return type of a script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptReturnType {
+    /// Script returns nothing (unit type)
+    #[default]
+    None,
+    /// Script returns a string
+    String,
+    /// Script returns a floating-point number
+    Float,
+    /// Script returns a boolean
+    Bool,
+    /// Script returns an integer
+    Int,
 }
 
 // =============================================================================
@@ -830,9 +910,16 @@ pub struct TraitMappingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct TraitMethodMapping {
-    /// Name of the command to execute (optional for polling-only methods)
+    /// Name of the command to execute (optional for polling-only or script-based methods)
     #[serde(default)]
     pub command: Option<String>,
+
+    /// Name of the script to execute (alternative to command for complex logic)
+    ///
+    /// When set, the script is executed instead of the command. The script
+    /// receives `input` as the input parameter and should return the result.
+    #[serde(default)]
+    pub script: Option<String>,
 
     /// Conversion to apply to input value
     #[serde(default)]

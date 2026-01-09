@@ -8,9 +8,20 @@ mod ell14_polling;
 #[cfg(feature = "tokio_serial")]
 pub mod generic_serial;
 
+// Rhai scripting engine for config-driven drivers
+#[cfg(feature = "scripting")]
+pub mod script_engine;
+
 // Re-export key types from generic_serial
 #[cfg(feature = "tokio_serial")]
 pub use generic_serial::{DynSerial, GenericSerialDriver, SharedPort};
+
+// Re-export scripting types when enabled
+#[cfg(feature = "scripting")]
+pub use script_engine::{
+    create_sandboxed_engine, execute_script, validate_script, CompiledScripts, ScriptContext,
+    ScriptEngineConfig, ScriptResult,
+};
 
 #[cfg(feature = "driver-newport")]
 pub mod esp300;

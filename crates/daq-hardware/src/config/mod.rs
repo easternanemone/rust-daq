@@ -110,8 +110,8 @@ pub use schema::{
     AddressFormat, BusConfig, BusType, CapabilityType, CommandConfig, CommandParameterType,
     ConnectionConfig, ConnectionType, ConversionConfig, DeviceCategory, DeviceConfig,
     DeviceIdentity, ErrorCodeConfig, FieldType, FlowControlSetting, ParameterConfig, ParameterType,
-    ParitySetting, ResponseConfig, ResponseFieldConfig, TraitMappingConfig, TraitMethodMapping,
-    ValidationRuleConfig,
+    ParitySetting, ResponseConfig, ResponseFieldConfig, ScriptDefinition, ScriptReturnType,
+    TraitMappingConfig, TraitMethodMapping, ValidationRuleConfig,
 };
 
 /// Generate JSON schema for DeviceConfig.

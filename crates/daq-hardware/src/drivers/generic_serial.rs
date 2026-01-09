@@ -43,6 +43,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{debug, instrument, trace, warn};
 
+// Rhai scripting support (optional)
+#[cfg(feature = "scripting")]
+use crate::drivers::script_engine::{
+    create_sandboxed_engine, execute_script, CompiledScripts, ScriptContext, ScriptEngineConfig,
+    ScriptResult,
+};
+#[cfg(feature = "scripting")]
+use rhai::Engine;
+
 // Re-use the serial port types from ell14 driver
 pub trait SerialPortIO: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> SerialPortIO for T {}
@@ -142,6 +151,7 @@ pub struct CommandResult {
 /// - Parsing responses using regex patterns
 /// - Applying unit conversions using evalexpr formulas
 /// - Implementing capability traits based on config mappings
+/// - Executing Rhai scripts for complex operations (when `scripting` feature is enabled)
 #[derive(Clone)]
 pub struct GenericSerialDriver {
     /// Device configuration
@@ -154,6 +164,12 @@ pub struct GenericSerialDriver {
     parameters: Arc<Mutex<HashMap<String, f64>>>,
     /// Compiled regex patterns for responses
     response_patterns: Arc<HashMap<String, Regex>>,
+    /// Compiled Rhai scripts (when scripting feature is enabled)
+    #[cfg(feature = "scripting")]
+    compiled_scripts: Arc<CompiledScripts>,
+    /// Rhai scripting engine (when scripting feature is enabled)
+    #[cfg(feature = "scripting")]
+    script_engine: Arc<Engine>,
 }
 
 impl GenericSerialDriver {
@@ -187,12 +203,26 @@ impl GenericSerialDriver {
         // Set the address parameter
         parameters.insert("address".to_string(), 0.0); // Address is typically string, handle separately
 
+        // Compile Rhai scripts if scripting feature is enabled
+        #[cfg(feature = "scripting")]
+        let (script_engine, compiled_scripts) = {
+            let engine_config = ScriptEngineConfig::default();
+            let engine = create_sandboxed_engine(&engine_config);
+            let scripts = CompiledScripts::compile_from_config(&config, &engine)
+                .context("Failed to compile device scripts")?;
+            (Arc::new(engine), Arc::new(scripts))
+        };
+
         Ok(Self {
             config: Arc::new(config),
             port,
             address: address.to_string(),
             parameters: Arc::new(Mutex::new(parameters)),
             response_patterns: Arc::new(response_patterns),
+            #[cfg(feature = "scripting")]
+            compiled_scripts,
+            #[cfg(feature = "scripting")]
+            script_engine,
         })
     }
 
@@ -997,6 +1027,12 @@ impl GenericSerialDriver {
             )
         })?;
 
+        // Check if method uses a script (scripting feature must be enabled)
+        #[cfg(feature = "scripting")]
+        if let Some(ref script_name) = method.script {
+            return self.execute_script_method(script_name, input_value).await;
+        }
+
         // Build command parameters
         let mut params = HashMap::new();
 
@@ -1153,6 +1189,78 @@ impl GenericSerialDriver {
         }
 
         Err(anyhow!("Cannot evaluate condition: {}", condition))
+    }
+
+    // =========================================================================
+    // Script Execution (requires "scripting" feature)
+    // =========================================================================
+
+    /// Execute a Rhai script for a trait method.
+    ///
+    /// This enables complex device operations that can't be expressed declaratively:
+    /// - Multi-step sequences with conditional logic
+    /// - Iterative correction loops
+    /// - Custom parsing and data transformations
+    ///
+    /// # Arguments
+    /// * `script_name` - Name of the script in the config's `[scripts]` section
+    /// * `input_value` - Optional input value passed to the script as `input`
+    ///
+    /// # Script Context
+    /// Scripts receive these variables:
+    /// - `input` - The input value (if provided)
+    /// - `address` - Device address string
+    /// - All parameters from `[parameters]` section
+    ///
+    /// # Returns
+    /// Script's return value converted to f64, or None if script returns nothing.
+    #[cfg(feature = "scripting")]
+    #[instrument(skip(self), fields(address = %self.address, script = %script_name), err)]
+    pub async fn execute_script_method(
+        &self,
+        script_name: &str,
+        input_value: Option<f64>,
+    ) -> Result<Option<f64>> {
+        // Get compiled script
+        let ast = self
+            .compiled_scripts
+            .get(script_name)
+            .ok_or_else(|| anyhow!("Script '{}' not found", script_name))?;
+
+        // Build script context with parameters
+        let params = self.parameters.lock().await.clone();
+
+        let context = ScriptContext::new(&self.address, input_value, params);
+
+        // Get script timeout from config
+        let timeout = self
+            .config
+            .scripts
+            .get(script_name)
+            .map(|s| Duration::from_millis(s.timeout_ms as u64))
+            .unwrap_or(Duration::from_secs(30));
+
+        // Execute script
+        debug!(script = %script_name, "Executing Rhai script");
+        let result = execute_script(&self.script_engine, ast, &context, timeout)?;
+
+        // Convert result to f64
+        match result {
+            ScriptResult::Float(f) => Ok(Some(f)),
+            ScriptResult::Int(i) => Ok(Some(i as f64)),
+            ScriptResult::None => Ok(None),
+            ScriptResult::String(s) => {
+                // Try to parse string as number
+                Ok(s.parse::<f64>().ok())
+            }
+            ScriptResult::Bool(b) => Ok(Some(if b { 1.0 } else { 0.0 })),
+        }
+    }
+
+    /// Check if a script exists in the configuration.
+    #[cfg(feature = "scripting")]
+    pub fn has_script(&self, name: &str) -> bool {
+        self.compiled_scripts.contains(name)
     }
 }
 
@@ -1538,5 +1646,186 @@ timeout_ms = 5000
 
         // code != 0 should be false
         assert!(!driver.evaluate_condition("code != 0", &parsed).unwrap());
+    }
+
+    // =========================================================================
+    // Scripting Tests (requires "scripting" feature)
+    // =========================================================================
+
+    #[cfg(feature = "scripting")]
+    mod scripting_tests {
+        use super::*;
+
+        const SCRIPT_CONFIG: &str = r#"
+[device]
+name = "Test Device with Scripts"
+protocol = "custom"
+capabilities = ["Readable"]
+
+[connection]
+type = "serial"
+timeout_ms = 500
+
+[parameters.address]
+type = "string"
+default = "0"
+
+[parameters.scale_factor]
+type = "float"
+default = 2.5
+
+[scripts.calculate_scaled]
+script = "input * scale_factor"
+description = "Multiply input by scale factor"
+timeout_ms = 5000
+inputs = ["input"]
+returns = "float"
+
+[scripts.hex_conversion]
+script = """
+let rounded = round(input);
+let as_int = rounded.to_int();
+let hex_str = to_hex_padded(as_int, 4);
+parse_hex(hex_str)
+"""
+description = "Convert to hex and back"
+timeout_ms = 5000
+inputs = ["input"]
+returns = "int"
+
+[scripts.conditional_logic]
+script = """
+if input > 100.0 {
+    input / 2.0
+} else {
+    input * 2.0
+}
+"""
+description = "Apply conditional scaling"
+timeout_ms = 5000
+inputs = ["input"]
+returns = "float"
+
+[commands.dummy]
+template = "dummy"
+expects_response = false
+
+[responses]
+
+[conversions]
+
+[trait_mapping.Readable.read]
+script = "calculate_scaled"
+"#;
+
+        #[test]
+        fn test_script_config_loads() {
+            let config = load_device_config_from_str(SCRIPT_CONFIG).unwrap();
+            assert!(config.scripts.contains_key("calculate_scaled"));
+            assert!(config.scripts.contains_key("hex_conversion"));
+            assert!(config.scripts.contains_key("conditional_logic"));
+        }
+
+        #[test]
+        fn test_driver_compiles_scripts() {
+            let config = load_device_config_from_str(SCRIPT_CONFIG).unwrap();
+            let port: SharedPort = Arc::new(Mutex::new(Box::new(MockPort::new())));
+            let driver = GenericSerialDriver::new(config, port, "0").unwrap();
+
+            assert!(driver.has_script("calculate_scaled"));
+            assert!(driver.has_script("hex_conversion"));
+            assert!(driver.has_script("conditional_logic"));
+            assert!(!driver.has_script("nonexistent"));
+        }
+
+        #[tokio::test]
+        async fn test_execute_script_with_input() {
+            let config = load_device_config_from_str(SCRIPT_CONFIG).unwrap();
+            let port: SharedPort = Arc::new(Mutex::new(Box::new(MockPort::new())));
+            let driver = GenericSerialDriver::new(config, port, "0").unwrap();
+
+            // scale_factor = 2.5, input = 10.0 -> result = 25.0
+            let result = driver
+                .execute_script_method("calculate_scaled", Some(10.0))
+                .await
+                .unwrap();
+
+            assert!(result.is_some());
+            let value = result.unwrap();
+            assert!((value - 25.0).abs() < 0.001);
+        }
+
+        #[tokio::test]
+        async fn test_execute_script_hex_conversion() {
+            let config = load_device_config_from_str(SCRIPT_CONFIG).unwrap();
+            let port: SharedPort = Arc::new(Mutex::new(Box::new(MockPort::new())));
+            let driver = GenericSerialDriver::new(config, port, "0").unwrap();
+
+            // 255 -> "00FF" -> 255
+            let result = driver
+                .execute_script_method("hex_conversion", Some(255.0))
+                .await
+                .unwrap();
+
+            assert!(result.is_some());
+            let value = result.unwrap();
+            assert!((value - 255.0).abs() < 0.001);
+        }
+
+        #[tokio::test]
+        async fn test_execute_script_conditional() {
+            let config = load_device_config_from_str(SCRIPT_CONFIG).unwrap();
+            let port: SharedPort = Arc::new(Mutex::new(Box::new(MockPort::new())));
+            let driver = GenericSerialDriver::new(config, port, "0").unwrap();
+
+            // input = 50 (<= 100) -> result = 50 * 2 = 100
+            let result = driver
+                .execute_script_method("conditional_logic", Some(50.0))
+                .await
+                .unwrap();
+            assert!((result.unwrap() - 100.0).abs() < 0.001);
+
+            // input = 200 (> 100) -> result = 200 / 2 = 100
+            let result = driver
+                .execute_script_method("conditional_logic", Some(200.0))
+                .await
+                .unwrap();
+            assert!((result.unwrap() - 100.0).abs() < 0.001);
+        }
+
+        #[test]
+        fn test_script_invalid_syntax_fails() {
+            let bad_config = r#"
+[device]
+name = "Bad Script Device"
+protocol = "custom"
+capabilities = []
+
+[connection]
+type = "serial"
+timeout_ms = 500
+
+[parameters]
+
+[scripts.bad_script]
+script = "let x = 1 +"
+description = "Invalid syntax"
+timeout_ms = 5000
+inputs = []
+returns = "int"
+
+[commands]
+[responses]
+[conversions]
+[trait_mapping]
+"#;
+
+            let config = load_device_config_from_str(bad_config).unwrap();
+            let port: SharedPort = Arc::new(Mutex::new(Box::new(MockPort::new())));
+
+            // Should fail to create driver due to script compilation error
+            let result = GenericSerialDriver::new(config, port, "0");
+            assert!(result.is_err(), "Expected error for invalid script syntax");
+        }
     }
 }
