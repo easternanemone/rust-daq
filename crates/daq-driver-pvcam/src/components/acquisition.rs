@@ -50,6 +50,8 @@
 
 use crate::components::connection::PvcamConnection;
 #[cfg(feature = "pvcam_hardware")]
+use crate::components::connection::get_pvcam_error;
+#[cfg(feature = "pvcam_hardware")]
 use crate::components::features::PvcamFeatures;
 use anyhow::{anyhow, bail, Result};
 use daq_core::core::Roi;
@@ -930,11 +932,11 @@ impl PvcamAcquisition {
                     CIRC_OVERWRITE,
                 ) == 0
                 {
-                    // bd-3gnv: Log SDK error code for diagnostics
-                    let err_code = pl_error_code();
-                    eprintln!("[PVCAM DEBUG] pl_exp_setup_cont failed: err_code={}", err_code);
+                    // bd-3gnv: Log SDK error with full message for diagnostics
+                    let err_msg = get_pvcam_error();
+                    eprintln!("[PVCAM DEBUG] pl_exp_setup_cont failed: {}", err_msg);
                     let _ = self.streaming.set(false).await;
-                    return Err(anyhow!("Failed to setup continuous acquisition (SDK error {})", err_code));
+                    return Err(anyhow!("Failed to setup continuous acquisition: {}", err_msg));
                 }
             }
             eprintln!("[PVCAM DEBUG] pl_exp_setup_cont succeeded with CIRC_OVERWRITE, frame_bytes={}", frame_bytes);
@@ -1026,9 +1028,9 @@ impl PvcamAcquisition {
             unsafe {
                 // SAFETY: circ_ptr points to page-aligned contiguous buffer; SDK expects byte size.
                 if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
-                    // bd-3gnv: Log SDK error code for diagnostics
-                    let err_code = pl_error_code();
-                    eprintln!("[PVCAM DEBUG] pl_exp_start_cont failed: err_code={}", err_code);
+                    // bd-3gnv: Log SDK error with full message for diagnostics
+                    let err_msg = get_pvcam_error();
+                    eprintln!("[PVCAM DEBUG] pl_exp_start_cont failed: {}", err_msg);
                     // Deregister callback on failure
                     if use_callback {
                         pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
@@ -1036,7 +1038,7 @@ impl PvcamAcquisition {
                     }
                     self.active_hcam.store(-1, Ordering::Release); // -1 = no active handle
                     let _ = self.streaming.set(false).await;
-                    return Err(anyhow!("Failed to start continuous acquisition (SDK error {})", err_code));
+                    return Err(anyhow!("Failed to start continuous acquisition: {}", err_msg));
                 }
             }
 
