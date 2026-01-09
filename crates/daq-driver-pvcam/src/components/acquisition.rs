@@ -1369,7 +1369,10 @@ impl PvcamAcquisition {
         let md_frame_ptr: *mut md_frame = if use_metadata {
             match ffi_safe::create_md_frame(MAX_ROIS) {
                 Some(ptr) => {
-                    tracing::debug!("Created md_frame struct for {} ROIs for metadata decoding", MAX_ROIS);
+                    tracing::debug!(
+                        "Created md_frame struct for {} ROIs for metadata decoding",
+                        MAX_ROIS
+                    );
                     ptr
                 }
                 None => {

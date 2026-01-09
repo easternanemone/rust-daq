@@ -85,7 +85,6 @@ use daq_proto::daq::{
     PauseScanRequest,
     QueuePlanRequest,
     QueuePlanResponse,
-    StreamDocumentsRequest,
     ReadValueRequest,
     ResumeScanRequest,
     ScanConfig,
@@ -104,6 +103,7 @@ use daq_proto::daq::{
     StopResponse as ScriptStopResponse,
     StopScanRequest,
     StopStreamRequest,
+    StreamDocumentsRequest,
     StreamFramesRequest,
     // Observable streaming (bd-qqjq stub for bd-r5vb)
     StreamObservablesRequest,

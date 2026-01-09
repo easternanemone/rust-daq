@@ -226,11 +226,10 @@ mod rerun_app {
 
                             self.runtime.spawn(async move {
                                 let result = async {
-                                    let addr = DaemonAddress::parse(&address, AddressSource::UserInput)
-                                        .map_err(|e| e.to_string())?;
-                                    DaqClient::connect(&addr)
-                                        .await
-                                        .map_err(|e| e.to_string())
+                                    let addr =
+                                        DaemonAddress::parse(&address, AddressSource::UserInput)
+                                            .map_err(|e| e.to_string())?;
+                                    DaqClient::connect(&addr).await.map_err(|e| e.to_string())
                                 }
                                 .await;
                                 let _ = tx.send(RerunActionResult::Connect(result)).await;

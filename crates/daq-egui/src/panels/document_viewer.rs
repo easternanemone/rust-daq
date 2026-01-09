@@ -186,7 +186,8 @@ impl DocumentViewerPanel {
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = tx.send(Err(format!("Failed to subscribe: {}", e))).await;
+                                    let _ =
+                                        tx.send(Err(format!("Failed to subscribe: {}", e))).await;
                                 }
                             }
                         }));

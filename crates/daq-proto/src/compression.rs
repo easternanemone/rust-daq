@@ -107,11 +107,17 @@ mod tests {
         // Verify compression occurred
         assert_eq!(frame.compression, CompressionType::CompressionLz4 as i32);
         assert_eq!(frame.uncompressed_size, original_size as u32);
-        assert!(frame.data.len() < original_size, "Data should be smaller after compression");
+        assert!(
+            frame.data.len() < original_size,
+            "Data should be smaller after compression"
+        );
 
         let compressed_size = frame.data.len();
         let ratio = compression_ratio(&frame);
-        assert!(ratio > 1.0, "Compression ratio should be > 1 for compressible data");
+        assert!(
+            ratio > 1.0,
+            "Compression ratio should be > 1 for compressible data"
+        );
 
         // Decompress
         decompress_frame(&mut frame).expect("Decompression should succeed");
@@ -119,7 +125,10 @@ mod tests {
         // Verify decompression restored original
         assert_eq!(frame.compression, CompressionType::CompressionNone as i32);
         assert_eq!(frame.data.len(), original_size);
-        assert!(frame.data.iter().all(|&b| b == 0), "Data should be restored to zeros");
+        assert!(
+            frame.data.iter().all(|&b| b == 0),
+            "Data should be restored to zeros"
+        );
 
         println!(
             "Compression test: {} -> {} bytes (ratio: {:.2}x)",

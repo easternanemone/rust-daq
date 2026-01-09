@@ -719,8 +719,8 @@ impl OscilloscopePanel {
 
             // Draw trigger level line
             if self.trigger_mode != TriggerMode::Off {
-                let trigger_line =
-                    egui_plot::HLine::new("trigger", self.trigger_level).color(Color32::from_rgb(255, 0, 0));
+                let trigger_line = egui_plot::HLine::new("trigger", self.trigger_level)
+                    .color(Color32::from_rgb(255, 0, 0));
                 plot_ui.hline(trigger_line);
             }
 

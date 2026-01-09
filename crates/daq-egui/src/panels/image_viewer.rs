@@ -196,11 +196,7 @@ const fn compute_viridis_lut() -> [[u8; 3]; 256] {
         let r = (0.267 + v * (0.993 - 0.267)) * 255.0;
         let g = v * 0.906 * 255.0;
         let b = (0.329 + v * 0.186) * 255.0; // Simplified for const fn
-        lut[i] = [
-            clamp_u8(r),
-            clamp_u8(g),
-            clamp_u8(b),
-        ];
+        lut[i] = [clamp_u8(r), clamp_u8(g), clamp_u8(b)];
         i += 1;
     }
     lut
@@ -215,11 +211,7 @@ const fn compute_inferno_lut() -> [[u8; 3]; 256] {
         let r = const_sqrt(v) * 255.0;
         let g = v * v * v * 200.0; // powf(1.5) approximated
         let b = (1.0 - v) * v * 4.0 * 255.0;
-        lut[i] = [
-            clamp_u8(r),
-            clamp_u8(g),
-            clamp_u8(b),
-        ];
+        lut[i] = [clamp_u8(r), clamp_u8(g), clamp_u8(b)];
         i += 1;
     }
     lut
@@ -234,11 +226,7 @@ const fn compute_plasma_lut() -> [[u8; 3]; 256] {
         let r = (0.05 + v * 0.95) * 255.0;
         let g = v * v * 255.0;
         let b = (1.0 - v * 0.7) * 255.0;
-        lut[i] = [
-            clamp_u8(r),
-            clamp_u8(g),
-            clamp_u8(b),
-        ];
+        lut[i] = [clamp_u8(r), clamp_u8(g), clamp_u8(b)];
         i += 1;
     }
     lut
@@ -253,11 +241,7 @@ const fn compute_magma_lut() -> [[u8; 3]; 256] {
         let r = const_pow_0_7(v) * 255.0;
         let g = v * v * 200.0;
         let b = (0.3 + v * 0.7) * v * 255.0;
-        lut[i] = [
-            clamp_u8(r),
-            clamp_u8(g),
-            clamp_u8(b),
-        ];
+        lut[i] = [clamp_u8(r), clamp_u8(g), clamp_u8(b)];
         i += 1;
     }
     lut
