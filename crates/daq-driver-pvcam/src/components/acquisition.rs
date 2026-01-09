@@ -1521,6 +1521,21 @@ impl PvcamAcquisition {
                                 current_frame_nr,
                                 frames_lost
                             );
+                        } else if current_frame_nr == prev_frame_nr {
+                            // Duplicate frame detected (bd-ha3w): same FrameNr as previous
+                            // This can happen due to race between callback and frame retrieval
+                            // Skip this frame to prevent duplicates in output stream
+                            discontinuity_events.fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                "Duplicate frame detected: FrameNr {} already processed, skipping (bd-ha3w)",
+                                current_frame_nr
+                            );
+                            // Release the frame back to SDK without processing
+                            ffi_safe::release_oldest_frame(hcam);
+                            if use_callback {
+                                callback_ctx.consume_one();
+                            }
+                            continue; // Skip to next frame in drain loop
                         } else if current_frame_nr < expected_frame_nr && current_frame_nr != 1 {
                             // Frame number went backwards (not due to wrap to 1)
                             // This is unexpected but log it as discontinuity
@@ -1576,6 +1591,34 @@ impl PvcamAcquisition {
                     let copy_bytes = frame_bytes.min(expected_frame_bytes);
                     let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
                     let pixel_data = sdk_bytes.to_vec();
+
+                    // Zero-frame detection (bd-ha3w): Check if frame contains valid data
+                    // Sample several positions to detect all-zero frames which indicate
+                    // either buffer corruption or reading before SDK finished writing.
+                    // Real camera data typically has noise even in dark frames.
+                    let sample_positions = [
+                        copy_bytes / 4,
+                        copy_bytes / 2,
+                        copy_bytes * 3 / 4,
+                        copy_bytes - 1,
+                    ];
+                    let has_nonzero = sample_positions.iter().any(|&pos| {
+                        pos < pixel_data.len() && pixel_data[pos] != 0
+                    });
+                    if !has_nonzero && copy_bytes > 1000 {
+                        // Frame appears to be all zeros - likely corrupted or race condition
+                        discontinuity_events.fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(
+                            "Zero-frame detected for FrameNr {}: buffer appears uninitialized, skipping (bd-ha3w)",
+                            current_frame_nr
+                        );
+                        // Still need to release and consume before skipping
+                        ffi_safe::release_oldest_frame(hcam);
+                        if use_callback {
+                            callback_ctx.consume_one();
+                        }
+                        continue; // Skip to next frame
+                    }
 
                     // Unlock ASAP to free SDK buffer for next frame
                     // bd-g9gq: Use FFI safe wrapper with explicit safety contract
