@@ -1491,10 +1491,8 @@ impl PvcamAcquisition {
             // Using zeroed struct as PVCAM will fill in the fields on frame retrieval.
             let mut frame_info: FRAME_INFO = unsafe { std::mem::zeroed() };
 
-            // bd-3gnv: Check status every N frames instead of every frame to reduce USB overhead.
-            // At 100 FPS, checking every 16 frames still detects READOUT_FAILED within ~160ms.
-            let mut frames_since_status_check: u32 = 0;
-            const STATUS_CHECK_INTERVAL: u32 = 16;
+            // bd-3gnv: Now checking buffer_cnt on every iteration to prevent stale frame loop.
+            // This is necessary because the SDK returns stale frames if we don't verify availability first.
 
             // bd-3gnv: Track drain loop timing
             let drain_start = std::time::Instant::now();
@@ -1513,30 +1511,40 @@ impl PvcamAcquisition {
                     break;
                 }
 
-                // Check acquisition status and detect fatal errors
-                // NOTE: Gemini suggested removing this for performance, but testing shows
-                // it's needed for proper frame timing synchronization with the hardware.
-                // bd-3gnv: Now checked every STATUS_CHECK_INTERVAL frames to reduce USB overhead.
-                // bd-g9gq: Use FFI safe wrapper with explicit safety contract
-                if frames_since_status_check >= STATUS_CHECK_INTERVAL {
-                    frames_since_status_check = 0;
-                    let (check_status, _, _) = match ffi_safe::check_cont_status(hcam) {
-                        Ok(result) => result,
-                        Err(()) => {
-                            tracing::error!("PVCAM status check failed");
-                            let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
-                            fatal_error = true;
-                            break;
-                        }
-                    };
-                    status = check_status;
-
-                    if status == READOUT_FAILED {
-                        tracing::error!("PVCAM readout failed");
-                        let _ = error_tx.send(AcquisitionError::ReadoutFailed);
+                // bd-3gnv FIX: Check if there are actually frames available BEFORE calling get_oldest_frame.
+                // The SDK can return stale frames if we don't check buffer_cnt first.
+                // This prevents the 60-million-iteration busy loop caused by the SDK returning
+                // the same frame repeatedly after the camera stops producing new frames.
+                let (check_status, _, buf_cnt) = match ffi_safe::check_cont_status(hcam) {
+                    Ok(result) => result,
+                    Err(()) => {
+                        tracing::error!("PVCAM status check failed");
+                        let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
                         fatal_error = true;
                         break;
                     }
+                };
+                status = check_status;
+                buffer_cnt = buf_cnt;
+
+                // Check for fatal errors
+                if status == READOUT_FAILED {
+                    tracing::error!("PVCAM readout failed");
+                    let _ = error_tx.send(AcquisitionError::ReadoutFailed);
+                    fatal_error = true;
+                    break;
+                }
+
+                // bd-3gnv FIX: Only attempt to get a frame if SDK reports frames are available.
+                // This is the critical fix - without this check, the SDK returns stale frames
+                // and we loop 60 million times detecting duplicates.
+                if buffer_cnt == 0 {
+                    // No frames available - exit drain loop and wait for callback/polling
+                    if frames_processed_in_drain > 0 || loop_iteration <= 3 {
+                        eprintln!("[PVCAM DEBUG] No frames available (buffer_cnt=0), exiting drain loop (processed={}, elapsed={:?})",
+                            frames_processed_in_drain, drain_start.elapsed());
+                    }
+                    break;
                 }
 
                 // Fetch oldest frame with FRAME_INFO for loss detection (bd-ek9n.3)
@@ -1551,7 +1559,6 @@ impl PvcamAcquisition {
                     }
                 };
                 frames_processed_in_drain += 1;
-                frames_since_status_check += 1; // bd-3gnv: Track frames for periodic status check
 
                 // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
