@@ -12,6 +12,9 @@ pub mod generic_serial;
 #[cfg(feature = "scripting")]
 pub mod script_engine;
 
+// Binary protocol support (Modbus RTU, etc.)
+pub mod binary_protocol;
+
 // Re-export key types from generic_serial
 #[cfg(feature = "tokio_serial")]
 pub use generic_serial::{DynSerial, GenericSerialDriver, SharedPort};
@@ -22,6 +25,12 @@ pub use script_engine::{
     create_sandboxed_engine, execute_script_async, execute_script_sync, validate_script,
     CompiledScripts, ScriptContext, ScriptEngineConfig, ScriptResult,
 };
+
+// Re-export binary protocol types
+pub use binary_protocol::{BinaryFrameBuilder, BinaryResponseParser, ParsedValue};
+
+#[cfg(feature = "binary_protocol")]
+pub use binary_protocol::{calculate_crc, validate_crc, CrcValue};
 
 #[cfg(feature = "driver-newport")]
 pub mod esp300;

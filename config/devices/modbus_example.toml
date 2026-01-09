@@ -1,0 +1,357 @@
+# config/devices/modbus_example.toml
+# Example Modbus RTU Device Configuration
+#
+# This demonstrates the Phase 6 binary protocol support for config-driven
+# Modbus RTU devices. It shows how to define binary commands with CRC.
+#
+# Protocol: Modbus RTU over RS-485
+# Reference: Modbus Application Protocol V1.1b3
+
+[device]
+name = "Modbus Example Device"
+description = "Example configuration for a Modbus RTU slave device"
+manufacturer = "Example Corp"
+model = "MOD-1000"
+protocol = "modbus_rtu"
+category = "data_acquisition"
+capabilities = ["Readable", "Settable"]
+
+# ==============================================================================
+# Connection Settings
+# ==============================================================================
+
+[connection]
+type = "serial"
+baud_rate = 9600
+data_bits = 8
+parity = "none"  # Can also be "even" for Modbus
+stop_bits = 1
+flow_control = "none"
+timeout_ms = 1000
+terminator_tx = ""  # Modbus RTU uses no terminators
+terminator_rx = ""  # Binary protocol with fixed frame sizes
+
+# RS-485 bus configuration
+[connection.bus]
+type = "rs485"
+address_format = "decimal"
+default_address = "1"
+
+# ==============================================================================
+# Device Parameters
+# ==============================================================================
+
+[parameters.device_address]
+type = "uint"
+default = 1
+range = [1, 247]
+description = "Modbus slave address (1-247)"
+
+[parameters.holding_register_start]
+type = "uint"
+default = 0
+range = [0, 65535]
+description = "Starting register address for read/write operations"
+
+[parameters.register_count]
+type = "uint"
+default = 1
+range = [1, 125]
+description = "Number of registers to read (max 125 for function 0x03)"
+
+# ==============================================================================
+# Binary Command Definitions
+# ==============================================================================
+
+# Read Holding Registers (Function Code 0x03)
+[binary_commands.read_holding_registers]
+description = "Read one or more holding registers from the device"
+expects_response = true
+response = "read_holding_registers_response"
+timeout_ms = 1000
+
+[[binary_commands.read_holding_registers.fields]]
+name = "address"
+type = "u8"
+value = "${device_address}"
+
+[[binary_commands.read_holding_registers.fields]]
+name = "function_code"
+type = "u8"
+value = "0x03"
+
+[[binary_commands.read_holding_registers.fields]]
+name = "start_register"
+type = "u16_be"
+value = "${holding_register_start}"
+
+[[binary_commands.read_holding_registers.fields]]
+name = "register_count"
+type = "u16_be"
+value = "${register_count}"
+
+[binary_commands.read_holding_registers.crc]
+algorithm = "crc16_modbus"
+append = true
+byte_order = "little_endian"
+
+# Write Single Register (Function Code 0x06)
+[binary_commands.write_single_register]
+description = "Write a value to a single holding register"
+expects_response = true
+response = "write_single_register_response"
+timeout_ms = 1000
+
+[[binary_commands.write_single_register.fields]]
+name = "address"
+type = "u8"
+value = "${device_address}"
+
+[[binary_commands.write_single_register.fields]]
+name = "function_code"
+type = "u8"
+value = "0x06"
+
+[[binary_commands.write_single_register.fields]]
+name = "register_address"
+type = "u16_be"
+value = "${holding_register_start}"
+
+[[binary_commands.write_single_register.fields]]
+name = "register_value"
+type = "u16_be"
+value = "${value}"
+
+[binary_commands.write_single_register.crc]
+algorithm = "crc16_modbus"
+append = true
+byte_order = "little_endian"
+
+# Write Multiple Registers (Function Code 0x10)
+[binary_commands.write_multiple_registers]
+description = "Write values to multiple consecutive holding registers"
+expects_response = true
+response = "write_multiple_registers_response"
+timeout_ms = 2000
+
+[[binary_commands.write_multiple_registers.fields]]
+name = "address"
+type = "u8"
+value = "${device_address}"
+
+[[binary_commands.write_multiple_registers.fields]]
+name = "function_code"
+type = "u8"
+value = "0x10"
+
+[[binary_commands.write_multiple_registers.fields]]
+name = "start_register"
+type = "u16_be"
+value = "${holding_register_start}"
+
+[[binary_commands.write_multiple_registers.fields]]
+name = "register_count"
+type = "u16_be"
+value = "${register_count}"
+
+[[binary_commands.write_multiple_registers.fields]]
+name = "byte_count"
+type = "u8"
+value = "${byte_count}"
+
+# Note: Data bytes would be appended programmatically
+
+[binary_commands.write_multiple_registers.crc]
+algorithm = "crc16_modbus"
+append = true
+byte_order = "little_endian"
+
+# ==============================================================================
+# Binary Response Definitions
+# ==============================================================================
+
+# Response to Read Holding Registers (Function Code 0x03)
+[binary_responses.read_holding_registers_response]
+description = "Response containing register data"
+min_length = 5  # address + function + byte_count + CRC (minimum)
+
+[[binary_responses.read_holding_registers_response.fields]]
+name = "address"
+type = "u8"
+position = 0
+
+[[binary_responses.read_holding_registers_response.fields]]
+name = "function_code"
+type = "u8"
+position = 1
+expected = "0x03"
+
+[[binary_responses.read_holding_registers_response.fields]]
+name = "byte_count"
+type = "u8"
+position = 2
+
+[[binary_responses.read_holding_registers_response.fields]]
+name = "data"
+type = "bytes"
+start = 3
+length_field = "byte_count"
+
+[binary_responses.read_holding_registers_response.crc]
+algorithm = "crc16_modbus"
+validate = true
+byte_order = "little_endian"
+
+# Response to Write Single Register (Function Code 0x06)
+# Echo: address + function + register_address + register_value + CRC
+[binary_responses.write_single_register_response]
+description = "Echo response confirming register write"
+min_length = 8
+
+[[binary_responses.write_single_register_response.fields]]
+name = "address"
+type = "u8"
+position = 0
+
+[[binary_responses.write_single_register_response.fields]]
+name = "function_code"
+type = "u8"
+position = 1
+expected = "0x06"
+
+[[binary_responses.write_single_register_response.fields]]
+name = "register_address"
+type = "u16_be"
+position = 2
+
+[[binary_responses.write_single_register_response.fields]]
+name = "register_value"
+type = "u16_be"
+position = 4
+
+[binary_responses.write_single_register_response.crc]
+algorithm = "crc16_modbus"
+validate = true
+byte_order = "little_endian"
+
+# Response to Write Multiple Registers (Function Code 0x10)
+[binary_responses.write_multiple_registers_response]
+description = "Response confirming multiple register write"
+min_length = 8
+
+[[binary_responses.write_multiple_registers_response.fields]]
+name = "address"
+type = "u8"
+position = 0
+
+[[binary_responses.write_multiple_registers_response.fields]]
+name = "function_code"
+type = "u8"
+position = 1
+expected = "0x10"
+
+[[binary_responses.write_multiple_registers_response.fields]]
+name = "start_register"
+type = "u16_be"
+position = 2
+
+[[binary_responses.write_multiple_registers_response.fields]]
+name = "register_count"
+type = "u16_be"
+position = 4
+
+[binary_responses.write_multiple_registers_response.crc]
+algorithm = "crc16_modbus"
+validate = true
+byte_order = "little_endian"
+
+# Modbus Exception Response (any function code + 0x80)
+[binary_responses.exception_response]
+description = "Exception response indicating an error"
+min_length = 5
+
+[[binary_responses.exception_response.fields]]
+name = "address"
+type = "u8"
+position = 0
+
+[[binary_responses.exception_response.fields]]
+name = "function_code"
+type = "u8"
+position = 1
+is_error_code = true  # High bit set indicates exception
+
+[[binary_responses.exception_response.fields]]
+name = "exception_code"
+type = "u8"
+position = 2
+
+[binary_responses.exception_response.crc]
+algorithm = "crc16_modbus"
+validate = true
+byte_order = "little_endian"
+
+# ==============================================================================
+# Error Codes (Modbus Exception Codes)
+# ==============================================================================
+
+[error_codes."0x01"]
+name = "ILLEGAL_FUNCTION"
+description = "Function code not supported"
+recoverable = true
+severity = "error"
+
+[error_codes."0x02"]
+name = "ILLEGAL_DATA_ADDRESS"
+description = "Register address out of range"
+recoverable = true
+severity = "error"
+
+[error_codes."0x03"]
+name = "ILLEGAL_DATA_VALUE"
+description = "Invalid value in request"
+recoverable = true
+severity = "error"
+
+[error_codes."0x04"]
+name = "SLAVE_DEVICE_FAILURE"
+description = "Unrecoverable error in slave device"
+recoverable = false
+severity = "critical"
+
+[error_codes."0x05"]
+name = "ACKNOWLEDGE"
+description = "Request accepted, processing in progress"
+recoverable = true
+severity = "info"
+
+[error_codes."0x06"]
+name = "SLAVE_DEVICE_BUSY"
+description = "Slave is busy, retry later"
+recoverable = true
+severity = "warning"
+
+# ==============================================================================
+# Retry Configuration
+# ==============================================================================
+
+[default_retry]
+max_retries = 3
+initial_delay_ms = 100
+max_delay_ms = 1000
+backoff_multiplier = 2.0
+# Retry on busy but not on illegal function/address errors
+retry_on_errors = ["0x05", "0x06"]
+no_retry_on_errors = ["0x01", "0x02", "0x03", "0x04"]
+
+# ==============================================================================
+# Trait Mapping
+# ==============================================================================
+
+[trait_mapping.Readable.read]
+command = "read_holding_registers"
+output_field = "data"
+
+[trait_mapping.Settable.set]
+command = "write_single_register"
+input_param = "value"

@@ -86,6 +86,14 @@ pub struct DeviceConfig {
     /// Rhai script definitions for complex logic that can't be expressed declaratively
     #[serde(default)]
     pub scripts: HashMap<String, ScriptDefinition>,
+
+    /// Binary command definitions for protocols like Modbus RTU
+    #[serde(default)]
+    pub binary_commands: HashMap<String, BinaryCommandConfig>,
+
+    /// Binary response parsing definitions
+    #[serde(default)]
+    pub binary_responses: HashMap<String, BinaryResponseConfig>,
 }
 
 // =============================================================================
@@ -960,6 +968,272 @@ pub struct TraitMethodMapping {
     pub timeout_ms: Option<u32>,
 }
 
+// =============================================================================
+// Binary Protocol Configuration (Phase 6)
+// =============================================================================
+
+/// Binary command configuration for protocols like Modbus RTU.
+///
+/// Defines how to build a binary frame from fields with explicit types and endianness.
+///
+/// # Example
+///
+/// ```toml
+/// [binary_commands.read_registers]
+/// description = "Read holding registers (Modbus function 0x03)"
+/// fields = [
+///     { name = "address", type = "u8", value = "${device_address}" },
+///     { name = "function", type = "u8", value = "0x03" },
+///     { name = "start_register", type = "u16_be", value = "${start_register}" },
+///     { name = "count", type = "u16_be", value = "${count}" },
+/// ]
+/// crc = { algorithm = "crc16_modbus", append = true }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryCommandConfig {
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+
+    /// Ordered list of fields to build the frame
+    pub fields: Vec<BinaryFieldConfig>,
+
+    /// CRC configuration (optional)
+    #[serde(default)]
+    pub crc: Option<CrcConfig>,
+
+    /// Whether this command expects a response
+    #[serde(default = "default_expects_response")]
+    pub expects_response: bool,
+
+    /// Name of the binary response definition to use for parsing
+    #[serde(default)]
+    pub response: Option<String>,
+
+    /// Per-command timeout override (milliseconds)
+    #[serde(default)]
+    #[validate(maximum = 300000)]
+    pub timeout_ms: Option<u32>,
+
+    /// Retry configuration for this command
+    #[serde(default)]
+    #[validate]
+    pub retry: Option<RetryConfig>,
+}
+
+/// Binary field configuration for frame building.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryFieldConfig {
+    /// Field name (for documentation and debugging)
+    pub name: String,
+
+    /// Field data type (includes endianness)
+    #[serde(rename = "type")]
+    pub field_type: BinaryFieldType,
+
+    /// Value template (can include `${param}` substitutions or hex literals like `0x03`)
+    #[serde(default)]
+    pub value: Option<String>,
+
+    /// Fixed byte array value (alternative to value template)
+    #[serde(default)]
+    pub bytes: Option<Vec<u8>>,
+
+    /// For variable-length fields: expression for length (e.g., "${count} * 2")
+    #[serde(default)]
+    pub length: Option<String>,
+}
+
+/// Binary field types with explicit endianness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BinaryFieldType {
+    /// 8-bit unsigned integer
+    U8,
+    /// 8-bit signed integer
+    I8,
+    /// 16-bit unsigned, big-endian (network byte order)
+    U16Be,
+    /// 16-bit unsigned, little-endian
+    U16Le,
+    /// 16-bit signed, big-endian
+    I16Be,
+    /// 16-bit signed, little-endian
+    I16Le,
+    /// 32-bit unsigned, big-endian
+    U32Be,
+    /// 32-bit unsigned, little-endian
+    U32Le,
+    /// 32-bit signed, big-endian
+    I32Be,
+    /// 32-bit signed, little-endian
+    I32Le,
+    /// 32-bit float, big-endian (IEEE 754)
+    F32Be,
+    /// 32-bit float, little-endian (IEEE 754)
+    F32Le,
+    /// 64-bit unsigned, big-endian
+    U64Be,
+    /// 64-bit unsigned, little-endian
+    U64Le,
+    /// Fixed-length byte array
+    Bytes,
+    /// ASCII string (no null terminator)
+    AsciiString,
+    /// Null-terminated ASCII string
+    AsciiStringZ,
+}
+
+impl BinaryFieldType {
+    /// Returns the fixed size in bytes, or None for variable-length types.
+    pub fn fixed_size(&self) -> Option<usize> {
+        match self {
+            Self::U8 | Self::I8 => Some(1),
+            Self::U16Be | Self::U16Le | Self::I16Be | Self::I16Le => Some(2),
+            Self::U32Be | Self::U32Le | Self::I32Be | Self::I32Le => Some(4),
+            Self::F32Be | Self::F32Le => Some(4),
+            Self::U64Be | Self::U64Le => Some(8),
+            Self::Bytes | Self::AsciiString | Self::AsciiStringZ => None,
+        }
+    }
+}
+
+/// CRC configuration for binary protocols.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct CrcConfig {
+    /// CRC algorithm to use
+    pub algorithm: CrcAlgorithm,
+
+    /// Whether to append CRC to outgoing frames
+    #[serde(default = "default_true")]
+    pub append: bool,
+
+    /// Whether to validate CRC on incoming frames
+    #[serde(default = "default_true")]
+    pub validate: bool,
+
+    /// Byte order for multi-byte CRC values
+    #[serde(default)]
+    pub byte_order: ByteOrder,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Supported CRC algorithms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CrcAlgorithm {
+    /// CRC-16 Modbus (polynomial 0x8005, init 0xFFFF, reflect in/out)
+    Crc16Modbus,
+    /// CRC-16 CCITT (polynomial 0x1021, init 0xFFFF)
+    Crc16Ccitt,
+    /// CRC-16 CCITT with init 0x0000 (X.25)
+    Crc16CcittFalse,
+    /// CRC-16 XMODEM (polynomial 0x1021, init 0x0000)
+    Crc16Xmodem,
+    /// CRC-32 (Ethernet, ZIP)
+    Crc32,
+    /// CRC-32C (Castagnoli, iSCSI)
+    Crc32C,
+    /// Simple 8-bit checksum (sum of bytes mod 256)
+    Checksum8,
+    /// XOR of all bytes
+    Xor8,
+    /// Longitudinal Redundancy Check (XOR of all bytes)
+    Lrc,
+}
+
+/// Byte order for multi-byte values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ByteOrder {
+    /// Big-endian (most significant byte first)
+    BigEndian,
+    /// Little-endian (least significant byte first)
+    #[default]
+    LittleEndian,
+}
+
+/// Binary response configuration for parsing binary frames.
+///
+/// # Example
+///
+/// ```toml
+/// [binary_responses.read_registers_response]
+/// fields = [
+///     { name = "address", type = "u8", position = 0 },
+///     { name = "function", type = "u8", position = 1 },
+///     { name = "byte_count", type = "u8", position = 2 },
+///     { name = "data", type = "bytes", start = 3, length_field = "byte_count" },
+/// ]
+/// crc = { algorithm = "crc16_modbus", validate = true }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryResponseConfig {
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+
+    /// Field definitions for parsing (in order)
+    pub fields: Vec<BinaryResponseFieldConfig>,
+
+    /// CRC configuration for validation
+    #[serde(default)]
+    pub crc: Option<CrcConfig>,
+
+    /// Minimum expected response length (bytes)
+    #[serde(default)]
+    #[validate(maximum = 65535)]
+    pub min_length: Option<u16>,
+
+    /// Maximum expected response length (bytes)
+    #[serde(default)]
+    #[validate(maximum = 65535)]
+    pub max_length: Option<u16>,
+}
+
+/// Binary response field configuration for parsing.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryResponseFieldConfig {
+    /// Field name (used for extracting values)
+    pub name: String,
+
+    /// Field data type
+    #[serde(rename = "type")]
+    pub field_type: BinaryFieldType,
+
+    /// Fixed position in the frame (0-based byte offset)
+    #[serde(default)]
+    pub position: Option<usize>,
+
+    /// Start position for variable-length fields
+    #[serde(default)]
+    pub start: Option<usize>,
+
+    /// Fixed length for variable-length fields
+    #[serde(default)]
+    pub length: Option<usize>,
+
+    /// Name of another field that contains the length
+    #[serde(default)]
+    pub length_field: Option<String>,
+
+    /// Expected value (for validation, hex string like "0x03")
+    #[serde(default)]
+    pub expected: Option<String>,
+
+    /// Whether this field is the error code indicator
+    #[serde(default)]
+    pub is_error_code: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,5 +1260,41 @@ mod tests {
         let field = FieldType::HexI32;
         let json = serde_json::to_string(&field).unwrap();
         assert_eq!(json, "\"hex_i32\"");
+    }
+
+    #[test]
+    fn test_binary_field_type_serialization() {
+        let field = BinaryFieldType::U16Be;
+        let json = serde_json::to_string(&field).unwrap();
+        assert_eq!(json, "\"u16_be\"");
+
+        let parsed: BinaryFieldType = serde_json::from_str("\"i32_le\"").unwrap();
+        assert_eq!(parsed, BinaryFieldType::I32Le);
+    }
+
+    #[test]
+    fn test_binary_field_type_fixed_size() {
+        assert_eq!(BinaryFieldType::U8.fixed_size(), Some(1));
+        assert_eq!(BinaryFieldType::U16Be.fixed_size(), Some(2));
+        assert_eq!(BinaryFieldType::U32Le.fixed_size(), Some(4));
+        assert_eq!(BinaryFieldType::U64Be.fixed_size(), Some(8));
+        assert_eq!(BinaryFieldType::Bytes.fixed_size(), None);
+        assert_eq!(BinaryFieldType::AsciiString.fixed_size(), None);
+    }
+
+    #[test]
+    fn test_crc_algorithm_serialization() {
+        let crc = CrcAlgorithm::Crc16Modbus;
+        let json = serde_json::to_string(&crc).unwrap();
+        assert_eq!(json, "\"crc16_modbus\"");
+
+        let parsed: CrcAlgorithm = serde_json::from_str("\"crc32\"").unwrap();
+        assert_eq!(parsed, CrcAlgorithm::Crc32);
+    }
+
+    #[test]
+    fn test_byte_order_default() {
+        let order: ByteOrder = Default::default();
+        assert_eq!(order, ByteOrder::LittleEndian);
     }
 }
