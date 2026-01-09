@@ -73,6 +73,52 @@ pub struct DeviceConfig {
     /// Trait method to command mapping
     #[serde(default)]
     pub trait_mapping: HashMap<String, TraitMappingConfig>,
+
+    /// Initialization sequence (run on device connect)
+    #[serde(default)]
+    pub init_sequence: Vec<InitStep>,
+
+    /// Default retry configuration (applies to all commands without explicit retry)
+    #[serde(default)]
+    #[validate]
+    pub default_retry: Option<RetryConfig>,
+}
+
+// =============================================================================
+// Initialization Sequence
+// =============================================================================
+
+/// A single step in the device initialization sequence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct InitStep {
+    /// Name of the command to execute
+    pub command: String,
+
+    /// Optional parameters for the command
+    #[serde(default)]
+    pub params: HashMap<String, serde_json::Value>,
+
+    /// Expected response pattern for validation (optional)
+    #[serde(default)]
+    pub expect: Option<String>,
+
+    /// Whether to fail initialization if this step fails
+    #[serde(default = "default_required")]
+    pub required: bool,
+
+    /// Delay after this step (milliseconds)
+    #[serde(default)]
+    #[validate(maximum = 60000)]
+    pub delay_ms: u32,
+
+    /// Human-readable description
+    #[serde(default)]
+    pub description: String,
+}
+
+fn default_required() -> bool {
+    true
 }
 
 // =============================================================================
@@ -330,6 +376,74 @@ pub enum AddressFormat {
 }
 
 // =============================================================================
+// Retry Configuration
+// =============================================================================
+
+/// Retry configuration for commands.
+///
+/// Defines how failed commands should be retried with exponential backoff.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts (0 = no retries)
+    #[serde(default = "default_max_retries")]
+    #[validate(maximum = 10)]
+    pub max_retries: u8,
+
+    /// Initial delay before first retry (milliseconds)
+    #[serde(default = "default_initial_delay_ms")]
+    #[validate(minimum = 10)]
+    #[validate(maximum = 10000)]
+    pub initial_delay_ms: u32,
+
+    /// Maximum delay between retries (milliseconds)
+    #[serde(default = "default_max_delay_ms")]
+    #[validate(maximum = 60000)]
+    pub max_delay_ms: u32,
+
+    /// Multiplier for exponential backoff (e.g., 2.0 = double delay each retry)
+    #[serde(default = "default_backoff_multiplier")]
+    pub backoff_multiplier: f64,
+
+    /// Error codes that should trigger a retry (if empty, retries on any error)
+    #[serde(default)]
+    pub retry_on_errors: Vec<String>,
+
+    /// Error codes that should NOT trigger a retry (takes precedence over retry_on_errors)
+    #[serde(default)]
+    pub no_retry_on_errors: Vec<String>,
+}
+
+fn default_max_retries() -> u8 {
+    3
+}
+
+fn default_initial_delay_ms() -> u32 {
+    100
+}
+
+fn default_max_delay_ms() -> u32 {
+    5000
+}
+
+fn default_backoff_multiplier() -> f64 {
+    2.0
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: default_max_retries(),
+            initial_delay_ms: default_initial_delay_ms(),
+            max_delay_ms: default_max_delay_ms(),
+            backoff_multiplier: default_backoff_multiplier(),
+            retry_on_errors: Vec::new(),
+            no_retry_on_errors: Vec::new(),
+        }
+    }
+}
+
+// =============================================================================
 // Command Configuration
 // =============================================================================
 
@@ -364,6 +478,17 @@ pub struct CommandConfig {
     #[serde(default)]
     #[validate(maximum = 60000)]
     pub delay_ms: u32,
+
+    /// Per-command timeout override (milliseconds).
+    /// If not specified, uses the connection-level timeout.
+    #[serde(default)]
+    #[validate(maximum = 300000)]
+    pub timeout_ms: Option<u32>,
+
+    /// Retry configuration for this command
+    #[serde(default)]
+    #[validate]
+    pub retry: Option<RetryConfig>,
 }
 
 fn default_expects_response() -> bool {
@@ -611,6 +736,53 @@ pub struct ErrorCodeConfig {
     /// Whether this error is recoverable
     #[serde(default)]
     pub recoverable: bool,
+
+    /// Error severity level
+    #[serde(default)]
+    pub severity: ErrorSeverity,
+
+    /// Suggested recovery action
+    #[serde(default)]
+    pub recovery_action: Option<RecoveryAction>,
+}
+
+/// Error severity levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSeverity {
+    /// Informational - operation may still succeed
+    Info,
+    /// Warning - operation succeeded with caveats
+    Warning,
+    /// Error - operation failed but device is OK
+    #[default]
+    Error,
+    /// Critical - device may be in bad state, requires attention
+    Critical,
+    /// Fatal - device unusable until power cycle/reset
+    Fatal,
+}
+
+/// Recovery actions for errors.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryAction {
+    /// Command to execute for recovery (optional)
+    #[serde(default)]
+    pub command: Option<String>,
+
+    /// Whether to attempt automatic recovery
+    #[serde(default)]
+    pub auto_recover: bool,
+
+    /// Delay before attempting recovery (milliseconds)
+    #[serde(default)]
+    #[validate(maximum = 60000)]
+    pub delay_ms: u32,
+
+    /// Human-readable instructions for manual recovery
+    #[serde(default)]
+    pub manual_instructions: Option<String>,
 }
 
 // =============================================================================

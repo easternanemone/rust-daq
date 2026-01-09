@@ -234,9 +234,9 @@ protocol:
         assert_eq!(y_axis.unit, Some("mm".to_string()));
 
         // Verify command templates
-        assert_eq!(movable.set_cmd, "POS:{axis} {val}");
+        assert_eq!(movable.set_cmd, "POS:{axis} {position}");
         assert_eq!(movable.get_cmd, "POS:{axis}?");
-        assert_eq!(movable.get_pattern, "{val:f}");
+        assert_eq!(movable.get_pattern, "{position:f}");
 
         Ok(())
     }

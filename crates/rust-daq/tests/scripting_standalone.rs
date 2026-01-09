@@ -80,10 +80,11 @@ fn test_script_validation() {
 #[test]
 fn test_large_but_valid_loop() {
     let host = TestScriptHost::new();
-    // 9000 operations should be within the 10000 limit
-    let result = host.run_script("let x = 0; for i in 0..9000 { x += 1; } x");
+    // Each loop iteration counts multiple operations (range iteration, body, increment)
+    // 2000 iterations should safely stay within the 10000 operation limit
+    let result = host.run_script("let x = 0; for i in 0..2000 { x += 1; } x");
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().as_int().unwrap(), 9000);
+    assert_eq!(result.unwrap().as_int().unwrap(), 2000);
 }
 
 #[test]

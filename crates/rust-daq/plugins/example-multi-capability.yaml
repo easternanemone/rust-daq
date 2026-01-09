@@ -74,7 +74,7 @@ capabilities:
         max: 360.0
 
     # Command format: MOT:AXIS:POS x,y,z,theta
-    set_cmd: "MOT:AXIS:POS {val}"
+    set_cmd: "MOT:AXIS:POS {position}"
 
     # Response format: "50.0,25.5,10.2,45.0"
     get_cmd: "MOT:AXIS:POS?"

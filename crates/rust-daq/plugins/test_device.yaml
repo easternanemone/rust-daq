@@ -34,9 +34,9 @@ capabilities:
         unit: "mm"
         min: 0.0
         max: 100.0
-    set_cmd: "POS:{axis} {val}"  # Example: "POS:x 50.5"
-    get_cmd: "POS:{axis}?"        # Example: "POS:x?"
-    get_pattern: "{val:f}"        # Expects just the position value
+    set_cmd: "POS:{axis} {position}"  # Example: "POS:x 50.5"
+    get_cmd: "POS:{axis}?"             # Example: "POS:x?"
+    get_pattern: "{position:f}"        # Expects just the position value
 
   readable:
     - name: "temperature"
