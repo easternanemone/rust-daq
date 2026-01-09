@@ -209,6 +209,25 @@ DAQ_DAEMON_URL=http://100.117.5.12:50051 \
 cargo run --bin daq-rerun --features rerun_viewer
 ```
 
+### When SSH Tunneling is Needed
+
+**Tailscale users (recommended):** No tunneling required. Both machines on the same Tailnet can connect directly via Tailscale IP (e.g., `100.x.x.x`). The daemon binds to `0.0.0.0` by default, making it accessible on all network interfaces.
+
+**Non-Tailscale users:** SSH tunneling is required when:
+- The remote machine is behind a firewall blocking port 50051
+- You're connecting over public internet without VPN
+- Security policy requires encrypted transport
+
+```bash
+# Create SSH tunnel (only if not using Tailscale)
+ssh -L 50051:localhost:50051 -L 9876:localhost:9876 user@remote-host
+
+# Then connect GUI to localhost
+DAQ_DAEMON_URL=http://127.0.0.1:50051 cargo run --bin daq-rerun --features rerun_viewer
+```
+
+**Automatic tunneling:** Future versions may support automatic SSH tunnel management. Track progress in beads issue tracker.
+
 ### Architecture
 
 - **Control Plane (gRPC :50051):** Device commands, script execution, status
