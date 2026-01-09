@@ -925,11 +925,10 @@ impl PvcamAcquisition {
                     TIMED_MODE,
                     exposure_ms as uns32,
                     &mut frame_bytes,
-                    // bd-3gnv: Use CIRC_OVERWRITE to prevent camera stalling when buffer fills.
-                    // With CIRC_NO_OVERWRITE, if host can't unlock frames fast enough, the camera
-                    // pauses and may not resume. CIRC_OVERWRITE overwrites oldest frames instead,
-                    // ensuring continuous acquisition. Frame loss is detected via FrameNr discontinuities.
-                    CIRC_OVERWRITE,
+                    // bd-3gnv: CIRC_OVERWRITE not supported by Prime BSI (error 185).
+                    // CIRC_NO_OVERWRITE: camera pauses when buffer fills until frames unlocked.
+                    // Frame unlocking happens in drain loop via ffi_safe::release_oldest_frame().
+                    CIRC_NO_OVERWRITE,
                 ) == 0
                 {
                     // bd-3gnv: Log SDK error with full message for diagnostics
@@ -939,7 +938,7 @@ impl PvcamAcquisition {
                     return Err(anyhow!("Failed to setup continuous acquisition: {}", err_msg));
                 }
             }
-            eprintln!("[PVCAM DEBUG] pl_exp_setup_cont succeeded with CIRC_OVERWRITE, frame_bytes={}", frame_bytes);
+            eprintln!("[PVCAM DEBUG] pl_exp_setup_cont succeeded with CIRC_NO_OVERWRITE, frame_bytes={}", frame_bytes);
 
             // Calculate dimensions for frame construction
             let binned_width = roi.width / x_bin as u32;
