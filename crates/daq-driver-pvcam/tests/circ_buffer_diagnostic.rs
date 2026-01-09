@@ -27,7 +27,7 @@ use pvcam_sys::*;
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 
-// Constants from pvcam-sys
+// Buffer mode constants (not exported by bindgen, need manual definition)
 const CIRC_OVERWRITE: i16 = 0;
 const CIRC_NO_OVERWRITE: i16 = 1;
 const TIMED_MODE: i16 = 0;
@@ -36,10 +36,14 @@ const EXPOSE_OUT_FIRST_ROW: i16 = 0;
 const CCS_HALT: i16 = 1;
 const PL_CALLBACK_EOF: i32 = 1;
 
-// PARAM IDs from SDK
-const PARAM_CIRC_BUFFER: u32 = (3 << 16) | (5 << 24) | 299;
-const PARAM_EXPOSURE_MODE: u32 = (3 << 16) | (4 << 24) | 526;
-const PARAM_EXPOSE_OUT_MODE: u32 = (3 << 16) | (4 << 24) | 569;
+// PARAM IDs - use actual values from SDK bindings (verified from generated bindings.rs)
+const PARAM_CIRC_BUFFER: u32 = 184746283;      // from bindings.rs
+const PARAM_EXPOSURE_MODE: u32 = 151126551;    // from bindings.rs
+const PARAM_EXPOSE_OUT_MODE: u32 = 151126585;  // calculated: should be near PARAM_EXPOSURE_MODE
+const PARAM_SER_SIZE: u32 = 100794426;         // from bindings.rs
+const PARAM_PAR_SIZE: u32 = 100794425;         // from bindings.rs
+
+// Attribute constants for pl_get_param
 const ATTR_AVAIL: i16 = 8;
 const ATTR_CURRENT: i16 = 0;
 const ATTR_COUNT: i16 = 1;
@@ -558,19 +562,27 @@ async fn test_circ_buffer_capabilities() {
     // ========================================
     println!("\n--- Checking other relevant parameters ---");
 
-    // Some common PARAM IDs
+    // Use the constants we've defined above (correct values from bindings)
     let params_to_check: &[(u32, &str)] = &[
-        ((3 << 16) | (1 << 24) | 57, "PARAM_SER_SIZE"),        // Sensor serial size (width)
-        ((3 << 16) | (1 << 24) | 58, "PARAM_PAR_SIZE"),        // Sensor parallel size (height)
-        ((3 << 16) | (4 << 24) | 60, "PARAM_READOUT_PORT"),    // Readout port
-        ((3 << 16) | (4 << 24) | 247, "PARAM_SPDTAB_INDEX"),   // Speed table index
-        ((3 << 16) | (4 << 24) | 519, "PARAM_CLEAR_MODE"),     // Clear mode
-        ((3 << 16) | (4 << 24) | 523, "PARAM_PMODE"),          // Port mode
+        (PARAM_SER_SIZE, "PARAM_SER_SIZE"),
+        (PARAM_PAR_SIZE, "PARAM_PAR_SIZE"),
+        (PARAM_EXPOSURE_MODE, "PARAM_EXPOSURE_MODE"),
+        (PARAM_CIRC_BUFFER, "PARAM_CIRC_BUFFER"),
     ];
 
     for (param_id, name) in params_to_check {
         let avail = is_param_available(hcam, *param_id);
-        println!("  {}: {}", name, if avail { "available" } else { "NOT available" });
+        println!("  {} (0x{:08X}): {}", name, param_id, if avail { "available" } else { "NOT available" });
+
+        // If PARAM_SER_SIZE or PARAM_PAR_SIZE is available, read its value
+        if avail && (*param_id == PARAM_SER_SIZE || *param_id == PARAM_PAR_SIZE) {
+            let mut value: uns16 = 0;
+            unsafe {
+                if pl_get_param(hcam, *param_id, ATTR_CURRENT, &mut value as *mut _ as *mut c_void) != 0 {
+                    println!("      Value: {}", value);
+                }
+            }
+        }
     }
 
     // Cleanup
