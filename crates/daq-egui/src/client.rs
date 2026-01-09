@@ -124,8 +124,9 @@ pub struct DaqClient {
     run_engine: RunEngineServiceClient<Channel>,
 }
 
-/// Maximum message size for gRPC (16 MB for high-resolution camera frames)
-const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// Maximum message size for gRPC (64 MB for high-resolution camera frames)
+/// Must match server's max_encoding_message_size in server.rs
+const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 
 impl DaqClient {
     /// Connect to the DAQ daemon at the given address with default configuration.

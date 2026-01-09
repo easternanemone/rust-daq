@@ -15,7 +15,7 @@
 
 use eframe::egui;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 use crate::client::DaqClient;
@@ -24,7 +24,9 @@ use daq_proto::compression::decompress_frame;
 use daq_proto::daq::FrameData;
 
 /// Maximum frame queue depth (prevents memory buildup if GUI is slow)
-const MAX_QUEUED_FRAMES: usize = 32;
+/// We only keep the latest frame anyway, so 4 frames is sufficient
+/// (1 in flight, 1 being processed, 2 buffer for timing jitter)
+const MAX_QUEUED_FRAMES: usize = 4;
 
 /// Debounce interval for live exposure updates (200ms)
 const EXPOSURE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
@@ -142,68 +144,164 @@ impl Colormap {
     }
 
     /// Apply colormap to a normalized value (0.0-1.0) returning RGB
+    /// Uses pre-computed LUT for performance (bd-7rk0)
+    #[inline]
     pub fn apply(&self, value: f32) -> [u8; 3] {
-        let v = value.clamp(0.0, 1.0);
-        match self {
-            Self::Grayscale => {
-                let g = (v * 255.0) as u8;
-                [g, g, g]
-            }
-            Self::Viridis => Self::viridis_lut(v),
-            Self::Inferno => Self::inferno_lut(v),
-            Self::Plasma => Self::plasma_lut(v),
-            Self::Magma => Self::magma_lut(v),
-        }
+        // Convert to 8-bit index (0-255)
+        let idx = (value.clamp(0.0, 1.0) * 255.0) as usize;
+        self.lut()[idx]
     }
 
-    // Simplified colormap LUTs (approximations)
-    fn viridis_lut(v: f32) -> [u8; 3] {
+    /// Apply colormap directly from 8-bit intensity (faster path)
+    #[inline]
+    pub fn apply_u8(&self, intensity: u8) -> [u8; 3] {
+        self.lut()[intensity as usize]
+    }
+
+    /// Get the pre-computed LUT for this colormap (256 RGB entries)
+    #[inline]
+    fn lut(&self) -> &'static [[u8; 3]; 256] {
+        match self {
+            Self::Grayscale => &GRAYSCALE_LUT,
+            Self::Viridis => &VIRIDIS_LUT,
+            Self::Inferno => &INFERNO_LUT,
+            Self::Plasma => &PLASMA_LUT,
+            Self::Magma => &MAGMA_LUT,
+        }
+    }
+}
+
+// Pre-computed colormap lookup tables (bd-7rk0: performance optimization)
+// Each LUT has 256 entries for O(1) intensity-to-color mapping
+
+static GRAYSCALE_LUT: [[u8; 3]; 256] = {
+    let mut lut = [[0u8; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        lut[i] = [i as u8, i as u8, i as u8];
+        i += 1;
+    }
+    lut
+};
+
+static VIRIDIS_LUT: [[u8; 3]; 256] = compute_viridis_lut();
+static INFERNO_LUT: [[u8; 3]; 256] = compute_inferno_lut();
+static PLASMA_LUT: [[u8; 3]; 256] = compute_plasma_lut();
+static MAGMA_LUT: [[u8; 3]; 256] = compute_magma_lut();
+
+const fn compute_viridis_lut() -> [[u8; 3]; 256] {
+    let mut lut = [[0u8; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        let v = i as f64 / 255.0;
         // Viridis: purple -> blue -> green -> yellow
         let r = (0.267 + v * (0.993 - 0.267)) * 255.0;
         let g = v * 0.906 * 255.0;
-        let b = (0.329 + v * (0.143_f32 - 0.329).abs()) * 255.0;
-        [
-            (r.clamp(0.0, 255.0)) as u8,
-            (g.clamp(0.0, 255.0)) as u8,
-            (b.clamp(0.0, 255.0)) as u8,
-        ]
+        let b = (0.329 + v * 0.186) * 255.0; // Simplified for const fn
+        lut[i] = [
+            clamp_u8(r),
+            clamp_u8(g),
+            clamp_u8(b),
+        ];
+        i += 1;
     }
+    lut
+}
 
-    fn inferno_lut(v: f32) -> [u8; 3] {
-        // Inferno: black -> purple -> red -> yellow
-        let r = v.powf(0.5) * 255.0;
-        let g = v.powf(1.5) * 200.0;
+const fn compute_inferno_lut() -> [[u8; 3]; 256] {
+    let mut lut = [[0u8; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        let v = i as f64 / 255.0;
+        // Inferno: black -> purple -> red -> yellow (using sqrt/pow approximations)
+        let r = const_sqrt(v) * 255.0;
+        let g = v * v * v * 200.0; // powf(1.5) approximated
         let b = (1.0 - v) * v * 4.0 * 255.0;
-        [
-            (r.clamp(0.0, 255.0)) as u8,
-            (g.clamp(0.0, 255.0)) as u8,
-            (b.clamp(0.0, 255.0)) as u8,
-        ]
+        lut[i] = [
+            clamp_u8(r),
+            clamp_u8(g),
+            clamp_u8(b),
+        ];
+        i += 1;
     }
+    lut
+}
 
-    fn plasma_lut(v: f32) -> [u8; 3] {
+const fn compute_plasma_lut() -> [[u8; 3]; 256] {
+    let mut lut = [[0u8; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        let v = i as f64 / 255.0;
         // Plasma: blue -> purple -> orange -> yellow
         let r = (0.05 + v * 0.95) * 255.0;
         let g = v * v * 255.0;
         let b = (1.0 - v * 0.7) * 255.0;
-        [
-            (r.clamp(0.0, 255.0)) as u8,
-            (g.clamp(0.0, 255.0)) as u8,
-            (b.clamp(0.0, 255.0)) as u8,
-        ]
+        lut[i] = [
+            clamp_u8(r),
+            clamp_u8(g),
+            clamp_u8(b),
+        ];
+        i += 1;
     }
+    lut
+}
 
-    fn magma_lut(v: f32) -> [u8; 3] {
+const fn compute_magma_lut() -> [[u8; 3]; 256] {
+    let mut lut = [[0u8; 3]; 256];
+    let mut i = 0;
+    while i < 256 {
+        let v = i as f64 / 255.0;
         // Magma: black -> purple -> pink -> white
-        let r = v.powf(0.7) * 255.0;
+        let r = const_pow_0_7(v) * 255.0;
         let g = v * v * 200.0;
         let b = (0.3 + v * 0.7) * v * 255.0;
-        [
-            (r.clamp(0.0, 255.0)) as u8,
-            (g.clamp(0.0, 255.0)) as u8,
-            (b.clamp(0.0, 255.0)) as u8,
-        ]
+        lut[i] = [
+            clamp_u8(r),
+            clamp_u8(g),
+            clamp_u8(b),
+        ];
+        i += 1;
     }
+    lut
+}
+
+/// Clamp f64 to u8 range (const fn compatible)
+const fn clamp_u8(v: f64) -> u8 {
+    if v <= 0.0 {
+        0
+    } else if v >= 255.0 {
+        255
+    } else {
+        v as u8
+    }
+}
+
+/// Const-compatible sqrt approximation using Newton-Raphson
+const fn const_sqrt(x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let mut guess = x / 2.0;
+    let mut i = 0;
+    while i < 10 {
+        guess = (guess + x / guess) / 2.0;
+        i += 1;
+    }
+    guess
+}
+
+/// Const-compatible x^0.7 approximation
+const fn const_pow_0_7(x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    // x^0.7 ≈ x * x^(-0.3) ≈ x / x^0.3
+    // Using sqrt approximation: x^0.5 then interpolate
+    let sqrt_x = const_sqrt(x);
+    // x^0.7 ≈ sqrt(x) * x^0.2 ≈ sqrt(x) * sqrt(sqrt(x))^0.4
+    // Simplified: use linear interpolation between x and sqrt(x)
+    // x^0.7 ≈ 0.4*x + 0.6*sqrt(x) (rough approximation)
+    sqrt_x * 0.7 + x * 0.3
 }
 
 /// Scale mode for pixel intensity mapping
@@ -363,7 +461,6 @@ pub struct ImageViewerPanel {
     /// Frame update receiver
     frame_rx: Option<FrameUpdateReceiver>,
     /// Frame update sender (for cloning to async tasks)
-    #[allow(dead_code)] // Used in start_stream (future feature)
     frame_tx: Option<FrameUpdateSender>,
     /// Active stream subscription
     subscription: Option<FrameStreamSubscription>,
@@ -376,7 +473,6 @@ pub struct ImageViewerPanel {
     /// Status message
     status: Option<String>,
     /// Max FPS for streaming (rate limit)
-    #[allow(dead_code)] // Used in start_stream (future feature)
     max_fps: u32,
     /// ROI selector state
     roi_selector: RoiSelector,
@@ -1027,8 +1123,10 @@ impl ImageViewerPanel {
         }
     }
 
-    /// Get sender for async frame updates (public API for external frame producers)
-    #[allow(dead_code)]
+    /// Get sender for async frame updates (for external frame producers)
+    ///
+    /// Allows external code to push frames directly without going through gRPC.
+    /// Useful for local frame sources or testing.
     pub fn get_sender(&self) -> Option<FrameUpdateSender> {
         self.frame_tx.clone()
     }
@@ -1118,10 +1216,24 @@ impl ImageViewerPanel {
             let mut frames_received = 0u64;
             let mut frames_dropped = 0u64;
 
+            // Timeout for stream inactivity (30s) to prevent hanging on network faults (bd-7rk0)
+            const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
+
             loop {
                 tokio::select! {
                     _ = cancel_rx.recv() => {
                         tracing::info!(device_id = %device_id_clone, "Frame stream cancelled");
+                        break;
+                    }
+                    _ = tokio::time::sleep(STREAM_TIMEOUT) => {
+                        tracing::warn!(
+                            device_id = %device_id_clone,
+                            timeout_secs = STREAM_TIMEOUT.as_secs(),
+                            "Frame stream timeout - no frames received"
+                        );
+                        let _ = action_tx.send(ImageViewerAction::Error(format!(
+                            "Frame stream timeout (no frames for {}s)", STREAM_TIMEOUT.as_secs()
+                        )));
                         break;
                     }
                     frame_result = stream.next() => {
@@ -2217,20 +2329,24 @@ impl ImageViewerPanel {
         }); // close ui.columns
     }
 
+    // =========================================================================
+    // Public API for programmatic control
+    // =========================================================================
+
     /// Set the device to stream from (for external control)
-    #[allow(dead_code)]
+    ///
+    /// This allows programmatic selection of which camera to stream.
+    /// Use in automated workflows or scripted interactions.
     pub fn set_device(&mut self, device_id: &str, client: &mut DaqClient, runtime: &Runtime) {
         self.start_stream(device_id, client, runtime);
     }
 
     /// Check if currently streaming
-    #[allow(dead_code)]
     pub fn is_streaming(&self) -> bool {
         self.subscription.is_some()
     }
 
-    /// Get current device ID
-    #[allow(dead_code)]
+    /// Get current device ID being streamed
     pub fn device_id(&self) -> Option<&str> {
         self.device_id.as_deref()
     }

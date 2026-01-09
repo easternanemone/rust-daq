@@ -215,7 +215,6 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<ListDevicesRequest>,
     ) -> Result<Response<ListDevicesResponse>, Status> {
         let req = request.into_inner();
-        println!("DEBUG: list_devices: Accessing registry...");
 
         let devices: Vec<DeviceInfo> = if let Some(capability_filter) = req.capability_filter {
             // Filter by capability
@@ -429,12 +428,7 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        println!(
-            "DEBUG: move_absolute: Accessing registry for device lookup {}...",
-            req.device_id
-        );
         let movable = self.registry.get_movable(&req.device_id);
-        println!("DEBUG: move_absolute: Got device reference.");
 
         let movable = movable.ok_or_else(|| {
             Status::not_found(format!(
@@ -1235,7 +1229,8 @@ impl HardwareService for HardwareServiceImpl {
         };
 
         // Create output channel for gRPC stream
-        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        // Small buffer (4) since clients only keep latest frame anyway (bd-7rk0)
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
 
         // Spawn task to forward frames from broadcast to gRPC stream
         let device_id_clone = device_id.clone();
@@ -1265,6 +1260,25 @@ impl HardwareService for HardwareServiceImpl {
                             }
                         }
                         last_frame_time = std::time::Instant::now();
+
+                        // Validate frame dimensions to prevent buffer overflows (bd-7rk0)
+                        let bytes_per_pixel = (frame.bit_depth as usize + 7) / 8;
+                        let expected_size = (frame.width as usize)
+                            .saturating_mul(frame.height as usize)
+                            .saturating_mul(bytes_per_pixel);
+                        if frame.data.len() != expected_size {
+                            tracing::warn!(
+                                device_id = %device_id_clone,
+                                width = frame.width,
+                                height = frame.height,
+                                bit_depth = frame.bit_depth,
+                                actual_size = frame.data.len(),
+                                expected_size = expected_size,
+                                "Frame data size mismatch, skipping"
+                            );
+                            frames_dropped = frames_dropped.saturating_add(1);
+                            continue;
+                        }
 
                         let now_instant = std::time::Instant::now();
                         fps_window.push_back(now_instant);
