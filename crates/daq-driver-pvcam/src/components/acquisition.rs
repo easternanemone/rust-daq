@@ -603,7 +603,9 @@ pub struct PvcamAcquisition {
 
 impl PvcamAcquisition {
     pub fn new(streaming: Parameter<bool>) -> Self {
-        let (frame_tx, _) = tokio::sync::broadcast::channel(32);
+        // bd-3gnv: Increased from 32 to 256 frames to prevent stalls during sustained streaming.
+        // At 100 FPS, 32 frames = 0.32s buffer (too small); 256 frames = 2.56s buffer (adequate).
+        let (frame_tx, _) = tokio::sync::broadcast::channel(256);
         Self {
             streaming,
             frame_count: Arc::new(AtomicU64::new(0)),
@@ -1461,6 +1463,11 @@ impl PvcamAcquisition {
             // Using zeroed struct as PVCAM will fill in the fields on frame retrieval.
             let mut frame_info: FRAME_INFO = unsafe { std::mem::zeroed() };
 
+            // bd-3gnv: Check status every N frames instead of every frame to reduce USB overhead.
+            // At 100 FPS, checking every 16 frames still detects READOUT_FAILED within ~160ms.
+            let mut frames_since_status_check: u32 = 0;
+            const STATUS_CHECK_INTERVAL: u32 = 16;
+
             loop {
                 // Check shutdown between frames
                 if !streaming.get() || shutdown.load(Ordering::Acquire) {
@@ -1470,23 +1477,27 @@ impl PvcamAcquisition {
                 // Check acquisition status and detect fatal errors
                 // NOTE: Gemini suggested removing this for performance, but testing shows
                 // it's needed for proper frame timing synchronization with the hardware.
+                // bd-3gnv: Now checked every STATUS_CHECK_INTERVAL frames to reduce USB overhead.
                 // bd-g9gq: Use FFI safe wrapper with explicit safety contract
-                let (check_status, _, _) = match ffi_safe::check_cont_status(hcam) {
-                    Ok(result) => result,
-                    Err(()) => {
-                        tracing::error!("PVCAM status check failed");
-                        let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
+                if frames_since_status_check >= STATUS_CHECK_INTERVAL {
+                    frames_since_status_check = 0;
+                    let (check_status, _, _) = match ffi_safe::check_cont_status(hcam) {
+                        Ok(result) => result,
+                        Err(()) => {
+                            tracing::error!("PVCAM status check failed");
+                            let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
+                            fatal_error = true;
+                            break;
+                        }
+                    };
+                    status = check_status;
+
+                    if status == READOUT_FAILED {
+                        tracing::error!("PVCAM readout failed");
+                        let _ = error_tx.send(AcquisitionError::ReadoutFailed);
                         fatal_error = true;
                         break;
                     }
-                };
-                status = check_status;
-
-                if status == READOUT_FAILED {
-                    tracing::error!("PVCAM readout failed");
-                    let _ = error_tx.send(AcquisitionError::ReadoutFailed);
-                    fatal_error = true;
-                    break;
                 }
 
                 // Fetch oldest frame with FRAME_INFO for loss detection (bd-ek9n.3)
@@ -1499,6 +1510,7 @@ impl PvcamAcquisition {
                     }
                 };
                 frames_processed_in_drain += 1;
+                frames_since_status_check += 1; // bd-3gnv: Track frames for periodic status check
 
                 // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
@@ -1773,8 +1785,9 @@ impl PvcamAcquisition {
                             remaining
                         );
                         callback_ctx.pending_frames.store(0, Ordering::Release);
-                        // Yield a bit to avoid hammering pl_exp_check_cont_status in a tight loop.
-                        std::thread::sleep(Duration::from_millis(1));
+                        // bd-3gnv: Use yield_now() instead of sleep(1ms) to reduce latency
+                        // while still preventing tight busy-loop during pending_frames desync.
+                        std::thread::yield_now();
                     }
                 }
             }
