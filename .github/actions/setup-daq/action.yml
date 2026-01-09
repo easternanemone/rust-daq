@@ -17,6 +17,10 @@ inputs:
     description: 'Key suffix for rust-cache'
     required: false
     default: ''
+  skip-cache:
+    description: 'Skip cargo caching'
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
@@ -26,8 +30,15 @@ runs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libudev-dev pkg-config libhdf5-dev protobuf-compiler \
-          libxkbcommon-dev libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        sudo apt-get install -y --no-install-recommends \
+          libudev-dev \
+          pkg-config \
+          libhdf5-dev \
+          protobuf-compiler \
+          libxkbcommon-dev \
+          libwayland-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev
 
     - name: Install system dependencies (macOS)
       shell: bash
@@ -48,11 +59,25 @@ runs:
         toolchain: ${{ inputs.rust-toolchain }}
         components: ${{ inputs.components }}
 
-    - name: Cache cargo
+    - name: Cache cargo registry
+      if: inputs.skip-cache != 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-registry-${{ runner.os }}-
+
+    - name: Cache cargo build
+      if: inputs.skip-cache != 'true'
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
         shared-key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Set up Python
       if: inputs.python-version != ''

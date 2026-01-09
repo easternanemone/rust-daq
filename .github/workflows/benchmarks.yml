@@ -9,19 +9,28 @@ on:
       - 'crates/**/benches/**'
       - 'crates/rust-daq/Cargo.toml'
       - 'crates/daq-storage/**'
+      - 'crates/daq-driver-pvcam/benches/**'
       - '.github/workflows/benchmarks.yml'
   pull_request:
     paths:
       - 'crates/**/benches/**'
       - 'crates/rust-daq/Cargo.toml'
       - 'crates/daq-storage/**'
+      - 'crates/daq-driver-pvcam/benches/**'
       - '.github/workflows/benchmarks.yml'
+
+# Cancel stale runs when new commits are pushed
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   performance:
     runs-on: ubuntu-latest
-    env:
-      CARGO_TERM_COLOR: always
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,17 +40,33 @@ jobs:
         with:
           cache-key: bench
 
+      - name: Clean benchmark targets
+        run: |
+          # Only clean benchmark-related artifacts to preserve cache benefits
+          rm -rf target/criterion target/release/deps/*bench* 2>/dev/null || true
+
       - name: Rust micro-benchmarks
         run: cargo bench --package rust_daq
 
       - name: Upload Criterion report
         uses: actions/upload-artifact@v4
         with:
-          name: criterion-report
+          name: criterion-report-${{ github.sha }}
           path: target/criterion
+          retention-days: 30
         if: always()
 
       - name: Publish summary
+        if: always()
         run: |
-          echo "## Benchmark Summary" >> $GITHUB_STEP_SUMMARY
-          echo "Criterion report uploaded as artifact \`criterion-report\`" >> $GITHUB_STEP_SUMMARY
+          echo "## Benchmark Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Criterion report uploaded as artifact \`criterion-report-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "target/criterion" ]; then
+            echo "### Benchmarks Run" >> "$GITHUB_STEP_SUMMARY"
+            find target/criterion -name "report" -type d | while read -r dir; do
+              bench_name=$(dirname "$dir" | xargs basename)
+              echo "- $bench_name" >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi

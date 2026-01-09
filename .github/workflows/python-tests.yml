@@ -2,6 +2,7 @@ name: Python Bindings Tests
 
 on:
   push:
+    branches: ["main"]
     paths:
       - "crates/rust-daq/clients/python/**"
       - ".github/workflows/python-tests.yml"
@@ -10,13 +11,22 @@ on:
       - "crates/rust-daq/clients/python/**"
       - ".github/workflows/python-tests.yml"
 
+# Cancel stale runs when new commits are pushed
+concurrency:
+  group: python-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -29,10 +39,17 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python-tests
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: crates/rust-daq/clients/python/pyproject.toml
 
       - name: Create virtual environment
         run: |
@@ -41,8 +58,9 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install test dependencies
-        run: >-
-          python -m pip install --upgrade pip maturin pytest hypothesis pytest-cov
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install maturin pytest hypothesis pytest-cov
 
       - name: Build Python extension with maturin
         run: maturin develop --release
@@ -50,26 +68,33 @@ jobs:
 
       - name: Report toolchain versions
         run: |
-          rustc --version
-          cargo --version
-          python --version
-          pip --version
-          maturin --version
+          echo "### Toolchain Versions" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          rustc --version >> "$GITHUB_STEP_SUMMARY"
+          cargo --version >> "$GITHUB_STEP_SUMMARY"
+          python --version >> "$GITHUB_STEP_SUMMARY"
+          pip --version >> "$GITHUB_STEP_SUMMARY"
+          maturin --version >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run pytest with coverage
-        run: >-
-          pytest
-          tests
-          --maxfail=1
-          --disable-warnings
-          --cov=rust_daq
-          --cov-report=term-missing
-          --cov-report=xml:coverage.xml
+        run: |
+          pytest tests \
+            --maxfail=3 \
+            --disable-warnings \
+            --cov=rust_daq \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            -v
         working-directory: crates/rust-daq/clients/python
 
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-coverage-${{ matrix.python-version }}
-          path: crates/rust-daq/clients/python/coverage.xml
+          name: python-coverage-${{ matrix.python-version }}-${{ github.sha }}
+          path: |
+            crates/rust-daq/clients/python/coverage.xml
+            crates/rust-daq/clients/python/htmlcov
+          retention-days: 14
