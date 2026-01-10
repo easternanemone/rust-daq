@@ -91,6 +91,29 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "pvcam_hardware")]
 const USE_CIRC_OVERWRITE_MODE: bool = false;
 
+/// bd-3gnv: Use sequence mode for streaming (proven to work on Prime BSI).
+///
+/// Sequence mode (`pl_exp_setup_seq` + `pl_exp_start_seq`) successfully captures frames
+/// on Prime BSI when circular buffer modes fail:
+/// - CIRC_OVERWRITE: Error 185 (Invalid Configuration)
+/// - CIRC_NO_OVERWRITE: Stalls after ~85 frames at 20ms exposure
+///
+/// Sequence mode works by acquiring batches of frames, then restarting for continuous
+/// streaming. This avoids the circular buffer issues entirely.
+///
+/// Verified working: 256x256 frames, TIMED_MODE, up to 500ms exposure.
+#[cfg(feature = "pvcam_hardware")]
+const USE_SEQUENCE_MODE: bool = true;
+
+/// Batch size for sequence mode streaming (bd-3gnv).
+///
+/// Smaller batches = lower latency, more restarts
+/// Larger batches = higher throughput, less restart overhead
+///
+/// 20 frames at 20ms exposure = 400ms batch time (~2.5 restarts/sec)
+#[cfg(feature = "pvcam_hardware")]
+const SEQUENCE_BATCH_SIZE: u16 = 20;
+
 /// Callback context for EOF notifications (bd-ek9n.2)
 ///
 /// This structure is passed to the PVCAM callback and shared with the frame
@@ -1110,6 +1133,23 @@ impl PvcamAcquisition {
                 rgn
             };
 
+            // bd-3gnv: Use sequence mode if enabled (proven to work on Prime BSI)
+            if USE_SEQUENCE_MODE {
+                return self
+                    .start_stream_sequence_impl(
+                        h,
+                        region,
+                        exposure_ms,
+                        binning,
+                        roi,
+                        reliable_tx,
+                        #[cfg(feature = "arrow_tap")]
+                        _arrow_tap,
+                        use_metadata,
+                    )
+                    .await;
+            }
+
             // PVCAM Best Practices: Use actual frame_bytes from pl_exp_setup_cont
             // rather than assuming pixels * 2 - metadata/alignment can change frame size.
             let mut frame_bytes: uns32 = 0;
@@ -1517,6 +1557,296 @@ impl PvcamAcquisition {
             }
         }
         Ok(())
+    }
+
+    /// bd-3gnv: Sequence mode streaming implementation.
+    ///
+    /// Uses `pl_exp_setup_seq` + `pl_exp_start_seq` for reliable frame acquisition
+    /// when circular buffer mode fails (error 185) or stalls.
+    ///
+    /// Works in batches of SEQUENCE_BATCH_SIZE frames, polling for completion,
+    /// then restarting for continuous streaming.
+    #[cfg(feature = "pvcam_hardware")]
+    #[allow(clippy::too_many_arguments)]
+    async fn start_stream_sequence_impl(
+        &self,
+        hcam: i16,
+        region: rgn_type,
+        exposure_ms: f64,
+        binning: (u16, u16),
+        roi: Roi,
+        reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>,
+        #[cfg(feature = "arrow_tap")] _arrow_tap: Option<
+            tokio::sync::mpsc::Sender<Arc<arrow::array::UInt16Array>>,
+        >,
+        _use_metadata: bool,
+    ) -> Result<()> {
+        let (x_bin, y_bin) = binning;
+        let binned_width = roi.width / x_bin as u32;
+        let binned_height = roi.height / y_bin as u32;
+
+        tracing::info!(
+            "Starting sequence mode streaming: {}x{} frames, {}ms exposure, batch size {}",
+            binned_width,
+            binned_height,
+            exposure_ms,
+            SEQUENCE_BATCH_SIZE
+        );
+
+        // Query frame size using pl_exp_setup_seq
+        let mut buffer_bytes: uns32 = 0;
+        let setup_result = unsafe {
+            pl_exp_setup_seq(
+                hcam,
+                SEQUENCE_BATCH_SIZE,
+                1, // region count
+                &region as *const _,
+                TIMED_MODE,
+                exposure_ms as uns32,
+                &mut buffer_bytes,
+            )
+        };
+
+        if setup_result == 0 {
+            let err_msg = get_pvcam_error();
+            let _ = self.streaming.set(false).await;
+            return Err(anyhow!("pl_exp_setup_seq failed: {}", err_msg));
+        }
+
+        let frame_bytes = buffer_bytes as usize / SEQUENCE_BATCH_SIZE as usize;
+        tracing::info!(
+            "Sequence mode: buffer_bytes={}, frame_bytes={}",
+            buffer_bytes,
+            frame_bytes
+        );
+
+        // Store camera handle for Drop cleanup
+        self.active_hcam.store(hcam, Ordering::Release);
+
+        // Reset shutdown flag
+        self.shutdown.store(false, Ordering::SeqCst);
+
+        let streaming = self.streaming.clone();
+        let shutdown = self.shutdown.clone();
+        let frame_tx = self.frame_tx.clone();
+        let frame_count = self.frame_count.clone();
+        let lost_frames = self.lost_frames.clone();
+        let width = binned_width;
+        let height = binned_height;
+        let roi_x = roi.x;
+        let roi_y = roi.y;
+
+        // Create completion channel for poll thread synchronization
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        if let Ok(mut guard) = self.poll_thread_done_rx.lock() {
+            *guard = Some(done_rx);
+        }
+        if let Ok(mut guard) = self.poll_thread_done_tx.lock() {
+            *guard = Some(done_tx.clone());
+        }
+
+        // Spawn blocking task for sequence acquisition loop
+        let poll_handle = tokio::task::spawn_blocking(move || {
+            Self::frame_loop_sequence(
+                hcam,
+                region,
+                exposure_ms,
+                frame_bytes,
+                streaming,
+                shutdown,
+                frame_tx,
+                reliable_tx,
+                frame_count,
+                lost_frames,
+                width,
+                height,
+                roi_x,
+                roi_y,
+                binning,
+                done_tx,
+            );
+        });
+
+        *self.poll_handle.lock().await = Some(poll_handle);
+        Ok(())
+    }
+
+    /// bd-3gnv: Sequence mode frame loop (blocking).
+    ///
+    /// Repeatedly acquires batches of frames using pl_exp_setup_seq/start_seq,
+    /// polls for completion, and sends frames to channels.
+    #[cfg(feature = "pvcam_hardware")]
+    #[allow(clippy::too_many_arguments)]
+    fn frame_loop_sequence(
+        hcam: i16,
+        region: rgn_type,
+        exposure_ms: f64,
+        frame_bytes: usize,
+        streaming: Parameter<bool>,
+        shutdown: Arc<AtomicBool>,
+        frame_tx: tokio::sync::broadcast::Sender<Arc<Frame>>,
+        reliable_tx: Option<tokio::sync::mpsc::Sender<Arc<Frame>>>,
+        frame_count: Arc<AtomicU64>,
+        _lost_frames: Arc<AtomicU64>,
+        width: u32,
+        height: u32,
+        roi_x: u32,
+        roi_y: u32,
+        binning: (u16, u16),
+        done_tx: std::sync::mpsc::Sender<()>,
+    ) {
+        const CCS_HALT: i16 = 1;
+
+        // Main sequence loop
+        let mut total_frames: u64 = 0;
+        let mut batch_num: u64 = 0;
+
+        while !shutdown.load(Ordering::SeqCst) && streaming.get() {
+            batch_num += 1;
+
+            // Setup sequence for batch
+            let mut buffer_bytes: uns32 = 0;
+            let setup_result = unsafe {
+                pl_exp_setup_seq(
+                    hcam,
+                    SEQUENCE_BATCH_SIZE,
+                    1,
+                    &region as *const _,
+                    TIMED_MODE,
+                    exposure_ms as uns32,
+                    &mut buffer_bytes,
+                )
+            };
+
+            if setup_result == 0 {
+                tracing::error!("pl_exp_setup_seq failed in loop: {}", get_pvcam_error());
+                break;
+            }
+
+            // Allocate buffer for batch
+            let mut buffer = vec![0u8; buffer_bytes as usize];
+
+            // Start sequence acquisition
+            let start_result =
+                unsafe { pl_exp_start_seq(hcam, buffer.as_mut_ptr() as *mut std::ffi::c_void) };
+
+            if start_result == 0 {
+                tracing::error!("pl_exp_start_seq failed: {}", get_pvcam_error());
+                break;
+            }
+
+            // Poll for completion
+            let mut status: i16 = 0;
+            let mut bytes_arrived: uns32 = 0;
+            let timeout = std::time::Duration::from_secs(
+                ((exposure_ms * SEQUENCE_BATCH_SIZE as f64 / 1000.0) + 5.0) as u64,
+            );
+            let start_time = std::time::Instant::now();
+
+            loop {
+                if shutdown.load(Ordering::SeqCst) || !streaming.get() {
+                    unsafe {
+                        pl_exp_abort(hcam, CCS_HALT);
+                    }
+                    break;
+                }
+
+                unsafe {
+                    pl_exp_check_status(hcam, &mut status, &mut bytes_arrived);
+                }
+
+                // READOUT_COMPLETE = 3
+                if status == 3 {
+                    // Extract frames from buffer
+                    for frame_idx in 0..SEQUENCE_BATCH_SIZE {
+                        let offset = frame_idx as usize * frame_bytes;
+                        if offset + frame_bytes > buffer.len() {
+                            break;
+                        }
+
+                        // Convert bytes to u16 pixels
+                        let pixel_data: Vec<u16> = buffer[offset..offset + frame_bytes]
+                            .chunks_exact(2)
+                            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                            .collect();
+
+                        total_frames += 1;
+                        frame_count.store(total_frames, Ordering::SeqCst);
+
+                        // Build frame
+                        let frame = Arc::new(
+                            Frame::builder(width, height)
+                                .with_pixels(pixel_data)
+                                .with_sequence_number(total_frames)
+                                .with_timestamp(Frame::timestamp_now())
+                                .with_exposure(exposure_ms)
+                                .with_roi_offset(roi_x, roi_y)
+                                .with_metadata(FrameExtendedMetadata {
+                                    hardware_timestamp_ns: None,
+                                    time_stamp_bof: None,
+                                    time_stamp_eof: None,
+                                    exp_time_us: None,
+                                    read_out_time_us: None,
+                                    binning: Some(binning),
+                                }),
+                        );
+
+                        // Send to channels
+                        let _ = frame_tx.send(frame.clone());
+                        if let Some(ref tx) = reliable_tx {
+                            let _ = tx.blocking_send(frame);
+                        }
+                    }
+
+                    if batch_num % 10 == 0 {
+                        tracing::debug!(
+                            "Sequence mode batch {} complete, total frames: {}",
+                            batch_num,
+                            total_frames
+                        );
+                    }
+                    break;
+                }
+
+                // READOUT_FAILED = 5, READOUT_NOT_ACTIVE = 0
+                if status == 5 {
+                    tracing::error!("Sequence readout failed");
+                    break;
+                }
+                if status == 0 && start_time.elapsed() > std::time::Duration::from_millis(100) {
+                    tracing::warn!("Acquisition not active after 100ms");
+                    break;
+                }
+
+                if start_time.elapsed() > timeout {
+                    tracing::error!(
+                        "Sequence batch {} timed out after {:?}",
+                        batch_num,
+                        timeout
+                    );
+                    unsafe {
+                        pl_exp_abort(hcam, CCS_HALT);
+                    }
+                    break;
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+
+            // Finish sequence
+            unsafe {
+                pl_exp_finish_seq(hcam, buffer.as_mut_ptr() as *mut std::ffi::c_void, 0);
+            }
+        }
+
+        tracing::info!(
+            "Sequence mode loop ended: {} total frames in {} batches",
+            total_frames,
+            batch_num
+        );
+
+        // Signal completion
+        let _ = done_tx.send(());
     }
 
     /// Hardware frame retrieval loop with callback support (bd-ek9n.2, bd-ek9n.3)
