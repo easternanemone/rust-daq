@@ -44,7 +44,7 @@ fn open_first_camera() -> Option<i16> {
             return None;
         }
         let mut hcam: i16 = 0;
-        if pl_cam_open(name.as_ptr(), &mut hcam, 0) == 0 {
+        if pl_cam_open(name.as_mut_ptr(), &mut hcam, 0) == 0 {
             eprintln!("pl_cam_open failed: {}", get_error_message());
             return None;
         }
