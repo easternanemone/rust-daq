@@ -2109,7 +2109,8 @@ impl PvcamAcquisition {
                 // but also check buffer_cnt as a secondary signal. Exit drain loop when BOTH
                 // the callback says no frames pending AND the SDK says buffer is empty.
                 let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
-                let (check_status, _, buf_cnt) = match ffi_safe::check_cont_status(hcam) {
+                let (check_status, bytes_arrived, buf_cnt) = match ffi_safe::check_cont_status(hcam)
+                {
                     Ok(result) => result,
                     Err(()) => {
                         tracing::error!("PVCAM status check failed");
@@ -2130,22 +2131,36 @@ impl PvcamAcquisition {
                 }
 
                 // bd-3gnv: Detect unexpected READOUT_NOT_ACTIVE condition
-                // This indicates the SDK internally stopped acquisition without an error.
-                // This can happen if the buffer fills up and the SDK times out waiting
-                // for buffers to be unlocked (even though we are unlocking them).
-                if status == READOUT_NOT_ACTIVE && frames_processed_in_drain > 0 {
-                    eprintln!(
-                        "[PVCAM DEBUG] WARNING: READOUT_NOT_ACTIVE detected mid-drain (frames_processed={}, buffer_cnt={}) - will attempt restart",
-                        frames_processed_in_drain, buffer_cnt
-                    );
-                    tracing::warn!(
-                        "PVCAM acquisition unexpectedly inactive after {} frames (buffer_cnt={}) - attempting restart (bd-3gnv)",
-                        frame_count.load(Ordering::Relaxed),
-                        buffer_cnt
-                    );
-                    // Set flag for auto-restart after drain loop
-                    stall_detected = true;
-                    break;
+                // If the SDK reports READOUT_NOT_ACTIVE while streaming is still true,
+                // we treat it as a stall and trigger a restart (even if we haven't
+                // processed frames in this drain cycle). This covers the case where
+                // the camera goes idle after ~90 frames and never resumes.
+                if status == READOUT_NOT_ACTIVE {
+                    let fc = frame_count.load(Ordering::Relaxed);
+                    // Heuristic: require at least one frame to have been acquired so we
+                    // don't restart a legitimately idle camera before first frame.
+                    if fc > 0 {
+                        // If we have already processed frames in this drain call, restart immediately.
+                        // Otherwise, restart when we've observed several consecutive timeouts.
+                        if frames_processed_in_drain > 0 || consecutive_timeouts >= 5 {
+                            eprintln!(
+                                "[PVCAM DEBUG] READOUT_NOT_ACTIVE stall detected (frames={}, timeouts={}, buf_cnt={}, bytes={}) - scheduling restart",
+                                fc,
+                                consecutive_timeouts,
+                                buffer_cnt,
+                                bytes_arrived
+                            );
+                            tracing::warn!(
+                                "PVCAM stall detected at {} frames (timeouts={}, buf_cnt={}, bytes={}) - restarting (bd-3gnv)",
+                                fc,
+                                consecutive_timeouts,
+                                buffer_cnt,
+                                bytes_arrived
+                            );
+                            stall_detected = true;
+                            break;
+                        }
+                    }
                 }
 
                 // bd-3gnv FIX: Only attempt to get a frame if either:
