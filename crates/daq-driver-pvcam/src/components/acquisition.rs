@@ -644,10 +644,12 @@ mod ffi_safe {
         if result == 0 || frame_ptr.is_null() {
             // bd-3gnv: Log error code to diagnose why get_oldest_frame is failing
             let err_code = unsafe { pl_error_code() };
+            let err_msg = super::get_pvcam_error();
             eprintln!(
-                "[PVCAM DEBUG] get_oldest_frame failed: result={}, err_code={}, frame_ptr_null={}",
+                "[PVCAM DEBUG] get_oldest_frame failed: result={}, err_code={}, msg={}, frame_ptr_null={}",
                 result,
                 err_code,
+                err_msg,
                 frame_ptr.is_null()
             );
             Err(())
@@ -1164,6 +1166,57 @@ impl PvcamAcquisition {
             } else {
                 CIRC_NO_OVERWRITE
             };
+
+            // Probe PARAM_CIRC_BUFFER to see if overwrite is advertised as available.
+            if circ_overwrite {
+                unsafe {
+                    let mut circ_avail: rs_bool = 0;
+                    if pl_get_param(
+                        h,
+                        PARAM_CIRC_BUFFER,
+                        ATTR_AVAIL as uns16,
+                        &mut circ_avail as *mut _ as *mut std::ffi::c_void,
+                    ) == 0
+                    {
+                        tracing::warn!(
+                            "PARAM_CIRC_BUFFER ATTR_AVAIL query failed: {}",
+                            get_pvcam_error()
+                        );
+                    } else if circ_avail == 0 {
+                        tracing::info!("CIRC_OVERWRITE not available per PARAM_CIRC_BUFFER, using NO_OVERWRITE");
+                        circ_overwrite = false;
+                        selected_buffer_mode = CIRC_NO_OVERWRITE;
+                    } else {
+                        // Log min/max for visibility into supported modes
+                        let mut circ_min: uns32 = 0;
+                        let mut circ_max: uns32 = 0;
+                        if pl_get_param(
+                            h,
+                            PARAM_CIRC_BUFFER,
+                            ATTR_MIN as uns16,
+                            &mut circ_min as *mut _ as *mut std::ffi::c_void,
+                        ) == 0
+                            || pl_get_param(
+                                h,
+                                PARAM_CIRC_BUFFER,
+                                ATTR_MAX as uns16,
+                                &mut circ_max as *mut _ as *mut std::ffi::c_void,
+                            ) == 0
+                        {
+                            tracing::debug!(
+                                "PARAM_CIRC_BUFFER min/max query failed: {}",
+                                get_pvcam_error()
+                            );
+                        } else {
+                            tracing::info!(
+                                "PARAM_CIRC_BUFFER min={}, max={} (overwrite avail)",
+                                circ_min,
+                                circ_max
+                            );
+                        }
+                    }
+                }
+            }
             let exp_mode = TIMED_MODE; // EXT_TRIG_* are encoded as PL_EXPOSURE_MODES (see pvcam.h)
 
             unsafe {
@@ -1215,6 +1268,25 @@ impl PvcamAcquisition {
                     "CIRC_NO_OVERWRITE"
                 }
             );
+
+            // Report the current buffer mode the camera accepted.
+            unsafe {
+                let mut circ_current: uns32 = 0;
+                if pl_get_param(
+                    h,
+                    PARAM_CIRC_BUFFER,
+                    ATTR_CURRENT as uns16,
+                    &mut circ_current as *mut _ as *mut std::ffi::c_void,
+                ) == 0
+                {
+                    tracing::warn!(
+                        "PARAM_CIRC_BUFFER ATTR_CURRENT query failed: {}",
+                        get_pvcam_error()
+                    );
+                } else {
+                    tracing::info!("PVCAM PARAM_CIRC_BUFFER current mode: {}", circ_current);
+                }
+            }
 
             // Calculate dimensions for frame construction
             let binned_width = roi.width / x_bin as u32;
@@ -1323,6 +1395,18 @@ impl PvcamAcquisition {
                         err_msg
                     ));
                 }
+            }
+
+            // Capture initial streaming status/bytes immediately after start for diagnostics.
+            if let Ok((st, bytes, buf_cnt)) = ffi_safe::check_cont_status(h) {
+                tracing::info!(
+                    "PVCAM start status: status={}, bytes_arrived={}, buffer_cnt={}",
+                    st,
+                    bytes,
+                    buf_cnt
+                );
+            } else {
+                tracing::warn!("PVCAM start status check failed right after pl_exp_start_cont");
             }
 
             // CRITICAL: Store the page-aligned buffer passed to pl_exp_start_cont.
@@ -2300,6 +2384,19 @@ impl PvcamAcquisition {
                             // Return to outer loop to wait for next callback signal.
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
                             consecutive_duplicates += 1;
+
+                            // Log the first duplicate in this drain with FRAME_INFO details for diagnosis.
+                            if consecutive_duplicates == 1 {
+                                tracing::warn!(
+                                    "PVCAM duplicate frame detected: FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}, buffer_cnt={}, bytes_arrived={}",
+                                    current_frame_nr,
+                                    frame_info.TimeStamp,
+                                    frame_info.TimeStampBOF,
+                                    frame_info.ReadoutTime,
+                                    buffer_cnt,
+                                    bytes_arrived
+                                );
+                            }
 
                             // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames
                             // to drain the buffer, regardless of which get function was used.
