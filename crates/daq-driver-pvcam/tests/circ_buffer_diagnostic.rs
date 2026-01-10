@@ -40,7 +40,7 @@ const PL_CALLBACK_EOF: i32 = 1;
 // PARAM IDs - use actual values from SDK bindings (verified from generated bindings.rs)
 const PARAM_CIRC_BUFFER: u32 = 184746283;      // from bindings.rs
 const PARAM_EXPOSURE_MODE: u32 = 151126551;    // from bindings.rs
-const PARAM_EXPOSE_OUT_MODE: u32 = 151126585;  // calculated: should be near PARAM_EXPOSURE_MODE
+const PARAM_EXPOSE_OUT_MODE: u32 = 151126576;  // Verified from bindings.rs on maitai (was 151126585)
 const PARAM_SER_SIZE: u32 = 100794426;         // from bindings.rs
 const PARAM_PAR_SIZE: u32 = 100794425;         // from bindings.rs
 // BuildSpeedTable parameters - SDK sets these to defaults before acquisition
@@ -1441,6 +1441,134 @@ async fn test_circ_buffer_capabilities() {
             }
 
             pl_cam_close(hcam_fresh);
+        }
+    }
+
+    // ========================================
+    // Test 15: SEQUENCE MODE (alternative to circular buffer)
+    // Per SDK documentation and best practices, sequence mode may be more
+    // reliable for controlled streaming vs circular buffer mode.
+    // ========================================
+    println!("\n--- Test 15: SEQUENCE MODE (pl_exp_setup_seq + pl_exp_start_seq) ---");
+    println!("     Testing sequence mode as alternative to circular buffer");
+    println!("     This is the SDK-recommended approach for simpler streaming\n");
+
+    // Reopen camera for clean state
+    let mut hcam_seq: i16 = -1;
+    unsafe {
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam_seq, 0) == 0 {
+            println!("[FAIL] Failed to reopen camera: {}", get_error_message());
+        } else {
+            println!("[OK] Camera opened for sequence mode test, handle = {}", hcam_seq);
+
+            // Create frame_info_struct
+            let mut frame_info: *mut FRAME_INFO = ptr::null_mut();
+            let _ = pl_create_frame_info_struct(&mut frame_info);
+
+            const FRAME_COUNT: uns16 = 5;  // Capture 5 frames in sequence
+            const EXPOSURE_MS: uns32 = 20;
+
+            let region = rgn_type {
+                s1: 0,
+                s2: 511,  // 512x512 for quick test
+                sbin: 1,
+                p1: 0,
+                p2: 511,
+                pbin: 1,
+            };
+
+            println!("     Region: 512x512");
+            println!("     Frame count: {}", FRAME_COUNT);
+            println!("     Exposure: {}ms", EXPOSURE_MS);
+
+            // Setup sequence acquisition
+            let mut buffer_bytes: uns32 = 0;
+            let setup_result = pl_exp_setup_seq(
+                hcam_seq,
+                FRAME_COUNT,
+                1,  // region count
+                &region as *const _,
+                TIMED_MODE,
+                EXPOSURE_MS,
+                &mut buffer_bytes,
+            );
+
+            if setup_result != 0 {
+                println!("[OK] pl_exp_setup_seq succeeded, buffer_bytes = {}", buffer_bytes);
+
+                // Allocate buffer for all frames
+                let mut buffer = vec![0u8; buffer_bytes as usize];
+
+                // Start sequence acquisition
+                let start_result = pl_exp_start_seq(
+                    hcam_seq,
+                    buffer.as_mut_ptr() as *mut c_void,
+                );
+
+                if start_result != 0 {
+                    println!("[OK] pl_exp_start_seq succeeded!");
+
+                    // Poll for completion
+                    let mut status: i16 = 0;
+                    let mut bytes_arrived: uns32 = 0;
+                    let mut frame_count = 0;
+                    let start_time = std::time::Instant::now();
+                    let timeout = std::time::Duration::from_secs(10);
+
+                    loop {
+                        pl_exp_check_status(hcam_seq, &mut status, &mut bytes_arrived);
+
+                        // Status codes: READOUT_NOT_ACTIVE=0, EXPOSURE_IN_PROGRESS=1,
+                        // READOUT_IN_PROGRESS=2, READOUT_COMPLETE=3, READOUT_FAILED=5
+                        const READOUT_COMPLETE: i16 = 3;
+                        const READOUT_FAILED: i16 = 5;
+                        const READOUT_NOT_ACTIVE: i16 = 0;
+
+                        if status == READOUT_COMPLETE {
+                            frame_count = FRAME_COUNT;
+                            println!("[OK] Sequence complete! {} frames captured", frame_count);
+                            println!("     bytes_arrived = {}", bytes_arrived);
+                            println!("\n*********************************************");
+                            println!("*** SEQUENCE MODE WORKS! ***");
+                            println!("*** This is a viable alternative to CIRC_OVERWRITE ***");
+                            println!("*********************************************\n");
+                            break;
+                        } else if status == READOUT_FAILED {
+                            println!("[FAIL] Sequence readout failed");
+                            break;
+                        } else if status == READOUT_NOT_ACTIVE {
+                            println!("[WARN] Acquisition not active");
+                            break;
+                        }
+
+                        if start_time.elapsed() > timeout {
+                            println!("[FAIL] Sequence acquisition timed out after 10s");
+                            println!("       Last status: {}, bytes: {}", status, bytes_arrived);
+                            break;
+                        }
+
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+
+                    // Abort and finish
+                    pl_exp_abort(hcam_seq, CCS_HALT);
+                    pl_exp_finish_seq(hcam_seq, buffer.as_mut_ptr() as *mut c_void, 0);
+                } else {
+                    println!("[FAIL] pl_exp_start_seq failed: {}", get_error_message());
+                    let err_code = pl_error_code();
+                    println!("       Error code: {}", err_code);
+                }
+            } else {
+                println!("[FAIL] pl_exp_setup_seq failed: {}", get_error_message());
+                let err_code = pl_error_code();
+                println!("       Error code: {}", err_code);
+            }
+
+            // Cleanup
+            if !frame_info.is_null() {
+                pl_release_frame_info_struct(frame_info);
+            }
+            pl_cam_close(hcam_seq);
         }
     }
 
