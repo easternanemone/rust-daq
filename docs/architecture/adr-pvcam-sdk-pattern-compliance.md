@@ -134,8 +134,8 @@ Based on SDK examples, these parameters MUST have availability checks:
 | PARAM_READOUT_PORT | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
 | PARAM_CLEAR_CYCLES | Common.cpp | ⚠️ Pending | features.rs |
 | PARAM_PMODE | Common.cpp | ⚠️ Pending | features.rs |
-| PARAM_EXPOSURE_MODE | Common.cpp | ⚠️ Pending | features.rs |
-| PARAM_EXPOSE_OUT_MODE | Common.cpp | ⚠️ Pending | features.rs |
+| PARAM_EXPOSURE_MODE | Common.cpp | ✅ Complete (bd-smn3) | features.rs |
+| PARAM_EXPOSE_OUT_MODE | Common.cpp | ✅ Complete (bd-smn3) | features.rs |
 | PARAM_CENTROIDS_ENABLED | Centroids.cpp | ⚠️ Pending | features.rs |
 | PARAM_CENTROIDS_MODE | Centroids.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_CENTROIDS_THRESHOLD | Centroids.cpp | ⚠️ Pending | features.rs |
@@ -153,8 +153,9 @@ Based on SDK examples, these parameters MUST have availability checks:
 - **Phase 0 (bd-ng5p thermal):** 2 ✅ (8%)
 - **Phase 1 (bd-sk6z core):** 9 ✅ (35%)
 - **Phase 2 (bd-l35g advanced):** 5 ✅ (19%)
-- **Complete:** 16 of 26 (62%)
-- **Pending updates (bd-smn3):** 10 (38%)
+- **Phase 3 (bd-smn3 remaining):** 2 ✅ (8%)
+- **Complete:** 18 of 26 (69%)
+- **Pending (no functions exist yet):** 8 (31%) - PARAM_DD_VERSION, PARAM_CLEAR_CYCLES, PARAM_PMODE, PARAM_CENTROIDS_ENABLED, PARAM_CENTROIDS_THRESHOLD, PARAM_ROI_COUNT
 
 ---
 
@@ -329,3 +330,4 @@ ssh maitai@100.117.5.12 'source /etc/profile.d/pvcam.sh && \
 | 2025-01-10 | bd-ng5p | Initial gap analysis and helper function implementation |
 | 2025-01-10 | bd-sk6z | Phase 1: Core sensor parameters (9 params) complete |
 | 2025-01-10 | bd-l35g | Phase 2: Advanced feature parameters (5 params) complete |
+| 2026-01-10 | bd-smn3 | Phase 3: PARAM_EXPOSURE_MODE, PARAM_EXPOSE_OUT_MODE (2 params) complete |

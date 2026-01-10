@@ -1359,9 +1359,18 @@ impl PvcamFeatures {
     // =========================================================================
 
     /// Get current exposure mode (bd-iai9)
+    ///
+    /// # SDK Pattern (bd-smn3)
+    /// Checks PARAM_EXPOSURE_MODE availability before access.
     pub fn get_exposure_mode(_conn: &PvcamConnection) -> Result<ExposureMode> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_EXPOSURE_MODE) {
+                return Err(anyhow!(
+                    "PARAM_EXPOSURE_MODE is not available on this camera"
+                ));
+            }
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
@@ -1391,9 +1400,18 @@ impl PvcamFeatures {
     }
 
     /// Set exposure mode (bd-iai9)
+    ///
+    /// # SDK Pattern (bd-smn3)
+    /// Checks PARAM_EXPOSURE_MODE availability before access.
     pub fn set_exposure_mode(_conn: &PvcamConnection, _mode: ExposureMode) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_EXPOSURE_MODE) {
+                return Err(anyhow!(
+                    "PARAM_EXPOSURE_MODE is not available on this camera"
+                ));
+            }
             let value = _mode.to_pvcam();
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
@@ -1463,9 +1481,18 @@ impl PvcamFeatures {
     }
 
     /// Get expose out mode (bd-iai9)
+    ///
+    /// # SDK Pattern (bd-smn3)
+    /// Checks PARAM_EXPOSE_OUT_MODE availability before access.
     pub fn get_expose_out_mode(_conn: &PvcamConnection) -> Result<ExposeOutMode> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_EXPOSE_OUT_MODE) {
+                return Err(anyhow!(
+                    "PARAM_EXPOSE_OUT_MODE is not available on this camera"
+                ));
+            }
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
@@ -1495,9 +1522,18 @@ impl PvcamFeatures {
     }
 
     /// Set expose out mode (bd-iai9)
+    ///
+    /// # SDK Pattern (bd-smn3)
+    /// Checks PARAM_EXPOSE_OUT_MODE availability before access.
     pub fn set_expose_out_mode(_conn: &PvcamConnection, _mode: ExposeOutMode) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_EXPOSE_OUT_MODE) {
+                return Err(anyhow!(
+                    "PARAM_EXPOSE_OUT_MODE is not available on this camera"
+                ));
+            }
             let value = _mode.to_pvcam();
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
