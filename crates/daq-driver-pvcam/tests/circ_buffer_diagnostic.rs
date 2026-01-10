@@ -16,12 +16,7 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 #![cfg(feature = "pvcam_hardware")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    unused_imports,
-    dead_code
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used, unused_imports, dead_code)]
 
 use pvcam_sys::*;
 use std::alloc::{alloc_zeroed, dealloc, Layout};
@@ -38,24 +33,24 @@ const CCS_HALT: i16 = 1;
 const PL_CALLBACK_EOF: i32 = 1;
 
 // PARAM IDs - use actual values from SDK bindings (verified from generated bindings.rs)
-const PARAM_CIRC_BUFFER: u32 = 184746283;      // from bindings.rs
-const PARAM_EXPOSURE_MODE: u32 = 151126551;    // from bindings.rs
-const PARAM_EXPOSE_OUT_MODE: u32 = 151126576;  // Verified from bindings.rs on maitai (was 151126585)
-const PARAM_SER_SIZE: u32 = 100794426;         // from bindings.rs
-const PARAM_PAR_SIZE: u32 = 100794425;         // from bindings.rs
-// BuildSpeedTable parameters - SDK sets these to defaults before acquisition
-const PARAM_READOUT_PORT: u32 = 151126263;     // Verified on maitai
-const PARAM_SPDTAB_INDEX: u32 = 16908801;      // Verified on maitai
-const PARAM_GAIN_INDEX: u32 = 16908800;        // Verified on maitai
-const PARAM_BIT_DEPTH: u32 = 16908799;         // Verified on maitai
-// PARAM_FRAME_BUFFER_SIZE - available AFTER setup_cont, gives min/max/recommended buffer sizes
+const PARAM_CIRC_BUFFER: u32 = 184746283; // from bindings.rs
+const PARAM_EXPOSURE_MODE: u32 = 151126551; // from bindings.rs
+const PARAM_EXPOSE_OUT_MODE: u32 = 151126576; // Verified from bindings.rs on maitai (was 151126585)
+const PARAM_SER_SIZE: u32 = 100794426; // from bindings.rs
+const PARAM_PAR_SIZE: u32 = 100794425; // from bindings.rs
+                                       // BuildSpeedTable parameters - SDK sets these to defaults before acquisition
+const PARAM_READOUT_PORT: u32 = 151126263; // Verified on maitai
+const PARAM_SPDTAB_INDEX: u32 = 16908801; // Verified on maitai
+const PARAM_GAIN_INDEX: u32 = 16908800; // Verified on maitai
+const PARAM_BIT_DEPTH: u32 = 16908799; // Verified on maitai
+                                       // PARAM_FRAME_BUFFER_SIZE - available AFTER setup_cont, gives min/max/recommended buffer sizes
 const PARAM_FRAME_BUFFER_SIZE: u32 = 184746284; // ((3<<16) + (11<<24) + 300) = 184746284
 
 // Attribute constants for pl_get_param
 const ATTR_AVAIL: i16 = 8;
 const ATTR_CURRENT: i16 = 0;
 const ATTR_COUNT: i16 = 1;
-const ATTR_DEFAULT: i16 = 5;  // Key for getting camera's default value!
+const ATTR_DEFAULT: i16 = 5; // Key for getting camera's default value!
 
 /// Get PVCAM error message
 fn get_error_message() -> String {
@@ -63,9 +58,7 @@ fn get_error_message() -> String {
     unsafe {
         let code = pl_error_code();
         pl_error_message(code, msg.as_mut_ptr());
-        CStr::from_ptr(msg.as_ptr())
-            .to_string_lossy()
-            .into_owned()
+        CStr::from_ptr(msg.as_ptr()).to_string_lossy().into_owned()
     }
 }
 
@@ -73,7 +66,13 @@ fn get_error_message() -> String {
 fn is_param_available(hcam: i16, param_id: u32) -> bool {
     let mut avail: rs_bool = 0;
     unsafe {
-        if pl_get_param(hcam, param_id, ATTR_AVAIL, &mut avail as *mut _ as *mut c_void) != 0 {
+        if pl_get_param(
+            hcam,
+            param_id,
+            ATTR_AVAIL,
+            &mut avail as *mut _ as *mut c_void,
+        ) != 0
+        {
             avail != 0
         } else {
             false
@@ -85,7 +84,13 @@ fn is_param_available(hcam: i16, param_id: u32) -> bool {
 fn get_bool_param(hcam: i16, param_id: u32) -> Option<bool> {
     let mut value: rs_bool = 0;
     unsafe {
-        if pl_get_param(hcam, param_id, ATTR_CURRENT, &mut value as *mut _ as *mut c_void) != 0 {
+        if pl_get_param(
+            hcam,
+            param_id,
+            ATTR_CURRENT,
+            &mut value as *mut _ as *mut c_void,
+        ) != 0
+        {
             Some(value != 0)
         } else {
             None
@@ -97,7 +102,13 @@ fn get_bool_param(hcam: i16, param_id: u32) -> Option<bool> {
 fn get_enum_count(hcam: i16, param_id: u32) -> Option<u32> {
     let mut count: uns32 = 0;
     unsafe {
-        if pl_get_param(hcam, param_id, ATTR_COUNT, &mut count as *mut _ as *mut c_void) != 0 {
+        if pl_get_param(
+            hcam,
+            param_id,
+            ATTR_COUNT,
+            &mut count as *mut _ as *mut c_void,
+        ) != 0
+        {
             Some(count)
         } else {
             None
@@ -110,7 +121,13 @@ fn get_enum_count(hcam: i16, param_id: u32) -> Option<u32> {
 fn get_default_i32_param(hcam: i16, param_id: u32) -> Option<i32> {
     let mut value: i32 = 0;
     unsafe {
-        if pl_get_param(hcam, param_id, ATTR_DEFAULT, &mut value as *mut _ as *mut c_void) != 0 {
+        if pl_get_param(
+            hcam,
+            param_id,
+            ATTR_DEFAULT,
+            &mut value as *mut _ as *mut c_void,
+        ) != 0
+        {
             Some(value)
         } else {
             None
@@ -136,7 +153,10 @@ fn init_readout_params_like_sdk(hcam: i16) -> bool {
             if set_i32_param(hcam, PARAM_READOUT_PORT, def_val) {
                 println!("    [OK] PARAM_READOUT_PORT = {}", def_val);
             } else {
-                println!("    [WARN] Failed to set PARAM_READOUT_PORT: {}", get_error_message());
+                println!(
+                    "    [WARN] Failed to set PARAM_READOUT_PORT: {}",
+                    get_error_message()
+                );
             }
         }
     } else {
@@ -149,7 +169,10 @@ fn init_readout_params_like_sdk(hcam: i16) -> bool {
             if set_i32_param(hcam, PARAM_SPDTAB_INDEX, def_val) {
                 println!("    [OK] PARAM_SPDTAB_INDEX = {}", def_val);
             } else {
-                println!("    [WARN] Failed to set PARAM_SPDTAB_INDEX: {}", get_error_message());
+                println!(
+                    "    [WARN] Failed to set PARAM_SPDTAB_INDEX: {}",
+                    get_error_message()
+                );
             }
         }
     } else {
@@ -162,7 +185,10 @@ fn init_readout_params_like_sdk(hcam: i16) -> bool {
             if set_i32_param(hcam, PARAM_GAIN_INDEX, def_val) {
                 println!("    [OK] PARAM_GAIN_INDEX = {}", def_val);
             } else {
-                println!("    [WARN] Failed to set PARAM_GAIN_INDEX: {}", get_error_message());
+                println!(
+                    "    [WARN] Failed to set PARAM_GAIN_INDEX: {}",
+                    get_error_message()
+                );
             }
         }
     } else {
@@ -174,7 +200,13 @@ fn init_readout_params_like_sdk(hcam: i16) -> bool {
     if is_param_available(hcam, PARAM_BIT_DEPTH) {
         let mut bit_depth: i32 = 0;
         unsafe {
-            if pl_get_param(hcam, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut bit_depth as *mut _ as *mut c_void) != 0 {
+            if pl_get_param(
+                hcam,
+                PARAM_BIT_DEPTH,
+                ATTR_CURRENT,
+                &mut bit_depth as *mut _ as *mut c_void,
+            ) != 0
+            {
                 println!("    [OK] PARAM_BIT_DEPTH = {} bits", bit_depth);
             }
         }
@@ -193,18 +225,8 @@ fn get_enum_entry(hcam: i16, param_id: u32, index: u32) -> Option<(i32, String)>
         if pl_enum_str_length(hcam, param_id, index, &mut name_len) == 0 {
             return None;
         }
-        if pl_get_enum_param(
-            hcam,
-            param_id,
-            index,
-            &mut value,
-            name.as_mut_ptr(),
-            100,
-        ) != 0
-        {
-            let name_str = CStr::from_ptr(name.as_ptr())
-                .to_string_lossy()
-                .into_owned();
+        if pl_get_enum_param(hcam, param_id, index, &mut value, name.as_mut_ptr(), 100) != 0 {
+            let name_str = CStr::from_ptr(name.as_ptr()).to_string_lossy().into_owned();
             Some((value, name_str))
         } else {
             None
@@ -244,7 +266,9 @@ async fn test_circ_buffer_capabilities() {
 
     if cam_count == 0 {
         println!("No cameras found, skipping test");
-        unsafe { pl_pvcam_uninit(); }
+        unsafe {
+            pl_pvcam_uninit();
+        }
         return;
     }
 
@@ -371,17 +395,20 @@ async fn test_circ_buffer_capabilities() {
             println!("[OK] Callback registered BEFORE setup");
             callback_registered = true;
         } else {
-            println!("[WARN] Failed to register callback: {}", get_error_message());
+            println!(
+                "[WARN] Failed to register callback: {}",
+                get_error_message()
+            );
         }
     }
 
     // Setup region (full frame, but small for testing)
     let region = rgn_type {
         s1: 0,
-        s2: 511,  // 512 pixels wide
+        s2: 511, // 512 pixels wide
         sbin: 1,
         p1: 0,
-        p2: 511,  // 512 pixels tall
+        p2: 511, // 512 pixels tall
         pbin: 1,
     };
 
@@ -460,7 +487,10 @@ async fn test_circ_buffer_capabilities() {
     }
 
     let exp_mode_ext = EXT_TRIG_INTERNAL | EXPOSE_OUT_FIRST_ROW;
-    println!("     Using exp_mode = EXT_TRIG_INTERNAL | EXPOSE_OUT_FIRST_ROW ({})", exp_mode_ext);
+    println!(
+        "     Using exp_mode = EXT_TRIG_INTERNAL | EXPOSE_OUT_FIRST_ROW ({})",
+        exp_mode_ext
+    );
 
     unsafe {
         let result = pl_exp_setup_cont(
@@ -485,7 +515,9 @@ async fn test_circ_buffer_capabilities() {
                 buffer_size as uns32,
             );
             if start_result != 0 {
-                println!("[OK] pl_exp_start_cont with EXT_TRIG_INTERNAL + CIRC_OVERWRITE succeeded!");
+                println!(
+                    "[OK] pl_exp_start_cont with EXT_TRIG_INTERNAL + CIRC_OVERWRITE succeeded!"
+                );
                 pl_exp_abort(hcam, CCS_HALT);
             } else {
                 println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
@@ -677,7 +709,10 @@ async fn test_circ_buffer_capabilities() {
     println!("     This is what PVCamTestCli uses with '<camera default>'!");
 
     if let Some(def_mode) = default_exp_mode {
-        println!("     Using exp_mode = {} (camera's ATTR_DEFAULT value)", def_mode);
+        println!(
+            "     Using exp_mode = {} (camera's ATTR_DEFAULT value)",
+            def_mode
+        );
 
         // Register callback first (like SDK example)
         callback_registered = false;
@@ -699,7 +734,7 @@ async fn test_circ_buffer_capabilities() {
                 hcam,
                 1,
                 &region as *const _,
-                def_mode as i16,  // Use camera's default mode!
+                def_mode as i16, // Use camera's default mode!
                 exposure_ms,
                 &mut frame_bytes,
                 CIRC_OVERWRITE,
@@ -717,9 +752,13 @@ async fn test_circ_buffer_capabilities() {
                     buffer_size as uns32,
                 );
                 if start_result != 0 {
-                    println!("[OK] pl_exp_start_cont with DEFAULT mode + CIRC_OVERWRITE succeeded!");
+                    println!(
+                        "[OK] pl_exp_start_cont with DEFAULT mode + CIRC_OVERWRITE succeeded!"
+                    );
                     println!("\n*** CAMERA DEFAULT MODE + CIRC_OVERWRITE WORKS! ***");
-                    println!("*** This is the solution - use camera's default exposure mode! ***\n");
+                    println!(
+                        "*** This is the solution - use camera's default exposure mode! ***\n"
+                    );
                     pl_exp_abort(hcam, CCS_HALT);
                 } else {
                     println!("[FAIL] pl_exp_start_cont failed: {}", get_error_message());
@@ -746,7 +785,10 @@ async fn test_circ_buffer_capabilities() {
     println!("\n--- Test 7: Camera DEFAULT mode WITHOUT callback + CIRC_OVERWRITE ---");
 
     if let Some(def_mode) = default_exp_mode {
-        println!("     Using exp_mode = {} (camera's ATTR_DEFAULT value), NO callback", def_mode);
+        println!(
+            "     Using exp_mode = {} (camera's ATTR_DEFAULT value), NO callback",
+            def_mode
+        );
 
         unsafe {
             let result = pl_exp_setup_cont(
@@ -798,7 +840,7 @@ async fn test_circ_buffer_capabilities() {
 
     if let Some(def_mode) = default_exp_mode {
         const ALIGN_4K: usize = 4096;
-        const FRAME_COUNT: usize = 50;  // SDK default
+        const FRAME_COUNT: usize = 50; // SDK default
 
         println!("     exp_mode = {} (camera default)", def_mode);
         println!("     frame_count = {} (SDK default)", FRAME_COUNT);
@@ -815,28 +857,38 @@ async fn test_circ_buffer_capabilities() {
                 CIRC_OVERWRITE,
             );
             if result != 0 {
-                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+                println!(
+                    "[OK] pl_exp_setup_cont succeeded, frame_bytes = {}",
+                    frame_bytes
+                );
 
                 // Allocate 4KB-aligned buffer
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 // Round up to 4KB boundary
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if buffer_ptr.is_null() {
                     println!("[FAIL] Failed to allocate 4KB-aligned buffer");
                 } else {
                     let ptr_val = buffer_ptr as usize;
-                    println!("     Buffer allocated: {} bytes at 0x{:X}", aligned_size, ptr_val);
-                    println!("     Alignment check: 0x{:X} % 4096 = {}", ptr_val, ptr_val % ALIGN_4K);
+                    println!(
+                        "     Buffer allocated: {} bytes at 0x{:X}",
+                        aligned_size, ptr_val
+                    );
+                    println!(
+                        "     Alignment check: 0x{:X} % 4096 = {}",
+                        ptr_val,
+                        ptr_val % ALIGN_4K
+                    );
 
                     let start_result = pl_exp_start_cont(
                         hcam,
                         buffer_ptr as *mut c_void,
-                        buffer_size as uns32,  // Original size, not padded
+                        buffer_size as uns32, // Original size, not padded
                     );
 
                     if start_result != 0 {
@@ -884,7 +936,10 @@ async fn test_circ_buffer_capabilities() {
                 println!("[OK] Callback registered");
                 callback_registered = true;
             } else {
-                println!("[WARN] Failed to register callback: {}", get_error_message());
+                println!(
+                    "[WARN] Failed to register callback: {}",
+                    get_error_message()
+                );
             }
         }
 
@@ -905,16 +960,13 @@ async fn test_circ_buffer_capabilities() {
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if !buffer_ptr.is_null() {
-                    let start_result = pl_exp_start_cont(
-                        hcam,
-                        buffer_ptr as *mut c_void,
-                        buffer_size as uns32,
-                    );
+                    let start_result =
+                        pl_exp_start_cont(hcam, buffer_ptr as *mut c_void, buffer_size as uns32);
 
                     if start_result != 0 {
                         println!("[OK] 4KB ALIGNED buffer + callback + CIRC_OVERWRITE succeeded!");
@@ -958,10 +1010,10 @@ async fn test_circ_buffer_capabilities() {
         // Use full sensor resolution like PVCamTestCli
         let full_region = rgn_type {
             s1: 0,
-            s2: 2047,  // 2048 pixels wide (0-2047)
+            s2: 2047, // 2048 pixels wide (0-2047)
             sbin: 1,
             p1: 0,
-            p2: 2047,  // 2048 pixels tall (0-2047)
+            p2: 2047, // 2048 pixels tall (0-2047)
             pbin: 1,
         };
 
@@ -979,22 +1031,22 @@ async fn test_circ_buffer_capabilities() {
                 CIRC_OVERWRITE,
             );
             if result != 0 {
-                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+                println!(
+                    "[OK] pl_exp_setup_cont succeeded, frame_bytes = {}",
+                    frame_bytes
+                );
 
                 // Allocate 4KB-aligned buffer
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if !buffer_ptr.is_null() {
-                    let start_result = pl_exp_start_cont(
-                        hcam,
-                        buffer_ptr as *mut c_void,
-                        buffer_size as uns32,
-                    );
+                    let start_result =
+                        pl_exp_start_cont(hcam, buffer_ptr as *mut c_void, buffer_size as uns32);
 
                     if start_result != 0 {
                         println!("[OK] FULL FRAME + 4KB aligned + CIRC_OVERWRITE succeeded!");
@@ -1026,7 +1078,9 @@ async fn test_circ_buffer_capabilities() {
     // ========================================
     println!("\n--- Test 11: SDK-style init (BuildSpeedTable) + CIRC_OVERWRITE ---");
     println!("     This mimics SDK Camera::Open → BuildSpeedTable()");
-    println!("     Setting PARAM_READOUT_PORT, PARAM_SPDTAB_INDEX, PARAM_GAIN_INDEX to defaults...\n");
+    println!(
+        "     Setting PARAM_READOUT_PORT, PARAM_SPDTAB_INDEX, PARAM_GAIN_INDEX to defaults...\n"
+    );
 
     // Initialize readout parameters like SDK does
     init_readout_params_like_sdk(hcam);
@@ -1074,22 +1128,22 @@ async fn test_circ_buffer_capabilities() {
                 CIRC_OVERWRITE,
             );
             if result != 0 {
-                println!("[OK] pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+                println!(
+                    "[OK] pl_exp_setup_cont succeeded, frame_bytes = {}",
+                    frame_bytes
+                );
 
                 // Allocate 4KB-aligned buffer
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if !buffer_ptr.is_null() {
-                    let start_result = pl_exp_start_cont(
-                        hcam,
-                        buffer_ptr as *mut c_void,
-                        buffer_size as uns32,
-                    );
+                    let start_result =
+                        pl_exp_start_cont(hcam, buffer_ptr as *mut c_void, buffer_size as uns32);
 
                     if start_result != 0 {
                         println!("[OK] SDK-style init + CIRC_OVERWRITE SUCCEEDED!");
@@ -1137,13 +1191,24 @@ async fn test_circ_buffer_capabilities() {
 
     for (param_id, name) in params_to_check {
         let avail = is_param_available(hcam, *param_id);
-        println!("  {} (0x{:08X}): {}", name, param_id, if avail { "available" } else { "NOT available" });
+        println!(
+            "  {} (0x{:08X}): {}",
+            name,
+            param_id,
+            if avail { "available" } else { "NOT available" }
+        );
 
         // If PARAM_SER_SIZE or PARAM_PAR_SIZE is available, read its value
         if avail && (*param_id == PARAM_SER_SIZE || *param_id == PARAM_PAR_SIZE) {
             let mut value: uns16 = 0;
             unsafe {
-                if pl_get_param(hcam, *param_id, ATTR_CURRENT, &mut value as *mut _ as *mut c_void) != 0 {
+                if pl_get_param(
+                    hcam,
+                    *param_id,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut c_void,
+                ) != 0
+                {
                     println!("      Value: {}", value);
                 }
             }
@@ -1164,11 +1229,11 @@ async fn test_circ_buffer_capabilities() {
 
     if let Some(def_mode) = default_exp_mode {
         const ALIGN_4K: usize = 4096;
-        const FRAME_COUNT: usize = 100;  // Use 100 frames like PVCamTestCli --buffer-frames=100
+        const FRAME_COUNT: usize = 100; // Use 100 frames like PVCamTestCli --buffer-frames=100
 
         let region = rgn_type {
             s1: 0,
-            s2: 511,  // 512x512 for quick test
+            s2: 511, // 512x512 for quick test
             sbin: 1,
             p1: 0,
             p2: 511,
@@ -1191,7 +1256,10 @@ async fn test_circ_buffer_capabilities() {
                 CIRC_OVERWRITE,
             );
             if result != 0 {
-                println!("[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+                println!(
+                    "[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}",
+                    frame_bytes
+                );
 
                 // Step 2: REGISTER CALLBACK AFTER SETUP (SDK order!)
                 let callback_result = pl_cam_register_callback_ex3(
@@ -1203,24 +1271,24 @@ async fn test_circ_buffer_capabilities() {
                 if callback_result != 0 {
                     println!("[OK] Step 2: Callback registered AFTER setup (SDK order!)");
                 } else {
-                    println!("[WARN] Failed to register callback: {}", get_error_message());
+                    println!(
+                        "[WARN] Failed to register callback: {}",
+                        get_error_message()
+                    );
                 }
 
                 // Allocate 4KB-aligned buffer
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if !buffer_ptr.is_null() {
                     // Step 3: START (after callback registration)
-                    let start_result = pl_exp_start_cont(
-                        hcam,
-                        buffer_ptr as *mut c_void,
-                        buffer_size as uns32,
-                    );
+                    let start_result =
+                        pl_exp_start_cont(hcam, buffer_ptr as *mut c_void, buffer_size as uns32);
 
                     if start_result != 0 {
                         println!("[OK] Step 3: pl_exp_start_cont SUCCEEDED!");
@@ -1230,7 +1298,10 @@ async fn test_circ_buffer_capabilities() {
                         println!("*********************************************\n");
                         pl_exp_abort(hcam, CCS_HALT);
                     } else {
-                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        println!(
+                            "[FAIL] Step 3: pl_exp_start_cont failed: {}",
+                            get_error_message()
+                        );
                         let err_code = pl_error_code();
                         println!("       Error code: {}", err_code);
                     }
@@ -1243,7 +1314,10 @@ async fn test_circ_buffer_capabilities() {
                 // Cleanup callback
                 pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
             } else {
-                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+                println!(
+                    "[FAIL] Step 1: pl_exp_setup_cont failed: {}",
+                    get_error_message()
+                );
             }
         }
     } else {
@@ -1278,7 +1352,7 @@ async fn test_circ_buffer_capabilities() {
                 hcam,
                 1,
                 &region as *const _,
-                TIMED_MODE,  // Explicit 0, like PVCamTestCli default
+                TIMED_MODE, // Explicit 0, like PVCamTestCli default
                 exposure_ms,
                 &mut frame_bytes,
                 CIRC_OVERWRITE,
@@ -1300,24 +1374,24 @@ async fn test_circ_buffer_capabilities() {
                 let buffer_size = (frame_bytes as usize) * FRAME_COUNT;
                 let aligned_size = (buffer_size + (ALIGN_4K - 1)) & !(ALIGN_4K - 1);
 
-                let layout = Layout::from_size_align(aligned_size, ALIGN_4K)
-                    .expect("Invalid layout");
+                let layout =
+                    Layout::from_size_align(aligned_size, ALIGN_4K).expect("Invalid layout");
                 let buffer_ptr = alloc_zeroed(layout);
 
                 if !buffer_ptr.is_null() {
                     // Step 3: START
-                    let start_result = pl_exp_start_cont(
-                        hcam,
-                        buffer_ptr as *mut c_void,
-                        buffer_size as uns32,
-                    );
+                    let start_result =
+                        pl_exp_start_cont(hcam, buffer_ptr as *mut c_void, buffer_size as uns32);
 
                     if start_result != 0 {
                         println!("[OK] Step 3: TIMED_MODE + SDK order WORKS!");
                         println!("\n*** TIMED_MODE with correct callback order works! ***\n");
                         pl_exp_abort(hcam, CCS_HALT);
                     } else {
-                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        println!(
+                            "[FAIL] Step 3: pl_exp_start_cont failed: {}",
+                            get_error_message()
+                        );
                         let err_code = pl_error_code();
                         println!("       Error code: {}", err_code);
                     }
@@ -1327,7 +1401,10 @@ async fn test_circ_buffer_capabilities() {
 
                 pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
             } else {
-                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+                println!(
+                    "[FAIL] Step 1: pl_exp_setup_cont failed: {}",
+                    get_error_message()
+                );
             }
         }
     }
@@ -1340,7 +1417,9 @@ async fn test_circ_buffer_capabilities() {
     println!("     This tests if accumulated state from previous tests causes issues\n");
 
     // Close current camera
-    unsafe { pl_cam_close(hcam); }
+    unsafe {
+        pl_cam_close(hcam);
+    }
     println!("[OK] Camera closed");
 
     // Reopen fresh
@@ -1356,7 +1435,10 @@ async fn test_circ_buffer_capabilities() {
             if pl_create_frame_info_struct(&mut frame_info) != 0 {
                 println!("[OK] frame_info_struct created (SDK Open requirement)");
             } else {
-                println!("[WARN] Failed to create frame_info_struct: {}", get_error_message());
+                println!(
+                    "[WARN] Failed to create frame_info_struct: {}",
+                    get_error_message()
+                );
             }
 
             // Now try CIRC_OVERWRITE with fresh state
@@ -1365,7 +1447,7 @@ async fn test_circ_buffer_capabilities() {
 
             let region = rgn_type {
                 s1: 0,
-                s2: 2047,  // Full frame
+                s2: 2047, // Full frame
                 sbin: 1,
                 p1: 0,
                 p2: 2047,
@@ -1382,13 +1464,16 @@ async fn test_circ_buffer_capabilities() {
                 1,
                 &region as *const _,
                 TIMED_MODE,
-                20,  // 20ms exposure
+                20, // 20ms exposure
                 &mut frame_bytes,
                 CIRC_OVERWRITE,
             );
 
             if setup_result != 0 {
-                println!("[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}", frame_bytes);
+                println!(
+                    "[OK] Step 1: pl_exp_setup_cont succeeded, frame_bytes = {}",
+                    frame_bytes
+                );
 
                 // Step 2: Register callback AFTER setup
                 let callback_result = pl_cam_register_callback_ex3(
@@ -1422,7 +1507,10 @@ async fn test_circ_buffer_capabilities() {
                         println!("*********************************************\n");
                         pl_exp_abort(hcam_fresh, CCS_HALT);
                     } else {
-                        println!("[FAIL] Step 3: pl_exp_start_cont failed: {}", get_error_message());
+                        println!(
+                            "[FAIL] Step 3: pl_exp_start_cont failed: {}",
+                            get_error_message()
+                        );
                         let err_code = pl_error_code();
                         println!("       Error code: {}", err_code);
                     }
@@ -1432,7 +1520,10 @@ async fn test_circ_buffer_capabilities() {
 
                 pl_cam_deregister_callback(hcam_fresh, PL_CALLBACK_EOF);
             } else {
-                println!("[FAIL] Step 1: pl_exp_setup_cont failed: {}", get_error_message());
+                println!(
+                    "[FAIL] Step 1: pl_exp_setup_cont failed: {}",
+                    get_error_message()
+                );
             }
 
             // Release frame_info_struct
@@ -1459,18 +1550,21 @@ async fn test_circ_buffer_capabilities() {
         if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam_seq, 0) == 0 {
             println!("[FAIL] Failed to reopen camera: {}", get_error_message());
         } else {
-            println!("[OK] Camera opened for sequence mode test, handle = {}", hcam_seq);
+            println!(
+                "[OK] Camera opened for sequence mode test, handle = {}",
+                hcam_seq
+            );
 
             // Create frame_info_struct
             let mut frame_info: *mut FRAME_INFO = ptr::null_mut();
             let _ = pl_create_frame_info_struct(&mut frame_info);
 
-            const FRAME_COUNT: uns16 = 3;  // Capture 3 frames
-            const EXPOSURE_MS: uns32 = 100;  // Longer exposure to ensure completion
+            const FRAME_COUNT: uns16 = 3; // Capture 3 frames
+            const EXPOSURE_MS: uns32 = 100; // Longer exposure to ensure completion
 
             let region = rgn_type {
                 s1: 0,
-                s2: 255,  // 256x256 for quick test
+                s2: 255, // 256x256 for quick test
                 sbin: 1,
                 p1: 0,
                 p2: 255,
@@ -1486,24 +1580,24 @@ async fn test_circ_buffer_capabilities() {
             let setup_result = pl_exp_setup_seq(
                 hcam_seq,
                 FRAME_COUNT,
-                1,  // region count
+                1, // region count
                 &region as *const _,
-                EXT_TRIG_INTERNAL,  // Camera's default mode (1792)
+                EXT_TRIG_INTERNAL, // Camera's default mode (1792)
                 EXPOSURE_MS,
                 &mut buffer_bytes,
             );
 
             if setup_result != 0 {
-                println!("[OK] pl_exp_setup_seq with EXT_TRIG_INTERNAL succeeded, buffer_bytes = {}", buffer_bytes);
+                println!(
+                    "[OK] pl_exp_setup_seq with EXT_TRIG_INTERNAL succeeded, buffer_bytes = {}",
+                    buffer_bytes
+                );
 
                 // Allocate buffer for all frames
                 let mut buffer = vec![0u8; buffer_bytes as usize];
 
                 // Start sequence acquisition
-                let start_result = pl_exp_start_seq(
-                    hcam_seq,
-                    buffer.as_mut_ptr() as *mut c_void,
-                );
+                let start_result = pl_exp_start_seq(hcam_seq, buffer.as_mut_ptr() as *mut c_void);
 
                 if start_result != 0 {
                     println!("[OK] pl_exp_start_seq succeeded!");
@@ -1526,7 +1620,10 @@ async fn test_circ_buffer_capabilities() {
                         const READOUT_NOT_ACTIVE: i16 = 0;
 
                         if status != last_status {
-                            println!("     Status changed: {} -> {} (bytes: {})", last_status, status, bytes_arrived);
+                            println!(
+                                "     Status changed: {} -> {} (bytes: {})",
+                                last_status, status, bytes_arrived
+                            );
                             last_status = status;
                         }
 
@@ -1590,18 +1687,21 @@ async fn test_circ_buffer_capabilities() {
         if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam_seq2, 0) == 0 {
             println!("[FAIL] Failed to reopen camera: {}", get_error_message());
         } else {
-            println!("[OK] Camera opened for TIMED_MODE sequence test, handle = {}", hcam_seq2);
+            println!(
+                "[OK] Camera opened for TIMED_MODE sequence test, handle = {}",
+                hcam_seq2
+            );
 
             // Create frame_info_struct
             let mut frame_info: *mut FRAME_INFO = ptr::null_mut();
             let _ = pl_create_frame_info_struct(&mut frame_info);
 
-            const FRAME_COUNT: uns16 = 1;  // Single frame for simplicity
-            const EXPOSURE_MS: uns32 = 200;  // 200ms single exposure
+            const FRAME_COUNT: uns16 = 1; // Single frame for simplicity
+            const EXPOSURE_MS: uns32 = 200; // 200ms single exposure
 
             let region = rgn_type {
                 s1: 0,
-                s2: 255,  // 256x256
+                s2: 255, // 256x256
                 sbin: 1,
                 p1: 0,
                 p2: 255,
@@ -1617,24 +1717,24 @@ async fn test_circ_buffer_capabilities() {
             let setup_result = pl_exp_setup_seq(
                 hcam_seq2,
                 FRAME_COUNT,
-                1,  // region count
+                1, // region count
                 &region as *const _,
-                TIMED_MODE,  // 0 = immediate software-triggered
+                TIMED_MODE, // 0 = immediate software-triggered
                 EXPOSURE_MS,
                 &mut buffer_bytes,
             );
 
             if setup_result != 0 {
-                println!("[OK] pl_exp_setup_seq with TIMED_MODE succeeded, buffer_bytes = {}", buffer_bytes);
+                println!(
+                    "[OK] pl_exp_setup_seq with TIMED_MODE succeeded, buffer_bytes = {}",
+                    buffer_bytes
+                );
 
                 // Allocate buffer
                 let mut buffer = vec![0u8; buffer_bytes as usize];
 
                 // Start sequence acquisition
-                let start_result = pl_exp_start_seq(
-                    hcam_seq2,
-                    buffer.as_mut_ptr() as *mut c_void,
-                );
+                let start_result = pl_exp_start_seq(hcam_seq2, buffer.as_mut_ptr() as *mut c_void);
 
                 if start_result != 0 {
                     println!("[OK] pl_exp_start_seq succeeded!");
@@ -1662,8 +1762,13 @@ async fn test_circ_buffer_capabilities() {
                                 5 => "READOUT_FAILED",
                                 _ => "UNKNOWN",
                             };
-                            println!("     Status: {} ({}) - elapsed: {:?}, bytes: {}",
-                                status, status_name, start_time.elapsed(), bytes_arrived);
+                            println!(
+                                "     Status: {} ({}) - elapsed: {:?}, bytes: {}",
+                                status,
+                                status_name,
+                                start_time.elapsed(),
+                                bytes_arrived
+                            );
                             last_status = status;
                         }
 
@@ -1745,7 +1850,10 @@ async fn test_circ_buffer_capabilities() {
 
             // Setup for single frame
             if pl_exp_setup_seq(hcam_seq3, 1, 1, &region, TIMED_MODE, 500, &mut buffer_bytes) != 0 {
-                println!("[OK] Setup for single frame, buffer_bytes = {}", buffer_bytes);
+                println!(
+                    "[OK] Setup for single frame, buffer_bytes = {}",
+                    buffer_bytes
+                );
 
                 let mut buffer = vec![0u8; buffer_bytes as usize];
 
@@ -1758,7 +1866,8 @@ async fn test_circ_buffer_capabilities() {
                     let mut last_status: i16 = -1;
                     let start_time = std::time::Instant::now();
 
-                    for _ in 0..200 {  // 2 seconds max
+                    for _ in 0..200 {
+                        // 2 seconds max
                         pl_exp_check_status(hcam_seq3, &mut status, &mut bytes_arrived);
 
                         if status != last_status {
@@ -1770,12 +1879,18 @@ async fn test_circ_buffer_capabilities() {
                                 5 => "FAILED",
                                 _ => "???",
                             };
-                            println!("     {:?}: status={} ({}) bytes={}",
-                                start_time.elapsed(), status, status_name, bytes_arrived);
+                            println!(
+                                "     {:?}: status={} ({}) bytes={}",
+                                start_time.elapsed(),
+                                status,
+                                status_name,
+                                bytes_arrived
+                            );
                             last_status = status;
                         }
 
-                        if status == 3 {  // READOUT_COMPLETE
+                        if status == 3 {
+                            // READOUT_COMPLETE
                             let non_zero = buffer.iter().filter(|&&b| b != 0).count();
                             println!("\n*********************************************");
                             println!("*** SINGLE FRAME CAPTURE SUCCESSFUL! ***");
