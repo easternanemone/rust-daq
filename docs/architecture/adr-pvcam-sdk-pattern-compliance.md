@@ -137,13 +137,13 @@ Based on SDK examples, these parameters MUST have availability checks:
 | PARAM_EXPOSURE_MODE | Common.cpp | ⚠️ Pending | features.rs |
 | PARAM_EXPOSE_OUT_MODE | Common.cpp | ⚠️ Pending | features.rs |
 | PARAM_CENTROIDS_ENABLED | Centroids.cpp | ⚠️ Pending | features.rs |
-| PARAM_CENTROIDS_MODE | Centroids.cpp | ⚠️ Pending | features.rs |
+| PARAM_CENTROIDS_MODE | Centroids.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_CENTROIDS_THRESHOLD | Centroids.cpp | ⚠️ Pending | features.rs |
-| PARAM_METADATA_ENABLED | MultipleRegions.cpp | ⚠️ Pending | features.rs |
+| PARAM_METADATA_ENABLED | MultipleRegions.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_ROI_COUNT | MultipleRegions.cpp | ⚠️ Pending | acquisition.rs |
-| PARAM_PP_INDEX | PostProcessing.cpp | ⚠️ Pending | features.rs |
-| PARAM_SMART_STREAM_MODE | Common.cpp | ⚠️ Pending | features.rs |
-| PARAM_SMART_STREAM_MODE_ENABLED | Common.cpp | ⚠️ Pending | features.rs |
+| PARAM_PP_INDEX | PostProcessing.cpp | ✅ Complete (bd-l35g) | features.rs |
+| PARAM_SMART_STREAM_MODE | Common.cpp | ✅ Complete (bd-l35g) | features.rs |
+| PARAM_SMART_STREAM_MODE_ENABLED | Common.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_FRAME_BUFFER_SIZE | acquisition.rs | ✅ Existing | acquisition.rs |
 | PARAM_CIRC_BUFFER | acquisition.rs | ✅ Existing | acquisition.rs |
 
@@ -152,7 +152,9 @@ Based on SDK examples, these parameters MUST have availability checks:
 - **Total parameters requiring checks:** 26
 - **Phase 0 (bd-ng5p thermal):** 2 ✅ (8%)
 - **Phase 1 (bd-sk6z core):** 9 ✅ (35%)
-- **Pending updates:** 15 (58%)
+- **Phase 2 (bd-l35g advanced):** 5 ✅ (19%)
+- **Complete:** 16 of 26 (62%)
+- **Pending updates (bd-smn3):** 10 (38%)
 
 ---
 
@@ -196,7 +198,7 @@ Based on SDK examples, these parameters MUST have availability checks:
 | Callback types | pvcam-sys/src/lib.rs | ✅ PvcamCallback type defined |
 | Connection lifecycle | components/connection.rs | ✅ Isolated |
 | Frame acquisition | components/acquisition.rs | ✅ Matches SDK pattern |
-| Parameter access | components/features.rs | ⚠️ Availability checks needed |
+| Parameter access | components/features.rs | 🔄 Availability checks 62% complete |
 | Driver API | lib.rs | ✅ Parameter<T> reactive system |
 
 ---
@@ -325,4 +327,5 @@ ssh maitai@100.117.5.12 'source /etc/profile.d/pvcam.sh && \
 | Date | Author | Description |
 |------|--------|-------------|
 | 2025-01-10 | bd-ng5p | Initial gap analysis and helper function implementation |
-| 2025-01-10 | bd-sk6z | Phase 1 implementation progress |
+| 2025-01-10 | bd-sk6z | Phase 1: Core sensor parameters (9 params) complete |
+| 2025-01-10 | bd-l35g | Phase 2: Advanced feature parameters (5 params) complete |
