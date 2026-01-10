@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 // Re-export Frame type for convenience
 #[cfg(feature = "pvcam_hardware")]
-pub use daq_driver_pvcam::Frame;
+pub use daq_core::capabilities::Frame;
 
 /// Test statistics collected during continuous acquisition validation.
 #[derive(Debug, Clone)]
