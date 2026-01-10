@@ -193,15 +193,23 @@ pub struct FrameValidator {
     expected_width: u32,
     expected_height: u32,
     expected_pixel_count: usize,
+    bytes_per_pixel: usize,
 }
 
 impl FrameValidator {
-    /// Create validator with expected dimensions
+    /// Create validator with expected dimensions (assumes 16-bit pixels)
     pub fn new(width: u32, height: u32) -> Self {
+        Self::with_bit_depth(width, height, 16)
+    }
+
+    /// Create validator with specific bit depth
+    pub fn with_bit_depth(width: u32, height: u32, bit_depth: u32) -> Self {
+        let bytes_per_pixel = ((bit_depth + 7) / 8) as usize; // Round up to bytes
         Self {
             expected_width: width,
             expected_height: height,
             expected_pixel_count: (width * height) as usize,
+            bytes_per_pixel,
         }
     }
 
@@ -213,6 +221,11 @@ impl FrameValidator {
     /// Create validator for full Prime BSI sensor
     pub fn for_prime_bsi() -> Self {
         Self::new(2048, 2048)
+    }
+
+    /// Expected data size in bytes
+    pub fn expected_bytes(&self) -> usize {
+        self.expected_pixel_count * self.bytes_per_pixel
     }
 
     /// Validate a frame's dimensions and data
@@ -232,10 +245,11 @@ impl FrameValidator {
             ));
         }
 
-        if frame.data.len() != self.expected_pixel_count {
+        let expected_bytes = self.expected_bytes();
+        if frame.data.len() != expected_bytes {
             return Err(format!(
-                "Pixel count mismatch: expected {}, got {}",
-                self.expected_pixel_count, frame.data.len()
+                "Data size mismatch: expected {} bytes ({} pixels × {} bytes/pixel), got {} bytes",
+                expected_bytes, self.expected_pixel_count, self.bytes_per_pixel, frame.data.len()
             ));
         }
 
