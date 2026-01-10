@@ -83,27 +83,24 @@ use tokio::task::JoinHandle;
 /// - Use pl_exp_get_latest_frame to get most recent frame
 /// - NO unlock calls needed
 ///
-/// However, Prime BSI returns error 185 (Invalid Configuration) with CIRC_OVERWRITE,
-/// even with TIMED_MODE and callbacks. This may be a camera/firmware limitation.
-/// Fallback to CIRC_NO_OVERWRITE with auto-restart on stall.
+/// However, Prime BSI returns error 185 (Invalid Configuration) with CIRC_OVERWRITE
+/// when using bare TIMED_MODE (0). The fix is to use EXT_TRIG_INTERNAL (1792) instead,
+/// which is what Prime BSI expects for sCMOS cameras. See pvcam_audit_results.md.
 ///
 /// Reference: https://github.com/jbopp/dynexp/blob/main/src/DynExpManager/HardwareAdapters/HardwareAdapterPVCam.cpp
 #[cfg(feature = "pvcam_hardware")]
-const USE_CIRC_OVERWRITE_MODE: bool = false;
+const USE_CIRC_OVERWRITE_MODE: bool = true;
 
-/// bd-3gnv: Use sequence mode for streaming (proven to work on Prime BSI).
+/// bd-3gnv: Use sequence mode for streaming (fallback if circular buffer fails).
 ///
-/// Sequence mode (`pl_exp_setup_seq` + `pl_exp_start_seq`) successfully captures frames
-/// on Prime BSI when circular buffer modes fail:
-/// - CIRC_OVERWRITE: Error 185 (Invalid Configuration)
-/// - CIRC_NO_OVERWRITE: Stalls after ~85 frames at 20ms exposure
+/// Sequence mode (`pl_exp_setup_seq` + `pl_exp_start_seq`) works as a fallback
+/// when circular buffer modes fail. However, with the bd-eqgb fix (EXT_TRIG_INTERNAL
+/// instead of TIMED_MODE), CIRC_OVERWRITE should now work on Prime BSI.
 ///
-/// Sequence mode works by acquiring batches of frames, then restarting for continuous
-/// streaming. This avoids the circular buffer issues entirely.
-///
-/// Verified working: 256x256 frames, TIMED_MODE, up to 500ms exposure.
+/// Set to false to test circular buffer with the exp_mode fix.
+/// Set to true to use sequence mode as a fallback.
 #[cfg(feature = "pvcam_hardware")]
-const USE_SEQUENCE_MODE: bool = true;
+const USE_SEQUENCE_MODE: bool = false;
 
 /// Batch size for sequence mode streaming (bd-3gnv).
 ///
@@ -1168,9 +1165,10 @@ impl PvcamAcquisition {
             } else {
                 CIRC_NO_OVERWRITE
             };
-            // bd-3gnv: Always use TIMED_MODE (like DynExp). EXT_TRIG_INTERNAL caused error 185.
-            // DynExp reference: uses TIMED_MODE with CIRC_OVERWRITE successfully.
-            let exp_mode = TIMED_MODE;
+            // bd-eqgb: Use EXT_TRIG_INTERNAL for Prime BSI (sCMOS camera).
+            // Prime BSI does NOT support bare TIMED_MODE - it requires EXT_TRIG_INTERNAL (1792).
+            // See pvcam_audit_results.md for SDK analysis confirming this is the root cause.
+            let exp_mode = EXT_TRIG_INTERNAL;
 
             unsafe {
                 // SAFETY: h is a valid camera handle; region points to initialized rgn_type; frame_bytes is writable.
