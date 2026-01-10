@@ -487,7 +487,11 @@ rs_bool pl_exp_unlock_oldest_frame(int16 hcam);
 | `CIRC_NO_OVERWRITE` | Frames wait until retrieved; acquisition pauses when full |
 | `CIRC_OVERWRITE` | Oldest frames overwritten when buffer full (may not be supported on all cameras) |
 
-**Note:** Prime BSI does not support `CIRC_OVERWRITE` mode.
+**Prime BSI Limitations:**
+- `CIRC_OVERWRITE` fails with Error 185 (Invalid Configuration) when EOF callbacks are registered
+- `CIRC_NO_OVERWRITE` may stall after ~85 frames at high frame rates due to buffer management issues
+
+**Workaround:** Use sequence mode streaming instead of circular buffer mode (see below).
 
 ### Exposure Modes
 
@@ -505,6 +509,53 @@ rs_bool pl_exp_unlock_oldest_frame(int16 hcam);
 // Send software trigger to camera
 rs_bool pl_exp_trigger(int16 hcam, uns32 *flags, uns32 value);
 ```
+
+### Sequence Mode Streaming (Prime BSI Workaround)
+
+When circular buffer modes are unreliable, sequence mode can be used for continuous streaming by repeatedly acquiring batches of frames:
+
+```c
+// Continuous streaming using sequence mode
+while (streaming) {
+    // 1. Setup sequence for batch of N frames
+    uns32 buffer_bytes;
+    pl_exp_setup_seq(hcam, BATCH_SIZE, 1, &region, TIMED_MODE, exposure_ms, &buffer_bytes);
+
+    // 2. Allocate buffer and start acquisition
+    void *buffer = malloc(buffer_bytes);
+    pl_exp_start_seq(hcam, buffer);
+
+    // 3. Poll for completion
+    int16 status;
+    uns32 bytes_arrived;
+    while (status != READOUT_COMPLETE) {
+        pl_exp_check_status(hcam, &status, &bytes_arrived);
+    }
+
+    // 4. Extract and process frames from buffer
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        void *frame_ptr = buffer + (i * frame_size);
+        process_frame(frame_ptr);
+    }
+
+    free(buffer);
+}
+```
+
+**Configuration:**
+- `BATCH_SIZE`: 10 frames provides good balance between latency (~150ms at 10ms exposure) and throughput
+- `TIMED_MODE`: Software-triggered internal exposure works reliably
+- Polling: Use `pl_exp_check_status()` with `READOUT_COMPLETE` (status == 3)
+
+**Advantages:**
+- Works reliably on Prime BSI where circular buffer modes fail
+- No callback registration conflicts
+- Predictable buffer management
+
+**Trade-offs:**
+- Slightly higher CPU overhead from batch restarts
+- First-frame latency proportional to batch size × exposure time
+- ~20-25 FPS achievable at 10ms exposure (vs theoretical ~35 FPS with optimal circular buffer)
 
 ---
 
@@ -768,17 +819,35 @@ PVCAM SDK                    rust-daq
 
 ### Key Implementation Details
 
-1. **Callback-based acquisition** using `pl_cam_register_callback_ex3` with `PL_CALLBACK_EOF`
-2. **Counter-based pending frames** to avoid losing events during processing
-3. **Frame loss detection** via `FrameNr` tracking
-4. **Dynamic buffer sizing** using `PARAM_FRAME_BUFFER_SIZE`
-5. **CIRC_NO_OVERWRITE mode** (CIRC_OVERWRITE not supported on Prime BSI)
+1. **Sequence mode streaming** (default for Prime BSI) - acquires batches of 10 frames using `pl_exp_setup_seq`/`pl_exp_start_seq`, then restarts for continuous streaming
+2. **Fallback callback-based acquisition** using `pl_cam_register_callback_ex3` with `PL_CALLBACK_EOF` (for cameras that support circular buffer)
+3. **Counter-based pending frames** to avoid losing events during processing
+4. **Frame loss detection** via `FrameNr` tracking
+5. **Dynamic buffer sizing** using `PARAM_FRAME_BUFFER_SIZE`
+
+### Streaming Architecture (Sequence Mode)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ frame_loop_sequence (blocking thread)                   │
+│                                                         │
+│  while streaming:                                       │
+│    1. pl_exp_setup_seq(BATCH_SIZE=10 frames)           │
+│    2. pl_exp_start_seq(buffer)                         │
+│    3. poll pl_exp_check_status until READOUT_COMPLETE  │
+│    4. extract frames from buffer                        │
+│    5. send to broadcast channel (frame_tx)             │
+│    6. repeat                                            │
+└─────────────────────────────────────────────────────────┘
+```
 
 ### Hardware-Specific Notes (Prime BSI)
 
 - **Sensor**: GS2020, 2048x2048 pixels
 - **SDK Version**: PVCAM 3.10.2.5
-- **Buffer Mode**: Only `CIRC_NO_OVERWRITE` supported
+- **Streaming Mode**: Sequence mode (circular buffer unreliable - Error 185 / stalls)
+- **Batch Size**: 10 frames (~150ms latency at 10ms exposure)
+- **Achievable FPS**: ~23 FPS at 10ms exposure (full 2048x2048)
 - **Required Environment**: `PVCAM_VERSION`, `PVCAM_SDK_DIR`, `LD_LIBRARY_PATH`
 
 ### Testing
