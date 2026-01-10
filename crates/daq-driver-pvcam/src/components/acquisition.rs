@@ -2275,12 +2275,23 @@ impl PvcamAcquisition {
                             let frames_lost = (current_frame_nr - expected_frame_nr) as u64;
                             lost_frames.fetch_add(frames_lost, Ordering::Relaxed);
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
-                            tracing::warn!(
-                                "Frame loss detected: expected FrameNr {}, got {} ({} frames lost)",
+                            tracing::debug!(
+                                "Frame skip detected: expected {}, got {} ({} frames skipped)",
                                 expected_frame_nr,
                                 current_frame_nr,
                                 frames_lost
                             );
+
+                            // bd-circ FIX: When using get_latest_frame, skipped frames still
+                            // occupy buffer space. Release them all to prevent buffer fill.
+                            if USE_GET_LATEST_FRAME && !USE_CIRC_OVERWRITE_MODE {
+                                for _ in 0..frames_lost {
+                                    if !ffi_safe::release_oldest_frame(hcam) {
+                                        unlock_failures += 1;
+                                        break; // Stop if unlock fails (no more frames)
+                                    }
+                                }
+                            }
                         } else if current_frame_nr == prev_frame_nr {
                             // Duplicate frame detected (bd-ha3w): same FrameNr as previous
                             // This happens when the SDK returns the same buffer before new data arrives.
