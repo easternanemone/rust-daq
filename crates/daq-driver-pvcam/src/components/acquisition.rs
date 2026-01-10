@@ -1108,6 +1108,17 @@ impl PvcamAcquisition {
             }
 
             let (x_bin, y_bin) = binning;
+            let start_span = tracing::info_span!(
+                "pvcam_start_stream",
+                roi_x = roi.x,
+                roi_y = roi.y,
+                width = roi.width,
+                height = roi.height,
+                bin_x = x_bin,
+                bin_y = y_bin,
+                exposure_ms
+            );
+            let _enter = start_span.enter();
 
             // PVCAM Best Practices: for reliable frame delivery (especially high FPS/high throughput),
             // prefer an EOF callback acquisition model over polling loops (bd-ek9n.2).
@@ -1934,6 +1945,23 @@ impl PvcamAcquisition {
         circ_size_bytes: u32,
         circ_overwrite: bool,
     ) {
+        let loop_span = tracing::debug_span!(
+            "pvcam_frame_loop",
+            circ_overwrite,
+            use_callback,
+            exposure_ms,
+            frame_bytes,
+            expected_frame_bytes,
+            width,
+            height,
+            roi_x,
+            roi_y,
+            bin_x = binning.0,
+            bin_y = binning.1,
+            metadata = use_metadata
+        );
+        let _enter = loop_span.enter();
+
         let mut status: i16 = 0;
         let mut bytes_arrived: uns32 = 0;
         let mut buffer_cnt: uns32 = 0;
