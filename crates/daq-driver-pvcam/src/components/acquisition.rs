@@ -1150,6 +1150,56 @@ impl PvcamAcquisition {
         clamped
     }
 
+    /// Get the number of ROIs supported by the camera (bd-vcbd)
+    ///
+    /// Returns the maximum number of regions of interest (ROIs) that can be
+    /// configured for acquisition. Useful for multi-region readout modes.
+    ///
+    /// # SDK Pattern (bd-vcbd)
+    /// Checks PARAM_ROI_COUNT availability before access.
+    #[cfg(feature = "pvcam_hardware")]
+    pub fn get_roi_count(conn: &PvcamConnection) -> Result<u16> {
+        if let Some(h) = conn.handle() {
+            // SDK Pattern: Check availability before access
+            let mut avail: rs_bool = 0;
+            unsafe {
+                if pl_get_param(
+                    h,
+                    PARAM_ROI_COUNT,
+                    ATTR_AVAIL as i16,
+                    &mut avail as *mut _ as *mut _,
+                ) == 0
+                    || avail == 0
+                {
+                    return Err(anyhow!("PARAM_ROI_COUNT is not available on this camera"));
+                }
+
+                let mut count: uns16 = 0;
+                // SAFETY: h is valid handle; count is writable uns16 on stack.
+                if pl_get_param(
+                    h,
+                    PARAM_ROI_COUNT,
+                    ATTR_CURRENT as i16,
+                    &mut count as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!("Failed to get ROI count: {}", get_pvcam_error()));
+                }
+                return Ok(count);
+            }
+        }
+        Err(anyhow!("Camera not connected"))
+    }
+
+    /// Get the number of ROIs supported by the camera (mock mode) (bd-vcbd)
+    ///
+    /// Mock version that returns a default value when hardware is not available.
+    #[cfg(not(feature = "pvcam_hardware"))]
+    pub fn get_roi_count(_conn: &PvcamConnection) -> Result<u16> {
+        // Mock mode default: 1 ROI (single region)
+        Ok(1)
+    }
+
     #[cfg(feature = "arrow_tap")]
     pub async fn set_arrow_tap(
         &self,
