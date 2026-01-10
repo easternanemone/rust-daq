@@ -47,7 +47,7 @@ struct FrameMetadata {
     frame_nr: i32,
     timestamp: u64,       // TimeStamp field (100ns resolution typically)
     timestamp_bof: u64,   // Beginning of frame timestamp
-    readout_time: u32,    // Readout time in microseconds
+    readout_time: i32,    // Readout time in microseconds
     retrieval_method: &'static str,
     wall_clock_ms: u128,  // Wall clock time since test start
 }
