@@ -2486,7 +2486,14 @@ impl PvcamAcquisition {
                         }
                     }
                 } else {
-                    // CIRC_OVERWRITE mode with no callback frame - exit drain loop
+                    // CIRC_OVERWRITE mode with no callback frame - consume pending and exit.
+                    // This prevents hot-spinning when callback fires but pl_exp_get_latest_frame
+                    // fails or returns null. The callback incremented pending_frames, so we must
+                    // decrement it here to keep the counter consistent with available frames.
+                    // (Codex review: P1 - Consume pending callbacks in overwrite mode)
+                    if use_callback {
+                        callback_ctx.consume_one();
+                    }
                     break;
                 };
 
