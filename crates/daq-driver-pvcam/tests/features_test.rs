@@ -685,6 +685,68 @@ mod mock_features {
         let count = PvcamAcquisition::get_roi_count(&conn).unwrap();
         assert_eq!(count, 1, "Mock ROI count default should be 1");
     }
+
+    // =========================================================================
+    // Dynamic Discovery Functions (bd-q4wz)
+    // =========================================================================
+
+    #[test]
+    fn list_available_cameras_mock() {
+        let cameras = PvcamConnection::list_available_cameras().unwrap();
+        assert!(
+            !cameras.is_empty(),
+            "Mock mode should return at least one camera"
+        );
+        assert!(
+            cameras.contains(&"MockCamera".to_string()),
+            "Mock mode should include MockCamera"
+        );
+    }
+
+    #[test]
+    fn list_exposure_modes_mock() {
+        let conn = mock_connection();
+        let modes = PvcamFeatures::list_exposure_modes(&conn).unwrap();
+        assert!(
+            !modes.is_empty(),
+            "Mock mode should return exposure modes"
+        );
+        // Check that Timed mode (value 0) is present
+        assert!(
+            modes.iter().any(|(v, _)| *v == 0),
+            "Timed mode (value 0) should be in the list"
+        );
+    }
+
+    #[test]
+    fn list_clear_modes_mock() {
+        let conn = mock_connection();
+        let modes = PvcamFeatures::list_clear_modes(&conn).unwrap();
+        assert!(
+            !modes.is_empty(),
+            "Mock mode should return clear modes"
+        );
+        // Check that PreExposure mode (value 1) is present
+        assert!(
+            modes.iter().any(|(v, _)| *v == 1),
+            "PreExposure mode (value 1) should be in the list"
+        );
+    }
+
+    #[test]
+    fn list_expose_out_modes_mock() {
+        let conn = mock_connection();
+        let modes = PvcamFeatures::list_expose_out_modes(&conn).unwrap();
+        assert!(
+            !modes.is_empty(),
+            "Mock mode should return expose out modes"
+        );
+        // Check that First Row mode (value 0) is present
+        assert!(
+            modes.iter().any(|(v, _)| *v == 0),
+            "First Row mode (value 0) should be in the list"
+        );
+    }
 }
 
 // =============================================================================
