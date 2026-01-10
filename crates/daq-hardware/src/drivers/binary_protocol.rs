@@ -52,7 +52,7 @@ pub struct CrcValue {
 /// Calculate CRC for the given data using the specified algorithm.
 #[cfg(feature = "binary_protocol")]
 pub fn calculate_crc(data: &[u8], config: &CrcConfig) -> CrcValue {
-    use crc::{Crc, CRC_16_MODBUS, CRC_16_IBM_SDLC, CRC_16_XMODEM, CRC_32_ISO_HDLC, CRC_32_ISCSI};
+    use crc::{Crc, CRC_16_IBM_SDLC, CRC_16_MODBUS, CRC_16_XMODEM, CRC_32_ISCSI, CRC_32_ISO_HDLC};
 
     let (value, size): (u64, usize) = match config.algorithm {
         CrcAlgorithm::Crc16Modbus => {
@@ -252,12 +252,15 @@ impl BinaryFrameBuilder {
                 let v = value as u64;
                 self.buffer.extend_from_slice(&v.to_le_bytes());
             }
-            BinaryFieldType::Bytes | BinaryFieldType::AsciiString | BinaryFieldType::AsciiStringZ => {
+            BinaryFieldType::Bytes
+            | BinaryFieldType::AsciiString
+            | BinaryFieldType::AsciiStringZ => {
                 // For string/bytes types, the value should be the raw string
                 let s = value_str.trim_start_matches("${").trim_end_matches('}');
                 if let Some(&param_value) = params.get(s) {
                     // If it's a parameter, convert to string representation
-                    self.buffer.extend_from_slice(param_value.to_string().as_bytes());
+                    self.buffer
+                        .extend_from_slice(param_value.to_string().as_bytes());
                 } else {
                     // Otherwise, use the literal string (minus any param syntax)
                     self.buffer.extend_from_slice(value_str.as_bytes());
@@ -439,10 +442,7 @@ impl BinaryResponseParser {
         current_offset: usize,
     ) -> Result<(ParsedValue, usize)> {
         // Determine start position
-        let start = field
-            .position
-            .or(field.start)
-            .unwrap_or(current_offset);
+        let start = field.position.or(field.start).unwrap_or(current_offset);
 
         if start >= data.len() {
             return Err(anyhow!(
@@ -775,18 +775,9 @@ mod tests {
         let data = vec![0x01, 0x03, 0x01, 0x00]; // address=1, function=3, value=256
         let result = BinaryResponseParser::parse(&data, &config).unwrap();
 
-        assert_eq!(
-            result.get("address").unwrap().as_i64().unwrap(),
-            1
-        );
-        assert_eq!(
-            result.get("function").unwrap().as_i64().unwrap(),
-            3
-        );
-        assert_eq!(
-            result.get("value").unwrap().as_i64().unwrap(),
-            256
-        );
+        assert_eq!(result.get("address").unwrap().as_i64().unwrap(), 1);
+        assert_eq!(result.get("function").unwrap().as_i64().unwrap(), 3);
+        assert_eq!(result.get("value").unwrap().as_i64().unwrap(), 256);
     }
 
     #[test]
@@ -823,10 +814,7 @@ mod tests {
         let data = vec![0x03, 0xAA, 0xBB, 0xCC]; // byte_count=3, data=[AA, BB, CC]
         let result = BinaryResponseParser::parse(&data, &config).unwrap();
 
-        assert_eq!(
-            result.get("byte_count").unwrap().as_i64().unwrap(),
-            3
-        );
+        assert_eq!(result.get("byte_count").unwrap().as_i64().unwrap(), 3);
         assert_eq!(
             result.get("data").unwrap().as_bytes(),
             vec![0xAA, 0xBB, 0xCC]

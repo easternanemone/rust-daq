@@ -48,9 +48,9 @@
 //! the `lost_frames` counter is incremented by the gap size and `discontinuity_events`
 //! is incremented. This allows downstream consumers to know when data is missing.
 
-use crate::components::connection::PvcamConnection;
 #[cfg(feature = "pvcam_hardware")]
 use crate::components::connection::get_pvcam_error;
+use crate::components::connection::PvcamConnection;
 #[cfg(feature = "pvcam_hardware")]
 use crate::components::features::PvcamFeatures;
 use anyhow::{anyhow, bail, Result};
@@ -434,7 +434,11 @@ mod ffi_safe {
     ///
     /// # Returns
     /// `Ok(())` on success, `Err(String)` with error message on failure
-    pub fn restart_acquisition(hcam: i16, circ_ptr: *mut u8, circ_size_bytes: u32) -> Result<(), String> {
+    pub fn restart_acquisition(
+        hcam: i16,
+        circ_ptr: *mut u8,
+        circ_size_bytes: u32,
+    ) -> Result<(), String> {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
         debug_assert!(!circ_ptr.is_null(), "Circular buffer pointer is null");
         debug_assert!(circ_size_bytes > 0, "Circular buffer size must be > 0");
@@ -552,7 +556,10 @@ mod ffi_safe {
     /// `true` if registration succeeded, `false` otherwise
     pub fn register_eof_callback(hcam: i16, callback_ctx_ptr: *const CallbackContext) -> bool {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
-        debug_assert!(!callback_ctx_ptr.is_null(), "Callback context pointer is null");
+        debug_assert!(
+            !callback_ctx_ptr.is_null(),
+            "Callback context pointer is null"
+        );
 
         // SAFETY: Caller guarantees hcam is valid, callback_ctx_ptr points to valid pinned context
         let result = unsafe {
@@ -1166,7 +1173,6 @@ impl PvcamAcquisition {
             let exp_mode = TIMED_MODE;
 
             unsafe {
-
                 // SAFETY: h is a valid camera handle; region points to initialized rgn_type; frame_bytes is writable.
                 if pl_exp_setup_cont(
                     h,
@@ -1181,7 +1187,10 @@ impl PvcamAcquisition {
                     // bd-3gnv: Log SDK error with full message for diagnostics
                     let err_msg = get_pvcam_error();
                     let _ = self.streaming.set(false).await;
-                    return Err(anyhow!("Failed to setup continuous acquisition: {}", err_msg));
+                    return Err(anyhow!(
+                        "Failed to setup continuous acquisition: {}",
+                        err_msg
+                    ));
                 }
             }
 
@@ -1288,7 +1297,10 @@ impl PvcamAcquisition {
                     }
                     self.active_hcam.store(-1, Ordering::Release); // -1 = no active handle
                     let _ = self.streaming.set(false).await;
-                    return Err(anyhow!("Failed to start continuous acquisition: {}", err_msg));
+                    return Err(anyhow!(
+                        "Failed to start continuous acquisition: {}",
+                        err_msg
+                    ));
                 }
             }
 
@@ -1695,8 +1707,6 @@ impl PvcamAcquisition {
         binning: (u16, u16),
         done_tx: std::sync::mpsc::Sender<()>,
     ) {
-        const CCS_HALT: i16 = 1;
-
         // Main sequence loop
         let mut total_frames: u64 = 0;
         let mut batch_num: u64 = 0;
@@ -1755,8 +1765,7 @@ impl PvcamAcquisition {
                     pl_exp_check_status(hcam, &mut status, &mut bytes_arrived);
                 }
 
-                // READOUT_COMPLETE = 3
-                if status == 3 {
+                if status == READOUT_COMPLETE {
                     // Extract frames from buffer
                     for frame_idx in 0..SEQUENCE_BATCH_SIZE {
                         let offset = frame_idx as usize * frame_bytes;
@@ -1804,22 +1813,19 @@ impl PvcamAcquisition {
                     break;
                 }
 
-                // READOUT_FAILED = 5, READOUT_NOT_ACTIVE = 0
-                if status == 5 {
+                if status == READOUT_FAILED {
                     tracing::error!("Sequence readout failed");
                     break;
                 }
-                if status == 0 && start_time.elapsed() > std::time::Duration::from_millis(100) {
+                if status == READOUT_NOT_ACTIVE
+                    && start_time.elapsed() > std::time::Duration::from_millis(100)
+                {
                     tracing::warn!("Acquisition not active after 100ms");
                     break;
                 }
 
                 if start_time.elapsed() > timeout {
-                    tracing::error!(
-                        "Sequence batch {} timed out after {:?}",
-                        batch_num,
-                        timeout
-                    );
+                    tracing::error!("Sequence batch {} timed out after {:?}", batch_num, timeout);
                     unsafe {
                         pl_exp_abort(hcam, CCS_HALT);
                     }
@@ -2043,7 +2049,10 @@ impl PvcamAcquisition {
 
                     // bd-3gnv: Detect 85-frame stall and auto-restart
                     // Signature: 10+ timeouts (1s), status is READOUT_NOT_ACTIVE (0), 80+ frames received
-                    if consecutive_timeouts >= 10 && st == 0 && frame_count.load(Ordering::Relaxed) >= 80 {
+                    if consecutive_timeouts >= 10
+                        && st == 0
+                        && frame_count.load(Ordering::Relaxed) >= 80
+                    {
                         eprintln!(
                             "[PVCAM DEBUG] Detected 85-frame stall (timeouts={}, status={}, frames={}) - attempting auto-restart",
                             consecutive_timeouts, st, frame_count.load(Ordering::Relaxed)
@@ -2076,7 +2085,8 @@ impl PvcamAcquisition {
                             Ok(_new_frame_bytes) => {
                                 // Step 4: Re-register EOF callback (setup may invalidate it)
                                 if use_callback {
-                                    let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
+                                    let callback_ctx_ptr =
+                                        &**callback_ctx as *const CallbackContext;
                                     if !ffi_safe::register_eof_callback(hcam, callback_ctx_ptr) {
                                         tracing::warn!("Failed to re-register EOF callback after restart (bd-3gnv)");
                                     }
@@ -2091,7 +2101,10 @@ impl PvcamAcquisition {
                                 continue; // Resume waiting for frames
                             }
                             Err(err_msg) => {
-                                tracing::error!("PVCAM full auto-restart failed: {} (bd-3gnv)", err_msg);
+                                tracing::error!(
+                                    "PVCAM full auto-restart failed: {} (bd-3gnv)",
+                                    err_msg
+                                );
                                 // Continue to max_consecutive_timeouts check - will eventually timeout
                             }
                         }
@@ -2325,9 +2338,9 @@ impl PvcamAcquisition {
                         copy_bytes * 3 / 4,
                         copy_bytes - 1,
                     ];
-                    let has_nonzero = sample_positions.iter().any(|&pos| {
-                        pos < pixel_data.len() && pixel_data[pos] != 0
-                    });
+                    let has_nonzero = sample_positions
+                        .iter()
+                        .any(|&pos| pos < pixel_data.len() && pixel_data[pos] != 0);
                     if !has_nonzero && copy_bytes > 1000 {
                         // Frame appears to be all zeros - likely corrupted or race condition
                         discontinuity_events.fetch_add(1, Ordering::Relaxed);
@@ -2418,9 +2431,7 @@ impl PvcamAcquisition {
                     } else {
                         // Reset timer when subscribers reconnect
                         if no_subscribers_since.is_some() {
-                            tracing::info!(
-                                "Subscriber reconnected, canceling disconnect timer"
-                            );
+                            tracing::info!("Subscriber reconnected, canceling disconnect timer");
                             no_subscribers_since = None;
                         }
                         if current_frame_nr % 30 == 1 {
@@ -2469,14 +2480,19 @@ impl PvcamAcquisition {
 
             // bd-3gnv: Critical warning if unlocks are failing - this causes buffer starvation
             if unlock_failures > 0 {
-                tracing::error!("PVCAM unlock failures: {} in drain loop (bd-3gnv)", unlock_failures);
+                tracing::error!(
+                    "PVCAM unlock failures: {} in drain loop (bd-3gnv)",
+                    unlock_failures
+                );
             }
 
             // bd-3gnv: Auto-restart acquisition if stall detected (workaround for 85-frame limit)
             // The Prime BSI camera stops producing frames after exactly 85 frames regardless of
             // buffer size, exposure time, or unlock behavior. Restarting acquisition works around this.
             if stall_detected {
-                tracing::info!("PVCAM auto-restart: stopping acquisition to recover from stall (bd-3gnv)");
+                tracing::info!(
+                    "PVCAM auto-restart: stopping acquisition to recover from stall (bd-3gnv)"
+                );
 
                 // Step 1: Stop acquisition
                 ffi_safe::stop_acquisition(hcam, CCS_HALT);
@@ -2487,8 +2503,10 @@ impl PvcamAcquisition {
                 // Step 3: Restart acquisition with same buffer
                 match ffi_safe::restart_acquisition(hcam, circ_ptr, circ_size_bytes) {
                     Ok(()) => {
-                        tracing::info!("PVCAM auto-restart succeeded after {} frames (bd-3gnv)",
-                            frame_count.load(Ordering::Relaxed));
+                        tracing::info!(
+                            "PVCAM auto-restart succeeded after {} frames (bd-3gnv)",
+                            frame_count.load(Ordering::Relaxed)
+                        );
 
                         // Step 4: Reset callback context (clear pending frames)
                         callback_ctx.pending_frames.store(0, Ordering::Release);
@@ -2556,7 +2574,9 @@ impl PvcamAcquisition {
         // bd-3gnv: Debug why we exited the outer loop
         eprintln!(
             "[PVCAM DEBUG] Frame loop exited: iter={}, streaming={}, shutdown={}",
-            loop_iteration, streaming.get(), shutdown.load(Ordering::Acquire)
+            loop_iteration,
+            streaming.get(),
+            shutdown.load(Ordering::Acquire)
         );
 
         // Gemini SDK review: Release md_frame struct if it was allocated
