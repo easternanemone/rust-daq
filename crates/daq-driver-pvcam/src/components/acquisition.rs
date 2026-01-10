@@ -1174,7 +1174,7 @@ impl PvcamAcquisition {
                     if pl_get_param(
                         h,
                         PARAM_CIRC_BUFFER,
-                        ATTR_AVAIL as uns16,
+                        ATTR_AVAIL as i16,
                         &mut circ_avail as *mut _ as *mut std::ffi::c_void,
                     ) == 0
                     {
@@ -1193,13 +1193,13 @@ impl PvcamAcquisition {
                         if pl_get_param(
                             h,
                             PARAM_CIRC_BUFFER,
-                            ATTR_MIN as uns16,
+                            ATTR_MIN as i16,
                             &mut circ_min as *mut _ as *mut std::ffi::c_void,
                         ) == 0
                             || pl_get_param(
                                 h,
                                 PARAM_CIRC_BUFFER,
-                                ATTR_MAX as uns16,
+                                ATTR_MAX as i16,
                                 &mut circ_max as *mut _ as *mut std::ffi::c_void,
                             ) == 0
                         {
@@ -1275,7 +1275,7 @@ impl PvcamAcquisition {
                 if pl_get_param(
                     h,
                     PARAM_CIRC_BUFFER,
-                    ATTR_CURRENT as uns16,
+                    ATTR_CURRENT as i16,
                     &mut circ_current as *mut _ as *mut std::ffi::c_void,
                 ) == 0
                 {
