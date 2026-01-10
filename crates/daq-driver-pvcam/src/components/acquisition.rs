@@ -136,7 +136,6 @@ pub struct CallbackContext {
     // === SDK Pattern Fields (bd-ffi-sdk-match) ===
     // These fields enable calling pl_exp_get_latest_frame INSIDE the callback,
     // matching the SDK examples (LiveImage.cpp, FastStreamingToDisk.cpp).
-
     /// Camera handle for callback to call pl_exp_get_latest_frame
     pub hcam: AtomicI16,
     /// Frame pointer retrieved in callback (SDK pattern: ctx->eofFrame)
@@ -189,19 +188,24 @@ impl CallbackContext {
     pub fn wait_for_frames(&self, timeout_ms: u64) -> u32 {
         // Check if shutdown requested
         if self.shutdown.load(Ordering::Acquire) {
+            tracing::trace!("wait_for_frames: shutdown requested, returning 0");
             return 0;
         }
 
         // Check if frames already pending (fast path)
         let pending = self.pending_frames.load(Ordering::Acquire);
         if pending > 0 {
+            tracing::trace!(pending, "wait_for_frames: frames already pending (fast path)");
             return pending;
         }
 
         // Wait on condvar with timeout
         let guard = match self.mutex.lock() {
             Ok(g) => g,
-            Err(_) => return 0, // Poisoned mutex
+            Err(_) => {
+                tracing::trace!("wait_for_frames: mutex poisoned, returning 0");
+                return 0; // Poisoned mutex
+            }
         };
 
         let timeout_duration = Duration::from_millis(timeout_ms);
@@ -215,11 +219,18 @@ impl CallbackContext {
             });
 
         match result {
-            Ok((mut guard, _)) => {
+            Ok((mut guard, timeout_result)) => {
                 *guard = false; // Reset notified flag
-                self.pending_frames.load(Ordering::Acquire)
+                let pending = self.pending_frames.load(Ordering::Acquire);
+                if timeout_result.timed_out() && pending == 0 {
+                    tracing::trace!(timeout_ms, "wait_for_frames: timed out with no frames");
+                }
+                pending
             }
-            Err(_) => 0, // Poisoned mutex
+            Err(_) => {
+                tracing::trace!("wait_for_frames: condvar wait returned poisoned mutex");
+                0 // Poisoned mutex
+            }
         }
     }
 
@@ -361,9 +372,13 @@ pub unsafe extern "system" fn pvcam_eof_callback(
     let ctx = &*(p_context as *const CallbackContext);
 
     // SDK Pattern Step 1: Store FRAME_INFO (ctx->eofFrameInfo = *pFrameInfo)
-    if !p_frame_info.is_null() {
-        ctx.store_frame_info(*p_frame_info);
-    }
+    let frame_nr = if !p_frame_info.is_null() {
+        let info = *p_frame_info;
+        ctx.store_frame_info(info);
+        info.FrameNr
+    } else {
+        -1
+    };
 
     // SDK Pattern Step 2: Get frame pointer INSIDE callback
     // This is the critical difference from the old implementation!
@@ -372,20 +387,26 @@ pub unsafe extern "system" fn pvcam_eof_callback(
     let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
     let result = pl_exp_get_latest_frame(hcam, &mut frame_ptr);
 
+    // SDK Pattern Step 3: Store frame pointer for main thread
+    // Trace level logging for callback diagnostics (bd-ffi-sdk-match)
     if result != 0 && !frame_ptr.is_null() {
-        // SDK Pattern Step 3: Store frame pointer for main thread
         ctx.store_frame_ptr(frame_ptr);
+        tracing::trace!(
+            frame_nr,
+            frame_ptr = ?frame_ptr,
+            "EOF callback: frame retrieved successfully"
+        );
     } else {
         // Frame retrieval failed - store null to signal error to main thread
         ctx.store_frame_ptr(std::ptr::null_mut());
+        tracing::trace!(
+            frame_nr,
+            result,
+            "EOF callback: pl_exp_get_latest_frame failed or returned null"
+        );
     }
 
     // SDK Pattern Step 4: Signal main thread (ctx->eofEvent.cond.notify_all())
-    let frame_nr = if !p_frame_info.is_null() {
-        (*p_frame_info).FrameNr
-    } else {
-        -1
-    };
     ctx.signal_frame_ready(frame_nr);
 }
 
@@ -2491,6 +2512,11 @@ impl PvcamAcquisition {
                     // fails or returns null. The callback incremented pending_frames, so we must
                     // decrement it here to keep the counter consistent with available frames.
                     // (Codex review: P1 - Consume pending callbacks in overwrite mode)
+                    tracing::trace!(
+                        pending,
+                        buffer_cnt,
+                        "Drain loop: callback frame_ptr is null in CIRC_OVERWRITE mode, exiting"
+                    );
                     if use_callback {
                         callback_ctx.consume_one();
                     }
