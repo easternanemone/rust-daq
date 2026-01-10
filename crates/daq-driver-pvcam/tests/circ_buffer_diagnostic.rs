@@ -44,10 +44,12 @@ const PARAM_EXPOSE_OUT_MODE: u32 = 151126585;  // calculated: should be near PAR
 const PARAM_SER_SIZE: u32 = 100794426;         // from bindings.rs
 const PARAM_PAR_SIZE: u32 = 100794425;         // from bindings.rs
 // BuildSpeedTable parameters - SDK sets these to defaults before acquisition
-const PARAM_READOUT_PORT: u32 = 117506317;     // from bindings.rs
-const PARAM_SPDTAB_INDEX: u32 = 100663574;     // from bindings.rs
-const PARAM_GAIN_INDEX: u32 = 100663575;       // from bindings.rs
-const PARAM_BIT_DEPTH: u32 = 100663579;        // from bindings.rs
+const PARAM_READOUT_PORT: u32 = 151126263;     // Verified on maitai
+const PARAM_SPDTAB_INDEX: u32 = 16908801;      // Verified on maitai
+const PARAM_GAIN_INDEX: u32 = 16908800;        // Verified on maitai
+const PARAM_BIT_DEPTH: u32 = 16908799;         // Verified on maitai
+// PARAM_FRAME_BUFFER_SIZE - available AFTER setup_cont, gives min/max/recommended buffer sizes
+const PARAM_FRAME_BUFFER_SIZE: u32 = 184746284; // ((3<<16) + (11<<24) + 300) = 184746284
 
 // Attribute constants for pl_get_param
 const ATTR_AVAIL: i16 = 8;
