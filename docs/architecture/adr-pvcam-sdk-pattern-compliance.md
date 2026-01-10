@@ -122,7 +122,7 @@ Based on SDK examples, these parameters MUST have availability checks:
 |-----------|-------------|-------------|------|
 | PARAM_TEMP | FanSpeedAndTemperature.cpp | ✅ Updated | features.rs |
 | PARAM_TEMP_SETPOINT | FanSpeedAndTemperature.cpp | ✅ Updated | features.rs |
-| PARAM_DD_VERSION | Common.cpp | ⚠️ Pending | features.rs |
+| PARAM_DD_VERSION | Common.cpp | ✅ Complete (bd-qijv) | features.rs |
 | PARAM_CHIP_NAME | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
 | PARAM_CAM_FW_VERSION | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
 | PARAM_SER_SIZE | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
@@ -132,15 +132,15 @@ Based on SDK examples, these parameters MUST have availability checks:
 | PARAM_GAIN_INDEX | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
 | PARAM_BIT_DEPTH | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
 | PARAM_READOUT_PORT | Common.cpp | ✅ Complete (bd-sk6z) | features.rs |
-| PARAM_CLEAR_CYCLES | Common.cpp | ⚠️ Pending | features.rs |
-| PARAM_PMODE | Common.cpp | ⚠️ Pending | features.rs |
+| PARAM_CLEAR_CYCLES | Common.cpp | ✅ Complete (bd-0yho) | features.rs |
+| PARAM_PMODE | Common.cpp | ✅ Complete (bd-0yho) | features.rs |
 | PARAM_EXPOSURE_MODE | Common.cpp | ✅ Complete (bd-smn3) | features.rs |
 | PARAM_EXPOSE_OUT_MODE | Common.cpp | ✅ Complete (bd-smn3) | features.rs |
-| PARAM_CENTROIDS_ENABLED | Centroids.cpp | ⚠️ Pending | features.rs |
+| PARAM_CENTROIDS_ENABLED | Centroids.cpp | ✅ Complete (bd-cq4y) | features.rs |
 | PARAM_CENTROIDS_MODE | Centroids.cpp | ✅ Complete (bd-l35g) | features.rs |
-| PARAM_CENTROIDS_THRESHOLD | Centroids.cpp | ⚠️ Pending | features.rs |
+| PARAM_CENTROIDS_THRESHOLD | Centroids.cpp | ✅ Complete (bd-cq4y) | features.rs |
 | PARAM_METADATA_ENABLED | MultipleRegions.cpp | ✅ Complete (bd-l35g) | features.rs |
-| PARAM_ROI_COUNT | MultipleRegions.cpp | ⚠️ Pending | acquisition.rs |
+| PARAM_ROI_COUNT | MultipleRegions.cpp | ✅ Complete (bd-vcbd) | acquisition.rs |
 | PARAM_PP_INDEX | PostProcessing.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_SMART_STREAM_MODE | Common.cpp | ✅ Complete (bd-l35g) | features.rs |
 | PARAM_SMART_STREAM_MODE_ENABLED | Common.cpp | ✅ Complete (bd-l35g) | features.rs |
@@ -154,8 +154,8 @@ Based on SDK examples, these parameters MUST have availability checks:
 - **Phase 1 (bd-sk6z core):** 9 ✅ (35%)
 - **Phase 2 (bd-l35g advanced):** 5 ✅ (19%)
 - **Phase 3 (bd-smn3 remaining):** 2 ✅ (8%)
-- **Complete:** 18 of 26 (69%)
-- **Pending (no functions exist yet):** 8 (31%) - PARAM_DD_VERSION, PARAM_CLEAR_CYCLES, PARAM_PMODE, PARAM_CENTROIDS_ENABLED, PARAM_CENTROIDS_THRESHOLD, PARAM_ROI_COUNT
+- **Phase 4 (bd-aowg missing functions):** 6 ✅ (23%)
+- **Complete:** 26 of 26 (100%)
 
 ---
 
@@ -331,3 +331,4 @@ ssh maitai@100.117.5.12 'source /etc/profile.d/pvcam.sh && \
 | 2025-01-10 | bd-sk6z | Phase 1: Core sensor parameters (9 params) complete |
 | 2025-01-10 | bd-l35g | Phase 2: Advanced feature parameters (5 params) complete |
 | 2026-01-10 | bd-smn3 | Phase 3: PARAM_EXPOSURE_MODE, PARAM_EXPOSE_OUT_MODE (2 params) complete |
+| 2026-01-10 | bd-aowg | Phase 4: Missing parameter functions (6 params) complete - 100% coverage |

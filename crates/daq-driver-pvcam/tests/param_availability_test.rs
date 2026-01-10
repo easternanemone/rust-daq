@@ -557,3 +557,128 @@ fn test_advanced_feature_availability() {
     close_camera(hcam);
     println!("\n[INFO] Advanced feature availability logged for camera profile");
 }
+
+/// Test newly implemented parameters (bd-aowg epic)
+///
+/// Verifies the availability and read success of parameters implemented
+/// in the PVCAM SDK Pattern Compliance epic:
+/// - PARAM_DD_VERSION (bd-qijv)
+/// - PARAM_CLEAR_CYCLES (bd-0yho)
+/// - PARAM_PMODE (bd-0yho)
+/// - PARAM_CENTROIDS_THRESHOLD (bd-cq4y)
+/// - PARAM_ROI_COUNT (bd-vcbd)
+#[test]
+fn test_new_parameter_functions_availability() {
+    Lazy::force(&TRACING);
+
+    println!("\n=== New Parameter Functions Availability Test (bd-aowg) ===\n");
+
+    let hcam = match open_first_camera() {
+        Some(h) => h,
+        None => {
+            eprintln!("Could not open camera, skipping test");
+            return;
+        }
+    };
+
+    // --- Device Information ---
+    println!("Device Information Parameters:");
+
+    // PARAM_DD_VERSION (bd-qijv)
+    let dd_version_avail = is_param_available(hcam, PARAM_DD_VERSION);
+    print!("  PARAM_DD_VERSION available: {}", dd_version_avail);
+    if dd_version_avail {
+        if let Some(val) = try_read_u16(hcam, PARAM_DD_VERSION) {
+            let major = (val >> 8) & 0xFF;
+            let minor = val & 0xFF;
+            println!(" = {}.{}", major, minor);
+        } else {
+            println!(" (read failed)");
+        }
+    } else {
+        println!();
+    }
+
+    // --- Clearing/Timing Parameters ---
+    println!("\nClearing/Timing Parameters:");
+
+    // PARAM_CLEAR_CYCLES (bd-0yho)
+    let clear_cycles_avail = is_param_available(hcam, PARAM_CLEAR_CYCLES);
+    print!("  PARAM_CLEAR_CYCLES available: {}", clear_cycles_avail);
+    if clear_cycles_avail {
+        if let Some(val) = try_read_u16(hcam, PARAM_CLEAR_CYCLES) {
+            println!(" = {} cycles", val);
+        } else {
+            println!(" (read failed)");
+        }
+    } else {
+        println!();
+    }
+
+    // PARAM_PMODE (bd-0yho)
+    let pmode_avail = is_param_available(hcam, PARAM_PMODE);
+    print!("  PARAM_PMODE available: {}", pmode_avail);
+    if pmode_avail {
+        if let Some(val) = try_read_i32(hcam, PARAM_PMODE) {
+            let mode_str = match val {
+                0 => "PMODE_NORMAL",
+                1 => "PMODE_FT",
+                2 => "PMODE_MPP",
+                3 => "PMODE_FT_MPP",
+                _ => "Unknown",
+            };
+            println!(" = {} ({})", val, mode_str);
+        } else {
+            println!(" (read failed)");
+        }
+    } else {
+        println!();
+    }
+
+    // --- Centroids Parameters ---
+    println!("\nCentroids Parameters:");
+
+    // PARAM_CENTROIDS_THRESHOLD (bd-cq4y) - with availability check
+    let centroids_threshold_avail = is_param_available(hcam, PARAM_CENTROIDS_THRESHOLD);
+    print!(
+        "  PARAM_CENTROIDS_THRESHOLD available: {}",
+        centroids_threshold_avail
+    );
+    if centroids_threshold_avail {
+        let mut threshold: u32 = 0;
+        unsafe {
+            if pl_get_param(
+                hcam,
+                PARAM_CENTROIDS_THRESHOLD,
+                ATTR_CURRENT as i16,
+                &mut threshold as *mut _ as *mut std::ffi::c_void,
+            ) != 0
+            {
+                println!(" = {}", threshold);
+            } else {
+                println!(" (read failed)");
+            }
+        }
+    } else {
+        println!();
+    }
+
+    // --- ROI Parameters ---
+    println!("\nROI Parameters:");
+
+    // PARAM_ROI_COUNT (bd-vcbd)
+    let roi_count_avail = is_param_available(hcam, PARAM_ROI_COUNT);
+    print!("  PARAM_ROI_COUNT available: {}", roi_count_avail);
+    if roi_count_avail {
+        if let Some(val) = try_read_u16(hcam, PARAM_ROI_COUNT) {
+            println!(" = {} regions", val);
+        } else {
+            println!(" (read failed)");
+        }
+    } else {
+        println!();
+    }
+
+    close_camera(hcam);
+    println!("\n[INFO] New parameter functions availability test complete (bd-aowg)");
+}

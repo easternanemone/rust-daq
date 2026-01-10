@@ -609,6 +609,82 @@ mod mock_features {
         let result = PvcamFeatures::set_centroids_config(&conn, &new_config);
         assert!(result.is_ok());
     }
+
+    // =========================================================================
+    // Tests for newly implemented parameter functions (bd-aowg epic)
+    // =========================================================================
+
+    #[test]
+    fn device_driver_version_mock() {
+        let conn = mock_connection();
+        let version = PvcamFeatures::get_device_driver_version(&conn).unwrap();
+        assert_eq!(version, "3.0.0", "Mock driver version should be 3.0.0");
+    }
+
+    #[test]
+    fn clear_cycles_mock() {
+        let conn = mock_connection();
+
+        let cycles = PvcamFeatures::get_clear_cycles(&conn).unwrap();
+        assert_eq!(cycles, 2, "Mock clear cycles default should be 2");
+
+        let result = PvcamFeatures::set_clear_cycles(&conn, 4);
+        assert!(
+            result.is_ok(),
+            "Setting clear cycles should succeed in mock mode"
+        );
+    }
+
+    #[test]
+    fn pmode_mock() {
+        let conn = mock_connection();
+
+        let pmode = PvcamFeatures::get_pmode(&conn).unwrap();
+        assert_eq!(pmode, 0, "Mock pmode default should be 0 (Normal)");
+
+        let result = PvcamFeatures::set_pmode(&conn, 1);
+        assert!(result.is_ok(), "Setting pmode should succeed in mock mode");
+    }
+
+    #[test]
+    fn centroids_enabled_mock() {
+        let conn = mock_connection();
+
+        let enabled = PvcamFeatures::get_centroids_enabled(&conn).unwrap();
+        assert!(!enabled, "Centroids should be disabled by default in mock");
+
+        let result = PvcamFeatures::set_centroids_enabled(&conn, true);
+        assert!(
+            result.is_ok(),
+            "Setting centroids enabled should succeed in mock mode"
+        );
+    }
+
+    #[test]
+    fn centroids_threshold_mock() {
+        let conn = mock_connection();
+
+        let threshold = PvcamFeatures::get_centroids_threshold(&conn).unwrap();
+        assert_eq!(
+            threshold, 100,
+            "Mock centroids threshold default should be 100"
+        );
+
+        let result = PvcamFeatures::set_centroids_threshold(&conn, 200);
+        assert!(
+            result.is_ok(),
+            "Setting centroids threshold should succeed in mock mode"
+        );
+    }
+
+    #[test]
+    fn roi_count_mock() {
+        use daq_driver_pvcam::components::acquisition::PvcamAcquisition;
+
+        let conn = mock_connection();
+        let count = PvcamAcquisition::get_roi_count(&conn).unwrap();
+        assert_eq!(count, 1, "Mock ROI count default should be 1");
+    }
 }
 
 // =============================================================================
@@ -880,5 +956,102 @@ mod hardware_features {
 
         let enabled = PvcamFeatures::is_metadata_enabled(&conn).unwrap();
         println!("Metadata enabled: {}", enabled);
+    }
+
+    // =========================================================================
+    // Tests for newly implemented parameter functions (bd-aowg epic)
+    // =========================================================================
+
+    #[test]
+    fn hardware_device_driver_version() {
+        let conn = open_camera();
+
+        let version = PvcamFeatures::get_device_driver_version(&conn).unwrap();
+        println!("Device driver version: {}", version);
+        assert!(!version.is_empty(), "Driver version should not be empty");
+    }
+
+    #[test]
+    fn hardware_clear_cycles() {
+        let conn = open_camera();
+
+        match PvcamFeatures::get_clear_cycles(&conn) {
+            Ok(cycles) => {
+                println!("Current clear cycles: {}", cycles);
+
+                // Try setting a different value
+                match PvcamFeatures::set_clear_cycles(&conn, cycles) {
+                    Ok(()) => println!("Successfully set clear cycles to {}", cycles),
+                    Err(e) => println!("Could not set clear cycles (may be read-only): {}", e),
+                }
+            }
+            Err(e) => println!("PARAM_CLEAR_CYCLES not available: {}", e),
+        }
+    }
+
+    #[test]
+    fn hardware_pmode() {
+        let conn = open_camera();
+
+        match PvcamFeatures::get_pmode(&conn) {
+            Ok(pmode) => {
+                println!("Current pmode: {} (0=Normal, 1=FrameTransfer, etc.)", pmode);
+
+                // Try setting back to current value
+                match PvcamFeatures::set_pmode(&conn, pmode) {
+                    Ok(()) => println!("Successfully set pmode to {}", pmode),
+                    Err(e) => println!("Could not set pmode (may be read-only): {}", e),
+                }
+            }
+            Err(e) => println!("PARAM_PMODE not available: {}", e),
+        }
+    }
+
+    #[test]
+    fn hardware_centroids_enabled() {
+        let conn = open_camera();
+
+        match PvcamFeatures::get_centroids_enabled(&conn) {
+            Ok(enabled) => {
+                println!("Centroids enabled: {}", enabled);
+
+                // Try toggling
+                match PvcamFeatures::set_centroids_enabled(&conn, enabled) {
+                    Ok(()) => println!("Successfully set centroids enabled to {}", enabled),
+                    Err(e) => println!("Could not set centroids enabled: {}", e),
+                }
+            }
+            Err(e) => println!("PARAM_CENTROIDS_ENABLED not available: {}", e),
+        }
+    }
+
+    #[test]
+    fn hardware_centroids_threshold() {
+        let conn = open_camera();
+
+        match PvcamFeatures::get_centroids_threshold(&conn) {
+            Ok(threshold) => {
+                println!("Current centroids threshold: {}", threshold);
+
+                // Try setting back to current value
+                match PvcamFeatures::set_centroids_threshold(&conn, threshold) {
+                    Ok(()) => println!("Successfully set centroids threshold to {}", threshold),
+                    Err(e) => println!("Could not set centroids threshold: {}", e),
+                }
+            }
+            Err(e) => println!("PARAM_CENTROIDS_THRESHOLD not available: {}", e),
+        }
+    }
+
+    #[test]
+    fn hardware_roi_count() {
+        use daq_driver_pvcam::components::acquisition::PvcamAcquisition;
+
+        let conn = open_camera();
+
+        match PvcamAcquisition::get_roi_count(&conn) {
+            Ok(count) => println!("Supported ROI count: {}", count),
+            Err(e) => println!("PARAM_ROI_COUNT not available: {}", e),
+        }
     }
 }

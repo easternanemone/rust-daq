@@ -943,6 +943,18 @@ impl PvcamFeatures {
         Ok("MockSensor".to_string())
     }
 
+    /// Get device driver version string (bd-qijv)
+    ///
+    /// # SDK Pattern (bd-qijv)
+    /// Checks PARAM_DD_VERSION availability before access.
+    pub fn get_device_driver_version(_conn: &PvcamConnection) -> Result<String> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            return Self::get_device_driver_version_impl(h);
+        }
+        Ok("3.0.0".to_string())
+    }
+
     /// Get current bit depth (bd-565x)
     pub fn get_bit_depth(_conn: &PvcamConnection) -> Result<u16> {
         #[cfg(feature = "pvcam_hardware")]
@@ -1476,6 +1488,119 @@ impl PvcamFeatures {
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.clear_mode = _mode.to_pvcam();
+        }
+        Ok(())
+    }
+
+    /// Get the number of sensor clearing cycles (bd-0yho)
+    ///
+    /// # SDK Pattern (bd-0yho)
+    /// Checks PARAM_CLEAR_CYCLES availability before access.
+    pub fn get_clear_cycles(_conn: &PvcamConnection) -> Result<u16> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CLEAR_CYCLES) {
+                return Err(anyhow!(
+                    "PARAM_CLEAR_CYCLES is not available on this camera"
+                ));
+            }
+            let mut value: uns16 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable uns16 on stack.
+                if pl_get_param(
+                    h,
+                    PARAM_CLEAR_CYCLES,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!("Failed to get clear cycles: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(value);
+        }
+        // Mock mode default: 2 clear cycles
+        Ok(2)
+    }
+
+    /// Set the number of sensor clearing cycles (bd-0yho)
+    ///
+    /// # SDK Pattern (bd-0yho)
+    /// Checks PARAM_CLEAR_CYCLES availability before access.
+    pub fn set_clear_cycles(_conn: &PvcamConnection, _cycles: u16) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CLEAR_CYCLES) {
+                return Err(anyhow!(
+                    "PARAM_CLEAR_CYCLES is not available on this camera"
+                ));
+            }
+            let value: uns16 = _cycles;
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_CLEAR_CYCLES, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set clear cycles: {}", get_pvcam_error()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get parallel clocking mode (bd-0yho)
+    ///
+    /// Returns the raw PVCAM PMODE value. Common values:
+    /// - 0: PMODE_NORMAL - Normal parallel shift
+    /// - 1: PMODE_FT - Frame transfer mode
+    /// - 2: PMODE_MPP - Multi-pinned phase mode
+    /// - 3: PMODE_FT_MPP - Frame transfer with MPP
+    ///
+    /// # SDK Pattern (bd-0yho)
+    /// Checks PARAM_PMODE availability before access.
+    pub fn get_pmode(_conn: &PvcamConnection) -> Result<i32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PMODE) {
+                return Err(anyhow!("PARAM_PMODE is not available on this camera"));
+            }
+            let mut value: i32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable i32 on stack.
+                if pl_get_param(h, PARAM_PMODE, ATTR_CURRENT, &mut value as *mut _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to get pmode: {}", get_pvcam_error()));
+                }
+            }
+            return Ok(value);
+        }
+        // Mock mode default: PMODE_NORMAL (0)
+        Ok(0)
+    }
+
+    /// Set parallel clocking mode (bd-0yho)
+    ///
+    /// Accepts raw PVCAM PMODE value. Common values:
+    /// - 0: PMODE_NORMAL - Normal parallel shift
+    /// - 1: PMODE_FT - Frame transfer mode
+    /// - 2: PMODE_MPP - Multi-pinned phase mode
+    /// - 3: PMODE_FT_MPP - Frame transfer with MPP
+    ///
+    /// # SDK Pattern (bd-0yho)
+    /// Checks PARAM_PMODE availability before access.
+    pub fn set_pmode(_conn: &PvcamConnection, _mode: i32) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PMODE) {
+                return Err(anyhow!("PARAM_PMODE is not available on this camera"));
+            }
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_PMODE, &_mode as *const _ as *mut _) == 0 {
+                    return Err(anyhow!("Failed to set pmode: {}", get_pvcam_error()));
+                }
+            }
         }
         Ok(())
     }
@@ -2514,6 +2639,134 @@ impl PvcamFeatures {
         Ok(())
     }
 
+    /// Check if centroids detection is enabled (bd-cq4y)
+    ///
+    /// # SDK Pattern (bd-cq4y)
+    /// Checks PARAM_CENTROIDS_ENABLED availability before access.
+    pub fn get_centroids_enabled(_conn: &PvcamConnection) -> Result<bool> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_ENABLED is not available on this camera"
+                ));
+            }
+            let mut value: rs_bool = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable rs_bool on stack.
+                if pl_get_param(
+                    h,
+                    PARAM_CENTROIDS_ENABLED,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get centroids enabled: {}",
+                        get_pvcam_error()
+                    ));
+                }
+            }
+            return Ok(value != 0);
+        }
+        // Mock mode default: disabled
+        Ok(false)
+    }
+
+    /// Enable or disable centroids detection (bd-cq4y)
+    ///
+    /// # SDK Pattern (bd-cq4y)
+    /// Checks PARAM_CENTROIDS_ENABLED availability before access.
+    pub fn set_centroids_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_ENABLED is not available on this camera"
+                ));
+            }
+            let value: rs_bool = if _enabled { 1 } else { 0 };
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_CENTROIDS_ENABLED, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!(
+                        "Failed to set centroids enabled: {}",
+                        get_pvcam_error()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get centroids detection threshold (bd-cq4y)
+    ///
+    /// The threshold is the minimum pixel intensity for centroid detection.
+    ///
+    /// # SDK Pattern (bd-cq4y)
+    /// Checks PARAM_CENTROIDS_THRESHOLD availability before access.
+    pub fn get_centroids_threshold(_conn: &PvcamConnection) -> Result<u32> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_THRESHOLD) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_THRESHOLD is not available on this camera"
+                ));
+            }
+            let mut value: uns32 = 0;
+            unsafe {
+                // SAFETY: h is valid handle; value is writable uns32 on stack.
+                if pl_get_param(
+                    h,
+                    PARAM_CENTROIDS_THRESHOLD,
+                    ATTR_CURRENT,
+                    &mut value as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(anyhow!(
+                        "Failed to get centroids threshold: {}",
+                        get_pvcam_error()
+                    ));
+                }
+            }
+            return Ok(value);
+        }
+        // Mock mode default: 100
+        Ok(100)
+    }
+
+    /// Set centroids detection threshold (bd-cq4y)
+    ///
+    /// The threshold is the minimum pixel intensity for centroid detection.
+    ///
+    /// # SDK Pattern (bd-cq4y)
+    /// Checks PARAM_CENTROIDS_THRESHOLD availability before access.
+    pub fn set_centroids_threshold(_conn: &PvcamConnection, _threshold: u32) -> Result<()> {
+        #[cfg(feature = "pvcam_hardware")]
+        if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_THRESHOLD) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_THRESHOLD is not available on this camera"
+                ));
+            }
+            let value: uns32 = _threshold;
+            unsafe {
+                // SAFETY: h is valid handle; value pointer valid for duration of call.
+                if pl_set_param(h, PARAM_CENTROIDS_THRESHOLD, &value as *const _ as *mut _) == 0 {
+                    return Err(anyhow!(
+                        "Failed to set centroids threshold: {}",
+                        get_pvcam_error()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     // =========================================================================
     // Smart Streaming (bd-0zge)
     // =========================================================================
@@ -2941,6 +3194,38 @@ impl PvcamFeatures {
             }
             Ok(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
         }
+    }
+
+    /// # SDK Pattern (bd-qijv)
+    /// Checks PARAM_DD_VERSION availability before access.
+    /// Returns device driver version as a formatted string (major.minor).
+    #[cfg(feature = "pvcam_hardware")]
+    fn get_device_driver_version_impl(h: i16) -> Result<String> {
+        // SDK Pattern: Check availability before access
+        if !Self::is_param_available(h, PARAM_DD_VERSION) {
+            return Err(anyhow!("PARAM_DD_VERSION is not available on this camera"));
+        }
+
+        let mut version: uns16 = 0;
+        unsafe {
+            // SAFETY: h is valid; version is writable uns16 on stack.
+            if pl_get_param(
+                h,
+                PARAM_DD_VERSION,
+                ATTR_CURRENT,
+                &mut version as *mut _ as *mut _,
+            ) == 0
+            {
+                return Err(anyhow!(
+                    "Failed to get device driver version: {}",
+                    get_pvcam_error()
+                ));
+            }
+        }
+        // PVCAM device driver version is encoded: major.minor in BCD
+        let major = (version >> 8) & 0xFF;
+        let minor = version & 0xFF;
+        Ok(format!("{}.{}", major, minor))
     }
 
     /// # SDK Pattern (bd-sk6z)
