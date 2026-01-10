@@ -91,19 +91,34 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "pvcam_hardware")]
 const USE_CIRC_OVERWRITE_MODE: bool = false;
 
-/// bd-3gnv: Use sequence mode for streaming (proven to work on Prime BSI).
+/// bd-3gnv: Use sequence mode for streaming (fallback option).
 ///
-/// Sequence mode (`pl_exp_setup_seq` + `pl_exp_start_seq`) successfully captures frames
-/// on Prime BSI when circular buffer modes fail:
-/// - CIRC_OVERWRITE: Error 185 (Invalid Configuration)
-/// - CIRC_NO_OVERWRITE: Stalls after ~85 frames at 20ms exposure
+/// When true: Uses `pl_exp_setup_seq` + `pl_exp_start_seq` to acquire batches of frames.
+/// When false: Uses `pl_exp_setup_cont` + `pl_exp_start_cont` with CIRC_NO_OVERWRITE.
 ///
-/// Sequence mode works by acquiring batches of frames, then restarting for continuous
-/// streaming. This avoids the circular buffer issues entirely.
+/// Status (Prime BSI):
+/// - CIRC_OVERWRITE: Error 185 (NOT supported by Prime BSI hardware)
+/// - CIRC_NO_OVERWRITE + get_latest_frame: WORKS at ~100 FPS!
 ///
-/// Verified working: 256x256 frames, TIMED_MODE, up to 500ms exposure.
+/// Previous issue: CIRC_NO_OVERWRITE stalled after ~85 frames when using
+/// `get_oldest_frame` + `unlock_oldest_frame`. Fixed by switching to
+/// `get_latest_frame` which doesn't require unlocking.
+///
+/// Set to false to use continuous mode (recommended for Prime BSI).
 #[cfg(feature = "pvcam_hardware")]
-const USE_SEQUENCE_MODE: bool = true;
+const USE_SEQUENCE_MODE: bool = false;
+
+/// bd-circ: Use get_latest_frame for continuous acquisition.
+///
+/// When true: Uses `pl_exp_get_latest_frame_ex` which returns the most recent frame
+/// and does NOT require unlocking. This is how PyVCAM handles continuous acquisition.
+///
+/// When false: Uses `pl_exp_get_oldest_frame_ex` + `pl_exp_unlock_oldest_frame` which
+/// requires proper unlock timing and caused the ~85 frame stall issue.
+///
+/// Tested: 199 frames in 2 seconds (~100 FPS) with CIRC_NO_OVERWRITE mode.
+#[cfg(feature = "pvcam_hardware")]
+const USE_GET_LATEST_FRAME: bool = true;
 
 /// Batch size for sequence mode streaming (bd-3gnv).
 ///
@@ -2203,10 +2218,10 @@ impl PvcamAcquisition {
                     break;
                 }
 
-                // bd-3gnv: Use get_latest_frame for CIRC_OVERWRITE mode (like DynExp)
+                // bd-circ: Use get_latest_frame for continuous acquisition (like PyVCAM).
                 // This returns the most recently acquired frame, no unlock needed.
-                // For CIRC_NO_OVERWRITE, use get_oldest_frame with unlock after processing.
-                let frame_ptr = if USE_CIRC_OVERWRITE_MODE {
+                // get_oldest_frame requires unlock and caused ~85 frame stalls.
+                let frame_ptr = if USE_GET_LATEST_FRAME {
                     match ffi_safe::get_latest_frame(hcam, &mut frame_info) {
                         Ok(ptr) => ptr,
                         Err(()) => {
@@ -2255,9 +2270,9 @@ impl PvcamAcquisition {
                             discontinuity_events.fetch_add(1, Ordering::Relaxed);
                             consecutive_duplicates += 1;
 
-                            // bd-3gnv: Only release frame in CIRC_NO_OVERWRITE mode.
-                            // CIRC_OVERWRITE mode uses get_latest_frame which doesn't require unlock.
-                            if !USE_CIRC_OVERWRITE_MODE {
+                            // bd-circ: Only release frame when using get_oldest_frame.
+                            // get_latest_frame doesn't require unlock.
+                            if !USE_GET_LATEST_FRAME {
                                 if !ffi_safe::release_oldest_frame(hcam) {
                                     unlock_failures += 1;
                                 }
@@ -2348,8 +2363,8 @@ impl PvcamAcquisition {
                             "Zero-frame detected for FrameNr {}: buffer appears uninitialized, skipping (bd-ha3w)",
                             current_frame_nr
                         );
-                        // bd-3gnv: Only release frame in CIRC_NO_OVERWRITE mode
-                        if !USE_CIRC_OVERWRITE_MODE {
+                        // bd-circ: Only release frame when using get_oldest_frame.
+                        if !USE_GET_LATEST_FRAME {
                             if !ffi_safe::release_oldest_frame(hcam) {
                                 unlock_failures += 1;
                             }
@@ -2360,9 +2375,9 @@ impl PvcamAcquisition {
                         continue; // Skip to next frame
                     }
 
-                    // bd-3gnv: Unlock ASAP for CIRC_NO_OVERWRITE mode to free SDK buffer.
-                    // CIRC_OVERWRITE mode uses get_latest_frame which doesn't require unlock.
-                    if !USE_CIRC_OVERWRITE_MODE {
+                    // bd-circ: Only release frame when using get_oldest_frame.
+                    // get_latest_frame doesn't require unlock.
+                    if !USE_GET_LATEST_FRAME {
                         if !ffi_safe::release_oldest_frame(hcam) {
                             unlock_failures += 1;
                         }
