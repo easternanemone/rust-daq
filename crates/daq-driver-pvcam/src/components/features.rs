@@ -1964,9 +1964,16 @@ impl PvcamFeatures {
     /// List all available post-processing features (bd-we5p)
     ///
     /// Returns features like PrimeEnhance, PrimeLocate, etc.
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_PP_INDEX availability before access.
     pub fn list_pp_features(_conn: &PvcamConnection) -> Result<Vec<PPFeature>> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PP_INDEX) {
+                return Err(anyhow!("PARAM_PP_INDEX is not available on this camera"));
+            }
             let count = Self::get_enum_count_impl(h, PARAM_PP_INDEX)?;
             let mut features = Vec::with_capacity(count as usize);
 
@@ -2010,9 +2017,16 @@ impl PvcamFeatures {
     /// Get parameters for a specific PP feature (bd-we5p)
     ///
     /// First call `select_pp_feature()` to select the feature, then call this.
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_PP_INDEX availability before access.
     pub fn list_pp_params(_conn: &PvcamConnection, _feature_index: u16) -> Result<Vec<PPParam>> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PP_INDEX) {
+                return Err(anyhow!("PARAM_PP_INDEX is not available on this camera"));
+            }
             // Select the feature first
             let feat_idx = _feature_index as i32;
             unsafe {
@@ -2073,6 +2087,9 @@ impl PvcamFeatures {
     /// Set a PP parameter value (bd-we5p)
     ///
     /// Select feature and parameter first using their indices.
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_PP_INDEX availability before access.
     pub fn set_pp_param(
         _conn: &PvcamConnection,
         _feature_index: u16,
@@ -2081,6 +2098,10 @@ impl PvcamFeatures {
     ) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PP_INDEX) {
+                return Err(anyhow!("PARAM_PP_INDEX is not available on this camera"));
+            }
             // Select feature
             let feat_idx = _feature_index as i32;
             unsafe {
@@ -2120,6 +2141,9 @@ impl PvcamFeatures {
     }
 
     /// Get a PP parameter value (bd-we5p)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_PP_INDEX availability before access.
     pub fn get_pp_param(
         _conn: &PvcamConnection,
         _feature_index: u16,
@@ -2127,6 +2151,10 @@ impl PvcamFeatures {
     ) -> Result<u32> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_PP_INDEX) {
+                return Err(anyhow!("PARAM_PP_INDEX is not available on this camera"));
+            }
             // Select feature
             let feat_idx = _feature_index as i32;
             unsafe {
@@ -2268,9 +2296,18 @@ impl PvcamFeatures {
     // =========================================================================
 
     /// Check if frame metadata is enabled (bd-ne6a)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_METADATA_ENABLED availability before access.
     pub fn is_metadata_enabled(_conn: &PvcamConnection) -> Result<bool> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_METADATA_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_METADATA_ENABLED is not available on this camera"
+                ));
+            }
             let mut value: rs_bool = 0;
             unsafe {
                 // SAFETY: h is valid; value is writable rs_bool on stack.
@@ -2281,8 +2318,10 @@ impl PvcamFeatures {
                     &mut value as *mut _ as *mut _,
                 ) == 0
                 {
-                    // Parameter may not be available - return false
-                    return Ok(false);
+                    return Err(anyhow!(
+                        "Failed to get metadata enabled: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(value != 0);
@@ -2307,9 +2346,18 @@ impl PvcamFeatures {
     ///    - Hardware frame count (absolute reference for loss detection)
     ///    - Pixel data offset/size
     /// 5. Remove the force-disable in start_stream once parsing is implemented
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_METADATA_ENABLED availability before access.
     pub fn set_metadata_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_METADATA_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_METADATA_ENABLED is not available on this camera"
+                ));
+            }
             let value: rs_bool = if _enabled { 1 } else { 0 };
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
@@ -2327,9 +2375,18 @@ impl PvcamFeatures {
     /// Get centroids configuration (bd-ne6a)
     ///
     /// Centroids are used with PrimeLocate for particle tracking.
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_CENTROIDS_MODE availability before access.
     pub fn get_centroids_config(_conn: &PvcamConnection) -> Result<CentroidsConfig> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_MODE) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_MODE is not available on this camera"
+                ));
+            }
             let mode = {
                 let mut value: i32 = 0;
                 unsafe {
@@ -2364,9 +2421,18 @@ impl PvcamFeatures {
     }
 
     /// Set centroids configuration (bd-ne6a)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_CENTROIDS_MODE availability before access.
     pub fn set_centroids_config(_conn: &PvcamConnection, _config: &CentroidsConfig) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_CENTROIDS_MODE) {
+                return Err(anyhow!(
+                    "PARAM_CENTROIDS_MODE is not available on this camera"
+                ));
+            }
             unsafe {
                 // Set mode
                 let mode = _config.mode.to_pvcam();
@@ -2417,9 +2483,18 @@ impl PvcamFeatures {
     // =========================================================================
 
     /// Check if Smart Streaming is enabled (bd-0zge)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_SMART_STREAM_MODE_ENABLED availability before access.
     pub fn is_smart_stream_enabled(_conn: &PvcamConnection) -> Result<bool> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_SMART_STREAM_MODE_ENABLED is not available on this camera"
+                ));
+            }
             let mut value: rs_bool = 0;
             unsafe {
                 // SAFETY: h is valid; value is writable rs_bool on stack.
@@ -2430,7 +2505,10 @@ impl PvcamFeatures {
                     &mut value as *mut _ as *mut _,
                 ) == 0
                 {
-                    return Ok(false);
+                    return Err(anyhow!(
+                        "Failed to get smart stream enabled: {}",
+                        get_pvcam_error()
+                    ));
                 }
             }
             return Ok(value != 0);
@@ -2442,9 +2520,18 @@ impl PvcamFeatures {
     ///
     /// When enabled, the camera will cycle through a pre-configured sequence
     /// of exposure times without software intervention.
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_SMART_STREAM_MODE_ENABLED availability before access.
     pub fn set_smart_stream_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE_ENABLED) {
+                return Err(anyhow!(
+                    "PARAM_SMART_STREAM_MODE_ENABLED is not available on this camera"
+                ));
+            }
             let value: rs_bool = if _enabled { 1 } else { 0 };
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
@@ -2470,9 +2557,18 @@ impl PvcamFeatures {
     }
 
     /// Get current Smart Streaming mode (bd-0zge)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_SMART_STREAM_MODE availability before access.
     pub fn get_smart_stream_mode(_conn: &PvcamConnection) -> Result<SmartStreamMode> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE) {
+                return Err(anyhow!(
+                    "PARAM_SMART_STREAM_MODE is not available on this camera"
+                ));
+            }
             let mut value: i32 = 0;
             unsafe {
                 // SAFETY: h is valid handle; value is writable i32 on stack.
@@ -2501,9 +2597,18 @@ impl PvcamFeatures {
     }
 
     /// Set Smart Streaming mode (bd-0zge)
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_SMART_STREAM_MODE availability before access.
     pub fn set_smart_stream_mode(_conn: &PvcamConnection, _mode: SmartStreamMode) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE) {
+                return Err(anyhow!(
+                    "PARAM_SMART_STREAM_MODE is not available on this camera"
+                ));
+            }
             let value = _mode.to_pvcam();
             unsafe {
                 // SAFETY: h is valid handle; value pointer valid for duration of call.
@@ -2524,9 +2629,18 @@ impl PvcamFeatures {
     }
 
     /// Upload smart streaming exposure sequence to camera hardware
+    ///
+    /// # SDK Pattern (bd-l35g)
+    /// Checks PARAM_SMART_STREAM_EXP_PARAMS availability before access.
     pub fn upload_smart_stream(_conn: &PvcamConnection, _exposures_ms: &[u32]) -> Result<()> {
         #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = _conn.handle() {
+            // SDK Pattern: Check availability before access
+            if !Self::is_param_available(h, PARAM_SMART_STREAM_EXP_PARAMS) {
+                return Err(anyhow!(
+                    "PARAM_SMART_STREAM_EXP_PARAMS is not available on this camera"
+                ));
+            }
             let entries = _exposures_ms.len() as u16;
             let mut ss_struct: *mut smart_stream_type = std::ptr::null_mut();
 
