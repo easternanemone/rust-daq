@@ -128,9 +128,9 @@ const USE_CIRC_OVERWRITE_MODE: bool = false;
 ///
 /// See: `docs/architecture/adr-pvcam-continuous-acquisition.md` for full investigation.
 ///
-/// Set to false to use continuous mode (recommended for Prime BSI).
+/// Set to true to use sequence mode (recommended for Prime BSI to avoid DMA stalls).
 #[cfg(feature = "pvcam_hardware")]
-const USE_SEQUENCE_MODE: bool = false;
+const USE_SEQUENCE_MODE: bool = true;
 
 /// Use FIFO pattern with `get_oldest_frame` for continuous acquisition.
 ///
