@@ -48,7 +48,9 @@ struct FrameMetadata {
 #[tokio::test]
 async fn test_frame_timing_semantics() {
     println!("\n=== FRAME TIMING PROBE: FIFO get_oldest_frame ===\n");
-    println!("Goal: Confirm get_oldest_frame returns chronological frames and unlock advances FIFO\n");
+    println!(
+        "Goal: Confirm get_oldest_frame returns chronological frames and unlock advances FIFO\n"
+    );
 
     // Initialize PVCAM
     unsafe {
@@ -218,12 +220,21 @@ async fn test_frame_timing_semantics() {
             }
         }
 
-        println!("Collected frame numbers: {:?}", oldest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>());
+        println!(
+            "Collected frame numbers: {:?}",
+            oldest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>()
+        );
         println!("Monotonic frame numbers: {}", monotonic_ok);
         println!("Non-decreasing timestamps: {}", ts_ok);
 
-        assert!(monotonic_ok, "Frame numbers must increase under FIFO retrieval");
-        assert!(ts_ok, "Timestamps must be non-decreasing under FIFO retrieval");
+        assert!(
+            monotonic_ok,
+            "Frame numbers must increase under FIFO retrieval"
+        );
+        assert!(
+            ts_ok,
+            "Timestamps must be non-decreasing under FIFO retrieval"
+        );
     } else {
         panic!(
             "Insufficient frames collected for FIFO timing probe ({} < 3)",

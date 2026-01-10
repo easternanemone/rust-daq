@@ -76,15 +76,14 @@ use pvcam_sys::*;
 #[cfg(feature = "pvcam_hardware")]
 use tokio::task::JoinHandle;
 
-/// bd-3gnv: Buffer mode selection for continuous streaming.
+/// Buffer mode preference for continuous streaming (PVCAM header PL_CIRC_MODES).
 ///
-/// CIRC_OVERWRITE would avoid stalls by overwriting the oldest frame, but Prime BSI
-/// returns error 185 (Invalid Configuration). We therefore run CIRC_NO_OVERWRITE and
-/// drain the buffer strictly FIFO (get_oldest_frame + unlock_oldest_frame).
-///
-/// Reference: https://github.com/jbopp/dynexp/blob/main/src/DynExpManager/HardwareAdapters/HardwareAdapterPVCam.cpp
+/// We prefer CIRC_OVERWRITE because the SDK examples (FastStreamingToDisk, LiveImage)
+/// run with 255-frame circular buffers and rely on overwrite semantics to avoid stalls.
+/// Some firmware revs previously rejected overwrite with error 185 (Invalid Configuration),
+/// so the driver will attempt OVERWRITE first and fall back to NO_OVERWRITE automatically.
 #[cfg(feature = "pvcam_hardware")]
-const USE_CIRC_OVERWRITE_MODE: bool = false;
+const PREFER_CIRC_OVERWRITE_MODE: bool = true;
 
 /// bd-3gnv: Prefer continuous FIFO streaming; keep sequence mode as a last-resort fallback.
 ///
@@ -458,6 +457,7 @@ mod ffi_safe {
     /// - `exposure_ms`: Exposure time in milliseconds
     /// - `circ_ptr`: Page-aligned circular buffer
     /// - `circ_size_bytes`: Buffer size in bytes
+    /// - `circ_overwrite`: Whether to configure CIRC_OVERWRITE (falls back to NO_OVERWRITE on failure)
     ///
     /// # Returns
     /// `Ok(frame_bytes)` on success, `Err(String)` on failure
@@ -472,6 +472,7 @@ mod ffi_safe {
         exposure_ms: f64,
         circ_ptr: *mut u8,
         circ_size_bytes: u32,
+        circ_overwrite: bool,
     ) -> Result<uns32, String> {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
         debug_assert!(!circ_ptr.is_null(), "Circular buffer pointer is null");
@@ -493,11 +494,15 @@ mod ffi_safe {
 
         // Use same constants as initial setup
         let exp_mode = TIMED_MODE;
-        let buffer_mode = CIRC_NO_OVERWRITE;
+        let mut buffer_mode = if circ_overwrite {
+            CIRC_OVERWRITE
+        } else {
+            CIRC_NO_OVERWRITE
+        };
         let mut frame_bytes: uns32 = 0;
 
-        // Step 1: pl_exp_setup_cont
-        let setup_result = unsafe {
+        // Step 1: pl_exp_setup_cont (try overwrite, then fall back)
+        let setup_overwrite = unsafe {
             pl_exp_setup_cont(
                 hcam,
                 1,
@@ -508,9 +513,33 @@ mod ffi_safe {
                 buffer_mode,
             )
         };
-        if setup_result == 0 {
+        if setup_overwrite == 0 {
             let err_msg = super::get_pvcam_error();
-            return Err(format!("pl_exp_setup_cont failed: {}", err_msg));
+            if circ_overwrite {
+                // Retry once with no-overwrite
+                buffer_mode = CIRC_NO_OVERWRITE;
+                frame_bytes = 0;
+                let setup_no_overwrite = unsafe {
+                    pl_exp_setup_cont(
+                        hcam,
+                        1,
+                        &region as *const _,
+                        exp_mode,
+                        exposure_ms as uns32,
+                        &mut frame_bytes,
+                        buffer_mode,
+                    )
+                };
+                if setup_no_overwrite == 0 {
+                    return Err(format!(
+                        "pl_exp_setup_cont failed (overwrite: {}; no-overwrite: {})",
+                        err_msg,
+                        super::get_pvcam_error()
+                    ));
+                }
+            } else {
+                return Err(format!("pl_exp_setup_cont failed: {}", err_msg));
+            }
         }
 
         // Step 2: pl_exp_start_cont
@@ -898,9 +927,9 @@ impl PvcamAcquisition {
     /// Calculate optimal circular buffer frame count (bd-ek9n.4)
     ///
     /// Uses PARAM_FRAME_BUFFER_SIZE when available, with heuristic fallback:
-    /// - Minimum 16 frames for reliability
+    /// - Minimum 32 frames for reliability
     /// - At least 1 second of buffer at current frame rate
-    /// - Capped at 256 frames to prevent excessive memory use
+    /// - Capped at 255 frames (matches PVCAM example defaults)
     ///
     /// # Arguments
     ///
@@ -909,12 +938,11 @@ impl PvcamAcquisition {
     /// * `exposure_ms` - Exposure time in milliseconds (for frame rate calculation)
     #[cfg(feature = "pvcam_hardware")]
     fn calculate_buffer_count(hcam: i16, frame_bytes: usize, exposure_ms: f64) -> usize {
-        // bd-circ: Reduced buffer size to avoid DMA limit issues on Prime BSI.
-        // Full sensor (2048x2048 @ 8MB/frame) stalls at ~85 frames (~780MB).
-        // Limiting to 32 frames (256MB) forces earlier wrap-around within safe DMA limits.
-        // Smaller ROIs (256x256 @ 128KB) can handle more frames (200+) successfully.
-        const MIN_BUFFER_FRAMES: usize = 16;
-        const MAX_BUFFER_FRAMES: usize = 32;
+        // PVCAM examples default to 255-frame circular buffers for full-frame streaming.
+        // We align with that default but still clamp to a sane upper bound to avoid
+        // excessive host memory use on large frames.
+        const MIN_BUFFER_FRAMES: usize = 32;
+        const MAX_BUFFER_FRAMES: usize = 255;
         const ONE_SECOND_MS: f64 = 1000.0;
 
         // Try to query PARAM_FRAME_BUFFER_SIZE from SDK
@@ -965,7 +993,8 @@ impl PvcamAcquisition {
         let one_second_frames = fps_estimate.ceil() as usize;
 
         // Choose the larger of SDK recommendation and 1-second heuristic,
-        // then clamp to reasonable bounds
+        // then clamp to reasonable bounds. Default to SDK guidance when available
+        // (typical Prime BSI recommendation is 255 frames at full frame).
         let target = sdk_frames.max(one_second_frames).max(MIN_BUFFER_FRAMES);
         let clamped = target.min(MAX_BUFFER_FRAMES);
 
@@ -1115,20 +1144,19 @@ impl PvcamAcquisition {
             // PVCAM Best Practices: Use actual frame_bytes from pl_exp_setup_cont
             // rather than assuming pixels * 2 - metadata/alignment can change frame size.
             let mut frame_bytes: uns32 = 0;
-            // bd-3gnv: Select buffer mode - CIRC_OVERWRITE for indefinite streaming (like DynExp)
-            // CIRC_OVERWRITE: oldest frame overwritten when buffer full (no stall)
-            // CIRC_NO_OVERWRITE: camera pauses when buffer fills until frames unlocked
-            let buffer_mode = if USE_CIRC_OVERWRITE_MODE {
+            // Prefer CIRC_OVERWRITE; fall back to CIRC_NO_OVERWRITE if the camera rejects it
+            // (some firmware returned error 185 "Invalid Configuration" previously).
+            // CIRC_OVERWRITE prevents stalls when the host drains slowly.
+            let mut circ_overwrite = PREFER_CIRC_OVERWRITE_MODE;
+            let mut selected_buffer_mode = if circ_overwrite {
                 CIRC_OVERWRITE
             } else {
                 CIRC_NO_OVERWRITE
             };
-            // bd-3gnv: Always use TIMED_MODE (like DynExp). EXT_TRIG_INTERNAL caused error 185.
-            // DynExp reference: uses TIMED_MODE with CIRC_OVERWRITE successfully.
-            let exp_mode = TIMED_MODE;
+            let exp_mode = TIMED_MODE; // EXT_TRIG_* are encoded as PL_EXPOSURE_MODES (see pvcam.h)
 
             unsafe {
-                // SAFETY: h is a valid camera handle; region points to initialized rgn_type; frame_bytes is writable.
+                // Try overwrite first
                 if pl_exp_setup_cont(
                     h,
                     1,
@@ -1136,18 +1164,46 @@ impl PvcamAcquisition {
                     exp_mode,
                     exposure_ms as uns32,
                     &mut frame_bytes,
-                    buffer_mode,
+                    selected_buffer_mode,
                 ) == 0
                 {
-                    // bd-3gnv: Log SDK error with full message for diagnostics
-                    let err_msg = get_pvcam_error();
-                    let _ = self.streaming.set(false).await;
-                    return Err(anyhow!(
-                        "Failed to setup continuous acquisition: {}",
-                        err_msg
-                    ));
+                    let err_msg_overwrite = get_pvcam_error();
+                    tracing::warn!(
+                        "CIRC_OVERWRITE setup failed ({}), retrying with CIRC_NO_OVERWRITE",
+                        err_msg_overwrite
+                    );
+                    // Retry with no-overwrite
+                    selected_buffer_mode = CIRC_NO_OVERWRITE;
+                    circ_overwrite = false;
+                    frame_bytes = 0;
+                    if pl_exp_setup_cont(
+                        h,
+                        1,
+                        &region as *const _,
+                        exp_mode,
+                        exposure_ms as uns32,
+                        &mut frame_bytes,
+                        selected_buffer_mode,
+                    ) == 0
+                    {
+                        let err_msg = get_pvcam_error();
+                        let _ = self.streaming.set(false).await;
+                        return Err(anyhow!(
+                            "Failed to setup continuous acquisition (both modes): {}",
+                            err_msg
+                        ));
+                    }
                 }
             }
+
+            tracing::info!(
+                "PVCAM continuous mode using {}",
+                if circ_overwrite {
+                    "CIRC_OVERWRITE"
+                } else {
+                    "CIRC_NO_OVERWRITE"
+                }
+            );
 
             // Calculate dimensions for frame construction
             let binned_width = roi.width / x_bin as u32;
@@ -1349,6 +1405,7 @@ impl PvcamAcquisition {
                     done_tx,
                     circ_ptr_restored, // bd-3gnv: Pass buffer for auto-restart
                     circ_size_bytes,   // bd-3gnv: Pass size for auto-restart
+                    circ_overwrite,
                 );
             });
 
@@ -1843,6 +1900,7 @@ impl PvcamAcquisition {
     ///               that all SDK calls are complete and Drop can safely call FFI cleanup.
     /// * `circ_ptr` - Pointer to circular buffer (for auto-restart on stall, bd-3gnv)
     /// * `circ_size_bytes` - Size of circular buffer in bytes (for auto-restart)
+    /// * `circ_overwrite` - Whether the acquisition was configured with CIRC_OVERWRITE
     #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
@@ -1874,6 +1932,7 @@ impl PvcamAcquisition {
         done_tx: std::sync::mpsc::Sender<()>,
         circ_ptr: *mut u8,
         circ_size_bytes: u32,
+        circ_overwrite: bool,
     ) {
         let mut status: i16 = 0;
         let mut bytes_arrived: uns32 = 0;
@@ -2035,6 +2094,7 @@ impl PvcamAcquisition {
                             exposure_ms,
                             circ_ptr,
                             circ_size_bytes,
+                            circ_overwrite,
                         ) {
                             Ok(_new_frame_bytes) => {
                                 // Step 4: Re-register EOF callback (setup may invalidate it)
@@ -2215,7 +2275,7 @@ impl PvcamAcquisition {
 
                             // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames
                             // to drain the buffer, regardless of which get function was used.
-                            if !USE_CIRC_OVERWRITE_MODE {
+                            if !circ_overwrite {
                                 if !ffi_safe::release_oldest_frame(hcam) {
                                     unlock_failures += 1;
                                 }
@@ -2307,7 +2367,7 @@ impl PvcamAcquisition {
                             current_frame_nr
                         );
                         // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain buffer
-                        if !USE_CIRC_OVERWRITE_MODE {
+                        if !circ_overwrite {
                             if !ffi_safe::release_oldest_frame(hcam) {
                                 unlock_failures += 1;
                             }
@@ -2321,7 +2381,7 @@ impl PvcamAcquisition {
                     // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain
                     // the buffer. unlock_oldest_frame removes the oldest frame; without it
                     // the buffer fills and acquisition stalls (~85 frames).
-                    if !USE_CIRC_OVERWRITE_MODE {
+                    if !circ_overwrite {
                         if !ffi_safe::release_oldest_frame(hcam) {
                             unlock_failures += 1;
                         }

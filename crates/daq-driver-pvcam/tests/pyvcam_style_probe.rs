@@ -111,7 +111,11 @@ async fn test_circ_overwrite_rejected_and_fifo_single_frame() {
         );
     } else {
         let code = unsafe { pl_error_code() };
-        println!("[OK] CIRC_OVERWRITE rejected (err code {}): {}", code, get_error_message());
+        println!(
+            "[OK] CIRC_OVERWRITE rejected (err code {}): {}",
+            code,
+            get_error_message()
+        );
     }
 
     // Now confirm FIFO path works: setup NO_OVERWRITE and grab one frame
@@ -148,7 +152,10 @@ async fn test_circ_overwrite_rejected_and_fifo_single_frame() {
     let mut address: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut fi: FRAME_INFO = unsafe { std::mem::zeroed() };
     let get_ok = unsafe { pl_exp_get_oldest_frame_ex(hcam, &mut address, &mut fi) } != 0;
-    assert!(get_ok && !address.is_null(), "Should retrieve oldest frame under FIFO");
+    assert!(
+        get_ok && !address.is_null(),
+        "Should retrieve oldest frame under FIFO"
+    );
 
     // Unlock to drain
     let unlock_ok = unsafe { pl_exp_unlock_oldest_frame(hcam) } != 0;
