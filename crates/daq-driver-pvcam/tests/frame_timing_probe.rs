@@ -23,13 +23,7 @@ use pvcam_sys::*;
 use std::ffi::{c_void, CStr};
 use std::time::{Duration, Instant};
 
-// Buffer mode constants
-const CIRC_NO_OVERWRITE: i16 = 1;
-const CCS_HALT: i16 = 1;
-
-// Exposure mode
-const EXT_TRIG_INTERNAL: i16 = 1792;
-const EXPOSE_OUT_FIRST_ROW: i16 = 0;
+// Use constants from pvcam_sys (no local redefinition needed)
 
 /// Get PVCAM error message
 fn get_error_message() -> String {
@@ -45,11 +39,11 @@ fn get_error_message() -> String {
 #[derive(Debug, Clone)]
 struct FrameMetadata {
     frame_nr: i32,
-    timestamp: u64,       // TimeStamp field (100ns resolution typically)
-    timestamp_bof: u64,   // Beginning of frame timestamp
-    readout_time: i32,    // Readout time in microseconds
+    timestamp: u64,     // TimeStamp field (100ns resolution typically)
+    timestamp_bof: u64, // Beginning of frame timestamp
+    readout_time: i32,  // Readout time in microseconds
     retrieval_method: &'static str,
-    wall_clock_ms: u128,  // Wall clock time since test start
+    wall_clock_ms: u128, // Wall clock time since test start
 }
 
 #[tokio::test]
@@ -75,7 +69,9 @@ async fn test_frame_timing_semantics() {
     }
 
     let mut cam_name = [0i8; 32];
-    unsafe { pl_cam_get_name(0, cam_name.as_mut_ptr()); }
+    unsafe {
+        pl_cam_get_name(0, cam_name.as_mut_ptr());
+    }
     let name = unsafe { CStr::from_ptr(cam_name.as_ptr()) }
         .to_string_lossy()
         .into_owned();
@@ -92,32 +88,47 @@ async fn test_frame_timing_semantics() {
 
     // Use small ROI for speed but long exposure to separate frames in time
     let region = rgn_type {
-        s1: 0, s2: 255, sbin: 1,
-        p1: 0, p2: 255, pbin: 1,
+        s1: 0,
+        s2: 255,
+        sbin: 1,
+        p1: 0,
+        p2: 255,
+        pbin: 1,
     };
 
     // LONG exposure to make timing differences clear
-    let exposure_ms: uns32 = 500;  // 500ms exposure = 2 FPS max
+    let exposure_ms: uns32 = 500; // 500ms exposure = 2 FPS max
     let mut frame_bytes: uns32 = 0;
     let exp_mode = EXT_TRIG_INTERNAL | EXPOSE_OUT_FIRST_ROW;
-    let buffer_frames = 10u32;  // Room for several frames
+    let buffer_frames = 10u32; // Room for several frames
 
     println!("Configuration:");
-    println!("  Exposure: {}ms (long, for clear timing separation)", exposure_ms);
+    println!(
+        "  Exposure: {}ms (long, for clear timing separation)",
+        exposure_ms
+    );
     println!("  Buffer frames: {}", buffer_frames);
     println!("  ROI: 256x256\n");
 
     // Setup continuous acquisition
     let setup_ok = unsafe {
         pl_exp_setup_cont(
-            hcam, 1, &region as *const _, exp_mode,
-            exposure_ms, &mut frame_bytes, CIRC_NO_OVERWRITE,
+            hcam,
+            1,
+            &region as *const _,
+            exp_mode,
+            exposure_ms,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE,
         ) != 0
     };
 
     if !setup_ok {
         println!("[FAIL] setup_cont failed: {}", get_error_message());
-        unsafe { pl_cam_close(hcam); pl_pvcam_uninit(); }
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
         return;
     }
     println!("[OK] setup_cont succeeded, frame_bytes = {}", frame_bytes);
@@ -128,12 +139,19 @@ async fn test_frame_timing_semantics() {
 
     // Start acquisition
     let start_ok = unsafe {
-        pl_exp_start_cont(hcam, buffer.as_mut_ptr() as *mut c_void, buffer_size as uns32) != 0
+        pl_exp_start_cont(
+            hcam,
+            buffer.as_mut_ptr() as *mut c_void,
+            buffer_size as uns32,
+        ) != 0
     };
 
     if !start_ok {
         println!("[FAIL] start_cont failed: {}", get_error_message());
-        unsafe { pl_cam_close(hcam); pl_pvcam_uninit(); }
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
         return;
     }
     println!("[OK] start_cont succeeded\n");
@@ -166,12 +184,16 @@ async fn test_frame_timing_semantics() {
                 retrieval_method: "get_oldest_frame",
                 wall_clock_ms: test_start.elapsed().as_millis(),
             };
-            println!("  [{}] FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}",
-                     i, meta.frame_nr, meta.timestamp, meta.timestamp_bof, meta.readout_time);
+            println!(
+                "  [{}] FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}",
+                i, meta.frame_nr, meta.timestamp, meta.timestamp_bof, meta.readout_time
+            );
             oldest_frames.push(meta);
 
             // Unlock so we can get next frame
-            unsafe { pl_exp_unlock_oldest_frame(hcam); }
+            unsafe {
+                pl_exp_unlock_oldest_frame(hcam);
+            }
         } else {
             println!("  [{}] No frame available", i);
             break;
@@ -196,8 +218,10 @@ async fn test_frame_timing_semantics() {
                 retrieval_method: "get_latest_frame",
                 wall_clock_ms: test_start.elapsed().as_millis(),
             };
-            println!("  [{}] FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}",
-                     i, meta.frame_nr, meta.timestamp, meta.timestamp_bof, meta.readout_time);
+            println!(
+                "  [{}] FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}",
+                i, meta.frame_nr, meta.timestamp, meta.timestamp_bof, meta.readout_time
+            );
             latest_frames.push(meta);
             // Note: get_latest_frame doesn't need unlock
         } else {
@@ -209,7 +233,9 @@ async fn test_frame_timing_semantics() {
     }
 
     // Stop acquisition
-    unsafe { pl_exp_abort(hcam, CCS_HALT); }
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+    }
 
     // Analysis
     println!("\n=== ANALYSIS ===\n");
@@ -219,22 +245,32 @@ async fn test_frame_timing_semantics() {
         let latest_first = &latest_frames[0];
 
         println!("First frame from get_oldest_frame:");
-        println!("  FrameNr: {}, TimeStamp: {}", oldest_first.frame_nr, oldest_first.timestamp);
+        println!(
+            "  FrameNr: {}, TimeStamp: {}",
+            oldest_first.frame_nr, oldest_first.timestamp
+        );
 
         println!("\nFirst frame from get_latest_frame:");
-        println!("  FrameNr: {}, TimeStamp: {}", latest_first.frame_nr, latest_first.timestamp);
+        println!(
+            "  FrameNr: {}, TimeStamp: {}",
+            latest_first.frame_nr, latest_first.timestamp
+        );
 
         println!("\n--- INTERPRETATION ---");
 
         if oldest_first.frame_nr < latest_first.frame_nr {
-            println!("✓ get_oldest_frame returns LOWER FrameNr ({} < {})",
-                     oldest_first.frame_nr, latest_first.frame_nr);
+            println!(
+                "✓ get_oldest_frame returns LOWER FrameNr ({} < {})",
+                oldest_first.frame_nr, latest_first.frame_nr
+            );
             println!("  → 'oldest' = chronologically older (captured earlier)");
             println!("  → 'latest' = chronologically newer (captured later)");
             println!("\n  NAMING IS CHRONOLOGICAL (as expected)");
         } else if oldest_first.frame_nr > latest_first.frame_nr {
-            println!("✗ get_oldest_frame returns HIGHER FrameNr ({} > {})",
-                     oldest_first.frame_nr, latest_first.frame_nr);
+            println!(
+                "✗ get_oldest_frame returns HIGHER FrameNr ({} > {})",
+                oldest_first.frame_nr, latest_first.frame_nr
+            );
             println!("  → 'oldest' = newest in capture time!");
             println!("  → 'latest' = oldest in capture time!");
             println!("\n  *** NAMING IS INVERTED (stack position, not time) ***");
@@ -245,12 +281,16 @@ async fn test_frame_timing_semantics() {
         if oldest_first.timestamp != latest_first.timestamp {
             println!("\nTimestamp comparison:");
             if oldest_first.timestamp < latest_first.timestamp {
-                println!("  oldest.TimeStamp ({}) < latest.TimeStamp ({})",
-                         oldest_first.timestamp, latest_first.timestamp);
+                println!(
+                    "  oldest.TimeStamp ({}) < latest.TimeStamp ({})",
+                    oldest_first.timestamp, latest_first.timestamp
+                );
                 println!("  → Confirms: 'oldest' = earlier capture time");
             } else {
-                println!("  oldest.TimeStamp ({}) > latest.TimeStamp ({})",
-                         oldest_first.timestamp, latest_first.timestamp);
+                println!(
+                    "  oldest.TimeStamp ({}) > latest.TimeStamp ({})",
+                    oldest_first.timestamp, latest_first.timestamp
+                );
                 println!("  → Confirms: NAMING IS INVERTED!");
             }
         }
@@ -262,8 +302,14 @@ async fn test_frame_timing_semantics() {
 
     // Print all frame numbers for debugging
     println!("\n--- All collected frame numbers ---");
-    println!("get_oldest_frame: {:?}", oldest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>());
-    println!("get_latest_frame: {:?}", latest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>());
+    println!(
+        "get_oldest_frame: {:?}",
+        oldest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>()
+    );
+    println!(
+        "get_latest_frame: {:?}",
+        latest_frames.iter().map(|f| f.frame_nr).collect::<Vec<_>>()
+    );
 
     // Cleanup
     println!("\n--- Cleanup ---");

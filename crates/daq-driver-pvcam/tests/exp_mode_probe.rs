@@ -22,21 +22,12 @@
 use pvcam_sys::*;
 use std::ffi::{c_void, CStr, CString};
 
-// Buffer mode constants
-const CIRC_OVERWRITE: i16 = 0;
-const CIRC_NO_OVERWRITE: i16 = 1;
-const CCS_HALT: i16 = 1;
-const PL_CALLBACK_EOF: i32 = 1;
+// Use constants from pvcam_sys (CIRC_OVERWRITE, CIRC_NO_OVERWRITE, CCS_HALT,
+// PL_CALLBACK_EOF, ATTR_AVAIL, ATTR_CURRENT, ATTR_COUNT, ATTR_DEFAULT)
 
-// PARAM IDs (verified on maitai)
+// PARAM IDs (verified on maitai - not in pvcam_sys constants)
 const PARAM_EXPOSURE_MODE: u32 = 151126551;
 const PARAM_EXPOSE_OUT_MODE: u32 = 151126576;
-
-// Attribute constants
-const ATTR_AVAIL: i16 = 8;
-const ATTR_CURRENT: i16 = 0;
-const ATTR_COUNT: i16 = 1;
-const ATTR_DEFAULT: i16 = 5;
 
 /// Get PVCAM error message
 fn get_error_message() -> String {
@@ -81,18 +72,10 @@ fn read_enum_values(hcam: i16, param_id: u32) -> Vec<(i32, String)> {
             let mut name_len: uns32 = 100;
 
             if pl_enum_str_length(hcam, param_id, idx, &mut name_len) != 0 {
-                if pl_get_enum_param(
-                    hcam,
-                    param_id,
-                    idx,
-                    &mut value,
-                    name.as_mut_ptr(),
-                    name_len,
-                ) != 0
+                if pl_get_enum_param(hcam, param_id, idx, &mut value, name.as_mut_ptr(), name_len)
+                    != 0
                 {
-                    let name_str = CStr::from_ptr(name.as_ptr())
-                        .to_string_lossy()
-                        .into_owned();
+                    let name_str = CStr::from_ptr(name.as_ptr()).to_string_lossy().into_owned();
                     result.push((value, name_str));
                 }
             }
@@ -266,19 +249,34 @@ async fn test_all_exp_mode_combinations() {
     println!("--- Reading PARAM_EXPOSURE_MODE ---");
     let exp_modes = read_enum_values(hcam, PARAM_EXPOSURE_MODE);
     for (value, name) in &exp_modes {
-        println!("  [{}] {} = {}", exp_modes.iter().position(|(v, _)| v == value).unwrap(), name, value);
+        println!(
+            "  [{}] {} = {}",
+            exp_modes.iter().position(|(v, _)| v == value).unwrap(),
+            name,
+            value
+        );
     }
 
     // Read all expose-out modes from camera
     println!("\n--- Reading PARAM_EXPOSE_OUT_MODE ---");
     let expose_out_modes = read_enum_values(hcam, PARAM_EXPOSE_OUT_MODE);
     for (value, name) in &expose_out_modes {
-        println!("  [{}] {} = {}", expose_out_modes.iter().position(|(v, _)| v == value).unwrap(), name, value);
+        println!(
+            "  [{}] {} = {}",
+            expose_out_modes
+                .iter()
+                .position(|(v, _)| v == value)
+                .unwrap(),
+            name,
+            value
+        );
     }
 
     // Test all combinations
-    println!("\n--- Testing ALL {} combinations with CIRC_OVERWRITE ---\n",
-             exp_modes.len() * expose_out_modes.len());
+    println!(
+        "\n--- Testing ALL {} combinations with CIRC_OVERWRITE ---\n",
+        exp_modes.len() * expose_out_modes.len()
+    );
 
     let mut results: Vec<TestResult> = Vec::new();
     let mut any_success = false;
@@ -304,7 +302,11 @@ async fn test_all_exp_mode_combinations() {
                 expose_out,
                 expose_name,
                 result.combined,
-                if result.error_code != 0 { result.error_code.to_string() } else { "-".to_string() }
+                if result.error_code != 0 {
+                    result.error_code.to_string()
+                } else {
+                    "-".to_string()
+                }
             );
 
             results.push(result);
@@ -323,7 +325,11 @@ async fn test_all_exp_mode_combinations() {
             r.combined,
             if r.setup_ok { "OK" } else { "FAIL" },
             if r.start_ok { "OK" } else { "FAIL" },
-            if r.error_code != 0 { r.error_code.to_string() } else { "-".to_string() }
+            if r.error_code != 0 {
+                r.error_code.to_string()
+            } else {
+                "-".to_string()
+            }
         );
     }
 
@@ -342,7 +348,10 @@ async fn test_all_exp_mode_combinations() {
     } else {
         println!("*** NO COMBINATION WORKS WITH CIRC_OVERWRITE ***");
         println!("*** Prime BSI does NOT support CIRC_OVERWRITE mode ***");
-        println!("\nAll {} combinations failed at pl_exp_start_cont with error 185.", results.len());
+        println!(
+            "\nAll {} combinations failed at pl_exp_start_cont with error 185.",
+            results.len()
+        );
     }
 
     // Cleanup
