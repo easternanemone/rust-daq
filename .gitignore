@@ -59,7 +59,7 @@ hive-mind-prompt-*.txt
 .claude/commands/
 .claude/helpers/
 .claude/skills/
-.claude/settings.json
+# .claude/settings.json is now tracked for cloud env hooks
 .claude/statusline-command.sh
 .gemini-flow/
 
@@ -129,7 +129,8 @@ docker-compose.yml
 docs/HYBRID_SEARCH_SETUP.md
 docs/MORPH_*.md
 .docker-data/
-.claude
+.claude/*
+!.claude/settings.json
 .node_modules
 .jules
 .tmp

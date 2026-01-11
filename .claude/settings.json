@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.beads/scripts/beads-maintenance-check.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/tools/mcp-ssh-server/scripts/tailscale-cloud-setup.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
