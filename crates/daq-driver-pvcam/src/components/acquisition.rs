@@ -1615,6 +1615,25 @@ impl PvcamAcquisition {
                         // CRITICAL: Update circ_overwrite flag for frame loop FIFO drain path
                         circ_overwrite = false;
 
+                        // Re-register callback after fallback setup (setup may invalidate callback)
+                        // This matches the SDK pattern: callback registration before each setup
+                        if use_callback {
+                            let result = pl_cam_register_callback_ex3(
+                                h,
+                                PL_CALLBACK_EOF,
+                                pvcam_eof_callback as *mut std::ffi::c_void,
+                                callback_ctx_ptr as *mut std::ffi::c_void,
+                            );
+                            if result == 0 {
+                                tracing::warn!(
+                                    "Failed to re-register EOF callback after fallback: {}",
+                                    get_pvcam_error()
+                                );
+                            } else {
+                                tracing::info!("EOF callback re-registered after fallback setup");
+                            }
+                        }
+
                         // Retry start with NO_OVERWRITE
                         if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
                             let start_err = get_pvcam_error();
