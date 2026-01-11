@@ -80,12 +80,14 @@ use tokio::task::JoinHandle;
 
 /// Buffer mode preference for continuous streaming (PVCAM header PL_CIRC_MODES).
 ///
-/// We prefer CIRC_OVERWRITE because the SDK examples (FastStreamingToDisk, LiveImage)
-/// run with 255-frame circular buffers and rely on overwrite semantics to avoid stalls.
-/// Some firmware revs previously rejected overwrite with error 185 (Invalid Configuration),
-/// so the driver will attempt OVERWRITE first and fall back to NO_OVERWRITE automatically.
+/// IMPORTANT: Prime BSI cameras do NOT support CIRC_OVERWRITE - they return error 185
+/// (PL_ERR_CONFIGURATION_INVALID) on pl_exp_start_cont even though pl_exp_setup_cont
+/// succeeds. Use CIRC_NO_OVERWRITE with proper FIFO draining for Prime BSI.
+///
+/// Historical note: SDK examples (FastStreamingToDisk, LiveImage) use CIRC_OVERWRITE
+/// with 255-frame buffers, but this only works on specific camera models.
 #[cfg(feature = "pvcam_hardware")]
-const PREFER_CIRC_OVERWRITE_MODE: bool = true;
+const PREFER_CIRC_OVERWRITE_MODE: bool = false;
 
 /// bd-3gnv: Prefer continuous FIFO streaming; keep sequence mode as a last-resort fallback.
 ///
