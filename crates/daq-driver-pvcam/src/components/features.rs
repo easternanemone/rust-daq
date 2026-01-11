@@ -12,15 +12,15 @@
 //! - **Temperature**: Sensor temperature monitoring and setpoint
 
 use crate::components::connection::PvcamConnection;
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use anyhow::anyhow;
 use anyhow::Result;
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use crate::components::connection::get_pvcam_error;
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use pvcam_sys::*;
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use std::ffi::CStr;
 
 // =============================================================================
@@ -770,7 +770,7 @@ impl PvcamFeatures {
     /// # Returns
     /// - `true` if the parameter is available on this camera
     /// - `false` if the parameter is unavailable or the check failed
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn is_param_available(hcam: i16, param_id: u32) -> bool {
         let mut avail: rs_bool = 0;
         unsafe {
@@ -792,7 +792,7 @@ impl PvcamFeatures {
     ///
     /// Use this variant when parameter unavailability should produce an error
     /// rather than a silent fallback.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn require_param_available(hcam: i16, param_id: u32, param_name: &str) -> Result<()> {
         if Self::is_param_available(hcam, param_id) {
             Ok(())
@@ -815,7 +815,7 @@ impl PvcamFeatures {
     /// Checks PARAM_TEMP availability before access, matching SDK pattern
     /// from FanSpeedAndTemperature.cpp example.
     pub fn get_temperature(_conn: &PvcamConnection) -> Result<f64> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_TEMP) {
@@ -837,10 +837,10 @@ impl PvcamFeatures {
             }
             return Ok(temp_raw as f64 / 100.0);
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(_conn.mock_state.lock().unwrap().temperature_c);
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(-40.0)
     }
 
@@ -849,7 +849,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-ng5p)
     /// Checks PARAM_TEMP_SETPOINT availability before access.
     pub fn set_temperature_setpoint(_conn: &PvcamConnection, _celsius: f64) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_TEMP_SETPOINT) {
@@ -866,7 +866,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.temperature_setpoint_c = _celsius;
@@ -880,7 +880,7 @@ impl PvcamFeatures {
 
     /// Get comprehensive camera information
     pub fn get_camera_info(_conn: &PvcamConnection) -> Result<CameraInfo> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Ok(CameraInfo {
                 serial_number: Self::get_serial_number_impl(h)?,
@@ -918,7 +918,7 @@ impl PvcamFeatures {
 
     /// Get camera serial number (bd-565x)
     pub fn get_serial_number(_conn: &PvcamConnection) -> Result<String> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_serial_number_impl(h);
         }
@@ -927,7 +927,7 @@ impl PvcamFeatures {
 
     /// Get firmware version string (bd-565x)
     pub fn get_firmware_version(_conn: &PvcamConnection) -> Result<String> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_firmware_version_impl(h);
         }
@@ -936,7 +936,7 @@ impl PvcamFeatures {
 
     /// Get sensor chip name (bd-565x)
     pub fn get_chip_name(_conn: &PvcamConnection) -> Result<String> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_chip_name_impl(h);
         }
@@ -948,7 +948,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-qijv)
     /// Checks PARAM_DD_VERSION availability before access.
     pub fn get_device_driver_version(_conn: &PvcamConnection) -> Result<String> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_device_driver_version_impl(h);
         }
@@ -957,7 +957,7 @@ impl PvcamFeatures {
 
     /// Get current bit depth (bd-565x)
     pub fn get_bit_depth(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_bit_depth_impl(h);
         }
@@ -966,7 +966,7 @@ impl PvcamFeatures {
 
     /// Get pixel readout time in nanoseconds (bd-565x)
     pub fn get_pixel_time(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_pixel_time_impl(h);
         }
@@ -979,7 +979,7 @@ impl PvcamFeatures {
 
     /// Get current fan speed setting (bd-glia)
     pub fn get_fan_speed(_conn: &PvcamConnection) -> Result<FanSpeed> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -996,19 +996,19 @@ impl PvcamFeatures {
             }
             return Ok(FanSpeed::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let state = _conn.mock_state.lock().unwrap();
             Ok(FanSpeed::from_pvcam(state.fan_speed))
         }
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(FanSpeed::High)
     }
 
     /// Set fan speed (bd-glia)
     pub fn set_fan_speed(_conn: &PvcamConnection, _speed: FanSpeed) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _speed.to_pvcam();
             unsafe {
@@ -1018,7 +1018,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.fan_speed = _speed.to_pvcam();
@@ -1035,7 +1035,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_SPDTAB_INDEX availability before access.
     pub fn get_speed_index(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SPDTAB_INDEX) {
@@ -1046,10 +1046,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_SPDTAB_INDEX)
                 .map_err(|e| anyhow!("Failed to get speed index: {}", e));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(_conn.mock_state.lock().unwrap().speed_index);
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(0)
     }
 
@@ -1060,7 +1060,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_SPDTAB_INDEX availability before access.
     pub fn set_speed_index(_conn: &PvcamConnection, _index: u16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SPDTAB_INDEX) {
@@ -1076,7 +1076,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.speed_index = _index;
@@ -1089,7 +1089,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_READOUT_PORT availability before access.
     pub fn get_readout_port(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_READOUT_PORT) {
@@ -1100,10 +1100,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_READOUT_PORT)
                 .map_err(|e| anyhow!("Failed to get readout port: {}", e));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(_conn.mock_state.lock().unwrap().readout_port_index);
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(0)
     }
 
@@ -1114,7 +1114,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_READOUT_PORT availability before access.
     pub fn set_readout_port(_conn: &PvcamConnection, _port: u16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_READOUT_PORT) {
@@ -1130,7 +1130,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.readout_port_index = _port;
@@ -1145,7 +1145,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_SPDTAB_INDEX availability before access.
     pub fn list_speed_modes(_conn: &PvcamConnection) -> Result<Vec<SpeedMode>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SPDTAB_INDEX) {
@@ -1211,7 +1211,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_READOUT_PORT availability before access.
     pub fn list_readout_ports(_conn: &PvcamConnection) -> Result<Vec<ReadoutPort>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_READOUT_PORT) {
@@ -1270,7 +1270,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_GAIN_INDEX availability before access.
     pub fn get_gain_index(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_GAIN_INDEX) {
@@ -1279,10 +1279,10 @@ impl PvcamFeatures {
             return Self::get_u16_param_impl(h, PARAM_GAIN_INDEX)
                 .map_err(|e| anyhow!("Failed to get gain index: {}", e));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(_conn.mock_state.lock().unwrap().gain_index);
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(0)
     }
 
@@ -1291,7 +1291,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_GAIN_INDEX availability before access.
     pub fn set_gain_index(_conn: &PvcamConnection, _index: u16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_GAIN_INDEX) {
@@ -1305,7 +1305,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.gain_index = _index;
@@ -1318,7 +1318,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_GAIN_INDEX availability before access.
     pub fn list_gain_modes(_conn: &PvcamConnection) -> Result<Vec<GainMode>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_GAIN_INDEX) {
@@ -1375,7 +1375,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-smn3)
     /// Checks PARAM_EXPOSURE_MODE availability before access.
     pub fn get_exposure_mode(_conn: &PvcamConnection) -> Result<ExposureMode> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSURE_MODE) {
@@ -1401,13 +1401,13 @@ impl PvcamFeatures {
             }
             return Ok(ExposureMode::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let state = _conn.mock_state.lock().unwrap();
             Ok(ExposureMode::from_pvcam(state.exposure_mode))
         }
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(ExposureMode::Timed)
     }
 
@@ -1416,7 +1416,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-smn3)
     /// Checks PARAM_EXPOSURE_MODE availability before access.
     pub fn set_exposure_mode(_conn: &PvcamConnection, _mode: ExposureMode) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSURE_MODE) {
@@ -1435,7 +1435,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.exposure_mode = _mode.to_pvcam();
@@ -1451,7 +1451,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_EXPOSURE_MODE availability before access.
     pub fn list_exposure_modes(_conn: &PvcamConnection) -> Result<Vec<(i32, String)>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSURE_MODE) {
@@ -1501,7 +1501,7 @@ impl PvcamFeatures {
 
     /// Get current clear mode (bd-iai9)
     pub fn get_clear_mode(_conn: &PvcamConnection) -> Result<ClearMode> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -1518,19 +1518,19 @@ impl PvcamFeatures {
             }
             return Ok(ClearMode::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let state = _conn.mock_state.lock().unwrap();
             Ok(ClearMode::from_pvcam(state.clear_mode))
         }
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(ClearMode::PreExposure)
     }
 
     /// Set clear mode (bd-iai9)
     pub fn set_clear_mode(_conn: &PvcamConnection, _mode: ClearMode) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _mode.to_pvcam();
             unsafe {
@@ -1540,7 +1540,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.clear_mode = _mode.to_pvcam();
@@ -1556,13 +1556,11 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_CLEAR_MODE availability before access.
     pub fn list_clear_modes(_conn: &PvcamConnection) -> Result<Vec<(i32, String)>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CLEAR_MODE) {
-                return Err(anyhow!(
-                    "PARAM_CLEAR_MODE is not available on this camera"
-                ));
+                return Err(anyhow!("PARAM_CLEAR_MODE is not available on this camera"));
             }
             let count = Self::get_enum_count_impl(h, PARAM_CLEAR_MODE)?;
             let mut modes = Vec::with_capacity(count as usize);
@@ -1610,7 +1608,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-0yho)
     /// Checks PARAM_CLEAR_CYCLES availability before access.
     pub fn get_clear_cycles(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CLEAR_CYCLES) {
@@ -1642,7 +1640,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-0yho)
     /// Checks PARAM_CLEAR_CYCLES availability before access.
     pub fn set_clear_cycles(_conn: &PvcamConnection, _cycles: u16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CLEAR_CYCLES) {
@@ -1672,7 +1670,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-0yho)
     /// Checks PARAM_PMODE availability before access.
     pub fn get_pmode(_conn: &PvcamConnection) -> Result<i32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PMODE) {
@@ -1702,7 +1700,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-0yho)
     /// Checks PARAM_PMODE availability before access.
     pub fn set_pmode(_conn: &PvcamConnection, _mode: i32) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PMODE) {
@@ -1723,7 +1721,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-smn3)
     /// Checks PARAM_EXPOSE_OUT_MODE availability before access.
     pub fn get_expose_out_mode(_conn: &PvcamConnection) -> Result<ExposeOutMode> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSE_OUT_MODE) {
@@ -1749,13 +1747,13 @@ impl PvcamFeatures {
             }
             return Ok(ExposeOutMode::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let state = _conn.mock_state.lock().unwrap();
             Ok(ExposeOutMode::from_pvcam(state.expose_out_mode))
         }
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(ExposeOutMode::FirstRow)
     }
 
@@ -1764,7 +1762,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-smn3)
     /// Checks PARAM_EXPOSE_OUT_MODE availability before access.
     pub fn set_expose_out_mode(_conn: &PvcamConnection, _mode: ExposeOutMode) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSE_OUT_MODE) {
@@ -1783,7 +1781,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.expose_out_mode = _mode.to_pvcam();
@@ -1799,7 +1797,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_EXPOSE_OUT_MODE availability before access.
     pub fn list_expose_out_modes(_conn: &PvcamConnection) -> Result<Vec<(i32, String)>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_EXPOSE_OUT_MODE) {
@@ -1851,7 +1849,7 @@ impl PvcamFeatures {
 
     /// Get current exposure resolution
     pub fn get_exposure_resolution(_conn: &PvcamConnection) -> Result<ExposureResolution> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -1879,7 +1877,7 @@ impl PvcamFeatures {
         _conn: &PvcamConnection,
         _res: ExposureResolution,
     ) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _res.to_pvcam();
             unsafe {
@@ -1897,7 +1895,7 @@ impl PvcamFeatures {
 
     /// Get current exposure resolution index
     pub fn get_exposure_resolution_index(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u16_param_impl(h, PARAM_EXP_RES_INDEX)
                 .map_err(|e| anyhow!("Failed to get exposure resolution index: {}", e));
@@ -1907,7 +1905,7 @@ impl PvcamFeatures {
 
     /// Set exposure resolution index
     pub fn set_exposure_resolution_index(_conn: &PvcamConnection, _index: u16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _index as i32;
             unsafe {
@@ -1929,7 +1927,7 @@ impl PvcamFeatures {
 
     /// Get current ADC offset (bd-i2k7.2)
     pub fn get_adc_offset(_conn: &PvcamConnection) -> Result<i16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i16 = 0;
             unsafe {
@@ -1951,7 +1949,7 @@ impl PvcamFeatures {
 
     /// Set ADC offset (bd-i2k7.2)
     pub fn set_adc_offset(_conn: &PvcamConnection, _offset: i16) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             unsafe {
                 // SAFETY: h is valid handle; offset pointer valid for duration of call.
@@ -1965,7 +1963,7 @@ impl PvcamFeatures {
 
     /// Get full well capacity (bd-i2k7.3)
     pub fn get_full_well_capacity(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u32_param_impl(h, PARAM_FWELL_CAPACITY)
                 .map_err(|e| anyhow!("Failed to get full well capacity: {}", e));
@@ -1978,7 +1976,7 @@ impl PvcamFeatures {
     // =========================================================================
 
     pub fn get_pre_mask(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u16_param_impl(h, PARAM_PREMASK)
                 .map_err(|e| anyhow!("Failed to get pre-mask: {}", e));
@@ -1987,7 +1985,7 @@ impl PvcamFeatures {
     }
 
     pub fn get_post_mask(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u16_param_impl(h, PARAM_POSTMASK)
                 .map_err(|e| anyhow!("Failed to get post-mask: {}", e));
@@ -1996,7 +1994,7 @@ impl PvcamFeatures {
     }
 
     pub fn get_pre_scan(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u16_param_impl(h, PARAM_PRESCAN)
                 .map_err(|e| anyhow!("Failed to get pre-scan: {}", e));
@@ -2005,7 +2003,7 @@ impl PvcamFeatures {
     }
 
     pub fn get_post_scan(_conn: &PvcamConnection) -> Result<u16> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u16_param_impl(h, PARAM_POSTSCAN)
                 .map_err(|e| anyhow!("Failed to get post-scan: {}", e));
@@ -2023,7 +2021,7 @@ impl PvcamFeatures {
     /// Essential for calculating maximum frame rate and dead time.
     /// Total Frame Time = Exposure + Readout (in overlapped mode).
     pub fn get_readout_time_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: f64 = 0.0;
             unsafe {
@@ -2049,7 +2047,7 @@ impl PvcamFeatures {
     ///
     /// Time required to clear the sensor before an exposure.
     pub fn get_clearing_time_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i64 = 0;
             unsafe {
@@ -2075,7 +2073,7 @@ impl PvcamFeatures {
 
     /// Get pre-trigger delay in microseconds (bd-ejx3)
     pub fn get_pre_trigger_delay_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i64 = 0;
             unsafe {
@@ -2101,7 +2099,7 @@ impl PvcamFeatures {
 
     /// Get post-trigger delay in microseconds (bd-ejx3)
     pub fn get_post_trigger_delay_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i64 = 0;
             unsafe {
@@ -2131,7 +2129,7 @@ impl PvcamFeatures {
 
     /// Get current shutter status (bd-e8ah)
     pub fn get_shutter_status(_conn: &PvcamConnection) -> Result<ShutterStatus> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -2156,7 +2154,7 @@ impl PvcamFeatures {
 
     /// Get current shutter open mode (bd-e8ah)
     pub fn get_shutter_mode(_conn: &PvcamConnection) -> Result<ShutterMode> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -2173,12 +2171,12 @@ impl PvcamFeatures {
             }
             return Ok(ShutterMode::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(ShutterMode::from_pvcam(
             _conn.mock_state.lock().unwrap().shutter_mode,
         ));
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(ShutterMode::Normal)
     }
 
@@ -2186,7 +2184,7 @@ impl PvcamFeatures {
     ///
     /// Controls the physical shutter behavior or TTL output signal.
     pub fn set_shutter_mode(_conn: &PvcamConnection, _mode: ShutterMode) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _mode.to_pvcam();
             unsafe {
@@ -2201,7 +2199,7 @@ impl PvcamFeatures {
 
     /// Get shutter open delay in microseconds (bd-e8ah)
     pub fn get_shutter_open_delay_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: uns32 = 0;
             unsafe {
@@ -2226,7 +2224,7 @@ impl PvcamFeatures {
 
     /// Get shutter close delay in microseconds (bd-e8ah)
     pub fn get_shutter_close_delay_us(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: uns32 = 0;
             unsafe {
@@ -2251,7 +2249,7 @@ impl PvcamFeatures {
 
     /// Set shutter open delay in microseconds (bd-e8ah)
     pub fn set_shutter_open_delay_us(_conn: &PvcamConnection, _delay_us: u32) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _delay_us as uns32;
             unsafe {
@@ -2269,7 +2267,7 @@ impl PvcamFeatures {
 
     /// Set shutter close delay in microseconds (bd-e8ah)
     pub fn set_shutter_close_delay_us(_conn: &PvcamConnection, _delay_us: u32) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _delay_us as uns32;
             unsafe {
@@ -2296,7 +2294,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_PP_INDEX availability before access.
     pub fn list_pp_features(_conn: &PvcamConnection) -> Result<Vec<PPFeature>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PP_INDEX) {
@@ -2349,7 +2347,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_PP_INDEX availability before access.
     pub fn list_pp_params(_conn: &PvcamConnection, _feature_index: u16) -> Result<Vec<PPParam>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PP_INDEX) {
@@ -2424,7 +2422,7 @@ impl PvcamFeatures {
         _param_index: u16,
         _value: u32,
     ) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PP_INDEX) {
@@ -2477,7 +2475,7 @@ impl PvcamFeatures {
         _feature_index: u16,
         _param_index: u16,
     ) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_PP_INDEX) {
@@ -2528,7 +2526,7 @@ impl PvcamFeatures {
 
     /// Reset all post-processing features to defaults
     pub fn reset_pp_features(_conn: &PvcamConnection) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             unsafe {
                 if pl_pp_reset(h) == 0 {
@@ -2548,7 +2546,7 @@ impl PvcamFeatures {
 
     /// List available serial (horizontal) binning factors (bd-fqi8)
     pub fn list_serial_binning(_conn: &PvcamConnection) -> Result<Vec<u16>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let count = Self::get_enum_count_impl(h, PARAM_BINNING_SER)?;
             let mut factors = Vec::with_capacity(count as usize);
@@ -2579,7 +2577,7 @@ impl PvcamFeatures {
 
     /// List available parallel (vertical) binning factors (bd-fqi8)
     pub fn list_parallel_binning(_conn: &PvcamConnection) -> Result<Vec<u16>> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let count = Self::get_enum_count_impl(h, PARAM_BINNING_PAR)?;
             let mut factors = Vec::with_capacity(count as usize);
@@ -2610,7 +2608,7 @@ impl PvcamFeatures {
 
     /// Get current binning as (serial, parallel) (bd-fqi8)
     pub fn get_binning(_conn: &PvcamConnection) -> Result<(u16, u16)> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let serial = Self::get_u16_param_impl(h, PARAM_BINNING_SER).unwrap_or(1);
             let parallel = Self::get_u16_param_impl(h, PARAM_BINNING_PAR).unwrap_or(1);
@@ -2628,7 +2626,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_METADATA_ENABLED availability before access.
     pub fn is_metadata_enabled(_conn: &PvcamConnection) -> Result<bool> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_METADATA_ENABLED) {
@@ -2678,7 +2676,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_METADATA_ENABLED availability before access.
     pub fn set_metadata_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_METADATA_ENABLED) {
@@ -2707,7 +2705,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_CENTROIDS_MODE availability before access.
     pub fn get_centroids_config(_conn: &PvcamConnection) -> Result<CentroidsConfig> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_MODE) {
@@ -2753,7 +2751,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_CENTROIDS_MODE availability before access.
     pub fn set_centroids_config(_conn: &PvcamConnection, _config: &CentroidsConfig) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_MODE) {
@@ -2811,7 +2809,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-cq4y)
     /// Checks PARAM_CENTROIDS_ENABLED availability before access.
     pub fn get_centroids_enabled(_conn: &PvcamConnection) -> Result<bool> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_ENABLED) {
@@ -2846,7 +2844,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-cq4y)
     /// Checks PARAM_CENTROIDS_ENABLED availability before access.
     pub fn set_centroids_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_ENABLED) {
@@ -2875,7 +2873,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-cq4y)
     /// Checks PARAM_CENTROIDS_THRESHOLD availability before access.
     pub fn get_centroids_threshold(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_THRESHOLD) {
@@ -2912,7 +2910,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-cq4y)
     /// Checks PARAM_CENTROIDS_THRESHOLD availability before access.
     pub fn set_centroids_threshold(_conn: &PvcamConnection, _threshold: u32) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_CENTROIDS_THRESHOLD) {
@@ -2943,7 +2941,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_SMART_STREAM_MODE_ENABLED availability before access.
     pub fn is_smart_stream_enabled(_conn: &PvcamConnection) -> Result<bool> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE_ENABLED) {
@@ -2980,7 +2978,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_SMART_STREAM_MODE_ENABLED availability before access.
     pub fn set_smart_stream_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE_ENABLED) {
@@ -3004,7 +3002,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.smart_stream_enabled = _enabled;
@@ -3017,7 +3015,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_SMART_STREAM_MODE availability before access.
     pub fn get_smart_stream_mode(_conn: &PvcamConnection) -> Result<SmartStreamMode> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE) {
@@ -3043,12 +3041,12 @@ impl PvcamFeatures {
             }
             return Ok(SmartStreamMode::from_pvcam(value));
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         return Ok(SmartStreamMode::from_pvcam(
             _conn.mock_state.lock().unwrap().smart_stream_mode,
         ));
 
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         Ok(SmartStreamMode::Exposures)
     }
 
@@ -3057,7 +3055,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_SMART_STREAM_MODE availability before access.
     pub fn set_smart_stream_mode(_conn: &PvcamConnection, _mode: SmartStreamMode) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SMART_STREAM_MODE) {
@@ -3076,7 +3074,7 @@ impl PvcamFeatures {
                 }
             }
         }
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
             let mut state = _conn.mock_state.lock().unwrap();
             state.smart_stream_mode = _mode.to_pvcam();
@@ -3089,7 +3087,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-l35g)
     /// Checks PARAM_SMART_STREAM_EXP_PARAMS availability before access.
     pub fn upload_smart_stream(_conn: &PvcamConnection, _exposures_ms: &[u32]) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             // SDK Pattern: Check availability before access
             if !Self::is_param_available(h, PARAM_SMART_STREAM_EXP_PARAMS) {
@@ -3114,13 +3112,12 @@ impl PvcamFeatures {
                 params_slice.copy_from_slice(_exposures_ms);
 
                 // Upload to camera
-                // NOTE: pl_set_param expects the ADDRESS of the value to set. For TYPE_VOID_PTR
-                // params like PARAM_SMART_STREAM_EXP_PARAMS, the "value" is a pointer, so we must
-                // pass &ss_struct (address of the pointer), not ss_struct (the pointer value).
+                // NOTE: For PARAM_SMART_STREAM_EXP_PARAMS (TYPE_VOID_PTR), we pass the
+                // pointer value (ss_struct) directly cast to *mut c_void.
                 if pl_set_param(
                     h,
                     PARAM_SMART_STREAM_EXP_PARAMS,
-                    &ss_struct as *const _ as *mut _,
+                    ss_struct as *mut _,
                 ) == 0
                 {
                     let err = get_pvcam_error();
@@ -3139,7 +3136,7 @@ impl PvcamFeatures {
     // =========================================================================
 
     pub fn get_host_frame_rotate(_conn: &PvcamConnection) -> Result<FrameRotate> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -3162,7 +3159,7 @@ impl PvcamFeatures {
     }
 
     pub fn set_host_frame_rotate(_conn: &PvcamConnection, _rotate: FrameRotate) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _rotate.to_pvcam();
             unsafe {
@@ -3178,7 +3175,7 @@ impl PvcamFeatures {
     }
 
     pub fn get_host_frame_flip(_conn: &PvcamConnection) -> Result<FrameFlip> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: i32 = 0;
             unsafe {
@@ -3201,7 +3198,7 @@ impl PvcamFeatures {
     }
 
     pub fn set_host_frame_flip(_conn: &PvcamConnection, _flip: FrameFlip) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value = _flip.to_pvcam();
             unsafe {
@@ -3217,7 +3214,7 @@ impl PvcamFeatures {
     }
 
     pub fn is_host_frame_summing_enabled(_conn: &PvcamConnection) -> Result<bool> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let mut value: rs_bool = 0;
             unsafe {
@@ -3237,7 +3234,7 @@ impl PvcamFeatures {
     }
 
     pub fn set_host_frame_summing_enabled(_conn: &PvcamConnection, _enabled: bool) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             let value: rs_bool = if _enabled { 1 } else { 0 };
             unsafe {
@@ -3258,7 +3255,7 @@ impl PvcamFeatures {
     }
 
     pub fn get_host_frame_summing_count(_conn: &PvcamConnection) -> Result<u32> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             return Self::get_u32_param_impl(h, PARAM_HOST_FRAME_SUMMING_COUNT)
                 .map_err(|e| anyhow!("Failed to get host frame summing count: {}", e));
@@ -3267,7 +3264,7 @@ impl PvcamFeatures {
     }
 
     pub fn set_host_frame_summing_count(_conn: &PvcamConnection, _count: u32) -> Result<()> {
-        #[cfg(feature = "pvcam_hardware")]
+        #[cfg(feature = "pvcam_sdk")]
         if let Some(h) = _conn.handle() {
             unsafe {
                 if pl_set_param(
@@ -3290,7 +3287,7 @@ impl PvcamFeatures {
     // Private Implementation Helpers
     // =========================================================================
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_serial_number_impl(h: i16) -> Result<String> {
         let mut buf = [0i8; 256];
         unsafe {
@@ -3313,7 +3310,7 @@ impl PvcamFeatures {
 
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_CAM_FW_VERSION availability before access.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_firmware_version_impl(h: i16) -> Result<String> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_CAM_FW_VERSION) {
@@ -3346,7 +3343,7 @@ impl PvcamFeatures {
 
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_CHIP_NAME availability before access.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_chip_name_impl(h: i16) -> Result<String> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_CHIP_NAME) {
@@ -3366,7 +3363,7 @@ impl PvcamFeatures {
     /// # SDK Pattern (bd-qijv)
     /// Checks PARAM_DD_VERSION availability before access.
     /// Returns device driver version as a formatted string (major.minor).
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_device_driver_version_impl(h: i16) -> Result<String> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_DD_VERSION) {
@@ -3397,7 +3394,7 @@ impl PvcamFeatures {
 
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_BIT_DEPTH availability before access.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_bit_depth_impl(h: i16) -> Result<u16> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_BIT_DEPTH) {
@@ -3422,7 +3419,7 @@ impl PvcamFeatures {
 
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_PIX_TIME availability before access.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_pixel_time_impl(h: i16) -> Result<u32> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_PIX_TIME) {
@@ -3445,7 +3442,7 @@ impl PvcamFeatures {
         Ok(value as u32)
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_pixel_size_impl(h: i16) -> Result<(u32, u32)> {
         let mut width: uns16 = 0;
         let mut height: uns16 = 0;
@@ -3476,7 +3473,7 @@ impl PvcamFeatures {
 
     /// # SDK Pattern (bd-sk6z)
     /// Checks PARAM_SER_SIZE and PARAM_PAR_SIZE availability before access.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_sensor_size_impl(h: i16) -> Result<(u32, u32)> {
         // SDK Pattern: Check availability before access
         if !Self::is_param_available(h, PARAM_SER_SIZE) {
@@ -3515,7 +3512,7 @@ impl PvcamFeatures {
         Ok((width as u32, height as u32))
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_u16_param_impl(h: i16, param: u32) -> Result<u16> {
         let mut value: i32 = 0;
         unsafe {
@@ -3531,7 +3528,7 @@ impl PvcamFeatures {
         Ok(value as u16)
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_enum_count_impl(h: i16, param: u32) -> Result<u32> {
         let mut count: uns32 = 0;
         unsafe {
@@ -3547,7 +3544,7 @@ impl PvcamFeatures {
         Ok(count)
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_enum_string_impl(h: i16, param: u32) -> Result<String> {
         // Get current value first
         let mut value: i32 = 0;
@@ -3580,7 +3577,7 @@ impl PvcamFeatures {
         Ok(format!("{}", value))
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_u32_param_impl(h: i16, param: u32) -> Result<u32> {
         let mut value: uns32 = 0;
         unsafe {
@@ -3596,7 +3593,7 @@ impl PvcamFeatures {
         Ok(value)
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_pp_feature_name_impl(h: i16) -> Result<String> {
         let mut buf = [0i8; 256];
         unsafe {
@@ -3617,7 +3614,7 @@ impl PvcamFeatures {
         }
     }
 
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     fn get_pp_param_name_impl(h: i16) -> Result<String> {
         let mut buf = [0i8; 256];
         unsafe {

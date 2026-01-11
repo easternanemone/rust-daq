@@ -8,11 +8,11 @@
 //!   export PVCAM_SDK_DIR=/opt/pvcam/sdk && \
 //!   export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
 //!   export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:/opt/pvcam/drivers/user-mode:$LD_LIBRARY_PATH && \
-//!   cd ~/rust-daq && cargo test -p daq-driver-pvcam --features pvcam_hardware \
+//!   cd ~/rust-daq && cargo test -p daq-driver-pvcam --features pvcam_sdk \
 //!     --test sdk_fast_stream_equiv -- --nocapture --test-threads=1'
 //! ```
 
-#![cfg(feature = "pvcam_hardware")]
+#![cfg(feature = "pvcam_sdk")]
 #![cfg(not(target_arch = "wasm32"))]
 use once_cell::sync::Lazy;
 use pvcam_sys::*;

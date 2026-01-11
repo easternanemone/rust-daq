@@ -13,12 +13,12 @@
 //!   export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
 //!   export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH && \
 //!   cd ~/rust-daq && git pull && \
-//!   cargo nextest run --profile hardware -p daq-driver-pvcam --features pvcam_hardware \
+//!   cargo nextest run --profile hardware -p daq-driver-pvcam --features pvcam_sdk \
 //!     --test continuous_acquisition_tier1'
 //! ```
 
 #![cfg(not(target_arch = "wasm32"))]
-#![cfg(feature = "pvcam_hardware")]
+#![cfg(feature = "pvcam_sdk")]
 
 mod common;
 
@@ -36,7 +36,7 @@ use std::time::Instant;
 // =============================================================================
 
 /// Camera name for tests (Prime BSI on maitai)
-const CAMERA_NAME: &str = "PrimeBSI";
+const CAMERA_NAME: &str = "pvcamUSB_0";
 
 /// Test ROI dimensions (small for fast tests)
 const TEST_ROI_WIDTH: u32 = 256;
@@ -313,7 +313,7 @@ async fn test_sustained_full_sensor_streaming() {
 
     // Expect ~600 frames over 20s; require at least 500 to catch regressions
     assert_frame_count_min(stats.frame_count, 500, "Sustained streaming");
-    assert_fps_near(stats.fps, expected_fps, 35.0, "Sustained streaming");
+    assert_fps_near(stats.fps, expected_fps, 50.0, "Sustained streaming");
     assert_no_duplicate_frames(stats.duplicate_frames, "Sustained streaming");
     assert_errors_within_limit(
         stats.timeout_errors + stats.channel_errors,

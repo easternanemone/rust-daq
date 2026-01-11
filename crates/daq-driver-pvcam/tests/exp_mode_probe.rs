@@ -11,12 +11,12 @@
 //!   export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
 //!   export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH && \
 //!   cd ~/rust-daq && git pull && \
-//!   cargo test --release -p daq-driver-pvcam --features pvcam_hardware \
+//!   cargo test --release -p daq-driver-pvcam --features pvcam_sdk \
 //!     --test exp_mode_probe -- --nocapture --test-threads=1'
 //! ```
 
 #![cfg(not(target_arch = "wasm32"))]
-#![cfg(feature = "pvcam_hardware")]
+#![cfg(feature = "pvcam_sdk")]
 #![allow(clippy::unwrap_used, clippy::expect_used, unused_imports, dead_code)]
 
 use pvcam_sys::*;

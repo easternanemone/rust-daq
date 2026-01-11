@@ -13,7 +13,7 @@
 //! cargo test -p daq-driver-pvcam --test driver_test
 //!
 //! # Hardware tests
-//! cargo test -p daq-driver-pvcam --test driver_test --features "pvcam_hardware,hardware_tests"
+//! cargo test -p daq-driver-pvcam --test driver_test --features "pvcam_sdk,hardware_tests"
 //! ```
 
 use daq_core::capabilities::{ExposureControl, FrameProducer, Parameterized, Triggerable};
@@ -24,7 +24,7 @@ use std::time::Duration;
 // Mock Mode Driver Tests
 // =============================================================================
 
-#[cfg(not(feature = "pvcam_hardware"))]
+#[cfg(not(feature = "pvcam_sdk"))]
 mod mock_driver {
     use super::*;
 
@@ -196,7 +196,7 @@ mod mock_driver {
 // Hardware Driver Tests
 // =============================================================================
 
-#[cfg(all(feature = "pvcam_hardware", feature = "hardware_tests"))]
+#[cfg(all(feature = "pvcam_sdk", feature = "hardware_tests"))]
 mod hardware_driver {
     use super::*;
     use std::sync::Mutex;

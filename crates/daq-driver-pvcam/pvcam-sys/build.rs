@@ -7,6 +7,7 @@ fn main() {
     #[cfg(feature = "pvcam-sdk")]
     {
         println!("cargo:rerun-if-env-changed=PVCAM_SDK_DIR");
+        println!("cargo:rerun-if-env-changed=PVCAM_LIB_DIR");
         println!("cargo:rerun-if-changed=wrapper.h"); // For bindgen to re-run if wrapper changes
 
         let sdk_dir = env::var("PVCAM_SDK_DIR").expect(

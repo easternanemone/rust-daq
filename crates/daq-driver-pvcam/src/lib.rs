@@ -33,7 +33,7 @@ pub use crate::components::features::PvcamFeatures;
 
 use crate::components::acquisition::PvcamAcquisition;
 use crate::components::connection::PvcamConnection;
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use pvcam_sys::*;
 
 /// Driver for Photometrics PVCAM cameras
@@ -118,21 +118,21 @@ impl PvcamDriver {
     pub async fn new_async(camera_name: String) -> Result<Self> {
         tracing::info!("PvcamDriver::new_async called for camera: {}", camera_name);
         tracing::info!(
-            "pvcam_hardware feature enabled: {}",
-            cfg!(feature = "pvcam_hardware")
+            "pvcam_sdk feature enabled: {}",
+            cfg!(feature = "pvcam_sdk")
         );
 
         // Run initialization in blocking task
         let connection = tokio::task::spawn_blocking({
-            #[cfg(feature = "pvcam_hardware")]
+            #[cfg(feature = "pvcam_sdk")]
             let name = camera_name.clone();
             move || -> Result<Arc<Mutex<PvcamConnection>>> {
-                #[cfg(feature = "pvcam_hardware")]
+                #[cfg(feature = "pvcam_sdk")]
                 let mut conn = PvcamConnection::new();
-                #[cfg(not(feature = "pvcam_hardware"))]
+                #[cfg(not(feature = "pvcam_sdk"))]
                 let conn = PvcamConnection::new();
 
-                #[cfg(feature = "pvcam_hardware")]
+                #[cfg(feature = "pvcam_sdk")]
                 {
                     tracing::info!("Initializing PVCAM SDK...");
                     conn.initialize()?;
@@ -140,9 +140,9 @@ impl PvcamDriver {
                     conn.open(&name)?;
                     tracing::info!("Camera opened successfully, handle: {:?}", conn.handle());
                 }
-                #[cfg(not(feature = "pvcam_hardware"))]
+                #[cfg(not(feature = "pvcam_sdk"))]
                 {
-                    tracing::warn!("pvcam_hardware feature NOT enabled - using mock mode");
+                    tracing::warn!("pvcam_sdk feature NOT enabled - using mock mode");
                 }
                 Ok(Arc::new(Mutex::new(conn)))
             }
@@ -165,7 +165,7 @@ impl PvcamDriver {
             let mut w = 2048;
             #[allow(unused_mut)]
             let mut h = 2048;
-            #[cfg(feature = "pvcam_hardware")]
+            #[cfg(feature = "pvcam_sdk")]
             {
                 let conn = connection.lock().await;
                 if let Some(hcam) = conn.handle() {
@@ -1010,7 +1010,7 @@ impl PvcamDriver {
     ///     }
     /// }
     /// ```
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub async fn reinitialize(&self) -> Result<()> {
         use crate::components::features::PvcamFeatures;
 
@@ -1057,7 +1057,7 @@ impl PvcamDriver {
     }
 
     /// Reinitialize the driver after a fatal error (mock mode).
-    #[cfg(not(feature = "pvcam_hardware"))]
+    #[cfg(not(feature = "pvcam_sdk"))]
     pub async fn reinitialize(&self) -> Result<()> {
         tracing::info!("Reinitializing PVCAM driver (mock mode)");
 

@@ -22,7 +22,7 @@
 //! cargo test -p daq-driver-pvcam
 //!
 //! # Hardware tests (on remote machine with Prime BSI)
-//! cargo test -p daq-driver-pvcam --features "pvcam_hardware,hardware_tests" -- --nocapture
+//! cargo test -p daq-driver-pvcam --features "pvcam_sdk,hardware_tests" -- --nocapture
 //! ```
 
 // Import all public types from the library root
@@ -285,7 +285,7 @@ mod type_conversions {
 // Mock Integration Tests: Feature Functions
 // =============================================================================
 
-#[cfg(not(feature = "pvcam_hardware"))]
+#[cfg(not(feature = "pvcam_sdk"))]
 mod mock_features {
     use super::*;
     use daq_driver_pvcam::components::connection::PvcamConnection;
@@ -707,10 +707,7 @@ mod mock_features {
     fn list_exposure_modes_mock() {
         let conn = mock_connection();
         let modes = PvcamFeatures::list_exposure_modes(&conn).unwrap();
-        assert!(
-            !modes.is_empty(),
-            "Mock mode should return exposure modes"
-        );
+        assert!(!modes.is_empty(), "Mock mode should return exposure modes");
         // Check that Timed mode (value 0) is present
         assert!(
             modes.iter().any(|(v, _)| *v == 0),
@@ -722,10 +719,7 @@ mod mock_features {
     fn list_clear_modes_mock() {
         let conn = mock_connection();
         let modes = PvcamFeatures::list_clear_modes(&conn).unwrap();
-        assert!(
-            !modes.is_empty(),
-            "Mock mode should return clear modes"
-        );
+        assert!(!modes.is_empty(), "Mock mode should return clear modes");
         // Check that PreExposure mode (value 1) is present
         assert!(
             modes.iter().any(|(v, _)| *v == 1),
@@ -750,10 +744,10 @@ mod mock_features {
 }
 
 // =============================================================================
-// Hardware Integration Tests (require pvcam_hardware + hardware_tests features)
+// Hardware Integration Tests (require pvcam_sdk + hardware_tests features)
 // =============================================================================
 
-#[cfg(all(feature = "pvcam_hardware", feature = "hardware_tests"))]
+#[cfg(all(feature = "pvcam_sdk", feature = "hardware_tests"))]
 mod hardware_features {
     use super::*;
     use daq_driver_pvcam::components::connection::PvcamConnection;

@@ -1,12 +1,12 @@
 //! Minimal example showing how to enable the Arrow tap and receive frames as Arrow arrays.
-//! Requires `--features arrow_tap,pvcam_hardware` and PVCAM env vars set.
+//! Requires `--features arrow_tap,pvcam_sdk` and PVCAM env vars set.
 //!
 //! Run (on hardware host):
 //! PVCAM_SDK_DIR=/opt/pvcam/sdk \
 //! PVCAM_LIB_DIR=/opt/pvcam/library/x86_64 \
 //! PVCAM_UMD_PATH=/opt/pvcam/drivers/user-mode \
 //! LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH \
-//! cargo run -p daq-driver-pvcam --example arrow_tap --features "pvcam_hardware,arrow_tap" -- PrimeBSI
+//! cargo run -p daq-driver-pvcam --example arrow_tap --features "pvcam_sdk,arrow_tap" -- PrimeBSI
 
 use arrow::array::Array;
 use tokio::sync::mpsc;

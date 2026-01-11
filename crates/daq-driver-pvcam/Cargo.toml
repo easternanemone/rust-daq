@@ -19,7 +19,8 @@ arrow = { version = "56", optional = true }
 [features]
 default = ["mock"]
 mock = []
-pvcam_hardware = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
+# Real PVCAM SDK integration (requires PVCAM SDK installed)
+pvcam_sdk = ["dep:pvcam-sys", "pvcam-sys/pvcam-sdk"]
 arrow_tap = ["arrow"]
 hardware_tests = []
 

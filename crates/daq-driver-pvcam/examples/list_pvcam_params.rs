@@ -1,11 +1,11 @@
 //! List all available PVCAM parameters from connected camera.
 //!
-//! Run with: cargo run --features "pvcam_hardware" --example list_pvcam_params
+//! Run with: cargo run --features "pvcam_sdk" --example list_pvcam_params
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use pvcam_sys::*;
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 fn main() {
     use std::ffi::CStr;
 
@@ -249,8 +249,8 @@ fn main() {
     }
 }
 
-#[cfg(not(feature = "pvcam_hardware"))]
+#[cfg(not(feature = "pvcam_sdk"))]
 fn main() {
-    println!("This example requires the pvcam_hardware feature.");
-    println!("Run with: cargo run --features pvcam_hardware --example list_pvcam_params");
+    println!("This example requires the pvcam_sdk feature.");
+    println!("Run with: cargo run --features pvcam_sdk --example list_pvcam_params");
 }

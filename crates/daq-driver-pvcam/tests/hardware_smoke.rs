@@ -27,7 +27,7 @@
 //! # Running
 //!
 //! ```bash
-//! cargo test -p daq-driver-pvcam --test hardware_smoke --features pvcam_hardware -- --nocapture --test-threads=1
+//! cargo test -p daq-driver-pvcam --test hardware_smoke --features pvcam_sdk -- --nocapture --test-threads=1
 //! ```
 //!
 //! # Test Coverage
@@ -41,7 +41,7 @@
 //! | `pvcam_exposure_range_test` | Test various exposure times |
 //! | `pvcam_frame_statistics_test` | Validate pixel data statistics |
 
-#![cfg(feature = "pvcam_hardware")]
+#![cfg(feature = "pvcam_sdk")]
 
 use daq_core::capabilities::{ExposureControl, FrameProducer};
 use daq_driver_pvcam::PvcamDriver;

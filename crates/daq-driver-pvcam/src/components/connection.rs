@@ -11,16 +11,16 @@
 // Common imports for all configurations
 use anyhow::Result;
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use anyhow::{anyhow, Context};
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use std::ffi::CString;
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use std::sync::atomic::{AtomicU32, Ordering};
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use std::sync::Mutex;
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 use pvcam_sys::*;
 
 /// Global reference counter for PVCAM SDK initialization (bd-9ou9).
@@ -28,15 +28,15 @@ use pvcam_sys::*;
 /// The SDK uses global state, so we track how many connections exist.
 /// - When count goes 0 → 1: call pl_pvcam_init()
 /// - When count goes 1 → 0: call pl_pvcam_uninit()
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 static SDK_REF_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Mutex to ensure atomic increment + init and decrement + uninit.
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 static SDK_INIT_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Helper to get PVCAM error string
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 pub(crate) fn get_pvcam_error() -> String {
     unsafe {
         // SAFETY: PVCAM docs state error query functions are thread-safe after initialization.
@@ -53,18 +53,18 @@ pub(crate) fn get_pvcam_error() -> String {
 #[derive(Default)]
 pub struct PvcamConnection {
     /// Camera handle from PVCAM SDK
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     handle: Option<i16>,
     /// Whether SDK is initialized
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     sdk_initialized: bool,
 
     /// Mock state for testing without hardware
-    #[cfg(not(feature = "pvcam_hardware"))]
+    #[cfg(not(feature = "pvcam_sdk"))]
     pub mock_state: std::sync::Mutex<MockCameraState>,
 }
 
-#[cfg(not(feature = "pvcam_hardware"))]
+#[cfg(not(feature = "pvcam_sdk"))]
 #[derive(Debug, Clone)]
 pub struct MockCameraState {
     pub temperature_c: f64,
@@ -83,7 +83,7 @@ pub struct MockCameraState {
     pub gain_index: u16,
 }
 
-#[cfg(not(feature = "pvcam_hardware"))]
+#[cfg(not(feature = "pvcam_sdk"))]
 impl Default for MockCameraState {
     fn default() -> Self {
         Self {
@@ -117,7 +117,7 @@ impl PvcamConnection {
     ///
     /// Uses global reference counting (bd-9ou9) to ensure the SDK is only
     /// initialized once, even with multiple PvcamDriver instances.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn initialize(&mut self) -> Result<()> {
         if self.sdk_initialized {
             return Ok(());
@@ -164,7 +164,7 @@ impl PvcamConnection {
     /// Open a camera by name.
     ///
     /// If name is not found, tries to open the first available camera.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn open(&mut self, camera_name: &str) -> Result<()> {
         if !self.sdk_initialized {
             return Err(anyhow!("SDK not initialized"));
@@ -210,7 +210,7 @@ impl PvcamConnection {
     }
 
     /// Close the camera if open.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn close(&mut self) {
         if let Some(h) = self.handle.take() {
             unsafe {
@@ -226,7 +226,7 @@ impl PvcamConnection {
     /// uninitialized when the last connection closes.
     ///
     /// Recovers from mutex poisoning to ensure ref count is always decremented (bd-vw80).
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn uninitialize(&mut self) {
         self.close(); // Ensure camera closed first
 
@@ -267,7 +267,7 @@ impl PvcamConnection {
     }
 
     /// Get the raw camera handle.
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn handle(&self) -> Option<i16> {
         self.handle
     }
@@ -286,13 +286,15 @@ impl PvcamConnection {
     ///     println!("Found camera: {}", name);
     /// }
     /// ```
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn list_available_cameras() -> Result<Vec<String>> {
         // Note: SDK must be initialized before calling this
         // We check if ref count > 0 to verify SDK is ready
         let ref_count = SDK_REF_COUNT.load(Ordering::SeqCst);
         if ref_count == 0 {
-            return Err(anyhow!("PVCAM SDK not initialized. Call initialize() first."));
+            return Err(anyhow!(
+                "PVCAM SDK not initialized. Call initialize() first."
+            ));
         }
 
         let mut total_cameras: i16 = 0;
@@ -324,16 +326,13 @@ impl PvcamConnection {
     }
 
     /// List all available PVCAM cameras (mock mode).
-    #[cfg(not(feature = "pvcam_hardware"))]
+    #[cfg(not(feature = "pvcam_sdk"))]
     pub fn list_available_cameras() -> Result<Vec<String>> {
-        Ok(vec![
-            "MockCamera".to_string(),
-            "PrimeBSI".to_string(),
-        ])
+        Ok(vec!["MockCamera".to_string(), "PrimeBSI".to_string()])
     }
 }
 
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 impl Drop for PvcamConnection {
     fn drop(&mut self) {
         self.uninitialize();

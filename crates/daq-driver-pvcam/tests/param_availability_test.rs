@@ -13,10 +13,10 @@
 //!   export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH && \
 //!   export LD_LIBRARY_PATH=/opt/pvcam/library/x86_64:$LD_LIBRARY_PATH && \
 //!   cd ~/rust-daq && cargo nextest run -p daq-driver-pvcam \
-//!     --features pvcam_hardware --test param_availability_test -- --nocapture'
+//!     --features pvcam_sdk --test param_availability_test -- --nocapture'
 //! ```
 
-#![cfg(feature = "pvcam_hardware")]
+#![cfg(feature = "pvcam_sdk")]
 #![cfg(not(target_arch = "wasm32"))]
 
 use once_cell::sync::Lazy;

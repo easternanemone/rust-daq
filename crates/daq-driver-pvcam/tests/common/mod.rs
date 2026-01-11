@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 // Re-export Frame type for convenience
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 pub use daq_core::capabilities::Frame;
 
 /// Test statistics collected during continuous acquisition validation.
@@ -148,7 +148,7 @@ impl FrameTracker {
     }
 
     /// Record a frame and track numbering anomalies
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn record_frame(&mut self, frame: &Frame) {
         self.record_frame_nr(frame.frame_number as i32);
     }
@@ -232,7 +232,7 @@ impl FrameValidator {
     }
 
     /// Validate a frame's dimensions and data
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn validate(&self, frame: &Frame) -> Result<(), String> {
         if frame.width != self.expected_width {
             return Err(format!(
@@ -267,7 +267,7 @@ impl FrameValidator {
     }
 
     /// Check if frame appears to be all zeros (uninitialized buffer)
-    #[cfg(feature = "pvcam_hardware")]
+    #[cfg(feature = "pvcam_sdk")]
     pub fn is_zero_frame(frame: &Frame) -> bool {
         // Check first 100 pixels for efficiency
         let check_count = frame.data.len().min(100);
@@ -430,7 +430,7 @@ pub mod exposures {
 // ============================================================================
 
 /// Get PVCAM SDK error message.
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 pub fn get_pvcam_error() -> String {
     use pvcam_sys::*;
     use std::ffi::CStr;
@@ -444,7 +444,7 @@ pub fn get_pvcam_error() -> String {
 }
 
 /// Get PVCAM SDK error code.
-#[cfg(feature = "pvcam_hardware")]
+#[cfg(feature = "pvcam_sdk")]
 pub fn get_pvcam_error_code() -> i16 {
     unsafe { pvcam_sys::pl_error_code() }
 }
