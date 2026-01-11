@@ -52,7 +52,7 @@
 //! RUST_LOG=debug cargo test --test hardware_esp300_validation --features hardware_tests -- --nocapture --test-threads=1
 //! ```
 
-#![cfg(all(feature = "hardware_tests", feature = "instrument_newport"))]
+#![cfg(all(feature = "hardware_tests", feature = "newport"))]
 
 use rust_daq::hardware::capabilities::Movable;
 use rust_daq::hardware::esp300::Esp300Driver;

@@ -38,12 +38,11 @@ async fn test_grpc_camera_control_stream() -> Result<()> {
     // Let's use direct registry insertion if possible or standard config registration.
 
     // Since we are in integration test context, we use the standard registry flow.
-    // Need to ensure DriverType::Pvcam is available (might need feature 'driver_pvcam' or 'all_hardware').
+    // Need to ensure DriverType::Pvcam is available (requires feature 'pvcam' or 'all_hardware').
     // The registry instantiation logic will create PvcamDriver.
 
-    // Warning: DriverType::Pvcam might be gated by #[cfg(feature = "driver_pvcam")].
-    // rust-daq features include "all_hardware" -> "instrument_photometrics" -> "daq-hardware/instrument_photometrics" -> "daq-hardware/pvcam_hardware" ??
-    // Actually "daq-hardware/instrument_photometrics" enables "driver_pvcam".
+    // DriverType::Pvcam is gated by #[cfg(feature = "pvcam")].
+    // all_hardware includes pvcam (mock driver).
     // So ensuring 'rust-daq' compiles with 'server' (and defaults 'all_hardware') should be enough.
 
     registry

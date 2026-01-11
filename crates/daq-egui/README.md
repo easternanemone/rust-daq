@@ -201,7 +201,7 @@ ssh maitai@100.117.5.12
 source /etc/profile.d/pvcam.sh
 export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
 cd ~/rust-daq
-cargo run --bin rust-daq-daemon --features pvcam_hardware -- daemon --port 50051 --lab-hardware
+cargo run --bin rust-daq-daemon --features pvcam_sdk -- daemon --port 50051 --lab-hardware
 
 # On local machine: run integrated GUI
 RERUN_URL=rerun+http://100.117.5.12:9876/proxy \
@@ -237,7 +237,7 @@ The daemon logs camera frames directly to its Rerun server, which the embedded v
 
 ## PVCAM Live View
 
-With `instrument_photometrics`, `pvcam_hardware`, `arrow`, and `driver_pvcam_arrow_tap` enabled, the left nav shows a **"PVCAM Live to Rerun"** toggle.
+With `pvcam`, `pvcam_sdk`, `arrow`, and `pvcam_arrow` enabled, the left nav shows a **"PVCAM Live to Rerun"** toggle.
 
 **Required environment:**
 ```bash
@@ -254,7 +254,7 @@ cargo run -p daq-egui --bin daq-rerun --features rerun_viewer
 
 # Terminal 2: Start GUI with PVCAM support
 cargo run -p daq-egui --bin rust-daq-gui \
-  --features "instrument_photometrics,pvcam_hardware,arrow,driver_pvcam_arrow_tap"
+  --features "pvcam,pvcam_sdk,arrow,pvcam_arrow"
 ```
 
 Frames stream to Rerun at `127.0.0.1:9876` under path `/pvcam/image`.

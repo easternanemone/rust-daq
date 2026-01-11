@@ -156,7 +156,7 @@ async fn test_parameter_change_notifications() -> Result<()> {
 // =============================================================================
 
 #[tokio::test]
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 async fn test_maitai_parameter_integration() -> Result<()> {
     use rust_daq::hardware::capabilities::Parameterized;
     use rust_daq::hardware::maitai::MaiTaiDriver;

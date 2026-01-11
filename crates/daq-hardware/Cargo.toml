@@ -60,24 +60,32 @@ features = ["sync"]
 optional = true
 
 [features]
-default = ["tokio_serial", "serial"]
-serial = ["dep:serialport"]
-tokio_serial = ["dep:tokio-serial", "serial"]
-driver-thorlabs = ["tokio_serial"]
-driver-thorlabs-config = ["driver-thorlabs"]  # Config-based ELL14 driver
-driver-newport = ["tokio_serial"]
-driver-spectra-physics = ["tokio_serial"]
-full = ["driver-thorlabs", "driver-newport", "driver-spectra-physics", "instrument_photometrics", "simulator"]
-# pvcam_hardware = ["dep:pvcam-sys"]
-driver_pvcam = ["dep:daq-driver-pvcam"]
-# Enable PVCAM Arrow tap (passes through to driver feature)
-driver_pvcam_arrow_tap = ["driver_pvcam", "daq-driver-pvcam/arrow_tap"]
-# Enable real PVCAM hardware (must propagate to driver crate)
-pvcam_hardware = ["driver_pvcam", "daq-driver-pvcam/pvcam_hardware"]
-instrument_photometrics = ["driver_pvcam"]
+# Simplified feature flags (bd-0aqw)
+default = ["serial"]
+
+# Serial communication (async via tokio-serial)
+serial = ["dep:tokio-serial", "dep:serialport"]
+
+# Hardware drivers (all require serial)
+thorlabs = ["serial"]           # ELL14 rotators
+thorlabs_config = ["thorlabs"]  # Config-based ELL14 driver
+newport = ["serial"]            # Newport stages
+spectra_physics = ["serial"]    # Spectra-Physics lasers
+newport_power_meter = ["serial"] # Newport 1830-C power meter
+
+# PVCAM camera support
+pvcam = ["dep:daq-driver-pvcam"]                           # Mock driver (fast compile)
+pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]        # Real SDK (requires installation)
+pvcam_arrow = ["pvcam", "daq-driver-pvcam/arrow_tap"]      # Arrow data format
+
+# Convenience feature: all hardware drivers (with mock PVCAM)
+all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam"]
+
+# Full feature set
+full = ["all_hardware", "simulator"]
+
+# Other features
 simulator = []
 plugins_hot_reload = ["dep:notify"]
-# Enable Rhai scripting for config-driven drivers
-scripting = ["dep:rhai"]
-# Enable binary protocol support (Modbus RTU, etc.) with CRC utilities
-binary_protocol = ["dep:crc"]
+scripting = ["dep:rhai"]        # Rhai scripting for config-driven drivers
+binary_protocol = ["dep:crc"]   # Modbus RTU, etc.

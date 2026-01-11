@@ -28,13 +28,13 @@
 //! x_axis.move_abs(10.0).await?;
 //! ```
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub mod driver;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub mod handles;
 #[cfg(feature = "plugins_hot_reload")]
 pub mod hot_reload;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub mod registry;
 pub mod schema;
 

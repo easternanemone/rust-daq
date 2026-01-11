@@ -56,33 +56,33 @@
 pub use daq_hardware::drivers::mock;
 pub use daq_hardware::{capabilities, registry, resource_pool};
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub use daq_hardware::plugin;
 
 // Common capability imports
 // pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable}; (Removed duplicate)
 
 // Real Hardware Drivers
-#[cfg(feature = "instrument_thorlabs")]
+#[cfg(feature = "thorlabs")]
 pub use daq_hardware::drivers::ell14;
 
-#[cfg(feature = "instrument_newport")]
+#[cfg(feature = "newport")]
 pub use daq_hardware::drivers::esp300;
 
-#[cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+#[cfg(all(feature = "pvcam", feature = "pvcam_sdk"))]
 pub use daq_hardware::drivers::pvcam;
 
 // PvcamDriver is available via pvcam::PvcamDriver when the above features are enabled
 
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 pub use daq_hardware::drivers::maitai;
 
-#[cfg(feature = "instrument_newport_power_meter")]
+#[cfg(feature = "newport_power_meter")]
 pub use daq_hardware::drivers::newport_1830c;
 
 // Configure daq-hardware mock serial for tests
 /// Mock serial port support for testing without hardware
-#[cfg(feature = "instrument_serial")]
+#[cfg(feature = "serial")]
 pub mod mock_serial {
     pub use daq_hardware::drivers::mock_serial::*;
 }

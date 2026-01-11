@@ -3,26 +3,26 @@
 //! Keeps a single `tokio_serial::SerialStream` per port path and reuses it across
 //! drivers that need the same physical connection (e.g., multidrop buses).
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use anyhow::Result;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use std::collections::HashMap;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use std::sync::Arc;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use tokio::sync::Mutex;
 
 /// Pool of shared serial connections keyed by port path.
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 #[derive(Default)]
 pub struct SerialPool {
     connections: HashMap<String, Arc<Mutex<SerialStream>>>,
 }
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 impl SerialPool {
     /// Create an empty pool.
     pub fn new() -> Self {

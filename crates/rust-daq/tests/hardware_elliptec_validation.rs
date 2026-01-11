@@ -24,7 +24,7 @@
 //! errors. The ELL14 is on an RS-485 multidrop bus - all devices share one physical connection
 //! with address-based multiplexing.
 
-#![cfg(all(feature = "hardware_tests", feature = "instrument_thorlabs"))]
+#![cfg(all(feature = "hardware_tests", feature = "thorlabs"))]
 
 use rust_daq::hardware::capabilities::Movable;
 use rust_daq::hardware::ell14::{Ell14Bus, Ell14Driver};

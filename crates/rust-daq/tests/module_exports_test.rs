@@ -172,7 +172,7 @@ fn verify_mock_serial_export() {
 // Real Hardware Drivers (feature-gated)
 // =============================================================================
 
-#[cfg(feature = "instrument_thorlabs")]
+#[cfg(feature = "thorlabs")]
 #[test]
 fn verify_ell14_export() {
     // Verify Ell14 driver is exported
@@ -180,7 +180,7 @@ fn verify_ell14_export() {
     _check_type_exists::<rust_daq::hardware::ell14::Ell14Driver>();
 }
 
-#[cfg(feature = "instrument_newport")]
+#[cfg(feature = "newport")]
 #[test]
 fn verify_esp300_export() {
     // Verify Esp300 driver is exported
@@ -188,7 +188,7 @@ fn verify_esp300_export() {
     _check_type_exists::<rust_daq::hardware::esp300::Esp300Driver>();
 }
 
-#[cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+#[cfg(all(feature = "pvcam", feature = "pvcam_sdk"))]
 #[test]
 fn verify_pvcam_export() {
     // Verify PVCAM camera is exported
@@ -196,7 +196,7 @@ fn verify_pvcam_export() {
     _check_type_exists::<rust_daq::hardware::pvcam::PvcamDriver>();
 }
 
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 #[test]
 fn verify_maitai_export() {
     // Verify MaiTai laser is exported
@@ -204,7 +204,7 @@ fn verify_maitai_export() {
     _check_type_exists::<rust_daq::hardware::maitai::MaiTaiDriver>();
 }
 
-#[cfg(feature = "instrument_newport_power_meter")]
+#[cfg(feature = "newport_power_meter")]
 #[test]
 fn verify_newport_1830c_export() {
     // Verify Newport 1830-C power meter is exported

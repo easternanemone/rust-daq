@@ -77,10 +77,10 @@ standalone = ["dep:eframe", "dep:egui_extras", "dep:egui_dock", "dep:egui_plot"]
 rerun_viewer = ["dep:rerun", "dep:mimalloc", "dep:bytemuck", "dep:egui_dock", "dep:egui_plot"]
 
 # Local PVCAM driver support (for running daemon locally)
-# - instrument_photometrics: enables mock mode (no SDK required)
-# - pvcam_hardware: enables real hardware mode (requires PVCAM SDK)
-instrument_photometrics = ["dep:daq-core", "dep:daq-driver-pvcam"]
-pvcam_hardware = ["instrument_photometrics", "daq-driver-pvcam/pvcam_hardware"]
+# - pvcam: enables mock mode (no SDK required)
+# - pvcam_sdk: enables real hardware mode (requires PVCAM SDK)
+pvcam = ["dep:daq-core", "dep:daq-driver-pvcam"]
+pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]
 
 [package.metadata.cargo-machete]
 ignored = ["egui_extras", "prost"]  # egui_extras: feature-gated; prost: used by tonic codegen

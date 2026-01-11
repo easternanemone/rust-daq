@@ -42,7 +42,7 @@
 //! Run with: cargo test --features "hardware_tests,instrument_spectra_physics"
 //!           --test hardware_maitai_validation -- --test-threads=1
 
-#![cfg(all(feature = "hardware_tests", feature = "instrument_spectra_physics"))]
+#![cfg(all(feature = "hardware_tests", feature = "spectra_physics"))]
 
 use rust_daq::hardware::capabilities::{
     EmissionControl, Readable, ShutterControl, WavelengthTunable,

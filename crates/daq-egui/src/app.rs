@@ -92,9 +92,9 @@ pub struct DaqApp {
 
     /// PVCAM live view streaming state (requires rerun_viewer + instrument_photometrics)
     /// Works in mock mode without pvcam_hardware, or with real SDK when pvcam_hardware enabled
-    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+    #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
     pvcam_streaming: bool,
-    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+    #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
     pvcam_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -213,9 +213,9 @@ impl DaqApp {
             daemon_launcher,
             auto_connect_state,
             log_receiver,
-            #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+            #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             pvcam_streaming: false,
-            #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+            #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             pvcam_task: None,
         }
     }
@@ -585,7 +585,7 @@ impl DaqApp {
         });
     }
 
-    #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+    #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
     fn start_pvcam_stream(&mut self) {
         use daq_core::capabilities::FrameProducer;
         use daq_driver_pvcam::PvcamDriver;
@@ -1065,7 +1065,7 @@ impl<'a> DaqTabViewer<'a> {
             }
 
             // PVCAM live view via Rerun
-            #[cfg(all(feature = "rerun_viewer", feature = "instrument_photometrics"))]
+            #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             {
                 ui.add_space(8.0);
                 let label = if self.app.pvcam_streaming {

@@ -24,7 +24,7 @@ id = "prime_bsi"
 name = "Photometrics Prime BSI Camera"
 [devices.driver]
 type = "pvcam"
-camera_name = "PMUSBCam00"
+camera_name = "pvcamUSB_0"
 
 # ============================================================================
 # Thorlabs ELL14 Rotation Mounts (RS-485 Multidrop Bus)

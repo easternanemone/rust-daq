@@ -4,14 +4,14 @@
 //! and managing plugin instances. This enables remote GUIs to dynamically render
 //! controls based on plugin YAML definitions.
 
-#[cfg(feature = "tokio_serial")]
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
+#[cfg(feature = "serial")]
 use daq_hardware::plugin::driver::GenericDriver;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use daq_hardware::plugin::registry::PluginFactory;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use daq_hardware::plugin::schema::{DriverType, UiElement};
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use daq_hardware::registry::{DeviceConfig, DeviceRegistry, DriverType as RegistryDriverType};
 
 use crate::grpc::proto::{
@@ -22,7 +22,7 @@ use crate::grpc::proto::{
     plugin_service_server::PluginService,
 };
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use crate::grpc::proto::{
     PluginActionable, PluginAxis, PluginCapabilities, PluginLoggable, PluginMovable,
     PluginProtocol, PluginReadable, PluginScriptable, PluginSettable, PluginSummary,
@@ -48,7 +48,7 @@ pub struct PluginInstance {
     pub start_time_ns: u64,
     pub last_error: Option<String>,
     pub last_error_time_ns: Option<u64>,
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub driver: Option<Arc<GenericDriver>>,
 }
 
@@ -69,12 +69,12 @@ impl std::fmt::Debug for PluginInstance {
 /// Works in conjunction with the plugin factory to list available plugins
 /// and spawn driver instances.
 pub struct PluginServiceImpl {
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     factory: Arc<RwLock<PluginFactory>>,
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     registry: Arc<DeviceRegistry>,
     instances: Arc<RwLock<HashMap<String, PluginInstance>>>,
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     next_instance_id: Arc<RwLock<u64>>,
 }
 
@@ -88,7 +88,7 @@ impl std::fmt::Debug for PluginServiceImpl {
 
 impl PluginServiceImpl {
     /// Create a new PluginService with the given plugin factory and device registry
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub fn new(factory: Arc<RwLock<PluginFactory>>, registry: Arc<DeviceRegistry>) -> Self {
         Self {
             factory,
@@ -99,7 +99,7 @@ impl PluginServiceImpl {
     }
 
     /// Create a stub PluginService when tokio_serial is not enabled
-    #[cfg(not(feature = "tokio_serial"))]
+    #[cfg(not(feature = "serial"))]
     pub fn new_stub() -> Self {
         Self {
             instances: Arc::new(RwLock::new(HashMap::new())),
@@ -107,7 +107,7 @@ impl PluginServiceImpl {
     }
 
     /// Generate the next instance ID
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     async fn next_instance_id(&self) -> String {
         let mut id = self.next_instance_id.write().await;
         let current = *id;
@@ -116,7 +116,7 @@ impl PluginServiceImpl {
     }
 }
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 fn driver_type_to_string(dt: &DriverType) -> String {
     match dt {
         DriverType::SerialScpi => "serial_scpi".to_string(),
@@ -126,7 +126,7 @@ fn driver_type_to_string(dt: &DriverType) -> String {
     }
 }
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 fn ui_element_to_proto(elem: &UiElement) -> PluginUiElement {
     match elem {
         UiElement::Group(g) => PluginUiElement {
@@ -186,13 +186,13 @@ impl PluginService for PluginServiceImpl {
         &self,
         request: Request<ListPluginsRequest>,
     ) -> Result<Response<ListPluginsResponse>, Status> {
-        #[cfg(not(feature = "tokio_serial"))]
+        #[cfg(not(feature = "serial"))]
         {
             let _ = request;
             return Ok(Response::new(ListPluginsResponse { plugins: vec![] }));
         }
 
-        #[cfg(feature = "tokio_serial")]
+        #[cfg(feature = "serial")]
         {
             let req = request.into_inner();
             let factory = self.factory.read().await;
@@ -234,7 +234,7 @@ impl PluginService for PluginServiceImpl {
         &self,
         request: Request<GetPluginInfoRequest>,
     ) -> Result<Response<PluginInfo>, Status> {
-        #[cfg(not(feature = "tokio_serial"))]
+        #[cfg(not(feature = "serial"))]
         {
             let _ = request;
             return Err(Status::unimplemented(
@@ -242,7 +242,7 @@ impl PluginService for PluginServiceImpl {
             ));
         }
 
-        #[cfg(feature = "tokio_serial")]
+        #[cfg(feature = "serial")]
         {
             let plugin_id = request.into_inner().plugin_id;
             let factory = self.factory.read().await;
@@ -374,7 +374,7 @@ impl PluginService for PluginServiceImpl {
         &self,
         request: Request<SpawnPluginRequest>,
     ) -> Result<Response<SpawnPluginResponse>, Status> {
-        #[cfg(not(feature = "tokio_serial"))]
+        #[cfg(not(feature = "serial"))]
         {
             let _ = request;
             return Err(Status::unimplemented(
@@ -382,7 +382,7 @@ impl PluginService for PluginServiceImpl {
             ));
         }
 
-        #[cfg(feature = "tokio_serial")]
+        #[cfg(feature = "serial")]
         {
             let req = request.into_inner();
             let factory = self.factory.read().await;
@@ -606,10 +606,10 @@ impl PluginService for PluginServiceImpl {
         let req = request.into_inner();
         let mut instances = self.instances.write().await;
 
-        #[cfg_attr(not(feature = "tokio_serial"), allow(unused_variables))]
+        #[cfg_attr(not(feature = "serial"), allow(unused_variables))]
         if let Some(instance) = instances.remove(&req.instance_id) {
             // Execute on_disconnect sequence if requested
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             if req.run_disconnect_sequence {
                 if let Some(driver) = &instance.driver {
                     let disconnect_sequence = &driver.config.on_disconnect;
@@ -647,7 +647,7 @@ impl PluginService for PluginServiceImpl {
             }
 
             // Also unregister from the DeviceRegistry
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             {
                 if !self.registry.unregister(&instance.device_id) {
                     tracing::warn!(

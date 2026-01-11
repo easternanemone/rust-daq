@@ -48,6 +48,7 @@ lazy_static = { version = "1.4", optional = true }
 hyper = { version = "0.14", features = ["server", "http1", "tcp"], optional = true }
 
 [features]
+# Simplified feature flags (bd-0aqw)
 default = ["modules", "server", "networking", "scripting"]
 server = ["dep:tonic-web", "dep:tower-http"]
 modules = []
@@ -59,23 +60,20 @@ metrics = ["dep:prometheus", "dep:lazy_static", "dep:hyper"]
 storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
 storage_arrow = ["daq-storage/storage_arrow"]
 
-# Hardware drivers (bd-5bfv): Pass-through to daq-hardware.
-# Define drivers here only because gRPC services may need awareness of enabled hardware.
-# Canonical definitions are in daq-hardware/Cargo.toml.
-tokio_serial = ["dep:tokio-serial", "daq-hardware/tokio_serial"]
-instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
-instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
-instrument_photometrics = ["tokio_serial", "daq-hardware/instrument_photometrics"]
-instrument_spectra_physics = ["tokio_serial", "daq-hardware/driver-spectra-physics"]
-instrument_newport_power_meter = ["tokio_serial"]
+# Hardware drivers (pass-through to daq-hardware)
+# Canonical definitions are in daq-hardware/Cargo.toml
+serial = ["dep:tokio-serial", "daq-hardware/serial"]
+thorlabs = ["serial", "daq-hardware/thorlabs"]
+newport = ["serial", "daq-hardware/newport"]
+spectra_physics = ["serial", "daq-hardware/spectra_physics"]
+newport_power_meter = ["serial", "daq-hardware/newport_power_meter"]
 
-all_hardware = [
-    "instrument_thorlabs",
-    "instrument_newport",
-    "instrument_photometrics",
-    "instrument_spectra_physics",
-    "instrument_newport_power_meter",
-]
+# PVCAM camera support
+pvcam = ["serial", "daq-hardware/pvcam"]
+pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
+
+# All hardware drivers (with mock PVCAM)
+all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam"]
 
 [dev-dependencies]
 config = "0.14.1"

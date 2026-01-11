@@ -145,78 +145,56 @@ tonic-web-wasm-client = "0.5"
 web-time = "1.1"
 
 [features]
-# NOTE: Phase 1 (bd-61) migrated to actor-based state management
-# For rollback instructions, see ROLLBACK_ACTOR.md
-default = ["storage_csv", "instrument_serial"]
+# Simplified feature flags (bd-0aqw)
+default = ["storage_csv", "serial"]
 
-# High-level Profiles (Simplification bd-37tw.5)
+# High-level Profiles
 backend = ["server", "modules", "all_hardware", "storage_csv"]
 frontend = ["gui_egui", "networking"]
 cli = ["all_hardware", "storage_csv", "scripting", "scripting_python"]
+full = ["storage_csv", "storage_arrow", "storage_matlab", "serial", "modules", "server", "all_hardware"]
 
-full = ["storage_csv", "storage_arrow", "storage_matlab", "instrument_serial", "modules", "server", "all_hardware"]
+# NOTE: storage_hdf5 requires native HDF5 installation (libhdf5-dev).
+# Omitted from "full" to keep CI working. Enable with --features storage_hdf5.
 
-# NOTE: storage_hdf5 requires a native HDF5 installation (e.g., libhdf5-dev). It is
-# intentionally omitted from the "full" feature set to keep CI and users without HDF5
-# toolchains working. Enable explicitly with `--features storage_hdf5` when available.
-
-# Storage backends
 # Storage backends
 storage_csv = ["dep:csv"]
 storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
 storage_arrow = ["dep:arrow", "daq-storage/storage_arrow", "daq-core/storage_arrow"]
 storage_matlab = ["dep:matrw"]
-# storage_netcdf = ["dep:netcdf"]
 
-# Legacy instrument support
-instrument_serial = ["dep:serialport", "daq-hardware/serial"]
-instrument_visa = ["dep:visa-rs"]
+# Serial communication (async via tokio-serial)
+serial = ["dep:tokio-serial", "dep:serialport", "daq-hardware/serial"]
+visa = ["dep:visa-rs"]
 
-# V5+ Serial communication (safe async for laboratory devices)
-tokio_serial = ["dep:tokio-serial", "instrument_serial", "daq-hardware/tokio_serial"]
+# Hardware drivers (pass-through to daq-hardware)
+thorlabs = ["serial", "daq-hardware/thorlabs"]
+newport = ["serial", "daq-hardware/newport"]
+spectra_physics = ["serial", "daq-hardware/spectra_physics"]
+newport_power_meter = ["serial", "daq-hardware/newport_power_meter"]
 
-# V5 Hardware drivers (bd-5bfv): Pass-through to daq-hardware.
-# Canonical driver feature definitions are in daq-hardware/Cargo.toml.
-# Serial drivers use tokio-serial for async I/O.
-instrument_thorlabs = ["tokio_serial", "daq-hardware/driver-thorlabs"]
-instrument_newport = ["tokio_serial", "daq-hardware/driver-newport"]
-instrument_photometrics = ["tokio_serial", "daq-hardware/instrument_photometrics"]
-instrument_spectra_physics = ["tokio_serial", "daq-hardware/driver-spectra-physics"]
-instrument_newport_power_meter = ["tokio_serial"]
+# PVCAM camera support
+pvcam = ["serial", "daq-hardware/pvcam"]
+pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
 
-# Convenience feature to enable all V5 hardware drivers
-all_hardware = [
-    "instrument_thorlabs",
-    "instrument_newport",
-    "instrument_photometrics",
-    "instrument_spectra_physics",
-    "instrument_newport_power_meter",
-]
+# All hardware drivers (with mock PVCAM)
+all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam"]
 
-# Phase 2 (bd-63): Networking layer with FlatBuffers protocol
+# Networking and server
 networking = []
 server = ["networking", "dep:daq-server", "tokio/full"]
 scripting = ["dep:daq-scripting"]
 gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_extras"]
-
-# Phase 3B (bd-c0ai): Module system with runtime instrument assignment
-# Requires networking for gRPC proto types used in module context
 modules = ["scripting"]
 
-# PVCAM SDK integration (requires PVCAM SDK installed)
-# Must propagate pvcam_hardware to daq-hardware which propagates to daq-driver-pvcam
-pvcam_hardware = ["daq-hardware/pvcam_hardware", "instrument_photometrics"]
+# Testing
 hardware_tests = []
-
-# Camera model for tests (default: Prime BSI 2048x2048)
-# Enable for Prime 95B (1200x1200) instead
 prime_95b_tests = []
 
 # Python scripting backend
 scripting_python = ["daq-scripting/python"]
 
 # Plugin hot-reload (development only)
-# Watches plugin directories for changes and reloads without restart
 plugins_hot_reload = ["dep:notify"]
 
 # Binaries and Examples moved to separate crates

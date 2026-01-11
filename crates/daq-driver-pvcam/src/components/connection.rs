@@ -138,7 +138,25 @@ impl PvcamConnection {
 
         if prev_count == 0 {
             // We're the first connection - initialize the SDK
+            println!("DEBUG: Initializing PVCAM SDK...");
+            if let Ok(v) = std::env::var("PVCAM_VERSION") {
+                println!("DEBUG: Env PVCAM_VERSION={}", v);
+            } else {
+                println!("DEBUG: Env PVCAM_VERSION is NOT SET");
+            }
+
             unsafe {
+                // Check version first (diagnostics)
+                let mut ver: uns16 = 0;
+                if pl_pvcam_get_ver(&mut ver) == 0 {
+                    let err = get_pvcam_error();
+                    println!("DEBUG: pl_pvcam_get_ver failed: {}", err);
+                    tracing::warn!("pl_pvcam_get_ver failed: {}", err);
+                } else {
+                    println!("DEBUG: PVCAM Version: {:x} (hex)", ver);
+                    tracing::info!("PVCAM Version: {:x} (hex)", ver);
+                }
+
                 // SAFETY: Global PVCAM init; protected by SDK_INIT_MUTEX.
                 if pl_pvcam_init() == 0 {
                     // Rollback ref count on failure
@@ -149,6 +167,7 @@ impl PvcamConnection {
                     ));
                 }
             }
+            println!("DEBUG: PVCAM SDK initialized success");
             tracing::info!("PVCAM SDK initialized (ref count: 1)");
         } else {
             tracing::debug!(
@@ -177,13 +196,17 @@ impl PvcamConnection {
         let mut total_cameras: i16 = 0;
         unsafe {
             // SAFETY: total_cameras is a valid out pointer; SDK already initialized.
-            if pl_cam_get_total(&mut total_cameras) == 0 {
+            let res = pl_cam_get_total(&mut total_cameras);
+            println!("DEBUG: pl_cam_get_total result={}, count={}", res, total_cameras);
+            if res == 0 {
                 return Err(anyhow!("Failed to get camera count: {}", get_pvcam_error()));
             }
         }
+        tracing::info!("pl_cam_get_total returned: {}", total_cameras);
 
         if total_cameras == 0 {
-            return Err(anyhow!("No PVCAM cameras detected"));
+            tracing::warn!("pl_cam_get_total returned 0, but attempting to open camera by name anyway (diagnostics)");
+            // return Err(anyhow!("No PVCAM cameras detected"));
         }
 
         let camera_name_cstr = CString::new(camera_name).context("Invalid camera name")?;

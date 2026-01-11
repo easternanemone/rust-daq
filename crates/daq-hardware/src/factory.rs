@@ -279,7 +279,7 @@ impl ConfiguredBus {
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB1")
     /// * `config_path` - Path to device TOML configuration
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub async fn open(port_path: &str, config_path: &Path) -> Result<Self> {
         use crate::port_resolver::resolve_port;
         use tokio_serial::SerialPortBuilderExt;

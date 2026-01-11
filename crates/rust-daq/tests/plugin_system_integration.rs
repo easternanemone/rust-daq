@@ -17,7 +17,7 @@
 //! Full serial communication tests require mock serial support (Phase 7).
 
 // Only compile these tests when tokio_serial feature is enabled
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 mod plugin_tests {
     use anyhow::Result;
     use rust_daq::hardware::capabilities::{

@@ -11,7 +11,7 @@
     unused_imports,
     missing_docs
 )]
-#![cfg(all(feature = "instrument_photometrics", feature = "pvcam_hardware"))]
+#![cfg(all(feature = "pvcam", feature = "pvcam_sdk"))]
 //! PVCAM Camera Hardware Validation Test Suite
 //!
 //! Comprehensive validation tests for Photometrics PVCAM camera driver.

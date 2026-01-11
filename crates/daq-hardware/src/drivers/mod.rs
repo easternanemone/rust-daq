@@ -1,11 +1,11 @@
-#[cfg(feature = "driver-thorlabs")]
+#[cfg(feature = "thorlabs")]
 pub mod ell14;
 
-#[cfg(all(test, feature = "driver-thorlabs"))]
+#[cfg(all(test, feature = "thorlabs"))]
 mod ell14_polling;
 
 // Generic serial driver for config-driven devices
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub mod generic_serial;
 
 // Rhai scripting engine for config-driven drivers
@@ -16,7 +16,7 @@ pub mod script_engine;
 pub mod binary_protocol;
 
 // Re-export key types from generic_serial
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 pub use generic_serial::{DynSerial, GenericSerialDriver, SharedPort};
 
 // Re-export scripting types when enabled
@@ -32,14 +32,14 @@ pub use binary_protocol::{BinaryFrameBuilder, BinaryResponseParser, ParsedValue}
 #[cfg(feature = "binary_protocol")]
 pub use binary_protocol::{calculate_crc, validate_crc, CrcValue};
 
-#[cfg(feature = "driver-newport")]
+#[cfg(feature = "newport")]
 pub mod esp300;
-#[cfg(feature = "driver-spectra-physics")]
+#[cfg(feature = "spectra_physics")]
 pub mod maitai;
 pub mod mock;
 #[cfg(feature = "serial")]
 pub mod mock_serial;
-#[cfg(feature = "driver-newport")]
+#[cfg(feature = "newport")]
 pub mod newport_1830c;
-#[cfg(feature = "driver_pvcam")]
+#[cfg(feature = "pvcam")]
 pub use daq_driver_pvcam as pvcam;

@@ -387,60 +387,51 @@ pub unsafe extern "system" fn pvcam_eof_callback(
     p_frame_info: *const FRAME_INFO,
     p_context: *mut std::ffi::c_void,
 ) {
-    if p_context.is_null() {
-        return;
-    }
-
-    let ctx = &*(p_context as *const CallbackContext);
-
-    // SDK Pattern Step 1: Store FRAME_INFO (ctx->eofFrameInfo = *pFrameInfo)
-    let frame_nr = if !p_frame_info.is_null() {
-        let info = *p_frame_info;
-        ctx.store_frame_info(info);
-        info.FrameNr
-    } else {
-        -1
-    };
-
-    // SDK Pattern Step 2: Get frame pointer INSIDE callback (ONLY for CIRC_OVERWRITE mode)
-    // bd-nzcq: In CIRC_NO_OVERWRITE mode, we must NOT call get_latest_frame here because
-    // the main loop needs to use get_oldest_frame for proper FIFO order. If we call
-    // get_latest_frame, we get frame N (newest) but then unlock frame 1 (oldest) = mismatch!
-    let circ_overwrite = ctx.circ_overwrite.load(Ordering::Acquire);
-
-    if circ_overwrite {
-        // CIRC_OVERWRITE mode: SDK pattern - get frame pointer in callback
-        let hcam = ctx.hcam.load(Ordering::Acquire);
-        let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-        let result = pl_exp_get_latest_frame(hcam, &mut frame_ptr);
-
-        if result != 0 && !frame_ptr.is_null() {
-            ctx.store_frame_ptr(frame_ptr);
-            tracing::trace!(
-                frame_nr,
-                frame_ptr = ?frame_ptr,
-                "EOF callback (CIRC_OVERWRITE): frame retrieved successfully"
-            );
-        } else {
-            ctx.store_frame_ptr(std::ptr::null_mut());
-            tracing::trace!(
-                frame_nr,
-                result,
-                "EOF callback (CIRC_OVERWRITE): pl_exp_get_latest_frame failed"
-            );
+    // FFI SAFETY: Rust code called from C must never panic.
+    let _ = std::panic::catch_unwind(|| {
+        if p_context.is_null() {
+            return;
         }
-    } else {
-        // CIRC_NO_OVERWRITE mode: Do NOT call get_latest_frame!
-        // Main loop will use get_oldest_frame for proper FIFO order (bd-nzcq)
-        ctx.store_frame_ptr(std::ptr::null_mut());
-        tracing::trace!(
-            frame_nr,
-            "EOF callback (CIRC_NO_OVERWRITE): signaling frame ready, main loop will use get_oldest_frame"
-        );
-    }
 
-    // SDK Pattern Step 4: Signal main thread (ctx->eofEvent.cond.notify_all())
-    ctx.signal_frame_ready(frame_nr);
+        let ctx = &*(p_context as *const CallbackContext);
+
+        // Store FRAME_INFO if available
+        let frame_nr = if !p_frame_info.is_null() {
+            let info = *p_frame_info;
+            ctx.store_frame_info(info);
+            info.FrameNr
+        } else {
+            -1
+        };
+
+        // PURE SIGNALING: Do not call SDK functions here.
+        // Let the main loop handle all frame retrieval.
+        // ctx.store_frame_ptr(std::ptr::null_mut());
+
+        // FIX (PVCAM_STALL_INVESTIGATION_2026_01_11):
+        // Restore SDK Pattern: Call pl_exp_get_latest_frame INSIDE callback if in OVERWRITE mode.
+        // This is "crucial" for clearing the internal buffer state in CIRC_OVERWRITE mode.
+        if ctx.circ_overwrite.load(Ordering::Acquire) {
+            let hcam = ctx.hcam.load(Ordering::Acquire);
+            if hcam != -1 {
+                let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+                if pl_exp_get_latest_frame(hcam, &mut frame_ptr) != 0 {
+                    ctx.store_frame_ptr(frame_ptr);
+                } else {
+                    ctx.store_frame_ptr(std::ptr::null_mut());
+                }
+            } else {
+                ctx.store_frame_ptr(std::ptr::null_mut());
+            }
+        } else {
+            // In CIRC_NO_OVERWRITE mode, we MUST NOT call get_latest_frame.
+            // Main loop uses get_oldest_frame + unlock to maintain FIFO order.
+            ctx.store_frame_ptr(std::ptr::null_mut());
+        }
+
+        // Signal main thread
+        ctx.signal_frame_ready(frame_nr);
+    });
 }
 
 /// Acquisition error type for signaling fatal errors from frame loop (Gemini SDK review).
@@ -2343,8 +2334,9 @@ impl PvcamAcquisition {
         binning: (u16, u16),
         metadata_tx: Option<tokio::sync::mpsc::Sender<FrameMetadata>>,
         done_tx: std::sync::mpsc::Sender<()>,
-        circ_ptr: *mut u8,
-        circ_size_bytes: u32,
+        // unused in CIRC_OVERWRITE path but kept for signature
+        _circ_ptr: *mut u8,
+        _circ_size_bytes: u32,
         circ_overwrite: bool,
     ) {
         let loop_span = tracing::debug_span!(
@@ -2368,9 +2360,9 @@ impl PvcamAcquisition {
         let mut bytes_arrived: uns32 = 0;
         let mut buffer_cnt: uns32 = 0;
         let mut consecutive_timeouts: u32 = 0;
-        const CALLBACK_WAIT_TIMEOUT_MS: u64 = 100; // Short timeout to check shutdown
+        const CALLBACK_WAIT_TIMEOUT_MS: u64 = 2000; // 2 seconds (align with C++ 5s, but responsive enough)
                                                    // FORCE LONG TIMEOUT for debugging
-        let max_consecutive_timeouts: u32 = 1000; // 100s
+        let max_consecutive_timeouts: u32 = 5; // 10 seconds total
 
         if use_callback {
             tracing::debug!("Using EOF callback mode for frame acquisition");
@@ -2429,15 +2421,7 @@ impl PvcamAcquisition {
                 // Callback mode (bd-ek9n.2): Wait on condvar with timeout
                 // Returns number of pending frames (0 on timeout/shutdown)
                 let pending = callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
-                if pending > 0 {
-                    true
-                } else {
-                    // Fallback: if callbacks are missed, avoid deadlock by occasionally checking status.
-                    match ffi_safe::check_cont_status(hcam) {
-                        Ok((_, _, cnt)) => cnt > 0,
-                        Err(()) => false,
-                    }
-                }
+                pending > 0
             } else {
                 // Polling mode fallback: Check status with 1ms delay
                 match ffi_safe::check_cont_status(hcam) {
@@ -2483,8 +2467,10 @@ impl PvcamAcquisition {
                     );
                 }
 
+                /*
                 // bd-3gnv: Detect stall (hardware errata) and auto-restart
-                // Trigger faster: after 2 consecutive timeouts if status is READOUT_NOT_ACTIVE (0)
+                // DISABLED: C++ reproduction proved hardware does not stall.
+                // This logic was causing false positives.
                 if consecutive_timeouts >= 2 {
                     if let Ok((st, _, _)) = ffi_safe::check_cont_status(hcam) {
                         if st == 0 { // READOUT_NOT_ACTIVE
@@ -2497,53 +2483,11 @@ impl PvcamAcquisition {
                                 frame_count.load(Ordering::Relaxed)
                             );
 
-                            // Step 1: Stop acquisition with CCS_CLEAR to fully reset camera state
-                            ffi_safe::stop_acquisition(hcam, CCS_CLEAR);
-
-                            // Step 2: Delay for camera to fully reset
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-
-                            // Step 3: Full restart with setup + start (camera needs re-setup to break the stall)
-                            match ffi_safe::full_restart_acquisition(
-                                hcam,
-                                roi_x,
-                                roi_y,
-                                width,
-                                height,
-                                binning,
-                                exposure_ms,
-                                circ_ptr,
-                                circ_size_bytes,
-                                circ_overwrite,
-                            ) {
-                                Ok(_new_frame_bytes) => {
-                                    // Step 4: Re-register EOF callback (setup may invalidate it)
-                                    if use_callback {
-                                        let callback_ctx_ptr =
-                                            &**callback_ctx as *const CallbackContext;
-                                        if !ffi_safe::register_eof_callback(hcam, callback_ctx_ptr) {
-                                            tracing::warn!("Failed to re-register EOF callback after restart (bd-3gnv)");
-                                        }
-                                    }
-
-                                    tracing::info!("PVCAM full auto-restart succeeded (bd-3gnv)");
-
-                                    // Reset state for new acquisition cycle
-                                    callback_ctx.pending_frames.store(0, Ordering::Release);
-                                    last_hw_frame_nr.store(-1, Ordering::Release);
-                                    consecutive_timeouts = 0;
-                                    continue; // Resume waiting for frames
-                                }
-                                Err(err_msg) => {
-                                    tracing::error!(
-                                        "PVCAM full auto-restart failed: {} (bd-3gnv)",
-                                        err_msg
-                                    );
-                                }
-                            }
+                            // ... (restart logic removed) ...
                         }
                     }
                 }
+                */
 
                 if consecutive_timeouts >= max_consecutive_timeouts {
                     tracing::warn!("Frame loop: max consecutive timeouts reached");
@@ -2579,81 +2523,15 @@ impl PvcamAcquisition {
                     break;
                 }
 
-                // bd-3gnv FIX: Check if there are actually frames available BEFORE calling get_oldest_frame.
-                // The SDK can return stale frames if we don't check properly.
-                // This prevents the 60-million-iteration busy loop caused by the SDK returning
-                // the same frame repeatedly after the camera stops producing new frames.
-                //
-                // Strategy: Use callback pending_frames as primary indicator (more reliable),
-                // but also check buffer_cnt as a secondary signal. Exit drain loop when BOTH
-                // the callback says no frames pending AND the SDK says buffer is empty.
-                let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
-                let (check_status, bytes_arrived, buf_cnt) = match ffi_safe::check_cont_status(hcam)
-                {
-                    Ok(result) => result,
+                // PURE FIFO: Always use get_oldest_frame.
+                // This works for both modes if we are fast enough, but is required for NO_OVERWRITE.
+                // We rely on the return code to know if we are done.
+                let frame_ptr = match ffi_safe::get_oldest_frame(hcam, &mut frame_info) {
+                    Ok(ptr) => ptr,
                     Err(()) => {
-                        tracing::error!("PVCAM status check failed");
-                        let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
-                        fatal_error = true;
+                        // No more frames available - exit drain loop
                         break;
                     }
-                };
-                status = check_status;
-                buffer_cnt = buf_cnt;
-
-                // Check for fatal errors
-                if status == READOUT_FAILED {
-                    tracing::error!("PVCAM readout failed");
-                    let _ = error_tx.send(AcquisitionError::ReadoutFailed);
-                    fatal_error = true;
-                    break;
-                }
-
-                // bd-3gnv FIX: Only attempt to get a frame if either:
-                // 1. Callback says frames are pending, OR
-                // 2. SDK buffer has frames available
-                // Exit if BOTH say no frames, to prevent stale frame spin.
-                if pending == 0 && buffer_cnt == 0 {
-                    // No frames available from either source - exit drain loop
-                    break;
-                }
-
-                // bd-ffi-sdk-match: Retrieve frame pointer from callback context.
-                // The callback has already called pl_exp_get_latest_frame and stored the
-                // result. This matches the SDK example pattern (LiveImage.cpp).
-                //
-                // Primary path: Use callback-stored frame (SDK pattern)
-                // Fallback path: Use get_oldest_frame for CIRC_NO_OVERWRITE FIFO draining
-                let callback_frame_ptr = callback_ctx.take_frame_ptr();
-
-                let frame_ptr = if !callback_frame_ptr.is_null() {
-                    // Got frame from callback - retrieve the stored FRAME_INFO
-                    frame_info = callback_ctx.take_frame_info();
-                    callback_frame_ptr
-                } else if !circ_overwrite {
-                    // Fallback for CIRC_NO_OVERWRITE: try FIFO drain with get_oldest_frame
-                    match ffi_safe::get_oldest_frame(hcam, &mut frame_info) {
-                        Ok(ptr) => ptr,
-                        Err(()) => {
-                            // No more frames available - exit drain loop normally
-                            break;
-                        }
-                    }
-                } else {
-                    // CIRC_OVERWRITE mode with no callback frame - consume pending and exit.
-                    // This prevents hot-spinning when callback fires but pl_exp_get_latest_frame
-                    // fails or returns null. The callback incremented pending_frames, so we must
-                    // decrement it here to keep the counter consistent with available frames.
-                    // (Codex review: P1 - Consume pending callbacks in overwrite mode)
-                    tracing::trace!(
-                        pending,
-                        buffer_cnt,
-                        "Drain loop: callback frame_ptr is null in CIRC_OVERWRITE mode, exiting"
-                    );
-                    if use_callback {
-                        callback_ctx.consume_one();
-                    }
-                    break;
                 };
 
                 frames_processed_in_drain += 1;
@@ -2806,12 +2684,10 @@ impl PvcamAcquisition {
                         continue; // Skip to next frame
                     }
 
-                    // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain
-                    // the buffer. unlock_oldest_frame removes the oldest frame.
-                    if !circ_overwrite {
-                        if !ffi_safe::release_oldest_frame(hcam) {
-                            unlock_failures += 1;
-                        }
+                    // Release frame back to SDK (CRITICAL for CIRC_NO_OVERWRITE)
+                    // Even if we were in OVERWRITE mode, unlocking shouldn't hurt if using get_oldest.
+                    if !ffi_safe::release_oldest_frame(hcam) {
+                        unlock_failures += 1;
                     }
 
                     // Decrement pending frame counter (callback mode)

@@ -6,8 +6,25 @@
 //! the `PVCAM_SDK_DIR` environment variable must point to the root
 //! directory of your PVCAM SDK installation.
 
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(deref_nullptr)]
+#![allow(clippy::all)]
+
 #[cfg(feature = "pvcam-sdk")]
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+pub mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
+#[cfg(feature = "pvcam-sdk")]
+pub use bindings::*;
+
+#[cfg(not(feature = "pvcam-sdk"))]
+pub mod mock_bindings {
+    // ... mock types if needed, or just empty
+}
+
 
 // Manual constant definitions for enums that bindgen didn't export as consts
 // Parameter attribute constants (from PL_PARAM_ATTRIBUTES enum)

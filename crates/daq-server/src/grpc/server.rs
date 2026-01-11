@@ -8,7 +8,7 @@ use crate::grpc::proto::{
     control_service_server::{ControlService, ControlServiceServer},
 };
 use crate::grpc::run_engine_service::RunEngineServiceImpl;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use crate::grpc::{PluginServiceImpl, PluginServiceServer};
 use daq_core::core::Measurement;
 #[cfg(feature = "scripting")]
@@ -1415,7 +1415,7 @@ pub async fn start_server_with_hardware(
     let module_server = ModuleServiceImpl::new(registry.clone());
 
     // Create PluginService with shared factory and registry (bd-0451)
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     let plugin_server = {
         // No lock needed for registry anymore
         let factory = registry.plugin_factory();
@@ -1451,7 +1451,7 @@ pub async fn start_server_with_hardware(
     standard_health_service.set_serving_status("daq.StorageService", ServingStatus::Serving);
     standard_health_service.set_serving_status("daq.RunEngineService", ServingStatus::Serving);
     standard_health_service.set_serving_status("daq.HealthService", ServingStatus::Serving); // Register custom service too
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     standard_health_service.set_serving_status("daq.PluginService", ServingStatus::Serving);
 
     println!("DAQ gRPC server (with hardware) listening on {}", bind_addr);
@@ -1459,7 +1459,7 @@ pub async fn start_server_with_hardware(
     println!("  - HardwareService: direct device control");
     println!("  - HealthService: system health monitoring (bd-ergo)");
     println!("  - ModuleService: experiment modules (bd-c0ai)");
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     println!("  - PluginService: YAML-defined instrument plugins (bd-0451)");
     println!("  - ScanService: coordinated multi-axis scans");
     println!("  - PresetService: configuration save/load (bd-akcm)");
@@ -1477,7 +1477,7 @@ pub async fn start_server_with_hardware(
         );
     }
 
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     let mut server_builder = {
         let auth_settings = grpc_settings.clone();
         Server::builder()
@@ -1489,16 +1489,16 @@ pub async fn start_server_with_hardware(
             }))
     };
 
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     if let Some(tls_config) = tls_config {
         server_builder = server_builder.tls_config(tls_config)?;
     }
 
-    #[cfg(all(feature = "tokio_serial", feature = "scripting"))]
+    #[cfg(all(feature = "serial", feature = "scripting"))]
     let server_builder =
         server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
 
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     let server_builder = server_builder
         .add_service(tonic_web::enable(HealthServer::new(
             standard_health_service,
@@ -1519,7 +1519,7 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(PresetServiceServer::new(preset_server)))
         .add_service(tonic_web::enable(StorageServiceServer::new(storage_server)));
 
-    #[cfg(not(feature = "tokio_serial"))]
+    #[cfg(not(feature = "serial"))]
     let mut server_builder = {
         let auth_settings = grpc_settings.clone();
         Server::builder()
@@ -1531,16 +1531,16 @@ pub async fn start_server_with_hardware(
             }))
     };
 
-    #[cfg(not(feature = "tokio_serial"))]
+    #[cfg(not(feature = "serial"))]
     if let Some(tls_config) = tls_config {
         server_builder = server_builder.tls_config(tls_config)?;
     }
 
-    #[cfg(all(not(feature = "tokio_serial"), feature = "scripting"))]
+    #[cfg(all(not(feature = "serial"), feature = "scripting"))]
     let server_builder =
         server_builder.add_service(tonic_web::enable(ControlServiceServer::new(control_server)));
 
-    #[cfg(not(feature = "tokio_serial"))]
+    #[cfg(not(feature = "serial"))]
     let server_builder = server_builder
         .add_service(tonic_web::enable(HealthServer::new(
             standard_health_service,

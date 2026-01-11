@@ -365,8 +365,8 @@ export LIBRARY_PATH=/opt/pvcam/library/x86_64:$LIBRARY_PATH
 export PVCAM_SMOKE_TEST=1
 
 cargo nextest run --profile hardware \
-  --features "instrument_photometrics,pvcam_hardware" \
-  --test pvcam_hardware_smoke
+  --features "instrument_photometrics,pvcam_sdk" \
+  --test pvcam_sdk_smoke
 ```
 
 ### Test Serialization

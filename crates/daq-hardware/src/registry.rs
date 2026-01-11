@@ -81,7 +81,7 @@ use daq_core::data::Frame;
 use daq_core::error::DaqError;
 use daq_core::pipeline::MeasurementSource;
 
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use crate::plugin::driver::GenericDriver;
 // use crate::plugin::driver::{Connection, GenericDriver};
 // use crate::plugin::schema::{DriverType, InstrumentConfig, PluginMetadata, ScriptType};
@@ -89,7 +89,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(feature = "tokio_serial")]
+#[cfg(feature = "serial")]
 use tokio::sync::RwLock;
 
 // =============================================================================
@@ -134,7 +134,7 @@ pub fn validate_driver_config(driver: &DriverType) -> Result<(), DaqError> {
             }
         }
 
-        #[cfg(feature = "driver_pvcam")]
+        #[cfg(feature = "pvcam")]
         DriverType::Pvcam { camera_name } => {
             if camera_name.is_empty() {
                 return Err(DaqError::Configuration(
@@ -142,7 +142,7 @@ pub fn validate_driver_config(driver: &DriverType) -> Result<(), DaqError> {
                 ));
             }
         }
-        #[cfg(feature = "tokio_serial")]
+        #[cfg(feature = "serial")]
         DriverType::Plugin { plugin_id, address } => {
             if plugin_id.is_empty() {
                 return Err(DaqError::Configuration(
@@ -346,13 +346,13 @@ pub enum DriverType {
     },
 
     /// Photometrics PVCAM camera
-    #[cfg(feature = "driver_pvcam")]
+    #[cfg(feature = "pvcam")]
     Pvcam {
         /// Camera name reported by PVCAM (e.g., "PrimeBSI")
         camera_name: String,
     },
     /// Plugin-based device loaded from YAML configuration
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     Plugin {
         /// Plugin ID from YAML metadata.id (e.g., "my-sensor-v1")
         plugin_id: String,
@@ -390,13 +390,13 @@ impl DriverType {
                 Capability::Triggerable,
                 Capability::ExposureControl,
             ],
-            #[cfg(feature = "driver_pvcam")]
+            #[cfg(feature = "pvcam")]
             DriverType::Pvcam { .. } => vec![
                 Capability::FrameProducer,
                 Capability::Triggerable,
                 Capability::ExposureControl,
             ],
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             DriverType::Plugin { .. } => {
                 // Note: Plugin capabilities are determined at runtime from YAML
                 // This returns an empty vec, but actual capabilities are introspected
@@ -420,9 +420,9 @@ impl DriverType {
             DriverType::MockStage { .. } => "mock_stage",
             DriverType::MockPowerMeter { .. } => "mock_power_meter",
             DriverType::MockCamera { .. } => "mock_camera",
-            #[cfg(feature = "driver_pvcam")]
+            #[cfg(feature = "pvcam")]
             DriverType::Pvcam { .. } => "pvcam",
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             DriverType::Plugin { .. } => {
                 // Note: This is a generic name; actual plugin name is stored in plugin_id
                 "plugin"
@@ -566,11 +566,11 @@ pub struct DeviceRegistry {
 
     /// Shared serial ports for ELL14 multidrop bus (interior mutability for async access)
     /// Key: port path (e.g., "/dev/ttyUSB0"), Value: shared Arc<Mutex<SerialStream>>
-    #[cfg(feature = "driver-thorlabs")]
+    #[cfg(feature = "thorlabs")]
     ell14_shared_ports: RwLock<HashMap<String, crate::drivers::ell14::SharedPort>>,
 
     /// Plugin factory for loading YAML-defined drivers (tokio_serial feature only)
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     plugin_factory: Arc<RwLock<crate::plugin::registry::PluginFactory>>,
 }
 
@@ -579,28 +579,28 @@ impl DeviceRegistry {
     pub fn new() -> Self {
         Self {
             devices: DashMap::new(),
-            #[cfg(feature = "driver-thorlabs")]
+            #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             plugin_factory: Arc::new(RwLock::new(crate::plugin::registry::PluginFactory::new())),
         }
     }
 
     /// Create a new device registry with a pre-configured PluginFactory
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub fn with_plugin_factory(
         plugin_factory: Arc<RwLock<crate::plugin::registry::PluginFactory>>,
     ) -> Self {
         Self {
             devices: DashMap::new(),
-            #[cfg(feature = "driver-thorlabs")]
+            #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             plugin_factory,
         }
     }
 
     /// Get a reference to the plugin factory
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub fn plugin_factory(&self) -> Arc<RwLock<crate::plugin::registry::PluginFactory>> {
         self.plugin_factory.clone()
     }
@@ -614,7 +614,7 @@ impl DeviceRegistry {
     ///
     /// # Errors
     /// Returns error if path is not a directory or if any plugin fails to load
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub async fn load_plugins(&self, path: &std::path::Path) -> Result<(), DaqError> {
         let mut factory = self.plugin_factory.write().await;
         factory
@@ -680,7 +680,7 @@ impl DeviceRegistry {
     ///
     /// # Thread Safety (bd-pf31)
     /// This method is thread-safe and can be called concurrently.
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     pub async fn register_plugin_instance(
         &self,
         config: DeviceConfig,
@@ -967,13 +967,13 @@ impl DeviceRegistry {
                 })
             }
 
-            #[cfg(feature = "tokio_serial")]
+            #[cfg(feature = "serial")]
             DriverType::Plugin { plugin_id, address } => {
                 self.instantiate_plugin_device(config, &plugin_id, &address)
                     .await
             }
 
-            #[cfg(feature = "driver_pvcam")]
+            #[cfg(feature = "pvcam")]
             DriverType::Pvcam { camera_name } => {
                 let driver = Arc::new(
                     crate::drivers::pvcam::PvcamDriver::new_async(camera_name.clone()).await?,
@@ -1002,7 +1002,7 @@ impl DeviceRegistry {
                 })
             }
 
-            #[cfg(feature = "driver-thorlabs")]
+            #[cfg(feature = "thorlabs")]
             DriverType::Ell14 { port, address } => {
                 // Use shared port for multidrop bus - multiple ELL14 devices share one serial connection
                 let shared_port = {
@@ -1052,7 +1052,7 @@ impl DeviceRegistry {
                 })
             }
 
-            #[cfg(feature = "driver-newport")]
+            #[cfg(feature = "newport")]
             DriverType::Newport1830C { port } => {
                 let driver = Arc::new(crate::drivers::newport_1830c::Newport1830CDriver::new(
                     &port,
@@ -1083,7 +1083,7 @@ impl DeviceRegistry {
                 })
             }
 
-            #[cfg(feature = "driver-spectra-physics")]
+            #[cfg(feature = "spectra_physics")]
             DriverType::MaiTai { port } => {
                 let driver = Arc::new(crate::drivers::maitai::MaiTaiDriver::new(&port)?);
                 Ok(RegisteredDevice {
@@ -1108,7 +1108,7 @@ impl DeviceRegistry {
                 })
             }
 
-            #[cfg(feature = "driver-newport")]
+            #[cfg(feature = "newport")]
             DriverType::Esp300 { port, axis } => {
                 let driver = Arc::new(crate::drivers::esp300::Esp300Driver::new(&port, axis)?);
                 Ok(RegisteredDevice {
@@ -1136,22 +1136,22 @@ impl DeviceRegistry {
             }
 
             // Handle disabled features
-            #[cfg(all(not(feature = "driver-thorlabs"), feature = "serial"))]
+            #[cfg(all(not(feature = "thorlabs"), feature = "serial"))]
             DriverType::Ell14 { .. } => Err(anyhow!(
                 "ELL14 driver requires 'instrument_thorlabs' feature"
             )),
 
-            #[cfg(all(not(feature = "driver-newport"), feature = "serial"))]
+            #[cfg(all(not(feature = "newport"), feature = "serial"))]
             DriverType::Newport1830C { .. } => Err(anyhow!(
                 "Newport 1830-C driver requires 'instrument_newport_power_meter' feature"
             )),
 
-            #[cfg(all(not(feature = "driver-spectra-physics"), feature = "serial"))]
+            #[cfg(all(not(feature = "spectra_physics"), feature = "serial"))]
             DriverType::MaiTai { .. } => Err(anyhow!(
                 "MaiTai driver requires 'driver-spectra-physics' feature"
             )),
 
-            #[cfg(all(not(feature = "driver-newport"), feature = "serial"))]
+            #[cfg(all(not(feature = "newport"), feature = "serial"))]
             DriverType::Esp300 { .. } => Err(anyhow!(
                 "ESP300 driver requires 'instrument_newport' feature"
             )),
@@ -1159,7 +1159,7 @@ impl DeviceRegistry {
     }
 
     /// Instantiate a plugin-based device
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     async fn instantiate_plugin_device(
         &self,
         config: DeviceConfig,
@@ -1180,7 +1180,7 @@ impl DeviceRegistry {
     /// This is the shared implementation used by both `instantiate_plugin_device`
     /// (for config-based registration) and `register_plugin_instance` (for
     /// PluginService-managed registration).
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     async fn create_registered_plugin(
         &self,
         config: DeviceConfig,
@@ -1421,7 +1421,7 @@ pub async fn create_registry_from_config(
     }
 
     // Load plugins from configured search paths
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     {
         let mut factory = registry.plugin_factory.write().await;
         for path in &config.plugin_paths {
@@ -1453,12 +1453,16 @@ pub async fn create_registry_from_config(
 
     // Register all configured devices
     for device_config in &config.devices {
+        println!("Attempting to register device: {}", device_config.id);
         if let Err(e) = registry.register(device_config.clone()).await {
+            println!("ERROR registering device '{}': {}", device_config.id, e);
             tracing::warn!(
                 "Failed to register device '{}': {} (continuing with other devices)",
                 device_config.id,
                 e
             );
+        } else {
+            println!("SUCCESS registering device '{}'", device_config.id);
         }
     }
 
@@ -1551,7 +1555,7 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry, DaqError> {
     }
 
     // Prime BSI Camera (PVCAM)
-    #[cfg(feature = "driver_pvcam")]
+    #[cfg(feature = "pvcam")]
     if let Err(e) = registry
         .register(DeviceConfig {
             id: "camera".into(),
@@ -1796,7 +1800,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "tokio_serial")]
+    #[cfg(feature = "serial")]
     #[tokio::test]
     async fn test_plugin_device_registration() {
         use std::sync::Arc;

@@ -177,7 +177,7 @@ async fn test_serial_flow_control_simulation() {
 
 /// Test MaiTai wavelength query command
 #[tokio::test]
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 async fn test_maitai_wavelength_query() {
     let (port, mut harness) = mock_serial::new();
     let mut reader = BufReader::new(port);
@@ -210,7 +210,7 @@ async fn test_maitai_wavelength_query() {
 
 /// Test MaiTai wavelength set command
 #[tokio::test]
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 async fn test_maitai_wavelength_set() {
     let (port, mut harness) = mock_serial::new();
     let mut reader = BufReader::new(port);
@@ -236,7 +236,7 @@ async fn test_maitai_wavelength_set() {
 
 /// Test MaiTai power query with timeout handling
 #[tokio::test]
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 async fn test_maitai_power_query_with_timeout() {
     let (port, mut harness) = mock_serial::new();
     let mut reader = BufReader::new(port);
@@ -274,7 +274,7 @@ async fn test_maitai_power_query_with_timeout() {
 
 /// Test MaiTai shutter control
 #[tokio::test]
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 async fn test_maitai_shutter_control() {
     let (port, mut harness) = mock_serial::new();
     let mut reader = BufReader::new(port);
@@ -316,7 +316,7 @@ async fn test_maitai_shutter_control() {
 
 /// Test MaiTai identification query
 #[tokio::test]
-#[cfg(feature = "instrument_spectra_physics")]
+#[cfg(feature = "spectra_physics")]
 async fn test_maitai_identify() {
     let (port, mut harness) = mock_serial::new();
     let mut reader = BufReader::new(port);

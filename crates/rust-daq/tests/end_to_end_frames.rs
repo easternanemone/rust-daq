@@ -1,4 +1,4 @@
-#![cfg(all(feature = "instrument_photometrics", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "pvcam", not(target_arch = "wasm32")))]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

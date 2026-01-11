@@ -94,7 +94,7 @@
 //! - Keep combustible materials away from beam
 //! - Have emergency power-off accessible
 
-#![cfg(feature = "instrument_newport_power_meter")]
+#![cfg(feature = "newport_power_meter")]
 
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

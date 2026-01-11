@@ -35,7 +35,7 @@
 //!
 //! **SAFETY:** These tests move physical hardware. Ensure no obstructions.
 
-#![cfg(all(feature = "hardware_tests", feature = "instrument_thorlabs"))]
+#![cfg(all(feature = "hardware_tests", feature = "thorlabs"))]
 
 use rust_daq::hardware::capabilities::Movable;
 use rust_daq::hardware::ell14::{Ell14Driver, HomeDirection};
