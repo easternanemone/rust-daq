@@ -603,9 +603,9 @@ rs_bool pl_cam_deregister_callback(int16 hcam, int32 callback_event);
 ### Callback Best Practices
 
 1. **Use `PL_CALLBACK_EOF`** - Most efficient for frame-ready notification
-2. **Keep callbacks short** - Signal a condvar/semaphore, don't process frames
+2. **Buffer-mode aware retrieval** - CIRC_OVERWRITE: call get_latest_frame IN callback; CIRC_NO_OVERWRITE: just signal
 3. **Use context pointer** - Pass class instance for OOP integration
-4. **Don't call PVCAM functions in callback** - May cause deadlock
+4. **Avoid heavy processing in callback** - Keep callback fast to avoid blocking SDK thread
 
 ---
 
@@ -667,26 +667,35 @@ rs_bool pl_release_frame_info_struct(FRAME_INFO *frame_to_delete);
 
 ### Frame Retrieval (Continuous Mode)
 
-**Recommended Pattern (Callback + Polling):**
+**SDK Pattern depends on buffer mode - see adr-pvcam-continuous-acquisition.md for authoritative guidance:**
 
+**CIRC_OVERWRITE Mode (LiveImage.cpp SDK example):**
 ```c
-// 1. Register EOF callback to signal when frames ready
-pl_cam_register_callback_ex3(hcam, PL_CALLBACK_EOF, eof_callback, context);
-
-// 2. In callback: signal condvar (don't retrieve frame here)
+// Callback retrieves frame INSIDE callback
 void eof_callback(const FRAME_INFO *info, void *ctx) {
+    pl_exp_get_latest_frame(ctx->hcam, &ctx->frame);  // IN CALLBACK
     signal_condvar(ctx);
 }
+```
 
-// 3. In processing thread: wait for signal, then drain frames
+**CIRC_NO_OVERWRITE Mode (Prime BSI - REQUIRED due to hardware limitation):**
+```c
+// Callback just signals, main loop retrieves with FIFO order
+void eof_callback(const FRAME_INFO *info, void *ctx) {
+    signal_condvar(ctx);  // DO NOT call get_latest_frame!
+}
+
+// Main loop uses get_oldest_frame for proper FIFO draining
 while (running) {
     wait_for_condvar(ctx, timeout);
     while (pl_exp_get_oldest_frame_ex(hcam, &frame, &info) == PV_OK) {
         process_frame(frame, info);
-        pl_exp_unlock_oldest_frame(hcam);
+        pl_exp_unlock_oldest_frame(hcam);  // REQUIRED
     }
 }
 ```
+
+**CRITICAL:** Mixing buffer modes and retrieval methods causes buffer stalls. See docs/architecture/adr-pvcam-continuous-acquisition.md lines 215-253 for detailed explanation.
 
 ### Frame Loss Detection
 

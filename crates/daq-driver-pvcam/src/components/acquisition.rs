@@ -399,6 +399,18 @@ pub unsafe extern "system" fn pvcam_eof_callback(
         let frame_nr = if !p_frame_info.is_null() {
             let info = *p_frame_info;
             ctx.store_frame_info(info);
+
+            // TRACING: Callback fired (bd-trace-2026-01-11)
+            // Only trace first 20 callbacks to avoid overhead
+            let current_pending = ctx.pending_frames.load(Ordering::Acquire);
+            if info.FrameNr <= 20 {
+                // Safe to use eprintln in callback (no allocation, thread-safe)
+                eprintln!(
+                    "[PVCAM CALLBACK] Frame {} ready, pending_before={}, timestamp={}",
+                    info.FrameNr, current_pending, info.TimeStamp
+                );
+            }
+
             info.FrameNr
         } else {
             -1
@@ -1653,6 +1665,15 @@ impl PvcamAcquisition {
                             callback_ctx.set_circ_overwrite(false);
                         }
 
+                        // CRITICAL FIX (bd-nzcq-callback-rereg): Deregister callback before re-registering.
+                        // Re-registering without deregistering first causes PVCAM internal state corruption
+                        // that manifests as callbacks stopping after ~5 frames. The SDK examples only
+                        // register callbacks ONCE and never re-register during a session.
+                        if use_callback {
+                            pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
+                            tracing::info!("Deregistered EOF callback before fallback re-registration");
+                        }
+
                         // Re-register callback after fallback setup (setup may invalidate callback)
                         // This matches the SDK pattern: callback registration before each setup
                         if use_callback {
@@ -2415,12 +2436,45 @@ impl PvcamAcquisition {
 
         while streaming.get() && !shutdown.load(Ordering::Acquire) {
             loop_iteration += 1;
+
+            // TRACING: Loop iteration start with SDK status (bd-trace-2026-01-11)
+            if loop_iteration <= 5 || loop_iteration % 30 == 0 {
+                let (st, bytes, cnt) = match ffi_safe::check_cont_status(hcam) {
+                    Ok(vals) => vals,
+                    Err(_) => (-999, 0, 0),
+                };
+                let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
+                tracing::info!(
+                    target: "pvcam_frame_trace",
+                    iter = loop_iteration,
+                    sdk_status = st,
+                    sdk_bytes = bytes,
+                    sdk_buffer_cnt = cnt,
+                    callback_pending = pending,
+                    "Frame loop iteration start"
+                );
+            }
+
             // Wait for frame notification (callback mode) or poll (fallback mode)
             // bd-g9gq: Use FFI safe wrapper with explicit safety contract
             let has_frames = if use_callback {
                 // Callback mode (bd-ek9n.2): Wait on condvar with timeout
                 // Returns number of pending frames (0 on timeout/shutdown)
+                let wait_start = std::time::Instant::now();
                 let pending = callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
+                let wait_elapsed_ms = wait_start.elapsed().as_millis();
+
+                // TRACING: Wait result (bd-trace-2026-01-11)
+                if pending == 0 || loop_iteration <= 10 {
+                    tracing::info!(
+                        target: "pvcam_frame_trace",
+                        iter = loop_iteration,
+                        pending_after_wait = pending,
+                        wait_ms = wait_elapsed_ms,
+                        timeout_ms = CALLBACK_WAIT_TIMEOUT_MS,
+                        "Callback wait completed"
+                    );
+                }
                 pending > 0
             } else {
                 // Polling mode fallback: Check status with 1ms delay
@@ -2506,6 +2560,15 @@ impl PvcamAcquisition {
             let mut fatal_error = false;
             let mut unlock_failures: u32 = 0; // bd-3gnv: Track unlock failures
 
+            // TRACING: Starting drain loop (bd-trace-2026-01-11)
+            if loop_iteration <= 10 {
+                tracing::info!(
+                    target: "pvcam_frame_trace",
+                    iter = loop_iteration,
+                    "Starting frame drain loop"
+                );
+            }
+
             // bd-3gnv: Duplicate detection is handled by immediate exit on any duplicate.
             // The drain loop breaks as soon as a duplicate is detected, returning to
             // the outer loop to wait for the next callback signal.
@@ -2530,11 +2593,36 @@ impl PvcamAcquisition {
                     Ok(ptr) => ptr,
                     Err(()) => {
                         // No more frames available - exit drain loop
+                        // TRACING: Drain loop exit - no more frames (bd-trace-2026-01-11)
+                        if loop_iteration <= 10 || frames_processed_in_drain > 0 {
+                            tracing::info!(
+                                target: "pvcam_frame_trace",
+                                iter = loop_iteration,
+                                frames_in_drain = frames_processed_in_drain,
+                                "Drain loop exit: no more frames available"
+                            );
+                        }
                         break;
                     }
                 };
 
                 frames_processed_in_drain += 1;
+
+                // TRACING: Frame retrieved (bd-trace-2026-01-11)
+                if loop_iteration <= 10 || frames_processed_in_drain <= 3 {
+                    unsafe {
+                        tracing::info!(
+                            target: "pvcam_frame_trace",
+                            iter = loop_iteration,
+                            drain_frame = frames_processed_in_drain,
+                            hw_frame_nr = frame_info.FrameNr,
+                            timestamp = frame_info.TimeStamp,
+                            timestamp_bof = frame_info.TimeStampBOF,
+                            readout_time = frame_info.ReadoutTime,
+                            "Frame retrieved from PVCAM"
+                        );
+                    }
+                }
 
                 // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
@@ -2730,6 +2818,18 @@ impl PvcamAcquisition {
                     // measurement pipeline is backpressured. Sending to broadcast
                     // first ensures GUI streaming gets frames regardless.
                     let receiver_count = frame_tx.receiver_count();
+
+                    // TRACING: Broadcast subscriber count (bd-trace-2026-01-11)
+                    if monotonic_frame_count <= 10 || monotonic_frame_count % 30 == 1 {
+                        tracing::info!(
+                            target: "pvcam_frame_trace",
+                            frame_nr = monotonic_frame_count,
+                            hw_frame_nr = current_frame_nr,
+                            receiver_count,
+                            "Sending frame to broadcast channel"
+                        );
+                    }
+
                     if receiver_count == 0 {
                         // Track when we lost all subscribers (bd-cckz)
                         if no_subscribers_since.is_none() {
@@ -2798,6 +2898,27 @@ impl PvcamAcquisition {
                     if let (Some(md), Some(ref tx)) = (frame_metadata, &metadata_tx) {
                         let _ = tx.try_send(md); // Non-blocking: drop if slow
                     }
+                }
+
+                // FIX (bd-circ-no-overwrite-2026-01-11): In CIRC_NO_OVERWRITE mode with callbacks,
+                // each EOF callback signals EXACTLY ONE frame. Attempting to drain multiple frames
+                // causes get_oldest_frame to return the same frame twice (because buffer_cnt=0),
+                // triggering duplicate detection and breaking acquisition.
+                //
+                // Solution: In CIRC_NO_OVERWRITE + callback mode, retrieve ONE frame per callback
+                // and exit the drain loop immediately. The outer loop will wait for the next callback.
+                //
+                // In CIRC_OVERWRITE mode or polling mode, continue draining as before.
+                if !circ_overwrite && use_callback && frames_processed_in_drain >= 1 {
+                    // TRACING: Single-frame mode (bd-trace-2026-01-11)
+                    if loop_iteration <= 10 {
+                        tracing::info!(
+                            target: "pvcam_frame_trace",
+                            iter = loop_iteration,
+                            "CIRC_NO_OVERWRITE + callback mode: processed 1 frame, exiting drain loop"
+                        );
+                    }
+                    break; // Exit drain loop, wait for next callback
                 }
             }
 

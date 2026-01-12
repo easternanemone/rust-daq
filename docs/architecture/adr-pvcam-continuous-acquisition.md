@@ -1,9 +1,11 @@
 # ADR: PVCAM Continuous Acquisition Mode Selection
 
-**Status:** Accepted
+**Status:** Accepted (SINGLE SOURCE OF TRUTH for SDK callback patterns)
 **Date:** 2025-01-09 (Updated 2026-01-11)
 **Authors:** Investigation by Claude Code with hardware testing on Prime BSI
 **Related Issues:** bd-nzcq, bd-ffi-sdk-match
+
+**⚠️ IMPORTANT:** This is the authoritative reference for PVCAM SDK callback patterns. Lines 153-256 document the official SDK patterns from LiveImage.cpp and explain buffer-mode-specific behavior. All other documentation defers to this ADR.
 
 ## Context
 
