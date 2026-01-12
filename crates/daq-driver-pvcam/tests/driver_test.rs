@@ -315,4 +315,104 @@ mod hardware_driver {
         driver.stop_stream().await.unwrap();
         println!("Streaming stopped, total frames: {}", driver.frame_count());
     }
+
+    /// Test 29: Full driver 200-frame streaming test
+    ///
+    /// This uses the actual PvcamDriver (not isolation tests) to stream 200 frames.
+    /// If this fails at ~19 frames while isolation tests pass, the issue is in
+    /// something unique to the full driver path.
+    #[tokio::test]
+    async fn hardware_stream_200_frames() {
+        let _lock = CAMERA_LOCK.lock().unwrap();
+        let _ = *LOG_INIT;
+
+        const TARGET_FRAMES: usize = 200;
+
+        println!("\n=== DRIVER TEST: 200 Frame Streaming ===");
+        println!("Uses actual PvcamDriver::start_stream()");
+        println!("Target: {} frames", TARGET_FRAMES);
+        println!();
+
+        let driver = PvcamDriver::new_async("pvcamUSB_0".to_string())
+            .await
+            .expect("Should create driver");
+
+        // Set 100ms exposure (same as isolation tests)
+        driver.set_exposure(0.100).await.unwrap();
+        println!("[OK] Exposure set to 100ms");
+
+        // Ensure clear mode is PreExposure
+        if let Some(param) = driver.parameters().get("acquisition.clear_mode") {
+            param.set_json(json!("PreExposure")).unwrap();
+            println!("[OK] Clear mode set to PreExposure");
+        }
+
+        // Ensure trigger mode is Timed
+        if let Some(param) = driver.parameters().get("acquisition.trigger_mode") {
+            param.set_json(json!("Timed")).unwrap();
+            println!("[OK] Trigger mode set to Timed");
+        }
+
+        // Start streaming
+        println!("[SETUP] Starting stream...");
+        driver.start_stream().await.unwrap();
+        println!("[OK] Stream started");
+
+        // Subscribe and receive frames
+        println!("\n=== FRAME ACQUISITION (target: {} frames) ===\n", TARGET_FRAMES);
+
+        let mut received = 0usize;
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(60); // 60 seconds should be plenty for 200 frames at 100ms
+
+        if let Some(mut rx) = driver.subscribe_frames().await {
+            while received < TARGET_FRAMES && start.elapsed() < timeout {
+                tokio::select! {
+                    frame = rx.recv() => {
+                        if let Ok(frame) = frame {
+                            received += 1;
+                            if received <= 25 || received % 50 == 0 {
+                                println!(
+                                    "[FRAME {}] {}x{}, seq={}",
+                                    received, frame.width, frame.height, frame.sequence_number
+                                );
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                        // Check if streaming stopped
+                        if !driver.is_streaming().await.unwrap_or(false) {
+                            println!("[ERROR] Streaming stopped unexpectedly at frame {}", received);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let total_time = start.elapsed();
+        driver.stop_stream().await.unwrap();
+
+        println!("\n=== DRIVER TEST COMPLETE ===\n");
+        println!("Frames received: {}/{}", received, TARGET_FRAMES);
+        println!("Time: {:?}", total_time);
+        println!("Driver frame_count: {}", driver.frame_count());
+
+        if received >= TARGET_FRAMES {
+            println!("RESULT: Full driver streaming is working!");
+        } else {
+            println!(
+                "RESULT: Full driver failed at {} frames (target was {})",
+                received, TARGET_FRAMES
+            );
+        }
+
+        assert!(
+            received >= TARGET_FRAMES,
+            "Expected {} frames, got {}. Full driver has issue at frame {}!",
+            TARGET_FRAMES,
+            received,
+            received + 1
+        );
+    }
 }
