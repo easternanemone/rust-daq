@@ -1171,7 +1171,8 @@ impl PvcamAcquisition {
         // PVCAM examples default to 255-frame circular buffers for full-frame streaming.
         // We align with that default but still clamp to a sane upper bound to avoid
         // excessive host memory use on large frames.
-        const MIN_BUFFER_FRAMES: usize = 32;
+        // bd-diag-2026-01-11: Reduced to 20 to match working minimal test buffer size
+        const MIN_BUFFER_FRAMES: usize = 20;
         const MAX_BUFFER_FRAMES: usize = 255;
         const ONE_SECOND_MS: f64 = 1000.0;
 
