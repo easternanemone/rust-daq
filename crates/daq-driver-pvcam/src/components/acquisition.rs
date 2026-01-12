@@ -84,10 +84,15 @@ use tokio::task::JoinHandle;
 /// (PL_ERR_CONFIGURATION_INVALID) on pl_exp_start_cont even though pl_exp_setup_cont
 /// succeeds. Use CIRC_NO_OVERWRITE with proper FIFO draining for Prime BSI.
 ///
+/// bd-diag-2026-01-11: Prefer CIRC_NO_OVERWRITE to match the working minimal test pattern.
+/// The minimal test (test_17) uses CIRC_NO_OVERWRITE directly without any fallback and works
+/// for 200+ frames. The previous CIRC_OVERWRITE → CIRC_NO_OVERWRITE fallback path may have
+/// issues with callback deregister/reregister that cause callbacks to stop after 19 frames.
+///
 /// Historical note: SDK examples (FastStreamingToDisk, LiveImage) use CIRC_OVERWRITE
 /// with 255-frame buffers and rely on overwrite semantics. Some firmware revs previously
-/// rejected overwrite with error 185 (Invalid Configuration); when overwrite is enabled,
-/// the driver will attempt OVERWRITE first and fall back to NO_OVERWRITE automatically.
+/// rejected overwrite with error 185 (Invalid Configuration); when overwrite is explicitly
+/// enabled, the driver will attempt OVERWRITE first and fall back to NO_OVERWRITE automatically.
 #[cfg(feature = "pvcam_sdk")]
 const PREFER_CIRC_OVERWRITE_MODE: bool = false;
 
