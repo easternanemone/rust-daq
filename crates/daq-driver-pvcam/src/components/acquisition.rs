@@ -1157,7 +1157,7 @@ impl PvcamAcquisition {
     /// Calculate optimal circular buffer frame count (bd-ek9n.4)
     ///
     /// Uses PARAM_FRAME_BUFFER_SIZE when available, with heuristic fallback:
-    /// - Minimum 32 frames for reliability
+    /// - Minimum 20 frames for reliability (matches working isolation tests)
     /// - At least 1 second of buffer at current frame rate
     /// - Capped at 255 frames (matches PVCAM example defaults)
     ///
@@ -1237,10 +1237,7 @@ impl PvcamAcquisition {
             clamped
         );
 
-        // bd-diag-2026-01-12: FORCE 11 frames to test slot loss hypothesis
-        // Hypothesis: cutoff = buffer_size - 2, so 11 should give 9 frames
-        eprintln!("[PVCAM DIAG] Buffer size forced to 11 frames (was {})", clamped);
-        11
+        clamped
     }
 
     /// Get the number of ROIs supported by the camera (bd-vcbd)
