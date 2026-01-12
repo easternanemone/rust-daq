@@ -2779,8 +2779,17 @@ impl PvcamAcquisition {
 
                     // Release frame back to SDK (CRITICAL for CIRC_NO_OVERWRITE)
                     // Even if we were in OVERWRITE mode, unlocking shouldn't hurt if using get_oldest.
-                    if !ffi_safe::release_oldest_frame(hcam) {
+                    // bd-debug-2026-01-12: Add explicit unlock tracing
+                    let unlock_frame_nr = current_frame_nr;
+                    if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                        eprintln!("[PVCAM DEBUG] Unlocking frame {}", unlock_frame_nr);
+                    }
+                    let unlock_result = ffi_safe::release_oldest_frame(hcam);
+                    if !unlock_result {
                         unlock_failures += 1;
+                        eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
+                    } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                        eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
                     }
 
                     // Decrement pending frame counter (callback mode)
