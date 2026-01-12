@@ -2701,6 +2701,16 @@ impl PvcamAcquisition {
                     eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
                 }
 
+                // bd-diag-2026-01-12: Check buffer status after unlock to verify slot release
+                if frames_processed_in_drain <= 25 || frames_processed_in_drain % 50 == 0 {
+                    if let Ok((st, bytes, cnt)) = ffi_safe::check_cont_status(hcam) {
+                        eprintln!(
+                            "[PVCAM POST-UNLOCK] status={}, bytes={}, buffer_cnt={}, frame_cnt={}",
+                            st, bytes, cnt, frame_count.load(Ordering::Relaxed) + 1
+                        );
+                    }
+                }
+
                 // bd-diag-skip-processing-2026-01-12: DIAGNOSTIC MODE
                 // When PVCAM_SKIP_PROCESSING=1 is set, skip ALL processing after unlock
                 // to match minimal test behavior exactly (get → unlock → continue).
