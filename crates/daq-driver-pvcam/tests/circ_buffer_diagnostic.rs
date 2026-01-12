@@ -3802,3 +3802,268 @@ async fn test_23_post_unlock_status_check() {
         frames_acquired
     );
 }
+
+// =============================================================================
+// TEST 24: Use ACTUAL driver callback infrastructure (GLOBAL_CALLBACK_CTX)
+// =============================================================================
+//
+// This test imports and uses the EXACT same callback infrastructure as the driver:
+// - GLOBAL_CALLBACK_CTX static from acquisition.rs
+// - pvcam_eof_callback function from acquisition.rs
+// - CallbackContext struct from acquisition.rs
+//
+// If this test FAILS at ~19 frames: the issue is in the driver's callback infrastructure
+// If this test PASSES with 200 frames: the issue is in how the driver sets up/uses it
+
+use daq_driver_pvcam::components::acquisition::{
+    CallbackContext, GLOBAL_CALLBACK_CTX, pvcam_eof_callback, set_global_callback_ctx,
+};
+
+#[tokio::test]
+async fn test_24_driver_callback_infrastructure() {
+    println!("\n=== TEST 24: Driver Callback Infrastructure Test ===");
+    println!("Uses the EXACT same GLOBAL_CALLBACK_CTX and pvcam_eof_callback as the driver.\n");
+    println!("If this FAILS at ~19 frames: issue is in driver callback infrastructure.");
+    println!("If this PASSES with 200 frames: issue is in how driver sets up the context.\n");
+
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 2000;
+    const EXPOSURE_MS: u32 = 100;
+    const BUFFER_FRAMES: usize = 21;
+
+    // Initialize SDK
+    println!("[SETUP] Initializing PVCAM SDK...");
+    unsafe {
+        if pl_pvcam_init() == 0 {
+            println!("ERROR: pl_pvcam_init failed");
+            return;
+        }
+    }
+    println!("[OK] PVCAM SDK initialized");
+
+    // Open camera
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
+        if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed");
+            pl_pvcam_uninit();
+            return;
+        }
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed");
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Camera opened, hcam={}", hcam);
+
+    // Create CallbackContext using the DRIVER's struct (pinned like driver does)
+    let callback_ctx = Box::pin(CallbackContext::new(hcam));
+    let callback_ctx_ptr = &*callback_ctx as *const CallbackContext;
+    println!("[OK] Driver CallbackContext created, ptr={:?}", callback_ctx_ptr);
+
+    // Set GLOBAL_CALLBACK_CTX (exactly like driver does)
+    set_global_callback_ctx(callback_ctx_ptr);
+    println!("[OK] GLOBAL_CALLBACK_CTX set to {:?}", callback_ctx_ptr);
+
+    // Register callback using DRIVER's pvcam_eof_callback
+    println!("[SETUP] Registering EOF callback (driver's pvcam_eof_callback)...");
+    let callback_registered = unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            pvcam_eof_callback as *mut std::ffi::c_void,
+            callback_ctx_ptr as *mut std::ffi::c_void,
+        );
+        if result == 0 {
+            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            false
+        } else {
+            println!("[OK] EOF callback registered using driver's pvcam_eof_callback");
+            true
+        }
+    };
+
+    if !callback_registered {
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+
+    // Query sensor size and setup region
+    let (ser_size, par_size) = unsafe {
+        let mut ser: uns16 = 0;
+        let mut par: uns16 = 0;
+        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
+        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        (ser, par)
+    };
+    println!("[OK] Sensor size: {}x{}", ser_size, par_size);
+
+    let region = rgn_type {
+        s1: 0,
+        s2: ser_size - 1,
+        sbin: 1,
+        p1: 0,
+        p2: par_size - 1,
+        pbin: 1,
+    };
+
+    // Setup continuous acquisition
+    println!("[SETUP] Setting up continuous acquisition...");
+    let mut frame_bytes: uns32 = 0;
+    let setup_result = unsafe {
+        pl_exp_setup_cont(
+            hcam,
+            1,
+            &region,
+            TIMED_MODE,
+            EXPOSURE_MS,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE,
+        )
+    };
+    if setup_result == 0 {
+        println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), Ordering::Release);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+
+    // Set circ_overwrite to false in callback context (like driver does for CIRC_NO_OVERWRITE)
+    callback_ctx.set_circ_overwrite(false);
+
+    // Allocate page-aligned buffer (like driver's PageAlignedBuffer)
+    let total_size = frame_bytes as usize * BUFFER_FRAMES;
+    let layout = Layout::from_size_align(total_size, 4096).unwrap();
+    let buffer = unsafe { alloc_zeroed(layout) };
+    if buffer.is_null() {
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), Ordering::Release);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Allocated {} bytes at {:?}", total_size, buffer);
+
+    // Start continuous acquisition
+    println!("[SETUP] Starting continuous acquisition...");
+    let start_result = unsafe { pl_exp_start_cont(hcam, buffer as *mut _, total_size as uns32) };
+    if start_result == 0 {
+        println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+        unsafe {
+            dealloc(buffer, layout);
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), Ordering::Release);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Acquisition started");
+
+    println!("\n=== FRAME ACQUISITION LOOP (using driver's wait_for_frames, target: {} frames) ===\n", TARGET_FRAMES);
+
+    // Run frame loop using spawn_blocking like driver does
+    let callback_ctx_for_loop = callback_ctx.clone();
+    let loop_start = std::time::Instant::now();
+
+    let frames_acquired = tokio::task::spawn_blocking(move || {
+        let mut frames = 0i32;
+        let mut loop_iteration = 0u64;
+
+        while frames < TARGET_FRAMES {
+            loop_iteration += 1;
+
+            // Wait for frames using driver's CallbackContext method
+            let pending = callback_ctx_for_loop.wait_for_frames(TIMEOUT_MS);
+
+            if pending == 0 {
+                // Check SDK status on timeout
+                let mut status: i16 = 0;
+                let mut bytes: uns32 = 0;
+                let mut cnt: uns32 = 0;
+                unsafe {
+                    pl_exp_check_cont_status(hcam, &mut status, &mut bytes, &mut cnt);
+                }
+                eprintln!(
+                    "[TIMEOUT] iter={}, status={}, bytes={}, cnt={}, pending={}",
+                    loop_iteration, status, bytes, cnt, callback_ctx_for_loop.pending_frames.load(Ordering::Acquire)
+                );
+
+                // Exit if SDK stopped
+                if status == 0 {
+                    eprintln!("[FATAL] SDK status=0 (READOUT_NOT_ACTIVE) - acquisition stopped!");
+                    break;
+                }
+                continue;
+            }
+
+            // Get oldest frame
+            let mut frame_ptr: *mut c_void = ptr::null_mut();
+            let get_result = unsafe { pl_exp_get_oldest_frame(hcam, &mut frame_ptr) };
+            if get_result == 0 || frame_ptr.is_null() {
+                eprintln!("[ERROR] get_oldest_frame failed: {}", get_error_message());
+                continue;
+            }
+
+            frames += 1;
+
+            // Unlock immediately
+            unsafe {
+                if pl_exp_unlock_oldest_frame(hcam) == 0 {
+                    eprintln!("[ERROR] unlock_oldest_frame failed");
+                }
+            }
+
+            // Consume callback notification (like driver does)
+            callback_ctx_for_loop.consume_one();
+
+            if frames <= 25 || frames % 50 == 0 {
+                eprintln!("[FRAME {}] acquired (iter={})", frames, loop_iteration);
+            }
+        }
+
+        frames
+    }).await.unwrap();
+
+    let total_time = loop_start.elapsed().as_millis();
+
+    println!("\n[CLEANUP] Stopping acquisition...");
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+        dealloc(buffer, layout);
+        pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), Ordering::Release);
+        pl_cam_close(hcam);
+        pl_pvcam_uninit();
+    }
+
+    println!("\n=== TEST 24 COMPLETE ===\n");
+    println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
+    println!("Total time: {}ms", total_time);
+
+    if frames_acquired >= TARGET_FRAMES {
+        println!("RESULT: Driver callback infrastructure is NOT the issue (200 frames achieved)");
+    } else {
+        println!("RESULT: Driver callback infrastructure MAY be causing the issue ({} frames)", frames_acquired);
+    }
+
+    assert!(
+        frames_acquired >= TARGET_FRAMES,
+        "Expected {} frames, got {}. Driver callback infrastructure may be the issue!",
+        TARGET_FRAMES,
+        frames_acquired
+    );
+}
