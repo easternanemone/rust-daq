@@ -432,8 +432,9 @@ pub unsafe extern "system" fn pvcam_eof_callback(
     let frame_nr = if !p_frame_info.is_null() {
         let info = *p_frame_info;
 
-        // Trace first 20 callbacks (eprintln is thread-safe, no allocation)
-        if info.FrameNr <= 20 {
+        // Trace callbacks (eprintln is thread-safe, no allocation)
+        // Print first 20, then every 50th, plus any after 19 to debug stopping issue
+        if info.FrameNr <= 20 || info.FrameNr % 50 == 0 {
             eprintln!(
                 "[PVCAM CALLBACK] Frame {} ready, timestamp={}",
                 info.FrameNr, info.TimeStamp
