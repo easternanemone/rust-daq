@@ -3855,7 +3855,7 @@ async fn test_25_pre_wait_status_check() {
     // Create and register callback (use test's callback, not driver's)
     let callback_ctx = Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
     let callback_ctx_ptr = &**callback_ctx as *const FullCallbackContext;
-    FULL_CALLBACK_CTX.store(callback_ctx_ptr as *mut FullCallbackContext, Ordering::Release);
+    FULL_CTX.store(callback_ctx_ptr as *mut FullCallbackContext, Ordering::Release);
     println!("[OK] Callback context created, ptr={:?}", callback_ctx_ptr);
 
     println!("[SETUP] Registering EOF callback...");
@@ -3921,7 +3921,7 @@ async fn test_25_pre_wait_status_check() {
     }
     println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
 
-    callback_ctx.set_circ_overwrite(false);
+    // FullCallbackContext defaults to circ_overwrite=false in new()
 
     // Allocate page-aligned buffer
     let total_size = frame_bytes as usize * BUFFER_FRAMES;
@@ -4035,7 +4035,7 @@ async fn test_25_pre_wait_status_check() {
         pl_exp_abort(hcam, CCS_HALT);
         dealloc(buffer, layout);
         pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
-        FULL_CALLBACK_CTX.store(std::ptr::null_mut(), Ordering::Release);
+        FULL_CTX.store(std::ptr::null_mut(), Ordering::Release);
         pl_cam_close(hcam);
         pl_pvcam_uninit();
     }
