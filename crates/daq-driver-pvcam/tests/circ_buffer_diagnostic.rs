@@ -3349,3 +3349,233 @@ async fn test_21_metadata_isolation() {
         frames_acquired
     );
 }
+
+/// TEST 22: PARAM_CIRC_BUFFER query after setup isolation
+///
+/// The full driver queries PARAM_CIRC_BUFFER ATTR_CURRENT after pl_exp_setup_cont
+/// but before pl_exp_start_cont. This test adds that exact query pattern to see if
+/// it affects streaming.
+#[tokio::test]
+async fn test_22_post_setup_circ_query() {
+    println!("\n=== TEST 22: Post-Setup PARAM_CIRC_BUFFER Query Isolation Test ===");
+    println!("Tests whether querying PARAM_CIRC_BUFFER after setup causes the 19-frame cutoff.\n");
+    println!("This matches the full driver pattern at acquisition.rs lines 1591-1607.\n");
+
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 2000;
+    const EXPOSURE_MS: u32 = 100;
+    const BUFFER_FRAMES: usize = 21;
+
+    // Initialize SDK
+    println!("[SETUP] Initializing PVCAM SDK...");
+    unsafe {
+        if pl_pvcam_init() == 0 {
+            println!("ERROR: pl_pvcam_init failed");
+            return;
+        }
+    }
+    println!("[OK] PVCAM SDK initialized");
+
+    // Open camera
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
+        if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed");
+            pl_pvcam_uninit();
+            return;
+        }
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed");
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Camera opened, hcam={}", hcam);
+
+    // Create callback context
+    let ctx = std::sync::Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
+    let ctx_ptr = &**ctx as *const FullCallbackContext;
+    FULL_CTX.store(ctx_ptr as *mut FullCallbackContext, Ordering::Release);
+    println!("[OK] Callback context created, ptr={:?}", ctx_ptr);
+
+    // Register callback BEFORE setup (SDK pattern)
+    println!("[SETUP] Registering EOF callback...");
+    unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            full_eof_callback as *mut c_void,
+            ctx_ptr as *mut c_void,
+        );
+        if result == 0 {
+            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] EOF callback registered");
+
+    // Setup region (full sensor)
+    let region = rgn_type {
+        s1: 0,
+        s2: 2047,
+        sbin: 1,
+        p1: 0,
+        p2: 2047,
+        pbin: 1,
+    };
+
+    // Setup continuous acquisition
+    let mut frame_bytes: uns32 = 0;
+    println!("[SETUP] Setting up continuous acquisition...");
+    unsafe {
+        let result = pl_exp_setup_cont(
+            hcam,
+            1,
+            &region as *const rgn_type,
+            TIMED_MODE as i16,
+            EXPOSURE_MS,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE as i16,
+        );
+        if result == 0 {
+            println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+
+    // === THE KEY DIFFERENCE: Query PARAM_CIRC_BUFFER ATTR_CURRENT AFTER setup ===
+    // This matches lines 1591-1607 in acquisition.rs
+    println!("\n[POST-SETUP QUERY] Querying PARAM_CIRC_BUFFER ATTR_CURRENT (like full driver)...");
+    unsafe {
+        let mut circ_current: uns32 = 0;
+        if pl_get_param(
+            hcam,
+            PARAM_CIRC_BUFFER,
+            ATTR_CURRENT,
+            &mut circ_current as *mut _ as *mut c_void,
+        ) == 0
+        {
+            println!("  [WARN] PARAM_CIRC_BUFFER ATTR_CURRENT query failed: {}", get_error_message());
+        } else {
+            println!("  [OK] PARAM_CIRC_BUFFER current mode: {}", circ_current);
+        }
+    }
+    println!("[OK] Post-setup query complete");
+
+    // Allocate buffer
+    const ALIGN_4K: usize = 4096;
+    let buffer_size = (frame_bytes as usize) * BUFFER_FRAMES;
+    let layout = Layout::from_size_align(buffer_size, ALIGN_4K).unwrap();
+    let buffer = unsafe { alloc(layout) };
+    if buffer.is_null() {
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Allocated {} bytes at {:?}", buffer_size, buffer);
+
+    // Start acquisition
+    println!("[SETUP] Starting continuous acquisition...");
+    unsafe {
+        let result = pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32);
+        if result == 0 {
+            println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+            dealloc(buffer, layout);
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Acquisition started");
+
+    // Spawn frame loop in blocking thread (like test_18)
+    let streaming = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let streaming_clone = streaming.clone();
+    let ctx_clone = ctx.clone();
+
+    println!("\n=== FRAME ACQUISITION LOOP (spawn_blocking, target: {} frames) ===\n", TARGET_FRAMES);
+    let handle = tokio::task::spawn_blocking(move || {
+        let mut frames_acquired: i32 = 0;
+
+        while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
+            let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
+            if pending == 0 {
+                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                unsafe {
+                    let mut status: i16 = 0;
+                    let mut bytes_arrived: uns32 = 0;
+                    let mut buffer_cnt: uns32 = 0;
+                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                        eprintln!("[SDK STATUS] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    }
+                }
+                continue;
+            }
+
+            let mut frame_ptr: *mut c_void = ptr::null_mut();
+            unsafe {
+                if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
+                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    continue;
+                }
+            }
+
+            frames_acquired += 1;
+
+            unsafe {
+                if pl_exp_unlock_oldest_frame(hcam) == 0 {
+                    eprintln!("[ERROR] pl_exp_unlock_oldest_frame failed");
+                }
+            }
+
+            ctx_clone.consume_one();
+
+            if frames_acquired <= 25 || frames_acquired % 50 == 0 {
+                println!("[FRAME {}] acquired", frames_acquired);
+            }
+        }
+
+        frames_acquired
+    });
+
+    let frames_acquired = handle.await.unwrap();
+
+    streaming.store(false, Ordering::Release);
+    ctx.signal_shutdown();
+
+    println!("\n[CLEANUP] Stopping acquisition...");
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+        dealloc(buffer, layout);
+        pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        FULL_CTX.store(std::ptr::null_mut(), Ordering::Release);
+        pl_cam_close(hcam);
+        pl_pvcam_uninit();
+    }
+
+    println!("\n=== TEST 22 COMPLETE ===\n");
+
+    if frames_acquired >= TARGET_FRAMES {
+        println!("RESULT: Post-setup PARAM_CIRC_BUFFER query is NOT the issue (200 frames achieved)");
+    } else {
+        println!("RESULT: Post-setup PARAM_CIRC_BUFFER query MAY be causing the issue ({} frames)", frames_acquired);
+    }
+    assert!(
+        frames_acquired >= TARGET_FRAMES,
+        "Expected {} frames, got {}. Post-setup PARAM_CIRC_BUFFER query may be affecting SDK callback state!",
+        TARGET_FRAMES,
+        frames_acquired
+    );
+}
