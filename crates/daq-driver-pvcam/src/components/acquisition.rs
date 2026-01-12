@@ -849,6 +849,10 @@ mod ffi_safe {
     /// # Returns
     /// - `Ok(frame_ptr)` - pointer to the frame data in the circular buffer
     /// - `Err(())` if no frame available or error
+    ///
+    /// bd-non-ex-2026-01-12: Changed from pl_exp_get_oldest_frame_ex to pl_exp_get_oldest_frame
+    /// to match the minimal SDK test that successfully streams 200+ frames.
+    /// The _ex version fills FRAME_INFO, but we get that from the callback already.
     pub fn get_oldest_frame(
         hcam: i16,
         frame_info: &mut FRAME_INFO,
@@ -856,8 +860,9 @@ mod ffi_safe {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
         let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
 
-        // SAFETY: hcam is valid, frame_info and frame_ptr are valid stack allocations
-        let result = unsafe { pl_exp_get_oldest_frame_ex(hcam, &mut frame_ptr, frame_info) };
+        // SAFETY: hcam is valid, frame_ptr is valid stack allocation
+        // bd-non-ex-2026-01-12: Use non-_ex version to match working minimal test pattern
+        let result = unsafe { pl_exp_get_oldest_frame(hcam, &mut frame_ptr) };
 
         if result == 0 || frame_ptr.is_null() {
             // bd-3gnv: Log error code to diagnose why get_oldest_frame is failing
@@ -872,6 +877,10 @@ mod ffi_safe {
             );
             Err(())
         } else {
+            // bd-non-ex-2026-01-12: frame_info not filled by non-_ex version
+            // Set FrameNr to -1 to indicate we don't have it from get_oldest_frame
+            // The callback provides FRAME_INFO with the real frame number
+            frame_info.FrameNr = -1;
             Ok(frame_ptr)
         }
     }
@@ -2666,30 +2675,49 @@ impl PvcamAcquisition {
                 frames_processed_in_drain += 1;
 
                 // TRACING: Frame retrieved (bd-trace-2026-01-11)
+                // bd-non-ex-2026-01-12: frame_info.FrameNr may be -1 if using non-_ex get_oldest_frame
                 if loop_iteration <= 10 || frames_processed_in_drain <= 3 {
-                    unsafe {
+                    if frame_info.FrameNr >= 0 {
+                        unsafe {
+                            tracing::info!(
+                                target: "pvcam_frame_trace",
+                                iter = loop_iteration,
+                                drain_frame = frames_processed_in_drain,
+                                hw_frame_nr = frame_info.FrameNr,
+                                timestamp = frame_info.TimeStamp,
+                                timestamp_bof = frame_info.TimeStampBOF,
+                                readout_time = frame_info.ReadoutTime,
+                                "Frame retrieved from PVCAM"
+                            );
+                        }
+                    } else {
                         tracing::info!(
                             target: "pvcam_frame_trace",
                             iter = loop_iteration,
                             drain_frame = frames_processed_in_drain,
-                            hw_frame_nr = frame_info.FrameNr,
-                            timestamp = frame_info.TimeStamp,
-                            timestamp_bof = frame_info.TimeStampBOF,
-                            readout_time = frame_info.ReadoutTime,
-                            "Frame retrieved from PVCAM"
+                            "Frame retrieved from PVCAM (no FRAME_INFO - using non-_ex API)"
                         );
                     }
                 }
 
                 // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
+                    // bd-non-ex-2026-01-12: Get frame number from callback context when using non-_ex API
+                    // The callback still receives FRAME_INFO from PVCAM even if get_oldest_frame doesn't fill it
+                    let current_frame_nr = if frame_info.FrameNr >= 0 {
+                        frame_info.FrameNr
+                    } else {
+                        // Using non-_ex API - get frame number from callback context
+                        callback_ctx.latest_frame_nr.load(Ordering::Acquire)
+                    };
+
                     // Frame loss detection (bd-ek9n.3): Check for gaps in FrameNr sequence
                     // FrameNr is 1-based hardware counter from PVCAM
-                    let current_frame_nr = frame_info.FrameNr;
+                    // bd-non-ex-2026-01-12: Skip frame number tracking if we don't have valid data
                     let prev_frame_nr = last_hw_frame_nr.load(Ordering::Acquire);
 
-                    if prev_frame_nr >= 0 {
-                        // Not the first frame - check for gaps
+                    if current_frame_nr >= 0 && prev_frame_nr >= 0 {
+                        // Only do frame number checks if we have valid frame numbers
                         let expected_frame_nr = prev_frame_nr + 1;
                         if current_frame_nr > expected_frame_nr {
                             // Gap detected: frames were lost between prev and current
@@ -2714,11 +2742,8 @@ impl PvcamAcquisition {
                             // Log the first duplicate in this drain with FRAME_INFO details for diagnosis.
                             if consecutive_duplicates == 1 {
                                 tracing::warn!(
-                                    "PVCAM duplicate frame detected: FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}, buffer_cnt={}, bytes_arrived={}",
+                                    "PVCAM duplicate frame detected: FrameNr={}, buffer_cnt={}, bytes_arrived={}",
                                     current_frame_nr,
-                                    frame_info.TimeStamp,
-                                    frame_info.TimeStampBOF,
-                                    frame_info.ReadoutTime,
                                     buffer_cnt,
                                     bytes_arrived
                                 );
@@ -2750,8 +2775,10 @@ impl PvcamAcquisition {
                             );
                         }
                     }
-                    // Update last seen frame number
-                    last_hw_frame_nr.store(current_frame_nr, Ordering::Release);
+                    // Update last seen frame number (only if we have valid data)
+                    if current_frame_nr >= 0 {
+                        last_hw_frame_nr.store(current_frame_nr, Ordering::Release);
+                    }
                     // bd-3gnv: Reset duplicate counter on successful new frame
                     consecutive_duplicates = 0;
 
