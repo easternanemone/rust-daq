@@ -2684,10 +2684,68 @@ impl PvcamAcquisition {
 
                 frames_processed_in_drain += 1;
 
+                // bd-immediate-unlock-2026-01-12: CRITICAL FIX
+                // The minimal test that works for 200 frames does: get_oldest_frame → unlock → process
+                // With CIRC_NO_OVERWRITE and 20 buffer slots, holding the frame too long causes
+                // the SDK to run out of buffers and stop acquisition.
+                //
+                // New order: copy pixel data → decode metadata → UNLOCK → then all processing
+                // All processing after unlock uses our copies, not frame_ptr.
+
+                // Step 1: Copy pixel data IMMEDIATELY (frame_ptr is only valid until unlock)
+                let copy_bytes = frame_bytes.min(expected_frame_bytes);
+                let pixel_data = unsafe {
+                    let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
+                    sdk_bytes.to_vec()
+                };
+
+                // Step 2: Decode metadata if enabled (needs frame_ptr, must be before unlock)
+                let frame_metadata = if !md_frame_ptr.is_null() {
+                    unsafe {
+                        if ffi_safe::decode_frame_metadata(
+                            md_frame_ptr,
+                            frame_ptr,
+                            frame_bytes as uns32,
+                        ) {
+                            let hdr = &*(*md_frame_ptr).header;
+                            let ts_res = hdr.timestampResNs as u64;
+                            let exp_res = hdr.exposureTimeResNs as u64;
+                            Some(FrameMetadata {
+                                frame_nr: hdr.frameNr,
+                                timestamp_bof_ns: (hdr.timestampBOF as u64) * ts_res,
+                                timestamp_eof_ns: (hdr.timestampEOF as u64) * ts_res,
+                                exposure_time_ns: (hdr.exposureTime as u64) * exp_res,
+                                bit_depth: hdr.bitDepth,
+                                roi_count: hdr.roiCount,
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Step 3: UNLOCK IMMEDIATELY - this is the critical fix
+                // The minimal test unlocks right after get_oldest_frame with no delay.
+                // frame_ptr is INVALID after this point - use pixel_data and frame_metadata only.
+                let unlock_frame_nr = unsafe { frame_info.FrameNr };
+                if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                    eprintln!("[PVCAM DEBUG] Unlocking frame {} (immediate)", unlock_frame_nr);
+                }
+                let unlock_result = ffi_safe::release_oldest_frame(hcam);
+                if !unlock_result {
+                    unlock_failures += 1;
+                    eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
+                } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                    eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
+                }
+                // Frame is now released back to SDK - all processing below uses our copies
+
                 // TRACING: Frame retrieved (bd-trace-2026-01-11)
                 // bd-non-ex-2026-01-12: frame_info.FrameNr may be -1 if using non-_ex get_oldest_frame
                 if loop_iteration <= 10 || frames_processed_in_drain <= 3 {
-                    if frame_info.FrameNr >= 0 {
+                    if unsafe { frame_info.FrameNr } >= 0 {
                         unsafe {
                             tracing::info!(
                                 target: "pvcam_frame_trace",
@@ -2710,7 +2768,8 @@ impl PvcamAcquisition {
                     }
                 }
 
-                // Remaining frame processing is in an unsafe block for pointer operations
+                // Remaining frame processing uses our copies (pixel_data, frame_metadata, frame_info)
+                // frame_ptr is NO LONGER VALID after unlock above
                 unsafe {
                     // bd-non-ex-2026-01-12: Get frame number from callback context when using non-_ex API
                     // The callback still receives FRAME_INFO from PVCAM even if get_oldest_frame doesn't fill it
@@ -2759,13 +2818,8 @@ impl PvcamAcquisition {
                                 );
                             }
 
-                            // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames
-                            // to drain the buffer, regardless of which get function was used.
-                            if !circ_overwrite {
-                                if !ffi_safe::release_oldest_frame(hcam) {
-                                    unlock_failures += 1;
-                                }
-                            }
+                            // bd-immediate-unlock-2026-01-12: Frame already unlocked at top of loop
+                            // No need to unlock again here - just consume callback and exit
                             if use_callback {
                                 callback_ctx.consume_one();
                             }
@@ -2792,63 +2846,9 @@ impl PvcamAcquisition {
                     // bd-3gnv: Reset duplicate counter on successful new frame
                     consecutive_duplicates = 0;
 
-                    // Gemini SDK review: Decode frame metadata for hardware timestamps
-                    // This must happen before copying pixel data as metadata parsing identifies
-                    // the pixel data offset within the buffer.
-                    // bd-g9gq: Use FFI safe wrapper with explicit safety contract
-                    let frame_metadata = if !md_frame_ptr.is_null() {
-                        // Decode the metadata-enabled frame buffer
-                        if ffi_safe::decode_frame_metadata(
-                            md_frame_ptr,
-                            frame_ptr,
-                            frame_bytes as uns32,
-                        ) {
-                            // Successfully decoded - extract timestamps
-                            let hdr = &*(*md_frame_ptr).header;
-                            let ts_res = hdr.timestampResNs as u64;
-                            let exp_res = hdr.exposureTimeResNs as u64;
-                            Some(FrameMetadata {
-                                frame_nr: hdr.frameNr,
-                                timestamp_bof_ns: (hdr.timestampBOF as u64) * ts_res,
-                                timestamp_eof_ns: (hdr.timestampEOF as u64) * ts_res,
-                                exposure_time_ns: (hdr.exposureTime as u64) * exp_res,
-                                bit_depth: hdr.bitDepth,
-                                roi_count: hdr.roiCount,
-                            })
-                        } else {
-                            tracing::warn!(
-                                "pl_md_frame_decode failed for frame {}",
-                                current_frame_nr
-                            );
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    // Memory optimization (bd-ek9n.5): Single copy from SDK buffer.
-                    // When metadata is enabled, the pixel data starts after the header.
-                    // For simplicity, we copy expected_frame_bytes from the buffer start
-                    // (metadata header is at the END of the buffer per PVCAM design).
-                    let copy_bytes = frame_bytes.min(expected_frame_bytes);
-                    let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
-                    let pixel_data = sdk_bytes.to_vec();
-
-                    // bd-early-unlock-2026-01-12: Release frame back to SDK IMMEDIATELY after copy.
-                    // The minimal test that works for 200 frames unlocks right after get_oldest_frame.
-                    // Delaying unlock appears to cause the SDK to stop calling callbacks.
-                    // All remaining processing works on pixel_data (our copy), not frame_ptr.
-                    let unlock_frame_nr = current_frame_nr;
-                    if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                        eprintln!("[PVCAM DEBUG] Unlocking frame {}", unlock_frame_nr);
-                    }
-                    let unlock_result = ffi_safe::release_oldest_frame(hcam);
-                    if !unlock_result {
-                        unlock_failures += 1;
-                        eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
-                    } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                        eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
-                    }
+                    // bd-immediate-unlock-2026-01-12: pixel_data, frame_metadata, and unlock
+                    // are all handled at the top of the loop immediately after get_oldest_frame.
+                    // frame_ptr is no longer valid here - use only our copies.
 
                     // Zero-frame detection (bd-ha3w): Check if frame contains valid data
                     // Sample several positions to detect all-zero frames which indicate
@@ -2870,20 +2870,13 @@ impl PvcamAcquisition {
                             "Zero-frame detected for FrameNr {}: buffer appears uninitialized, skipping (bd-ha3w)",
                             current_frame_nr
                         );
-                        // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain buffer
-                        if !circ_overwrite {
-                            if !ffi_safe::release_oldest_frame(hcam) {
-                                unlock_failures += 1;
-                            }
-                        }
+                        // bd-immediate-unlock-2026-01-12: Frame already unlocked at top of loop
+                        // Just consume callback and skip
                         if use_callback {
                             callback_ctx.consume_one();
                         }
                         continue; // Skip to next frame
                     }
-
-                    // bd-early-unlock-2026-01-12: Unlock moved earlier (right after pixel copy)
-                    // to match the minimal test pattern that works for 200 frames.
 
                     // Decrement pending frame counter (callback mode)
                     if use_callback {
