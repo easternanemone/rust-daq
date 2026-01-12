@@ -2557,3 +2557,258 @@ async fn test_18_spawn_blocking_isolation() {
         frames_acquired
     );
 }
+
+/// Test 19: check_cont_status Isolation Test
+///
+/// HYPOTHESIS: The full driver calls pl_exp_check_cont_status multiple times per iteration,
+/// which test_18 does NOT do. This test adds those calls to test_18's working pattern
+/// to see if check_cont_status is interfering with SDK callback state.
+///
+/// If this test FAILS at ~19 frames: check_cont_status is likely the cause
+/// If this test PASSES with 200 frames: check_cont_status is NOT the issue
+#[tokio::test]
+async fn test_19_check_cont_status_isolation() {
+    println!("\n=== TEST 19: check_cont_status Isolation Test ===");
+    println!("Adds check_cont_status calls like full driver to test_18's working pattern.\n");
+    println!("If this fails at ~19 frames: check_cont_status is the issue.");
+    println!("If this passes with 200 frames: check_cont_status is NOT the issue.\n");
+
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 5000;
+    const EXPOSURE_MS: uns32 = 100;
+    const BUFFER_FRAMES: usize = 21;
+
+    // Initialize SDK
+    println!("[SETUP] Initializing PVCAM SDK...");
+    unsafe {
+        if pl_pvcam_init() == 0 {
+            println!("ERROR: pl_pvcam_init failed");
+            return;
+        }
+    }
+    println!("[OK] PVCAM SDK initialized");
+
+    // Open camera
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
+        if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed");
+            pl_pvcam_uninit();
+            return;
+        }
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed");
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Camera opened, hcam={}", hcam);
+
+    // Create callback context (like full driver: Arc<Pin<Box<...>>>)
+    let ctx = std::sync::Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
+    let ctx_ptr = &**ctx as *const FullCallbackContext;
+    FULL_CTX.store(ctx_ptr as *mut FullCallbackContext, Ordering::Release);
+    println!("[OK] Callback context created (Arc<Pin<Box>>), ptr={:?}", ctx_ptr);
+
+    // Register callback BEFORE setup (SDK pattern)
+    println!("[SETUP] Registering EOF callback...");
+    unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            full_eof_callback as *mut c_void,
+            ctx_ptr as *mut c_void,
+        );
+        if result == 0 {
+            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] EOF callback registered");
+
+    // Setup region (full sensor)
+    let region = rgn_type {
+        s1: 0,
+        s2: 2047,
+        sbin: 1,
+        p1: 0,
+        p2: 2047,
+        pbin: 1,
+    };
+
+    // Setup continuous acquisition with CIRC_NO_OVERWRITE
+    let mut frame_bytes: uns32 = 0;
+    println!("[SETUP] Setting up continuous acquisition (CIRC_NO_OVERWRITE)...");
+    unsafe {
+        let result = pl_exp_setup_cont(
+            hcam,
+            1,
+            &region as *const rgn_type,
+            TIMED_MODE as i16,
+            EXPOSURE_MS,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE as i16,
+        );
+        if result == 0 {
+            println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+
+    // Allocate 4K-aligned buffer
+    const ALIGN_4K: usize = 4096;
+    let buffer_size = (frame_bytes as usize) * BUFFER_FRAMES;
+    let layout = Layout::from_size_align(buffer_size, ALIGN_4K).unwrap();
+    let buffer = unsafe { alloc(layout) };
+    if buffer.is_null() {
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Allocated {} bytes ({} frames) at {:?}", buffer_size, BUFFER_FRAMES, buffer);
+
+    // Start acquisition
+    println!("[SETUP] Starting continuous acquisition...");
+    unsafe {
+        let result = pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as uns32);
+        if result == 0 {
+            println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+            dealloc(buffer, layout);
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Acquisition started");
+
+    // Clone Arc for spawn_blocking
+    let ctx_clone = ctx.clone();
+    let streaming = std::sync::Arc::new(AtomicBool::new(true));
+    let streaming_clone = streaming.clone();
+
+    // Spawn frame loop in blocking thread (like full driver)
+    println!("\n=== FRAME ACQUISITION LOOP (with check_cont_status calls) ===\n");
+    let handle = tokio::task::spawn_blocking(move || {
+        let mut frames_acquired: i32 = 0;
+        let mut loop_iteration: u64 = 0;
+        let loop_start = std::time::Instant::now();
+
+        while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
+            loop_iteration += 1;
+
+            // KEY DIFFERENCE FROM TEST_18: Add check_cont_status call like full driver
+            // Full driver does this at loop start every 5 iterations or every 30th
+            if loop_iteration <= 5 || loop_iteration % 30 == 0 {
+                unsafe {
+                    let mut status: i16 = 0;
+                    let mut bytes_arrived: uns32 = 0;
+                    let mut buffer_cnt: uns32 = 0;
+                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                        if loop_iteration <= 10 {
+                            eprintln!("[ITER {}] check_cont_status: status={}, bytes={}, cnt={}",
+                                loop_iteration, status, bytes_arrived, buffer_cnt);
+                        }
+                    }
+                }
+            }
+
+            // Wait for callback (like full driver)
+            let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
+            if pending == 0 {
+                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+
+                // KEY DIFFERENCE: Add check_cont_status on timeout like full driver
+                unsafe {
+                    let mut status: i16 = 0;
+                    let mut bytes_arrived: uns32 = 0;
+                    let mut buffer_cnt: uns32 = 0;
+                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                        eprintln!("[TIMEOUT SDK] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    }
+                }
+                continue;
+            }
+
+            // Get oldest frame
+            let mut frame_ptr: *mut c_void = ptr::null_mut();
+            unsafe {
+                if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
+                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    continue;
+                }
+            }
+
+            frames_acquired += 1;
+
+            // Unlock immediately (like minimal test and test_18)
+            unsafe {
+                if pl_exp_unlock_oldest_frame(hcam) == 0 {
+                    eprintln!("[ERROR] pl_exp_unlock_oldest_frame failed");
+                }
+            }
+
+            // Consume callback notification
+            ctx_clone.consume_one();
+
+            if frames_acquired <= 25 || frames_acquired % 50 == 0 {
+                println!("[FRAME {}] acquired (iter {})", frames_acquired, loop_iteration);
+            }
+        }
+
+        let total_time = loop_start.elapsed().as_millis();
+        println!("\n=== ACQUISITION SUMMARY ===");
+        println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
+        println!("Total time: {}ms", total_time);
+        println!("Loop iterations: {}", loop_iteration);
+        if frames_acquired > 0 && total_time > 0 {
+            println!("Average FPS: {:.2}", frames_acquired as f64 * 1000.0 / total_time as f64);
+        }
+
+        frames_acquired
+    });
+
+    // Wait for frame loop to complete
+    let frames_acquired = handle.await.unwrap();
+
+    // Stop streaming
+    streaming.store(false, Ordering::Release);
+    ctx.signal_shutdown();
+
+    // Cleanup
+    println!("\n[CLEANUP] Stopping acquisition...");
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+        dealloc(buffer, layout);
+        pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        FULL_CTX.store(std::ptr::null_mut(), Ordering::Release);
+        pl_cam_close(hcam);
+        pl_pvcam_uninit();
+    }
+
+    println!("\n=== TEST 19 COMPLETE ===\n");
+
+    // Assert success
+    if frames_acquired >= TARGET_FRAMES {
+        println!("RESULT: check_cont_status is NOT the issue (200 frames achieved)");
+    } else {
+        println!("RESULT: check_cont_status MAY be causing the issue ({} frames)", frames_acquired);
+    }
+    assert!(
+        frames_acquired >= TARGET_FRAMES,
+        "Expected {} frames, got {}. check_cont_status may be interfering with SDK state!",
+        TARGET_FRAMES,
+        frames_acquired
+    );
+}
