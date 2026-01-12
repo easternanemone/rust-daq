@@ -57,6 +57,7 @@ pub struct PvcamDriver {
     trigger_mode: Parameter<String>,
     clear_mode: Parameter<String>,
     expose_out_mode: Parameter<String>,
+    buffer_mode: Parameter<String>,
     roi: Parameter<Roi>,
     binning: Parameter<(u16, u16)>,
     armed: Parameter<bool>,
@@ -117,10 +118,7 @@ pub struct PvcamDriver {
 impl PvcamDriver {
     pub async fn new_async(camera_name: String) -> Result<Self> {
         tracing::info!("PvcamDriver::new_async called for camera: {}", camera_name);
-        tracing::info!(
-            "pvcam_sdk feature enabled: {}",
-            cfg!(feature = "pvcam_sdk")
-        );
+        tracing::info!("pvcam_sdk feature enabled: {}", cfg!(feature = "pvcam_sdk"));
 
         // Run initialization in blocking task
         let connection = tokio::task::spawn_blocking({
@@ -246,6 +244,10 @@ impl PvcamDriver {
         )
         .with_description("Expose out signal mode")
         .with_choices_introspectable(ExposeOutMode::all_choices());
+
+        let buffer_mode = Parameter::new("acquisition.buffer_mode", "Overwrite".to_string())
+            .with_description("Circular buffer mode")
+            .with_choices_introspectable(vec!["Overwrite".into(), "No Overwrite".into()]);
 
         let roi = Parameter::new(
             "acquisition.roi",
@@ -415,6 +417,7 @@ impl PvcamDriver {
         params.register(trigger_mode.clone());
         params.register(clear_mode.clone());
         params.register(expose_out_mode.clone());
+        params.register(buffer_mode.clone());
         params.register(roi.clone());
         params.register(binning.clone());
         params.register(armed.clone());
@@ -452,7 +455,10 @@ impl PvcamDriver {
         params.register(model_name.clone());
         params.register(bit_depth.clone());
 
-        let acquisition = Arc::new(PvcamAcquisition::new(streaming.clone()));
+        let acquisition = Arc::new(PvcamAcquisition::new(
+            streaming.clone(),
+            buffer_mode.clone(),
+        ));
 
         let mut driver = Self {
             camera_name,
@@ -462,6 +468,7 @@ impl PvcamDriver {
             trigger_mode,
             clear_mode,
             expose_out_mode,
+            buffer_mode,
             roi,
             binning,
             armed,
@@ -612,6 +619,23 @@ impl PvcamDriver {
                     let mode = ExposureMode::from_str(&val);
                     PvcamFeatures::set_exposure_mode(&conn_guard, mode)
                         .map_err(|e| DaqError::Instrument(e.to_string()))
+                })
+            }
+        });
+
+        // Buffer Mode (guard against streaming changes)
+        self.buffer_mode.connect_to_hardware_write({
+            let streaming = self.streaming.clone();
+            move |_val| {
+                let streaming = streaming.clone();
+                Box::pin(async move {
+                    if streaming.get() {
+                        Err(DaqError::Instrument(
+                            "Cannot change buffer_mode while streaming".to_string(),
+                        ))
+                    } else {
+                        Ok(())
+                    }
                 })
             }
         });
@@ -1194,6 +1218,7 @@ impl FrameProducer for PvcamDriver {
                 self.roi.get(),
                 self.binning.get(),
                 self.exposure_ms.get(),
+                self.buffer_mode.get(),
             )
             .await
     }
