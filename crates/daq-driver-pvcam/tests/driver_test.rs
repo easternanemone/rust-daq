@@ -347,7 +347,10 @@ mod hardware_driver {
         println!("[OK] Stream started");
 
         // Subscribe and receive frames
-        println!("\n=== FRAME ACQUISITION (target: {} frames) ===\n", TARGET_FRAMES);
+        println!(
+            "\n=== FRAME ACQUISITION (target: {} frames) ===\n",
+            TARGET_FRAMES
+        );
 
         let mut received = 0usize;
         let start = std::time::Instant::now();

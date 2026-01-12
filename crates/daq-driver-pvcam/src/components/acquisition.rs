@@ -48,17 +48,18 @@
 //! the `lost_frames` counter is incremented by the gap size and `discontinuity_events`
 //! is incremented. This allows downstream consumers to know when data is missing.
 
-#[cfg(feature = "pvcam_sdk")]
-use crate::components::connection::get_pvcam_error;
 use crate::components::connection::PvcamConnection;
 #[cfg(feature = "pvcam_sdk")]
+use crate::components::connection::get_pvcam_error;
+#[cfg(feature = "pvcam_sdk")]
 use crate::components::features::PvcamFeatures;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use daq_core::core::Roi;
 use daq_core::data::Frame;
 use daq_core::parameter::Parameter;
 #[cfg(feature = "pvcam_sdk")]
-use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::sync::Arc;
 #[cfg(feature = "pvcam_sdk")]
 use std::sync::atomic::AtomicBool;
 #[cfg(feature = "pvcam_sdk")]
@@ -68,7 +69,6 @@ use std::sync::atomic::AtomicI32;
 #[cfg(feature = "pvcam_sdk")]
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
@@ -786,8 +786,15 @@ impl PvcamAcquisition {
                     ATTR_AVAIL as i16,
                     &mut avail as *mut _ as *mut _,
                 ) == 0
-                    && avail == 0
                 {
+                    // Failed to query availability
+                    return Err(anyhow!(
+                        "Failed to query PARAM_ROI_COUNT availability: {}",
+                        get_pvcam_error()
+                    ));
+                }
+
+                if avail == 0 {
                     return Err(anyhow!("PARAM_ROI_COUNT is not available on this camera"));
                 }
 
@@ -811,7 +818,7 @@ impl PvcamAcquisition {
     /// Get the number of ROIs supported by the camera (mock mode) (bd-vcbd)
     ///
     /// Mock version that returns a default value when hardware is not available.
-    #[cfg(not(feature = "pvcam_hardware"))]
+    #[cfg(not(feature = "pvcam_sdk"))]
     pub fn get_roi_count(_conn: &PvcamConnection) -> Result<u16> {
         // Mock mode default: 1 ROI (single region)
         Ok(1)
@@ -872,6 +879,7 @@ impl PvcamAcquisition {
     ) -> Result<()> {
         // Avoid unused parameter warnings when hardware feature is disabled.
         let _ = conn;
+        let _ = buffer_mode;
         if self.streaming.get() {
             bail!("Already streaming");
         }
@@ -1016,14 +1024,9 @@ impl PvcamAcquisition {
                     }
                 }
             }
-            let mut circ_overwrite = buffer_mode == "Overwrite";
-            let mut selected_buffer_mode = if circ_overwrite {
-                CIRC_OVERWRITE
-            } else {
-                CIRC_NO_OVERWRITE
-            };
 
             // Step 1: pl_exp_setup_cont (try overwrite, then fall back)
+
             let setup_overwrite = unsafe {
                 pl_exp_setup_cont(
                     h,
@@ -1066,20 +1069,154 @@ impl PvcamAcquisition {
                 }
             }
 
+            // Calculate frame count and buffer size
+            let expected_frame_bytes = (roi.width * roi.height * 2) as usize;
+            let buffer_count = Self::calculate_buffer_count(h, frame_bytes as usize, exposure_ms);
+            let circ_size_bytes = (frame_bytes as usize * buffer_count) as u32;
+
+            tracing::info!(
+                "Allocating circular buffer: {} frames, {} bytes total ({} bytes/frame)",
+                buffer_count,
+                circ_size_bytes,
+                frame_bytes
+            );
+
+            // Allocate page-aligned buffer (bd-ek9n.4)
+            // PVCAM requires page alignment for DMA. Using std::alloc::alloc_zeroed with Layout.
+            let layout = Layout::from_size_align(circ_size_bytes as usize, 4096)
+                .map_err(|e| anyhow!("Failed to create layout for circular buffer: {}", e))?;
+
+            // SAFETY: Layout is valid (non-zero size, power-of-2 align).
+            // alloc_zeroed returns null on failure, checked immediately.
+            let circ_ptr = unsafe { alloc_zeroed(layout) };
+            if circ_ptr.is_null() {
+                return Err(anyhow!("Failed to allocate circular buffer memory"));
+            }
+
+            // Wrap in PageAlignedBuffer for RAII cleanup (stored in Arc<Mutex>)
+            // SAFETY: ptr allocated with layout, ownership transferred to struct
+            let aligned_buf = unsafe { PageAlignedBuffer::new(circ_ptr, layout) };
+            *self.circ_buffer.lock().await = Some(aligned_buf);
+
+            // Register EOF callback (bd-ek9n.2)
+            // Must be done before starting acquisition.
+            // Using pinned callback context to ensure stable address.
+            let use_callback = true; // Always use callback for best performance
+            if use_callback {
+                self.callback_context.reset();
+                self.callback_context.set_hcam(h);
+                let callback_ctx_ptr = &**self.callback_context as *const CallbackContext;
+
+                if ffi_safe::register_eof_callback(h, callback_ctx_ptr) {
+                    self.callback_registered.store(true, Ordering::Release);
+                    tracing::debug!("Registered PVCAM EOF callback");
+                } else {
+                    tracing::warn!(
+                        "Failed to register PVCAM EOF callback - falling back to polling"
+                    );
+                }
+            }
+
             // Step 2: pl_exp_start_cont
             let start_result = unsafe { pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) };
             if start_result == 0 {
                 let err_msg = super::get_pvcam_error();
-                return Err(format!("pl_exp_start_cont failed: {}", err_msg));
+                return Err(format!("pl_exp_start_cont failed: {}", err_msg).into());
             }
+
+            // Store active handle for Drop cleanup
+            self.active_hcam.store(h, Ordering::Release);
+            self.shutdown.store(false, Ordering::SeqCst);
+
+            // Prepare state for poll thread
+            let streaming = self.streaming.clone();
+            let shutdown = self.shutdown.clone();
+            let frame_tx = self.frame_tx.clone();
+            let frame_count = self.frame_count.clone();
+            let lost_frames = self.lost_frames.clone();
+            let discontinuity_events = self.discontinuity_events.clone();
+            let last_hw_frame_nr = self.last_hardware_frame_nr.clone();
+            let callback_ctx = self.callback_context.clone();
+            let callback_registered = self.callback_registered.load(Ordering::Acquire);
+            let width = roi.width;
+            let height = roi.height;
+            let roi_x = roi.x;
+            let roi_y = roi.y;
+
+            // Prepare error channel (unbounded)
+            let (error_tx_unbounded, mut error_rx) =
+                tokio::sync::mpsc::unbounded_channel::<AcquisitionError>();
+            *self.error_tx.lock().await = Some(error_tx_unbounded.clone());
+
+            // Monitor errors in background task (Gemini SDK review)
+            let last_error = self.last_error.clone();
+            let streaming_ctrl = self.streaming.clone();
+            tokio::spawn(async move {
+                while let Some(err) = error_rx.recv().await {
+                    tracing::error!("Acquisition error received: {:?}", err);
+                    if let Ok(mut guard) = last_error.lock() {
+                        *guard = Some(err);
+                    }
+                    // Stop streaming on fatal error
+                    let _ = streaming_ctrl.set(false).await;
+                }
+            });
+
+            // Create completion channel for poll thread synchronization
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            if let Ok(mut guard) = self.poll_thread_done_rx.lock() {
+                *guard = Some(done_rx);
+            }
+            if let Ok(mut guard) = self.poll_thread_done_tx.lock() {
+                *guard = Some(done_tx.clone());
+            }
+
+            let metadata_tx_clone = self.metadata_tx.lock().await.clone();
+
+            // Spawn blocking task for frame acquisition
+            // Must be blocking because PVCAM FFI is blocking and we don't want to block executor
+            let poll_handle = tokio::task::spawn_blocking(move || {
+                Self::frame_loop_hardware(
+                    h,
+                    streaming,
+                    shutdown,
+                    frame_tx,
+                    reliable_tx,
+                    #[cfg(feature = "arrow_tap")]
+                    _arrow_tap,
+                    frame_count,
+                    lost_frames,
+                    discontinuity_events,
+                    last_hw_frame_nr,
+                    callback_ctx,
+                    callback_registered,
+                    exposure_ms,
+                    frame_bytes as usize,
+                    expected_frame_bytes,
+                    width,
+                    height,
+                    error_tx_unbounded,
+                    use_metadata,
+                    roi_x,
+                    roi_y,
+                    binning,
+                    metadata_tx_clone,
+                    done_tx,
+                    circ_ptr,
+                    circ_size_bytes,
+                    circ_overwrite,
+                );
+            });
+
+            *self.poll_handle.lock().await = Some(poll_handle);
 
             Ok(())
         }
 
         // Mock path (or no handle)
-        #[cfg(not(feature = "pvcam_hardware"))]
+        #[cfg(not(feature = "pvcam_sdk"))]
         {
-            tracing::warn!("start_stream: pvcam_hardware NOT compiled - using mock stream");
+            tracing::warn!("start_stream: pvcam_sdk NOT compiled - using mock stream");
             self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
                 .await?;
         }
@@ -1088,7 +1225,7 @@ impl PvcamAcquisition {
         #[cfg(feature = "pvcam_sdk")]
         if conn.handle().is_none() {
             tracing::warn!(
-                "start_stream: pvcam_hardware compiled but handle is None - falling back to mock stream"
+                "start_stream: pvcam_sdk compiled but handle is None - falling back to mock stream"
             );
             self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
                 .await?;
@@ -1595,7 +1732,7 @@ impl PvcamAcquisition {
         let mut buffer_cnt: uns32 = 0;
         let mut consecutive_timeouts: u32 = 0;
         const CALLBACK_WAIT_TIMEOUT_MS: u64 = 100; // Short timeout to check shutdown
-                                                   // FORCE LONG TIMEOUT for debugging
+        // FORCE LONG TIMEOUT for debugging
         let max_consecutive_timeouts: u32 = 1000; // 100s
 
         if use_callback {

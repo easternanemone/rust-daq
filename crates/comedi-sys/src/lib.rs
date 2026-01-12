@@ -50,31 +50,31 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 // Re-export constants with standard names when using SDK feature
 // (bindgen prefixes enum variants with the enum name, but dummy bindings use flat names)
 #[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_UNUSED as COMEDI_SUBD_UNUSED;
-#[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_AI as COMEDI_SUBD_AI;
 #[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_AO as COMEDI_SUBD_AO;
 #[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_DI as COMEDI_SUBD_DI;
-#[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_DO as COMEDI_SUBD_DO;
-#[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_DIO as COMEDI_SUBD_DIO;
+pub use comedi_subdevice_type_COMEDI_SUBD_CALIB as COMEDI_SUBD_CALIB;
 #[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_COUNTER as COMEDI_SUBD_COUNTER;
 #[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_TIMER as COMEDI_SUBD_TIMER;
+pub use comedi_subdevice_type_COMEDI_SUBD_DI as COMEDI_SUBD_DI;
+#[cfg(feature = "comedi-sdk")]
+pub use comedi_subdevice_type_COMEDI_SUBD_DIO as COMEDI_SUBD_DIO;
+#[cfg(feature = "comedi-sdk")]
+pub use comedi_subdevice_type_COMEDI_SUBD_DO as COMEDI_SUBD_DO;
 #[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_MEMORY as COMEDI_SUBD_MEMORY;
 #[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_CALIB as COMEDI_SUBD_CALIB;
-#[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_PROC as COMEDI_SUBD_PROC;
+#[cfg(feature = "comedi-sdk")]
+pub use comedi_subdevice_type_COMEDI_SUBD_PWM as COMEDI_SUBD_PWM;
 #[cfg(feature = "comedi-sdk")]
 pub use comedi_subdevice_type_COMEDI_SUBD_SERIAL as COMEDI_SUBD_SERIAL;
 #[cfg(feature = "comedi-sdk")]
-pub use comedi_subdevice_type_COMEDI_SUBD_PWM as COMEDI_SUBD_PWM;
+pub use comedi_subdevice_type_COMEDI_SUBD_TIMER as COMEDI_SUBD_TIMER;
+#[cfg(feature = "comedi-sdk")]
+pub use comedi_subdevice_type_COMEDI_SUBD_UNUSED as COMEDI_SUBD_UNUSED;
 
 #[cfg(feature = "comedi-sdk")]
 pub use comedi_io_direction_COMEDI_INPUT as COMEDI_INPUT;

@@ -99,7 +99,7 @@ use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{RwLock, watch};
 
 use crate::core::ParameterBase as CoreParameterBase;
 use crate::error::DaqError;
@@ -227,8 +227,7 @@ where
 
     /// Set the dtype for this parameter (for GUI introspection).
     pub fn with_dtype(self, dtype: impl Into<String>) -> Self {
-        let dtype_str = dtype.into();
-        self.inner.with_metadata(|m| m.dtype = dtype_str);
+        self.inner.with_metadata(|m| m.dtype = dtype.into());
         self
     }
 
@@ -422,7 +421,7 @@ where
     }
 
     /// Get parameter metadata (delegates to Observable)
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> String {
         self.inner.name()
     }
 
@@ -455,7 +454,7 @@ impl<T> CoreParameterBase for Parameter<T>
 where
     T: Clone + Send + Sync + PartialEq + Debug + Serialize + for<'de> Deserialize<'de> + 'static,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         self.inner.name()
     }
 
@@ -537,7 +536,7 @@ impl<T> ObservableParameterBase for Parameter<T>
 where
     T: Clone + Send + Sync + PartialEq + Debug + Serialize + for<'de> Deserialize<'de> + 'static,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         self.inner.name()
     }
 
@@ -942,7 +941,10 @@ mod tests {
             .build();
 
         assert_eq!(param.name(), "exposure");
-        assert_eq!(param.description(), Some("Camera exposure time".to_string()));
+        assert_eq!(
+            param.description(),
+            Some("Camera exposure time".to_string())
+        );
         assert_eq!(param.unit(), Some("ms".to_string()));
         assert_eq!(param.get(), 100.0);
     }

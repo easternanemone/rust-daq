@@ -197,7 +197,10 @@ impl PvcamConnection {
         unsafe {
             // SAFETY: total_cameras is a valid out pointer; SDK already initialized.
             let res = pl_cam_get_total(&mut total_cameras);
-            println!("DEBUG: pl_cam_get_total result={}, count={}", res, total_cameras);
+            println!(
+                "DEBUG: pl_cam_get_total result={}, count={}",
+                res, total_cameras
+            );
             if res == 0 {
                 return Err(anyhow!("Failed to get camera count: {}", get_pvcam_error()));
             }

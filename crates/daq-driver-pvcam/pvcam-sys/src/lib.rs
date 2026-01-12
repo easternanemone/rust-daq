@@ -25,7 +25,6 @@ pub mod mock_bindings {
     // ... mock types if needed, or just empty
 }
 
-
 // Manual constant definitions for enums that bindgen didn't export as consts
 // Parameter attribute constants (from PL_PARAM_ATTRIBUTES enum)
 #[cfg(feature = "pvcam-sdk")]

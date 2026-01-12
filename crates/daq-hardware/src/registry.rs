@@ -414,8 +414,8 @@ impl DriverType {
             ],
             #[cfg(feature = "comedi")]
             DriverType::Comedi { .. } => vec![
-                Capability::Readable,  // Analog input
-                Capability::Settable,  // Analog output
+                Capability::Readable, // Analog input
+                Capability::Settable, // Analog output
             ],
             #[cfg(feature = "serial")]
             DriverType::Plugin { .. } => {

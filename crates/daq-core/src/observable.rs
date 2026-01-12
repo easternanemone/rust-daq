@@ -130,7 +130,7 @@ struct ObservableSharedState<T> {
 /// knowing the concrete parameter type at compile time.
 pub trait ParameterBase: Send + Sync {
     /// Get the parameter name
-    fn name(&self) -> &str;
+    fn name(&self) -> String;
 
     /// Get the current value as JSON
     fn get_json(&self) -> Result<serde_json::Value>;
@@ -375,19 +375,8 @@ where
     }
 
     /// Get the parameter name.
-    pub fn name(&self) -> &str {
-        // Note: This returns a reference to shared state, which requires the lock
-        // to be held. For short-lived operations this is fine. For longer usage,
-        // call metadata() and access .name on the returned clone.
-        // SAFETY: We leak the read guard here which is not ideal but maintains
-        // API compatibility. Consider returning String in future versions.
-        unsafe {
-            let guard = self.shared.read().unwrap();
-            let name_ptr = guard.metadata.name.as_str() as *const str;
-            // This is safe because the name is never modified after creation
-            // and the Observable (and its Arc) outlives any reference to name
-            &*name_ptr
-        }
+    pub fn name(&self) -> String {
+        self.shared.read().unwrap().metadata.name.clone()
     }
 
     /// Get the metadata (returns a clone for thread safety).
@@ -421,10 +410,7 @@ where
     pub fn validate(&self, value: &T) -> Result<()> {
         let guard = self.shared.read().unwrap();
         if guard.metadata.read_only {
-            return Err(anyhow!(
-                "Parameter '{}' is read-only",
-                guard.metadata.name
-            ));
+            return Err(anyhow!("Parameter '{}' is read-only", guard.metadata.name));
         }
 
         if let Some(validator) = &guard.validator {
@@ -483,9 +469,8 @@ where
     pub fn get_json(&self) -> Result<serde_json::Value> {
         let value = self.get();
         let name = self.metadata().name.clone();
-        serde_json::to_value(&value).map_err(|e| {
-            anyhow!("Failed to serialize parameter '{}': {}", name, e)
-        })
+        serde_json::to_value(&value)
+            .map_err(|e| anyhow!("Failed to serialize parameter '{}': {}", name, e))
     }
 
     /// Set the value from JSON
@@ -508,7 +493,7 @@ impl<T> ParameterBase for Observable<T>
 where
     T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         Observable::name(self)
     }
 

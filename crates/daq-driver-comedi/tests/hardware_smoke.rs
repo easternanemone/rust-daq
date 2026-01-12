@@ -103,8 +103,9 @@ fn device_discovery_test() {
 
     // Step 1: Open device
     println!("\n[1/3] Opening device...");
-    let device = ComediDevice::open(&path)
-        .expect("Failed to open Comedi device - check that /dev/comedi0 exists and has correct permissions");
+    let device = ComediDevice::open(&path).expect(
+        "Failed to open Comedi device - check that /dev/comedi0 exists and has correct permissions",
+    );
 
     // Step 2: Get board name
     println!("[2/3] Reading board name...");
@@ -414,7 +415,9 @@ fn analog_input_single_read_test() {
     println!("\nReading from channel 0...");
 
     // Read raw value
-    let raw = ai.read_raw(0, Range::default()).expect("Failed to read raw value");
+    let raw = ai
+        .read_raw(0, Range::default())
+        .expect("Failed to read raw value");
     println!("  Raw value: {}", raw);
 
     // Read voltage

@@ -1037,7 +1037,7 @@ pub enum Response {
 /// Concrete parameters use `Parameter<T>` (see parameter.rs).
 pub trait ParameterBase: Send + Sync {
     /// Parameter name
-    fn name(&self) -> &str;
+    fn name(&self) -> String;
 
     /// Get current value as JSON
     fn value_json(&self) -> serde_json::Value;

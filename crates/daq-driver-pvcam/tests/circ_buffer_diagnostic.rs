@@ -22,8 +22,8 @@ use pvcam_sys::*;
 use std::alloc::{alloc, alloc_zeroed, dealloc, Layout};
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
-use std::sync::Arc;
 use std::sync::atomic::AtomicI16;
+use std::sync::Arc;
 
 // Use constants from pvcam_sys (CIRC_OVERWRITE, CIRC_NO_OVERWRITE, TIMED_MODE,
 // EXT_TRIG_INTERNAL, EXPOSE_OUT_FIRST_ROW, CCS_HALT, PL_CALLBACK_EOF,
@@ -1924,8 +1924,8 @@ async fn test_circ_buffer_capabilities() {
 // If this test passes for 20+ frames but the daemon fails, the issue is in
 // the daemon's callback/synchronization implementation, not the FFI/SDK.
 
-use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Condvar, Mutex};
 
 /// Minimal callback context matching C++ SDK pattern
 struct MinimalContext {
@@ -1959,7 +1959,9 @@ impl MinimalContext {
     fn wait(&self, timeout_ms: u64) -> bool {
         let guard = self.mutex.lock().unwrap();
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        let result = self.condvar.wait_timeout_while(guard, timeout, |flag| !*flag);
+        let result = self
+            .condvar
+            .wait_timeout_while(guard, timeout, |flag| !*flag);
         match result {
             Ok((mut guard, timeout_result)) => {
                 *guard = false;
@@ -1976,10 +1978,7 @@ static mut MINIMAL_CTX: Option<*const MinimalContext> = None;
 
 /// Minimal callback - NO catch_unwind, NO extra synchronization
 /// This matches the C++ SDK example exactly
-extern "system" fn minimal_eof_callback(
-    p_frame_info: *const FRAME_INFO,
-    _p_context: *mut c_void,
-) {
+extern "system" fn minimal_eof_callback(p_frame_info: *const FRAME_INFO, _p_context: *mut c_void) {
     unsafe {
         if let Some(ctx_ptr) = MINIMAL_CTX {
             let ctx = &*ctx_ptr;
@@ -2044,8 +2043,18 @@ async fn test_17_minimal_sdk_callback() {
     let mut ser_size: u16 = 0;
     let mut par_size: u16 = 0;
     unsafe {
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT as i16, &mut ser_size as *mut _ as *mut c_void);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT as i16, &mut par_size as *mut _ as *mut c_void);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT as i16,
+            &mut ser_size as *mut _ as *mut c_void,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT as i16,
+            &mut par_size as *mut _ as *mut c_void,
+        );
     }
     println!("[OK] Sensor size: {}x{}", ser_size, par_size);
 
@@ -2067,7 +2076,10 @@ async fn test_17_minimal_sdk_callback() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -2124,7 +2136,11 @@ async fn test_17_minimal_sdk_callback() {
         }
         return;
     }
-    println!("[OK] Buffer allocated: {} frames, {:.2} MB", buffer_frames, buffer_size as f64 / 1024.0 / 1024.0);
+    println!(
+        "[OK] Buffer allocated: {} frames, {:.2} MB",
+        buffer_frames,
+        buffer_size as f64 / 1024.0 / 1024.0
+    );
 
     // Start acquisition
     println!("[START] pl_exp_start_cont...");
@@ -2142,12 +2158,19 @@ async fn test_17_minimal_sdk_callback() {
     println!("[OK] Acquisition started");
 
     // Frame loop (SDK pattern)
-    println!("\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let mut frames_acquired: i32 = 0;
     let loop_start = std::time::Instant::now();
 
     while frames_acquired < TARGET_FRAMES {
-        println!("[MAIN LOOP {}] Waiting for EOF (timeout {}ms)...", frames_acquired + 1, TIMEOUT_MS);
+        println!(
+            "[MAIN LOOP {}] Waiting for EOF (timeout {}ms)...",
+            frames_acquired + 1,
+            TIMEOUT_MS
+        );
         let wait_start = std::time::Instant::now();
 
         if !ctx.wait(TIMEOUT_MS) {
@@ -2157,24 +2180,39 @@ async fn test_17_minimal_sdk_callback() {
 
         let wait_elapsed = wait_start.elapsed().as_millis();
         let frame_nr = ctx.frame_nr.load(Ordering::Acquire);
-        println!("[MAIN LOOP {}] EOF received after {}ms, FrameNr={}", frames_acquired + 1, wait_elapsed, frame_nr);
+        println!(
+            "[MAIN LOOP {}] EOF received after {}ms, FrameNr={}",
+            frames_acquired + 1,
+            wait_elapsed,
+            frame_nr
+        );
 
         // Retrieve frame using get_oldest_frame
         let mut frame_ptr: *mut c_void = ptr::null_mut();
         unsafe {
             if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
-                println!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                println!(
+                    "[ERROR] pl_exp_get_oldest_frame failed: {}",
+                    get_error_message()
+                );
                 break;
             }
         }
-        println!("[MAIN LOOP {}] Frame retrieved, ptr={:?}", frames_acquired + 1, frame_ptr);
+        println!(
+            "[MAIN LOOP {}] Frame retrieved, ptr={:?}",
+            frames_acquired + 1,
+            frame_ptr
+        );
 
         frames_acquired += 1;
 
         // Unlock frame (CRITICAL for CIRC_NO_OVERWRITE)
         unsafe {
             if pl_exp_unlock_oldest_frame(hcam) == 0 {
-                println!("[ERROR] pl_exp_unlock_oldest_frame failed: {}", get_error_message());
+                println!(
+                    "[ERROR] pl_exp_unlock_oldest_frame failed: {}",
+                    get_error_message()
+                );
             } else {
                 println!("[MAIN LOOP {}] Frame unlocked", frames_acquired);
             }
@@ -2186,10 +2224,16 @@ async fn test_17_minimal_sdk_callback() {
     let total_time = loop_start.elapsed().as_millis();
     println!("\n=== ACQUISITION SUMMARY ===");
     println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
-    println!("Total callbacks: {}", ctx.callback_count.load(Ordering::Acquire));
+    println!(
+        "Total callbacks: {}",
+        ctx.callback_count.load(Ordering::Acquire)
+    );
     println!("Total time: {}ms", total_time);
     if frames_acquired > 0 {
-        println!("Average FPS: {:.2}", frames_acquired as f64 * 1000.0 / total_time as f64);
+        println!(
+            "Average FPS: {:.2}",
+            frames_acquired as f64 * 1000.0 / total_time as f64
+        );
     }
 
     // Cleanup
@@ -2274,13 +2318,17 @@ impl FullCallbackContext {
             Err(poisoned) => poisoned.into_inner(),
         };
         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
-        let result = self.condvar.wait_timeout_while(guard, timeout_duration, |notified| {
-            !*notified && !self.shutdown.load(Ordering::Acquire)
-        });
+        let result = self
+            .condvar
+            .wait_timeout_while(guard, timeout_duration, |notified| {
+                !*notified && !self.shutdown.load(Ordering::Acquire)
+            });
         match result {
             Ok((mut guard, timeout_result)) => {
                 *guard = false;
-                if timeout_result.timed_out() { 0 } else {
+                if timeout_result.timed_out() {
+                    0
+                } else {
                     self.pending_frames.load(Ordering::Acquire).max(1)
                 }
             }
@@ -2293,9 +2341,15 @@ impl FullCallbackContext {
     }
 
     fn consume_one(&self) {
-        let _ = self.pending_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            if n > 0 { Some(n - 1) } else { None }
-        });
+        let _ = self
+            .pending_frames
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                if n > 0 {
+                    Some(n - 1)
+                } else {
+                    None
+                }
+            });
     }
 
     fn signal_shutdown(&self) {
@@ -2312,28 +2366,36 @@ static FULL_CTX: std::sync::atomic::AtomicPtr<FullCallbackContext> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 /// Callback for test 18 - matches full driver's pvcam_eof_callback
-extern "system" fn full_eof_callback(
-    p_frame_info: *const FRAME_INFO,
-    _p_context: *mut c_void,
-) {
-    static CALLBACK_ENTRY_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+extern "system" fn full_eof_callback(p_frame_info: *const FRAME_INFO, _p_context: *mut c_void) {
+    static CALLBACK_ENTRY_COUNT: std::sync::atomic::AtomicU32 =
+        std::sync::atomic::AtomicU32::new(0);
     let entry_count = CALLBACK_ENTRY_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let ctx_ptr = FULL_CTX.load(Ordering::Acquire);
 
     if entry_count <= 25 || entry_count % 50 == 0 {
-        eprintln!("[TEST18 CALLBACK ENTRY] #{}, ctx={:?}", entry_count, ctx_ptr);
+        eprintln!(
+            "[TEST18 CALLBACK ENTRY] #{}, ctx={:?}",
+            entry_count, ctx_ptr
+        );
     }
 
-    if ctx_ptr.is_null() { return; }
+    if ctx_ptr.is_null() {
+        return;
+    }
     let ctx = unsafe { &*ctx_ptr };
 
     let frame_nr = if !p_frame_info.is_null() {
         let info = unsafe { *p_frame_info };
         if info.FrameNr <= 25 || info.FrameNr % 50 == 0 {
-            eprintln!("[TEST18 CALLBACK] Frame {} ready, timestamp={}", info.FrameNr, info.TimeStamp);
+            eprintln!(
+                "[TEST18 CALLBACK] Frame {} ready, timestamp={}",
+                info.FrameNr, info.TimeStamp
+            );
         }
         info.FrameNr
-    } else { -1 };
+    } else {
+        -1
+    };
 
     ctx.signal_frame_ready(frame_nr);
 }
@@ -2381,7 +2443,10 @@ async fn test_18_spawn_blocking_isolation() {
     let ctx = std::sync::Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
     let ctx_ptr = &**ctx as *const FullCallbackContext;
     FULL_CTX.store(ctx_ptr as *mut FullCallbackContext, Ordering::Release);
-    println!("[OK] Callback context created (Arc<Pin<Box>>), ptr={:?}", ctx_ptr);
+    println!(
+        "[OK] Callback context created (Arc<Pin<Box>>), ptr={:?}",
+        ctx_ptr
+    );
 
     // Register callback BEFORE setup (SDK pattern)
     println!("[SETUP] Registering EOF callback...");
@@ -2393,7 +2458,10 @@ async fn test_18_spawn_blocking_isolation() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -2432,7 +2500,10 @@ async fn test_18_spawn_blocking_isolation() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate 4K-aligned buffer
     const ALIGN_4K: usize = 4096;
@@ -2448,7 +2519,10 @@ async fn test_18_spawn_blocking_isolation() {
         }
         return;
     }
-    println!("[OK] Allocated {} bytes ({} frames) at {:?}", buffer_size, BUFFER_FRAMES, buffer);
+    println!(
+        "[OK] Allocated {} bytes ({} frames) at {:?}",
+        buffer_size, BUFFER_FRAMES, buffer
+    );
 
     // Start acquisition
     println!("[SETUP] Starting continuous acquisition...");
@@ -2471,7 +2545,10 @@ async fn test_18_spawn_blocking_isolation() {
     let streaming_clone = streaming.clone();
 
     // Spawn frame loop in blocking thread (like full driver)
-    println!("\n=== FRAME ACQUISITION LOOP (spawn_blocking, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (spawn_blocking, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let handle = tokio::task::spawn_blocking(move || {
         let mut frames_acquired: i32 = 0;
         let loop_start = std::time::Instant::now();
@@ -2480,14 +2557,26 @@ async fn test_18_spawn_blocking_isolation() {
             // Wait for callback (like full driver)
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
                 // Check SDK status
                 unsafe {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
-                        eprintln!("[SDK STATUS] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
+                        eprintln!(
+                            "[SDK STATUS] status={}, bytes={}, cnt={}",
+                            status, bytes_arrived, buffer_cnt
+                        );
                     }
                 }
                 continue;
@@ -2497,7 +2586,10 @@ async fn test_18_spawn_blocking_isolation() {
             let mut frame_ptr: *mut c_void = ptr::null_mut();
             unsafe {
                 if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
-                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    eprintln!(
+                        "[ERROR] pl_exp_get_oldest_frame failed: {}",
+                        get_error_message()
+                    );
                     continue;
                 }
             }
@@ -2524,7 +2616,10 @@ async fn test_18_spawn_blocking_isolation() {
         println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
         println!("Total time: {}ms", total_time);
         if frames_acquired > 0 && total_time > 0 {
-            println!("Average FPS: {:.2}", frames_acquired as f64 * 1000.0 / total_time as f64);
+            println!(
+                "Average FPS: {:.2}",
+                frames_acquired as f64 * 1000.0 / total_time as f64
+            );
         }
 
         frames_acquired
@@ -2610,7 +2705,10 @@ async fn test_19_check_cont_status_isolation() {
     let ctx = std::sync::Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
     let ctx_ptr = &**ctx as *const FullCallbackContext;
     FULL_CTX.store(ctx_ptr as *mut FullCallbackContext, Ordering::Release);
-    println!("[OK] Callback context created (Arc<Pin<Box>>), ptr={:?}", ctx_ptr);
+    println!(
+        "[OK] Callback context created (Arc<Pin<Box>>), ptr={:?}",
+        ctx_ptr
+    );
 
     // Register callback BEFORE setup (SDK pattern)
     println!("[SETUP] Registering EOF callback...");
@@ -2622,7 +2720,10 @@ async fn test_19_check_cont_status_isolation() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -2661,7 +2762,10 @@ async fn test_19_check_cont_status_isolation() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate 4K-aligned buffer
     const ALIGN_4K: usize = 4096;
@@ -2677,7 +2781,10 @@ async fn test_19_check_cont_status_isolation() {
         }
         return;
     }
-    println!("[OK] Allocated {} bytes ({} frames) at {:?}", buffer_size, BUFFER_FRAMES, buffer);
+    println!(
+        "[OK] Allocated {} bytes ({} frames) at {:?}",
+        buffer_size, BUFFER_FRAMES, buffer
+    );
 
     // Start acquisition
     println!("[SETUP] Starting continuous acquisition...");
@@ -2716,10 +2823,18 @@ async fn test_19_check_cont_status_isolation() {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
                         if loop_iteration <= 10 {
-                            eprintln!("[ITER {}] check_cont_status: status={}, bytes={}, cnt={}",
-                                loop_iteration, status, bytes_arrived, buffer_cnt);
+                            eprintln!(
+                                "[ITER {}] check_cont_status: status={}, bytes={}, cnt={}",
+                                loop_iteration, status, bytes_arrived, buffer_cnt
+                            );
                         }
                     }
                 }
@@ -2728,15 +2843,27 @@ async fn test_19_check_cont_status_isolation() {
             // Wait for callback (like full driver)
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
 
                 // KEY DIFFERENCE: Add check_cont_status on timeout like full driver
                 unsafe {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
-                        eprintln!("[TIMEOUT SDK] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
+                        eprintln!(
+                            "[TIMEOUT SDK] status={}, bytes={}, cnt={}",
+                            status, bytes_arrived, buffer_cnt
+                        );
                     }
                 }
                 continue;
@@ -2746,7 +2873,10 @@ async fn test_19_check_cont_status_isolation() {
             let mut frame_ptr: *mut c_void = ptr::null_mut();
             unsafe {
                 if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
-                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    eprintln!(
+                        "[ERROR] pl_exp_get_oldest_frame failed: {}",
+                        get_error_message()
+                    );
                     continue;
                 }
             }
@@ -2764,7 +2894,10 @@ async fn test_19_check_cont_status_isolation() {
             ctx_clone.consume_one();
 
             if frames_acquired <= 25 || frames_acquired % 50 == 0 {
-                println!("[FRAME {}] acquired (iter {})", frames_acquired, loop_iteration);
+                println!(
+                    "[FRAME {}] acquired (iter {})",
+                    frames_acquired, loop_iteration
+                );
             }
         }
 
@@ -2774,7 +2907,10 @@ async fn test_19_check_cont_status_isolation() {
         println!("Total time: {}ms", total_time);
         println!("Loop iterations: {}", loop_iteration);
         if frames_acquired > 0 && total_time > 0 {
-            println!("Average FPS: {:.2}", frames_acquired as f64 * 1000.0 / total_time as f64);
+            println!(
+                "Average FPS: {:.2}",
+                frames_acquired as f64 * 1000.0 / total_time as f64
+            );
         }
 
         frames_acquired
@@ -2804,7 +2940,10 @@ async fn test_19_check_cont_status_isolation() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: check_cont_status is NOT the issue (200 frames achieved)");
     } else {
-        println!("RESULT: check_cont_status MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: check_cont_status MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
     assert!(
         frames_acquired >= TARGET_FRAMES,
@@ -2868,59 +3007,119 @@ async fn test_20_param_query_isolation() {
         // Query sensor size (PARAM_SER_SIZE, PARAM_PAR_SIZE)
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        if pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_SER_SIZE: {}", ser);
         }
-        if pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_PAR_SIZE: {}", par);
         }
 
         // Query bit depth
         let mut bit_depth: i16 = 0;
-        if pl_get_param(hcam, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut bit_depth as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_BIT_DEPTH,
+            ATTR_CURRENT,
+            &mut bit_depth as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_BIT_DEPTH: {}", bit_depth);
         }
 
         // Query chip name
         let mut chip_name = [0i8; 64];
-        if pl_get_param(hcam, PARAM_CHIP_NAME, ATTR_CURRENT, chip_name.as_mut_ptr() as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_CHIP_NAME,
+            ATTR_CURRENT,
+            chip_name.as_mut_ptr() as *mut _,
+        ) != 0
+        {
             let name = std::ffi::CStr::from_ptr(chip_name.as_ptr()).to_string_lossy();
             println!("  PARAM_CHIP_NAME: {}", name);
         }
 
         // Query temperature
         let mut temp: i16 = 0;
-        if pl_get_param(hcam, PARAM_TEMP, ATTR_CURRENT, &mut temp as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_TEMP,
+            ATTR_CURRENT,
+            &mut temp as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_TEMP: {} (raw)", temp);
         }
 
         // Query speed table entries (PARAM_SPDTAB_INDEX)
         let mut speed_idx: i16 = 0;
-        if pl_get_param(hcam, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut speed_idx as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_SPDTAB_INDEX,
+            ATTR_CURRENT,
+            &mut speed_idx as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_SPDTAB_INDEX: {}", speed_idx);
         }
 
         // Query gain index
         let mut gain_idx: i16 = 0;
-        if pl_get_param(hcam, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut gain_idx as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_GAIN_INDEX,
+            ATTR_CURRENT,
+            &mut gain_idx as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_GAIN_INDEX: {}", gain_idx);
         }
 
         // Query frame buffer size recommendation
         let mut frame_buf_size: u64 = 0;
-        if pl_get_param(hcam, PARAM_FRAME_BUFFER_SIZE, ATTR_CURRENT, &mut frame_buf_size as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_FRAME_BUFFER_SIZE,
+            ATTR_CURRENT,
+            &mut frame_buf_size as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_FRAME_BUFFER_SIZE: {}", frame_buf_size);
         }
 
         // Query metadata capability
         let mut md_enabled: rs_bool = 0;
-        if pl_get_param(hcam, PARAM_METADATA_ENABLED, ATTR_AVAIL, &mut md_enabled as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_METADATA_ENABLED,
+            ATTR_AVAIL,
+            &mut md_enabled as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_METADATA_ENABLED (avail): {}", md_enabled);
         }
 
         // Query circular buffer mode capability
         let mut circ_avail: rs_bool = 0;
-        if pl_get_param(hcam, PARAM_CIRC_BUFFER, ATTR_AVAIL, &mut circ_avail as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_CIRC_BUFFER,
+            ATTR_AVAIL,
+            &mut circ_avail as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_CIRC_BUFFER (avail): {}", circ_avail);
         }
     }
@@ -2944,7 +3143,10 @@ async fn test_20_param_query_isolation() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -2983,7 +3185,10 @@ async fn test_20_param_query_isolation() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate buffer
     const ALIGN_4K: usize = 4096;
@@ -3021,14 +3226,20 @@ async fn test_20_param_query_isolation() {
     let streaming = std::sync::Arc::new(AtomicBool::new(true));
     let streaming_clone = streaming.clone();
 
-    println!("\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let handle = tokio::task::spawn_blocking(move || {
         let mut frames_acquired: i32 = 0;
 
         while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
                 continue;
             }
 
@@ -3077,7 +3288,10 @@ async fn test_20_param_query_isolation() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: pl_get_param calls are NOT the issue (200 frames achieved)");
     } else {
-        println!("RESULT: pl_get_param calls MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: pl_get_param calls MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
     assert!(
         frames_acquired >= TARGET_FRAMES,
@@ -3138,10 +3352,22 @@ async fn test_21_metadata_isolation() {
     unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        if pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_SER_SIZE: {}", ser);
         }
-        if pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_PAR_SIZE: {}", par);
         }
     }
@@ -3152,13 +3378,25 @@ async fn test_21_metadata_isolation() {
     unsafe {
         // Check if metadata is available
         let mut md_avail: rs_bool = 0;
-        if pl_get_param(hcam, PARAM_METADATA_ENABLED, ATTR_AVAIL, &mut md_avail as *mut _ as *mut _) != 0 {
+        if pl_get_param(
+            hcam,
+            PARAM_METADATA_ENABLED,
+            ATTR_AVAIL,
+            &mut md_avail as *mut _ as *mut _,
+        ) != 0
+        {
             println!("  PARAM_METADATA_ENABLED available: {}", md_avail != 0);
 
             if md_avail != 0 {
                 // Get current value
                 let mut current_md: rs_bool = 0;
-                if pl_get_param(hcam, PARAM_METADATA_ENABLED, ATTR_CURRENT, &mut current_md as *mut _ as *mut _) != 0 {
+                if pl_get_param(
+                    hcam,
+                    PARAM_METADATA_ENABLED,
+                    ATTR_CURRENT,
+                    &mut current_md as *mut _ as *mut _,
+                ) != 0
+                {
                     println!("  PARAM_METADATA_ENABLED current: {}", current_md != 0);
                 }
 
@@ -3167,16 +3405,26 @@ async fn test_21_metadata_isolation() {
                 if !use_metadata && current_md != 0 {
                     println!("  Disabling metadata (like full driver when not decoding)...");
                     let disable: rs_bool = 0;
-                    if pl_set_param(hcam, PARAM_METADATA_ENABLED, &disable as *const _ as *mut _) == 0 {
-                        println!("  WARNING: Failed to disable metadata: {}", get_error_message());
+                    if pl_set_param(hcam, PARAM_METADATA_ENABLED, &disable as *const _ as *mut _)
+                        == 0
+                    {
+                        println!(
+                            "  WARNING: Failed to disable metadata: {}",
+                            get_error_message()
+                        );
                     } else {
                         println!("  Metadata disabled successfully");
                     }
                 } else if use_metadata && current_md == 0 {
                     println!("  Enabling metadata (like full driver when decoding)...");
                     let enable: rs_bool = 1;
-                    if pl_set_param(hcam, PARAM_METADATA_ENABLED, &enable as *const _ as *mut _) == 0 {
-                        println!("  WARNING: Failed to enable metadata: {}", get_error_message());
+                    if pl_set_param(hcam, PARAM_METADATA_ENABLED, &enable as *const _ as *mut _)
+                        == 0
+                    {
+                        println!(
+                            "  WARNING: Failed to enable metadata: {}",
+                            get_error_message()
+                        );
                     } else {
                         println!("  Metadata enabled successfully");
                     }
@@ -3208,7 +3456,10 @@ async fn test_21_metadata_isolation() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -3247,7 +3498,10 @@ async fn test_21_metadata_isolation() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate buffer
     const ALIGN_4K: usize = 4096;
@@ -3285,14 +3539,20 @@ async fn test_21_metadata_isolation() {
     let streaming = std::sync::Arc::new(AtomicBool::new(true));
     let streaming_clone = streaming.clone();
 
-    println!("\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let handle = tokio::task::spawn_blocking(move || {
         let mut frames_acquired: i32 = 0;
 
         while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
                 continue;
             }
 
@@ -3339,9 +3599,14 @@ async fn test_21_metadata_isolation() {
     println!("\n=== TEST 21 COMPLETE ===\n");
 
     if frames_acquired >= TARGET_FRAMES {
-        println!("RESULT: PARAM_METADATA_ENABLED manipulation is NOT the issue (200 frames achieved)");
+        println!(
+            "RESULT: PARAM_METADATA_ENABLED manipulation is NOT the issue (200 frames achieved)"
+        );
     } else {
-        println!("RESULT: PARAM_METADATA_ENABLED manipulation MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: PARAM_METADATA_ENABLED manipulation MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
     assert!(
         frames_acquired >= TARGET_FRAMES,
@@ -3410,7 +3675,10 @@ async fn test_22_post_setup_circ_query() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -3449,7 +3717,10 @@ async fn test_22_post_setup_circ_query() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // === THE KEY DIFFERENCE: Query PARAM_CIRC_BUFFER ATTR_CURRENT AFTER setup ===
     // This matches lines 1591-1607 in acquisition.rs
@@ -3463,7 +3734,10 @@ async fn test_22_post_setup_circ_query() {
             &mut circ_current as *mut _ as *mut c_void,
         ) == 0
         {
-            println!("  [WARN] PARAM_CIRC_BUFFER ATTR_CURRENT query failed: {}", get_error_message());
+            println!(
+                "  [WARN] PARAM_CIRC_BUFFER ATTR_CURRENT query failed: {}",
+                get_error_message()
+            );
         } else {
             println!("  [OK] PARAM_CIRC_BUFFER current mode: {}", circ_current);
         }
@@ -3506,20 +3780,35 @@ async fn test_22_post_setup_circ_query() {
     let streaming_clone = streaming.clone();
     let ctx_clone = ctx.clone();
 
-    println!("\n=== FRAME ACQUISITION LOOP (spawn_blocking, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (spawn_blocking, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let handle = tokio::task::spawn_blocking(move || {
         let mut frames_acquired: i32 = 0;
 
         while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
                 unsafe {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
-                        eprintln!("[SDK STATUS] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
+                        eprintln!(
+                            "[SDK STATUS] status={}, bytes={}, cnt={}",
+                            status, bytes_arrived, buffer_cnt
+                        );
                     }
                 }
                 continue;
@@ -3528,7 +3817,10 @@ async fn test_22_post_setup_circ_query() {
             let mut frame_ptr: *mut c_void = ptr::null_mut();
             unsafe {
                 if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
-                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    eprintln!(
+                        "[ERROR] pl_exp_get_oldest_frame failed: {}",
+                        get_error_message()
+                    );
                     continue;
                 }
             }
@@ -3569,9 +3861,14 @@ async fn test_22_post_setup_circ_query() {
     println!("\n=== TEST 22 COMPLETE ===\n");
 
     if frames_acquired >= TARGET_FRAMES {
-        println!("RESULT: Post-setup PARAM_CIRC_BUFFER query is NOT the issue (200 frames achieved)");
+        println!(
+            "RESULT: Post-setup PARAM_CIRC_BUFFER query is NOT the issue (200 frames achieved)"
+        );
     } else {
-        println!("RESULT: Post-setup PARAM_CIRC_BUFFER query MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Post-setup PARAM_CIRC_BUFFER query MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
     assert!(
         frames_acquired >= TARGET_FRAMES,
@@ -3588,7 +3885,9 @@ async fn test_22_post_setup_circ_query() {
 #[tokio::test]
 async fn test_23_post_unlock_status_check() {
     println!("\n=== TEST 23: Post-Unlock check_cont_status Isolation Test ===");
-    println!("Tests whether calling check_cont_status after each unlock causes the 19-frame cutoff.\n");
+    println!(
+        "Tests whether calling check_cont_status after each unlock causes the 19-frame cutoff.\n"
+    );
     println!("This matches the full driver pattern at acquisition.rs lines 2696-2703.\n");
 
     const TARGET_FRAMES: i32 = 200;
@@ -3639,7 +3938,10 @@ async fn test_23_post_unlock_status_check() {
             ctx_ptr as *mut c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             pl_cam_close(hcam);
             pl_pvcam_uninit();
             return;
@@ -3678,7 +3980,10 @@ async fn test_23_post_unlock_status_check() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate buffer
     const ALIGN_4K: usize = 4096;
@@ -3716,20 +4021,35 @@ async fn test_23_post_unlock_status_check() {
     let streaming_clone = streaming.clone();
     let ctx_clone = ctx.clone();
 
-    println!("\n=== FRAME ACQUISITION LOOP (with post-unlock status check, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (with post-unlock status check, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
     let handle = tokio::task::spawn_blocking(move || {
         let mut frames_acquired: i32 = 0;
 
         while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
             let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
-                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                println!(
+                    "[TIMEOUT] No frame after {}ms (acquired {})",
+                    TIMEOUT_MS, frames_acquired
+                );
                 unsafe {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
-                        eprintln!("[SDK STATUS] status={}, bytes={}, cnt={}", status, bytes_arrived, buffer_cnt);
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
+                        eprintln!(
+                            "[SDK STATUS] status={}, bytes={}, cnt={}",
+                            status, bytes_arrived, buffer_cnt
+                        );
                     }
                 }
                 continue;
@@ -3738,7 +4058,10 @@ async fn test_23_post_unlock_status_check() {
             let mut frame_ptr: *mut c_void = ptr::null_mut();
             unsafe {
                 if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
-                    eprintln!("[ERROR] pl_exp_get_oldest_frame failed: {}", get_error_message());
+                    eprintln!(
+                        "[ERROR] pl_exp_get_oldest_frame failed: {}",
+                        get_error_message()
+                    );
                     continue;
                 }
             }
@@ -3758,8 +4081,17 @@ async fn test_23_post_unlock_status_check() {
                     let mut status: i16 = 0;
                     let mut bytes_arrived: uns32 = 0;
                     let mut buffer_cnt: uns32 = 0;
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
-                        eprintln!("[POST-UNLOCK] status={}, bytes={}, cnt={}, frame={}", status, bytes_arrived, buffer_cnt, frames_acquired);
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
+                        eprintln!(
+                            "[POST-UNLOCK] status={}, bytes={}, cnt={}, frame={}",
+                            status, bytes_arrived, buffer_cnt, frames_acquired
+                        );
                     }
                 }
             }
@@ -3794,7 +4126,10 @@ async fn test_23_post_unlock_status_check() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Post-unlock check_cont_status is NOT the issue (200 frames achieved)");
     } else {
-        println!("RESULT: Post-unlock check_cont_status MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Post-unlock check_cont_status MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
     assert!(
         frames_acquired >= TARGET_FRAMES,
@@ -3855,7 +4190,10 @@ async fn test_25_pre_wait_status_check() {
     // Create and register callback (use test's callback, not driver's)
     let callback_ctx = Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
     let callback_ctx_ptr = &**callback_ctx as *const FullCallbackContext;
-    FULL_CTX.store(callback_ctx_ptr as *mut FullCallbackContext, Ordering::Release);
+    FULL_CTX.store(
+        callback_ctx_ptr as *mut FullCallbackContext,
+        Ordering::Release,
+    );
     println!("[OK] Callback context created, ptr={:?}", callback_ctx_ptr);
 
     println!("[SETUP] Registering EOF callback...");
@@ -3882,8 +4220,18 @@ async fn test_25_pre_wait_status_check() {
     let (ser_size, par_size) = unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        );
         (ser, par)
     };
 
@@ -3919,7 +4267,10 @@ async fn test_25_pre_wait_status_check() {
         }
         return;
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // FullCallbackContext defaults to circ_overwrite=false in new()
 
@@ -3953,7 +4304,10 @@ async fn test_25_pre_wait_status_check() {
     }
     println!("[OK] Acquisition started");
 
-    println!("\n=== FRAME ACQUISITION LOOP (with PRE-WAIT status check, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (with PRE-WAIT status check, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
 
     let callback_ctx_for_loop = callback_ctx.clone();
 
@@ -4028,7 +4382,9 @@ async fn test_25_pre_wait_status_check() {
         }
 
         frames
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     println!("\n[CLEANUP] Stopping acquisition...");
     unsafe {
@@ -4046,7 +4402,10 @@ async fn test_25_pre_wait_status_check() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Pre-wait check_cont_status is NOT the issue (200 frames achieved)");
     } else {
-        println!("RESULT: Pre-wait check_cont_status MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Pre-wait check_cont_status MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
 
     assert!(
@@ -4070,7 +4429,7 @@ async fn test_25_pre_wait_status_check() {
 // If this test PASSES with 200 frames: the issue is in how the driver sets up/uses it
 
 use daq_driver_pvcam::components::acquisition::{
-    CallbackContext, GLOBAL_CALLBACK_CTX, pvcam_eof_callback, set_global_callback_ctx,
+    pvcam_eof_callback, set_global_callback_ctx, CallbackContext, GLOBAL_CALLBACK_CTX,
 };
 
 #[tokio::test]
@@ -4115,7 +4474,10 @@ async fn test_24_driver_callback_infrastructure() {
     // Create CallbackContext using the DRIVER's struct (Arc<Pin<Box<>>> like driver does)
     let callback_ctx = Arc::new(Box::pin(CallbackContext::new(hcam)));
     let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
-    println!("[OK] Driver CallbackContext created, ptr={:?}", callback_ctx_ptr);
+    println!(
+        "[OK] Driver CallbackContext created, ptr={:?}",
+        callback_ctx_ptr
+    );
 
     // Set GLOBAL_CALLBACK_CTX (exactly like driver does)
     set_global_callback_ctx(callback_ctx_ptr);
@@ -4131,7 +4493,10 @@ async fn test_24_driver_callback_infrastructure() {
             callback_ctx_ptr as *mut std::ffi::c_void,
         );
         if result == 0 {
-            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            println!(
+                "ERROR: pl_cam_register_callback_ex3 failed: {}",
+                get_error_message()
+            );
             false
         } else {
             println!("[OK] EOF callback registered using driver's pvcam_eof_callback");
@@ -4151,8 +4516,18 @@ async fn test_24_driver_callback_infrastructure() {
     let (ser_size, par_size) = unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        );
         (ser, par)
     };
     println!("[OK] Sensor size: {}x{}", ser_size, par_size);
@@ -4190,7 +4565,10 @@ async fn test_24_driver_callback_infrastructure() {
         }
         return;
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Set circ_overwrite to false in callback context (like driver does for CIRC_NO_OVERWRITE)
     callback_ctx.set_circ_overwrite(false);
@@ -4227,7 +4605,10 @@ async fn test_24_driver_callback_infrastructure() {
     }
     println!("[OK] Acquisition started");
 
-    println!("\n=== FRAME ACQUISITION LOOP (using driver's wait_for_frames, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (using driver's wait_for_frames, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
 
     // Run frame loop using spawn_blocking like driver does
     let callback_ctx_for_loop = callback_ctx.clone();
@@ -4253,7 +4634,11 @@ async fn test_24_driver_callback_infrastructure() {
                 }
                 eprintln!(
                     "[TIMEOUT] iter={}, status={}, bytes={}, cnt={}, pending={}",
-                    loop_iteration, status, bytes, cnt, callback_ctx_for_loop.pending_frames.load(Ordering::Acquire)
+                    loop_iteration,
+                    status,
+                    bytes,
+                    cnt,
+                    callback_ctx_for_loop.pending_frames.load(Ordering::Acquire)
                 );
 
                 // Exit if SDK stopped
@@ -4290,7 +4675,9 @@ async fn test_24_driver_callback_infrastructure() {
         }
 
         frames
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let total_time = loop_start.elapsed().as_millis();
 
@@ -4311,7 +4698,10 @@ async fn test_24_driver_callback_infrastructure() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Driver callback infrastructure is NOT the issue (200 frames achieved)");
     } else {
-        println!("RESULT: Driver callback infrastructure MAY be causing the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Driver callback infrastructure MAY be causing the issue ({} frames)",
+            frames_acquired
+        );
     }
 
     assert!(
@@ -4383,7 +4773,10 @@ async fn test_26_watch_channel_loop_condition() {
     let callback_ctx = Arc::new(Box::pin(CallbackContext::new(-1))); // <-- -1 like driver
     callback_ctx.set_hcam(hcam); // <-- Update to actual hcam
     let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
-    println!("[OK] CallbackContext created with -1, then set_hcam({})", hcam);
+    println!(
+        "[OK] CallbackContext created with -1, then set_hcam({})",
+        hcam
+    );
     println!("[OK] CallbackContext ptr={:?}", callback_ctx_ptr);
 
     // Set GLOBAL_CALLBACK_CTX
@@ -4407,7 +4800,10 @@ async fn test_26_watch_channel_loop_condition() {
         result != 0
     };
     if !callback_registered {
-        println!("ERROR: Failed to register callback: {}", get_error_message());
+        println!(
+            "ERROR: Failed to register callback: {}",
+            get_error_message()
+        );
         unsafe {
             pl_cam_close(hcam);
             pl_pvcam_uninit();
@@ -4420,8 +4816,18 @@ async fn test_26_watch_channel_loop_condition() {
     let (ser_size, par_size) = unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        );
         (ser, par)
     };
     println!("[OK] Sensor size: {}x{}", ser_size, par_size);
@@ -4457,7 +4863,10 @@ async fn test_26_watch_channel_loop_condition() {
         }
         return;
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate buffer
     let buffer_size = frame_bytes as usize * BUFFER_FRAMES;
@@ -4475,7 +4884,8 @@ async fn test_26_watch_channel_loop_condition() {
 
     // Start acquisition
     println!("[SETUP] Starting continuous acquisition...");
-    let start_result = unsafe { pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32) };
+    let start_result =
+        unsafe { pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32) };
     if start_result == 0 {
         println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
         unsafe {
@@ -4488,7 +4898,10 @@ async fn test_26_watch_channel_loop_condition() {
     println!("[OK] Acquisition started");
 
     // Frame loop with watch channel condition (like driver)
-    println!("\n=== FRAME ACQUISITION LOOP (with watch channel condition, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (with watch channel condition, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
 
     let callback_ctx_for_loop = callback_ctx.clone();
     let streaming_tx_for_stop = streaming_tx.clone();
@@ -4523,7 +4936,10 @@ async fn test_26_watch_channel_loop_condition() {
             let pending = callback_ctx_for_loop.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
                 consecutive_timeouts += 1;
-                eprintln!("[TIMEOUT] #{} at iter={}", consecutive_timeouts, loop_iteration);
+                eprintln!(
+                    "[TIMEOUT] #{} at iter={}",
+                    consecutive_timeouts, loop_iteration
+                );
                 if consecutive_timeouts >= 5 {
                     eprintln!("[FATAL] Max timeouts reached");
                     break;
@@ -4555,7 +4971,9 @@ async fn test_26_watch_channel_loop_condition() {
         }
 
         frames
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let total_time = loop_start.elapsed().as_millis();
 
@@ -4579,7 +4997,10 @@ async fn test_26_watch_channel_loop_condition() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Watch channel + CallbackContext(-1) pattern is NOT the issue");
     } else {
-        println!("RESULT: Watch channel or CallbackContext(-1) pattern MAY be the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Watch channel or CallbackContext(-1) pattern MAY be the issue ({} frames)",
+            frames_acquired
+        );
     }
 
     assert!(
@@ -4670,8 +5091,14 @@ async fn test_27_callback_rereg_during_fallback() {
         )
     };
     if first_reg == 0 {
-        println!("ERROR: First callback registration failed: {}", get_error_message());
-        unsafe { pl_cam_close(hcam); pl_pvcam_uninit(); }
+        println!(
+            "ERROR: First callback registration failed: {}",
+            get_error_message()
+        );
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
         return;
     }
     println!("[OK] First callback registered");
@@ -4680,8 +5107,18 @@ async fn test_27_callback_rereg_during_fallback() {
     let (ser_size, par_size) = unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        );
         (ser, par)
     };
     println!("[OK] Sensor size: {}x{}", ser_size, par_size);
@@ -4710,13 +5147,21 @@ async fn test_27_callback_rereg_during_fallback() {
         )
     };
     if overwrite_setup == 0 {
-        println!("[INFO] CIRC_OVERWRITE setup failed (expected on some cameras): {}", get_error_message());
+        println!(
+            "[INFO] CIRC_OVERWRITE setup failed (expected on some cameras): {}",
+            get_error_message()
+        );
     } else {
-        println!("[OK] CIRC_OVERWRITE setup succeeded, frame_bytes={}", frame_bytes);
+        println!(
+            "[OK] CIRC_OVERWRITE setup succeeded, frame_bytes={}",
+            frame_bytes
+        );
     }
 
     // Allocate buffer
-    let frame_bytes_val = if overwrite_setup != 0 { frame_bytes as usize } else {
+    let frame_bytes_val = if overwrite_setup != 0 {
+        frame_bytes as usize
+    } else {
         // Estimate for fallback
         (ser_size as usize) * (par_size as usize) * 2
     };
@@ -4725,7 +5170,10 @@ async fn test_27_callback_rereg_during_fallback() {
     let buffer = unsafe { alloc_zeroed(layout) };
     if buffer.is_null() {
         println!("ERROR: Failed to allocate buffer");
-        unsafe { pl_cam_close(hcam); pl_pvcam_uninit(); }
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
         return;
     }
     println!("[OK] Allocated {} bytes at {:?}", buffer_size, buffer);
@@ -4742,7 +5190,10 @@ async fn test_27_callback_rereg_during_fallback() {
         println!("[UNEXPECTED] CIRC_OVERWRITE start SUCCEEDED - camera may differ from Prime BSI");
         // Continue anyway - this is still valid for testing
     } else {
-        println!("[OK] CIRC_OVERWRITE start failed as expected: {}", get_error_message());
+        println!(
+            "[OK] CIRC_OVERWRITE start failed as expected: {}",
+            get_error_message()
+        );
 
         // Step 4: Re-setup with CIRC_NO_OVERWRITE
         println!("[STEP 4] Re-setup with CIRC_NO_OVERWRITE...");
@@ -4759,11 +5210,21 @@ async fn test_27_callback_rereg_during_fallback() {
             )
         };
         if no_overwrite_setup == 0 {
-            println!("ERROR: CIRC_NO_OVERWRITE setup failed: {}", get_error_message());
-            unsafe { dealloc(buffer, layout); pl_cam_close(hcam); pl_pvcam_uninit(); }
+            println!(
+                "ERROR: CIRC_NO_OVERWRITE setup failed: {}",
+                get_error_message()
+            );
+            unsafe {
+                dealloc(buffer, layout);
+                pl_cam_close(hcam);
+                pl_pvcam_uninit();
+            }
             return;
         }
-        println!("[OK] CIRC_NO_OVERWRITE setup succeeded, frame_bytes={}", frame_bytes);
+        println!(
+            "[OK] CIRC_NO_OVERWRITE setup succeeded, frame_bytes={}",
+            frame_bytes
+        );
 
         // Update callback context (like driver line 1724)
         callback_ctx.set_circ_overwrite(false);
@@ -4786,27 +5247,43 @@ async fn test_27_callback_rereg_during_fallback() {
             )
         };
         if rereg == 0 {
-            println!("ERROR: Callback re-registration failed: {}", get_error_message());
-            unsafe { dealloc(buffer, layout); pl_cam_close(hcam); pl_pvcam_uninit(); }
+            println!(
+                "ERROR: Callback re-registration failed: {}",
+                get_error_message()
+            );
+            unsafe {
+                dealloc(buffer, layout);
+                pl_cam_close(hcam);
+                pl_pvcam_uninit();
+            }
             return;
         }
         println!("[OK] Callback re-registered");
 
         // Step 7: Re-start with CIRC_NO_OVERWRITE
         println!("[STEP 7] Starting with CIRC_NO_OVERWRITE...");
-        let no_overwrite_start = unsafe {
-            pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32)
-        };
+        let no_overwrite_start =
+            unsafe { pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32) };
         if no_overwrite_start == 0 {
-            println!("ERROR: CIRC_NO_OVERWRITE start failed: {}", get_error_message());
-            unsafe { dealloc(buffer, layout); pl_cam_close(hcam); pl_pvcam_uninit(); }
+            println!(
+                "ERROR: CIRC_NO_OVERWRITE start failed: {}",
+                get_error_message()
+            );
+            unsafe {
+                dealloc(buffer, layout);
+                pl_cam_close(hcam);
+                pl_pvcam_uninit();
+            }
             return;
         }
         println!("[OK] Acquisition started with CIRC_NO_OVERWRITE");
     }
 
     // Frame loop
-    println!("\n=== FRAME ACQUISITION LOOP (after fallback, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (after fallback, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
 
     let callback_ctx_for_loop = callback_ctx.clone();
     let loop_start = std::time::Instant::now();
@@ -4836,7 +5313,10 @@ async fn test_27_callback_rereg_during_fallback() {
             let pending = callback_ctx_for_loop.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
                 consecutive_timeouts += 1;
-                eprintln!("[TIMEOUT] #{} at iter={}", consecutive_timeouts, loop_iteration);
+                eprintln!(
+                    "[TIMEOUT] #{} at iter={}",
+                    consecutive_timeouts, loop_iteration
+                );
                 if consecutive_timeouts >= 5 {
                     eprintln!("[FATAL] Max timeouts reached");
                     break;
@@ -4853,7 +5333,9 @@ async fn test_27_callback_rereg_during_fallback() {
 
             frames += 1;
 
-            unsafe { pl_exp_unlock_oldest_frame(hcam); }
+            unsafe {
+                pl_exp_unlock_oldest_frame(hcam);
+            }
             callback_ctx_for_loop.consume_one();
 
             if frames <= 25 || frames % 50 == 0 {
@@ -4862,7 +5344,9 @@ async fn test_27_callback_rereg_during_fallback() {
         }
 
         frames
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let total_time = loop_start.elapsed().as_millis();
 
@@ -4883,7 +5367,10 @@ async fn test_27_callback_rereg_during_fallback() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Callback deregister/re-register during fallback is NOT the issue");
     } else {
-        println!("RESULT: Callback deregister/re-register during fallback MAY be the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Callback deregister/re-register during fallback MAY be the issue ({} frames)",
+            frames_acquired
+        );
     }
 
     assert!(
@@ -4954,7 +5441,10 @@ async fn test_28_full_driver_channel_infrastructure() {
     callback_ctx.set_hcam(hcam);
     let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
     set_global_callback_ctx(callback_ctx_ptr);
-    println!("[OK] CallbackContext created with -1, then set_hcam({})", hcam);
+    println!(
+        "[OK] CallbackContext created with -1, then set_hcam({})",
+        hcam
+    );
 
     // ========== DRIVER CHANNEL INFRASTRUCTURE ==========
 
@@ -5002,7 +5492,10 @@ async fn test_28_full_driver_channel_infrastructure() {
         {
             pl_cam_close(hcam);
             pl_pvcam_uninit();
-            println!("ERROR: Failed to register callback: {}", get_error_message());
+            println!(
+                "ERROR: Failed to register callback: {}",
+                get_error_message()
+            );
             return;
         }
     }
@@ -5012,8 +5505,18 @@ async fn test_28_full_driver_channel_infrastructure() {
     let (ser_size, par_size) = unsafe {
         let mut ser: uns16 = 0;
         let mut par: uns16 = 0;
-        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
-        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        pl_get_param(
+            hcam,
+            PARAM_SER_SIZE,
+            ATTR_CURRENT,
+            &mut ser as *mut _ as *mut _,
+        );
+        pl_get_param(
+            hcam,
+            PARAM_PAR_SIZE,
+            ATTR_CURRENT,
+            &mut par as *mut _ as *mut _,
+        );
         (ser, par)
     };
     println!("[OK] Sensor size: {}x{}", ser_size, par_size);
@@ -5049,7 +5552,10 @@ async fn test_28_full_driver_channel_infrastructure() {
             return;
         }
     }
-    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+    println!(
+        "[OK] pl_exp_setup_cont succeeded, frame_bytes={}",
+        frame_bytes
+    );
 
     // Allocate buffer (page-aligned like driver)
     let buffer_count = 21;
@@ -5091,7 +5597,10 @@ async fn test_28_full_driver_channel_infrastructure() {
     println!("[OK] Acquisition started");
 
     // ========== FRAME ACQUISITION LOOP IN spawn_blocking (like driver) ==========
-    println!("\n=== FRAME ACQUISITION LOOP (with full channel infrastructure, target: {} frames) ===\n", TARGET_FRAMES);
+    println!(
+        "\n=== FRAME ACQUISITION LOOP (with full channel infrastructure, target: {} frames) ===\n",
+        TARGET_FRAMES
+    );
 
     let callback_ctx_clone = callback_ctx.clone();
     let frame_tx_clone = frame_tx.clone();
@@ -5120,7 +5629,13 @@ async fn test_28_full_driver_channel_infrastructure() {
                 let mut bytes_arrived: uns32 = 0;
                 let mut buffer_cnt: uns32 = 0;
                 unsafe {
-                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                    if pl_exp_check_cont_status(
+                        hcam,
+                        &mut status,
+                        &mut bytes_arrived,
+                        &mut buffer_cnt,
+                    ) != 0
+                    {
                         let pending = callback_ctx_clone.pending_frames.load(Ordering::Acquire);
                         println!(
                             "[PRE-WAIT STATUS] iter={}, status={}, bytes={}, cnt={}, pending={}",
@@ -5140,9 +5655,7 @@ async fn test_28_full_driver_channel_infrastructure() {
 
             // Get oldest frame using direct FFI
             let mut frame_ptr: *mut c_void = std::ptr::null_mut();
-            let get_result = unsafe {
-                pl_exp_get_oldest_frame(hcam, &mut frame_ptr)
-            };
+            let get_result = unsafe { pl_exp_get_oldest_frame(hcam, &mut frame_ptr) };
             if get_result == 0 {
                 // No frame available, continue to wait
                 continue;
@@ -5166,7 +5679,9 @@ async fn test_28_full_driver_channel_infrastructure() {
             let _ = frame_tx_clone.send(current_frame as u32);
 
             // Decrement pending (like driver)
-            callback_ctx_clone.pending_frames.fetch_sub(1, Ordering::AcqRel);
+            callback_ctx_clone
+                .pending_frames
+                .fetch_sub(1, Ordering::AcqRel);
         }
 
         // Signal done (like driver)
@@ -5204,7 +5719,10 @@ async fn test_28_full_driver_channel_infrastructure() {
     if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Full driver channel infrastructure is NOT the issue");
     } else {
-        println!("RESULT: Full driver channel infrastructure MAY be the issue ({} frames)", frames_acquired);
+        println!(
+            "RESULT: Full driver channel infrastructure MAY be the issue ({} frames)",
+            frames_acquired
+        );
     }
 
     assert!(

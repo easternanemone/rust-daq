@@ -21,11 +21,7 @@
 //! - PVCAM SDK installed at /opt/pvcam/sdk
 //! - LD_LIBRARY_PATH includes /opt/pvcam/library/x86_64
 
-#![cfg(all(
-    feature = "pvcam",
-    feature = "pvcam_sdk",
-    feature = "hardware_tests"
-))]
+#![cfg(all(feature = "pvcam", feature = "pvcam_sdk", feature = "hardware_tests"))]
 
 use rust_daq::hardware::capabilities::{ExposureControl, FrameProducer};
 use rust_daq::hardware::pvcam::PvcamDriver;

@@ -3114,12 +3114,7 @@ impl PvcamFeatures {
                 // Upload to camera
                 // NOTE: For PARAM_SMART_STREAM_EXP_PARAMS (TYPE_VOID_PTR), we pass the
                 // pointer value (ss_struct) directly cast to *mut c_void.
-                if pl_set_param(
-                    h,
-                    PARAM_SMART_STREAM_EXP_PARAMS,
-                    ss_struct as *mut _,
-                ) == 0
-                {
+                if pl_set_param(h, PARAM_SMART_STREAM_EXP_PARAMS, ss_struct as *mut _) == 0 {
                     let err = get_pvcam_error();
                     pl_release_smart_stream_struct(&mut ss_struct);
                     return Err(anyhow!("Failed to upload smart stream: {}", err));
