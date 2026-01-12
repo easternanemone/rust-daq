@@ -2797,6 +2797,22 @@ impl PvcamAcquisition {
                     let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
                     let pixel_data = sdk_bytes.to_vec();
 
+                    // bd-early-unlock-2026-01-12: Release frame back to SDK IMMEDIATELY after copy.
+                    // The minimal test that works for 200 frames unlocks right after get_oldest_frame.
+                    // Delaying unlock appears to cause the SDK to stop calling callbacks.
+                    // All remaining processing works on pixel_data (our copy), not frame_ptr.
+                    let unlock_frame_nr = current_frame_nr;
+                    if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                        eprintln!("[PVCAM DEBUG] Unlocking frame {}", unlock_frame_nr);
+                    }
+                    let unlock_result = ffi_safe::release_oldest_frame(hcam);
+                    if !unlock_result {
+                        unlock_failures += 1;
+                        eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
+                    } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
+                        eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
+                    }
+
                     // Zero-frame detection (bd-ha3w): Check if frame contains valid data
                     // Sample several positions to detect all-zero frames which indicate
                     // either buffer corruption or reading before SDK finished writing.
@@ -2829,20 +2845,8 @@ impl PvcamAcquisition {
                         continue; // Skip to next frame
                     }
 
-                    // Release frame back to SDK (CRITICAL for CIRC_NO_OVERWRITE)
-                    // Even if we were in OVERWRITE mode, unlocking shouldn't hurt if using get_oldest.
-                    // bd-debug-2026-01-12: Add explicit unlock tracing
-                    let unlock_frame_nr = current_frame_nr;
-                    if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                        eprintln!("[PVCAM DEBUG] Unlocking frame {}", unlock_frame_nr);
-                    }
-                    let unlock_result = ffi_safe::release_oldest_frame(hcam);
-                    if !unlock_result {
-                        unlock_failures += 1;
-                        eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
-                    } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                        eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
-                    }
+                    // bd-early-unlock-2026-01-12: Unlock moved earlier (right after pixel copy)
+                    // to match the minimal test pattern that works for 200 frames.
 
                     // Decrement pending frame counter (callback mode)
                     if use_callback {
