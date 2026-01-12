@@ -111,8 +111,8 @@ impl SpeedTable {
             }
 
             // 5. Restore original state
-            // Restore in reverse order of dependency: Gain -> Speed -> Port?
-            // Actually, Port first, then Speed, then Gain is usually safer because Gain depends on Speed, Speed on Port.
+            // Dependency chain: Speed is defined within the selected Port, and Gain is defined within the selected Speed.
+            // Therefore we must restore Port first, then Speed, then Gain so that each index is interpreted in the correct context.
             unsafe {
                 let p = orig_port as i32;
                 if pl_set_param(h, PARAM_READOUT_PORT, &p as *const _ as *mut _) == 0 {
