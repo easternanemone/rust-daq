@@ -2127,7 +2127,7 @@ async fn test_17_minimal_sdk_callback() {
     // Start acquisition
     println!("[START] pl_exp_start_cont...");
     unsafe {
-        let result = pl_exp_start_cont(hcam, buffer, buffer_size as u32);
+        let result = pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32);
         if result == 0 {
             println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
             dealloc(buffer, layout);
