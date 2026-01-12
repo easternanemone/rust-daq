@@ -48,34 +48,34 @@
 //! the `lost_frames` counter is incremented by the gap size and `discontinuity_events`
 //! is incremented. This allows downstream consumers to know when data is missing.
 
-#[cfg(feature = "pvcam_sdk")]
-use crate::components::connection::get_pvcam_error;
 use crate::components::connection::PvcamConnection;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
+use crate::components::connection::get_pvcam_error;
+#[cfg(feature = "pvcam_hardware")]
 use crate::components::features::PvcamFeatures;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use daq_core::core::Roi;
 use daq_core::data::Frame;
 use daq_core::parameter::Parameter;
-#[cfg(feature = "pvcam_sdk")]
-use std::alloc::{alloc_zeroed, dealloc, Layout};
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
+use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::sync::Arc;
+#[cfg(feature = "pvcam_hardware")]
 use std::sync::atomic::AtomicBool;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 use std::sync::atomic::AtomicI16;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 use std::sync::atomic::AtomicI32;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 use pvcam_sys::*;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 use tokio::task::JoinHandle;
 
 /// Buffer mode preference for continuous streaming (PVCAM header PL_CIRC_MODES).
@@ -84,17 +84,10 @@ use tokio::task::JoinHandle;
 /// (PL_ERR_CONFIGURATION_INVALID) on pl_exp_start_cont even though pl_exp_setup_cont
 /// succeeds. Use CIRC_NO_OVERWRITE with proper FIFO draining for Prime BSI.
 ///
-/// bd-diag-2026-01-11: Prefer CIRC_NO_OVERWRITE to match the working minimal test pattern.
-/// The minimal test (test_17) uses CIRC_NO_OVERWRITE directly without any fallback and works
-/// for 200+ frames. The previous CIRC_OVERWRITE → CIRC_NO_OVERWRITE fallback path may have
-/// issues with callback deregister/reregister that cause callbacks to stop after 19 frames.
-///
 /// Historical note: SDK examples (FastStreamingToDisk, LiveImage) use CIRC_OVERWRITE
-/// with 255-frame buffers and rely on overwrite semantics. Some firmware revs previously
-/// rejected overwrite with error 185 (Invalid Configuration); when overwrite is explicitly
-/// enabled, the driver will attempt OVERWRITE first and fall back to NO_OVERWRITE automatically.
-#[cfg(feature = "pvcam_sdk")]
-const PREFER_CIRC_OVERWRITE_MODE: bool = false;
+/// with 255-frame buffers, but this only works on specific camera models.
+#[cfg(feature = "pvcam_hardware")]
+const PREFER_CIRC_OVERWRITE_MODE: bool = true;
 
 /// bd-3gnv: Prefer continuous FIFO streaming; keep sequence mode as a last-resort fallback.
 ///
@@ -104,7 +97,7 @@ const PREFER_CIRC_OVERWRITE_MODE: bool = false;
 ///
 /// When true: Force sequence mode (`pl_exp_setup_seq` + `pl_exp_start_seq`) in batches. This
 /// is slower but can be toggled for diagnostics if continuous mode regresses.
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 const USE_SEQUENCE_MODE: bool = false;
 
 /// Batch size for sequence mode streaming (bd-3gnv).
@@ -113,7 +106,7 @@ const USE_SEQUENCE_MODE: bool = false;
 /// Larger batches = higher throughput, less restart overhead
 ///
 /// 10 frames at 10ms exposure = ~150ms batch time (balances latency + throughput)
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 const SEQUENCE_BATCH_SIZE: u16 = 10;
 
 /// Callback context for EOF notifications (bd-ek9n.2)
@@ -129,7 +122,7 @@ const SEQUENCE_BATCH_SIZE: u16 = 10;
 ///
 /// This struct must remain valid for the lifetime of the acquisition.
 /// It is pinned via `Box::pin` and passed to PVCAM as a raw pointer.
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 pub struct CallbackContext {
     /// Count of pending frames (incremented by callback, decremented by consumer)
     pub pending_frames: std::sync::atomic::AtomicU32,
@@ -153,13 +146,9 @@ pub struct CallbackContext {
     /// Frame info from callback (SDK pattern: ctx->eofFrameInfo = *pFrameInfo)
     /// Uses std::sync::Mutex (not tokio) because callback runs on PVCAM thread
     pub frame_info: std::sync::Mutex<FRAME_INFO>,
-    /// Buffer mode flag: true = CIRC_OVERWRITE, false = CIRC_NO_OVERWRITE
-    /// In CIRC_NO_OVERWRITE mode, callback MUST NOT call get_latest_frame
-    /// because main loop needs get_oldest_frame for proper FIFO order (bd-nzcq)
-    pub circ_overwrite: AtomicBool,
 }
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 impl CallbackContext {
     /// Create a new CallbackContext with camera handle for SDK pattern frame retrieval.
     ///
@@ -176,103 +165,76 @@ impl CallbackContext {
             hcam: AtomicI16::new(hcam),
             frame_ptr: AtomicPtr::new(std::ptr::null_mut()),
             frame_info: std::sync::Mutex::new(unsafe { std::mem::zeroed() }),
-            // Default to CIRC_OVERWRITE (true); updated by set_circ_overwrite() after fallback
-            circ_overwrite: AtomicBool::new(true),
         }
-    }
-
-    /// Set the buffer mode flag. Must be called after fallback to CIRC_NO_OVERWRITE (bd-nzcq).
-    ///
-    /// When circ_overwrite=false, the callback will NOT call get_latest_frame,
-    /// forcing the main loop to use get_oldest_frame for proper FIFO order.
-    pub fn set_circ_overwrite(&self, overwrite: bool) {
-        self.circ_overwrite.store(overwrite, Ordering::Release);
-        tracing::debug!(circ_overwrite = overwrite, "CallbackContext buffer mode updated");
     }
 
     /// Signal that a frame is ready (called from EOF callback)
     ///
     /// Increments the pending frame counter and notifies waiting threads.
     /// Must lock the mutex to avoid missed wakeups with condvar.
-    ///
-    /// # PVCAM Callback Reliability Fix (bd-callback-reliability-2026-01-12)
-    ///
-    /// This method MUST always notify, even if the mutex is poisoned.
-    /// Previous implementation silently skipped notification on poisoned mutex,
-    /// causing the main loop to wait forever for frames that were already counted.
     #[inline]
     pub fn signal_frame_ready(&self, frame_nr: i32) {
         self.latest_frame_nr.store(frame_nr, Ordering::Release);
         self.pending_frames.fetch_add(1, Ordering::AcqRel);
-        // CRITICAL: Always notify, even if mutex is poisoned
-        // Use match to handle both Ok and Err cases
-        let mut guard = match self.mutex.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(), // Still get the guard from poisoned mutex
-        };
-        *guard = true; // Set notified flag
-        self.condvar.notify_one();
+        // Lock mutex to ensure condvar notification is seen
+        if let Ok(mut guard) = self.mutex.lock() {
+            *guard = true; // Set notified flag
+            self.condvar.notify_one();
+        }
     }
 
     /// Wait for frames to be available with timeout
     ///
     /// Returns the number of pending frames (0 on shutdown or timeout).
     /// Does NOT decrement the counter - caller should drain frames and call `consume_one()` for each.
-    ///
-    /// # PVCAM Callback Reliability Fix (bd-callback-reliability-2026-01-12)
-    ///
-    /// This method handles poisoned mutex gracefully by using `into_inner()` to
-    /// continue operation. This ensures the frame loop doesn't deadlock if the
-    /// mutex was poisoned by an earlier panic elsewhere.
     pub fn wait_for_frames(&self, timeout_ms: u64) -> u32 {
-        // bd-simple-wait-2026-01-12: Simplified wait to match minimal test pattern exactly.
-        // The minimal test that works for 200 frames has NO fast path - it always waits
-        // on the condvar and always resets the flag. This avoids subtle race conditions
-        // where the fast path could leave the mutex flag in the wrong state.
-
         // Check if shutdown requested
         if self.shutdown.load(Ordering::Acquire) {
             tracing::trace!("wait_for_frames: shutdown requested, returning 0");
             return 0;
         }
 
-        // ALWAYS lock mutex and wait on condvar - no fast path
-        // This matches the minimal test's wait() pattern exactly
+        // Check if frames already pending (fast path)
+        let pending = self.pending_frames.load(Ordering::Acquire);
+        if pending > 0 {
+            tracing::trace!(
+                pending,
+                "wait_for_frames: frames already pending (fast path)"
+            );
+            return pending;
+        }
+
+        // Wait on condvar with timeout
         let guard = match self.mutex.lock() {
             Ok(g) => g,
-            Err(poisoned) => {
-                tracing::warn!("wait_for_frames: mutex poisoned, continuing with recovered guard");
-                poisoned.into_inner()
+            Err(_) => {
+                tracing::trace!("wait_for_frames: mutex poisoned, returning 0");
+                return 0; // Poisoned mutex
             }
         };
 
         let timeout_duration = Duration::from_millis(timeout_ms);
-
-        // Simple predicate like minimal test: wait while NOT notified (and not shutdown)
         let result = self
             .condvar
             .wait_timeout_while(guard, timeout_duration, |notified| {
-                !*notified && !self.shutdown.load(Ordering::Acquire)
+                // Wait while NOT notified AND no pending frames AND not shutdown
+                !*notified
+                    && self.pending_frames.load(Ordering::Acquire) == 0
+                    && !self.shutdown.load(Ordering::Acquire)
             });
 
         match result {
             Ok((mut guard, timeout_result)) => {
-                // ALWAYS reset notified flag (critical - minimal test does this)
-                *guard = false;
-
-                if timeout_result.timed_out() {
-                    tracing::trace!(timeout_ms, "wait_for_frames: timed out");
-                    0 // Return 0 on timeout
-                } else {
-                    // Signal received - return pending count
-                    self.pending_frames.load(Ordering::Acquire).max(1)
+                *guard = false; // Reset notified flag
+                let pending = self.pending_frames.load(Ordering::Acquire);
+                if timeout_result.timed_out() && pending == 0 {
+                    tracing::trace!(timeout_ms, "wait_for_frames: timed out with no frames");
                 }
+                pending
             }
-            Err(poisoned) => {
-                let (mut guard, _timeout_result) = poisoned.into_inner();
-                *guard = false;
-                tracing::warn!("wait_for_frames: recovered from poisoned condvar wait");
-                0 // Treat poisoned mutex as timeout
+            Err(_) => {
+                tracing::trace!("wait_for_frames: condvar wait returned poisoned mutex");
+                0 // Poisoned mutex
             }
         }
     }
@@ -284,11 +246,7 @@ impl CallbackContext {
         let _ = self
             .pending_frames
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                if n > 0 {
-                    Some(n - 1)
-                } else {
-                    None
-                }
+                if n > 0 { Some(n - 1) } else { None }
             });
     }
 
@@ -403,93 +361,53 @@ impl CallbackContext {
 /// - `p_frame_info` must be a valid pointer to FRAME_INFO or null
 /// - `p_context` must be a valid pointer to CallbackContext
 /// - The callback runs on PVCAM's internal thread, not the Rust async runtime
-///
-/// # PVCAM Callback Reliability Fix (bd-callback-reliability-2026-01-12)
-///
-/// This callback is kept minimal to match the C++ SDK pattern (LiveImage.cpp).
-/// Previous implementation had issues:
-/// 1. `catch_unwind` overhead and potential interference with C callback stack
-/// 2. Extra mutex operations (`store_frame_info`) causing contention
-/// 3. Silent notification failures when mutex poisoned
-///
-/// The fix removes `catch_unwind` and keeps only essential signaling logic.
-/// The callback MUST NOT panic - all operations are infallible.
-///
-/// # bd-static-ctx-2026-01-12: Static Global Context Fix
-///
-/// The SDK stops calling callbacks after ~19 frames when using p_context parameter.
-/// The minimal test works for 200+ frames by using a static global pointer instead
-/// of the p_context parameter. This fix adopts the same pattern.
-///
-/// NOTE: This means only ONE PvcamAcquisition instance can use callbacks at a time.
-/// Since we typically only have one camera, this is acceptable.
-
-/// Static global pointer to callback context (bd-static-ctx-2026-01-12)
-/// This matches the pattern used in the working minimal test.
-/// Must be set before callback registration and cleared after deregistration.
-#[cfg(feature = "pvcam_sdk")]
-pub static GLOBAL_CALLBACK_CTX: std::sync::atomic::AtomicPtr<CallbackContext> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-
-/// Set the global callback context pointer (call before registering callback)
-#[cfg(feature = "pvcam_sdk")]
-pub fn set_global_callback_ctx(ctx: *const CallbackContext) {
-    GLOBAL_CALLBACK_CTX.store(ctx as *mut CallbackContext, std::sync::atomic::Ordering::Release);
-}
-
-/// Clear the global callback context pointer (call after deregistering callback)
-#[cfg(feature = "pvcam_sdk")]
-pub fn clear_global_callback_ctx() {
-    GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Release);
-}
-
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 pub unsafe extern "system" fn pvcam_eof_callback(
     p_frame_info: *const FRAME_INFO,
-    _p_context: *mut std::ffi::c_void, // bd-static-ctx-2026-01-12: IGNORED - use static global instead
+    p_context: *mut std::ffi::c_void,
 ) {
-    // bd-debug-2026-01-12: Trace callback entry BEFORE any checks
-    static CALLBACK_ENTRY_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let entry_count = CALLBACK_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-
-    // bd-static-ctx-2026-01-12: Use static global context like minimal test
-    // This avoids the SDK p_context issue that stops callbacks after ~19 frames
-    let ctx_ptr = GLOBAL_CALLBACK_CTX.load(std::sync::atomic::Ordering::Acquire);
-
-    if entry_count <= 25 || entry_count % 50 == 0 {
-        eprintln!(
-            "[PVCAM CALLBACK ENTRY] #{}, static_ctx={:?}",
-            entry_count, ctx_ptr
-        );
-    }
-
-    if ctx_ptr.is_null() {
-        eprintln!("[PVCAM CALLBACK] static context is NULL at entry #{}", entry_count);
+    if p_context.is_null() {
         return;
     }
 
-    let ctx = &*ctx_ptr;
+    let ctx = &*(p_context as *const CallbackContext);
 
-    // Extract frame number (infallible)
+    // SDK Pattern Step 1: Store FRAME_INFO (ctx->eofFrameInfo = *pFrameInfo)
     let frame_nr = if !p_frame_info.is_null() {
         let info = *p_frame_info;
-
-        // Trace callbacks (eprintln is thread-safe, no allocation)
-        // Print first 25, then every 50th
-        if info.FrameNr <= 25 || info.FrameNr % 50 == 0 {
-            eprintln!(
-                "[PVCAM CALLBACK] Frame {} ready, timestamp={}",
-                info.FrameNr, info.TimeStamp
-            );
-        }
-
+        ctx.store_frame_info(info);
         info.FrameNr
     } else {
         -1
     };
 
-    // Signal main thread - this is the ONLY essential operation
-    // In CIRC_NO_OVERWRITE mode, main loop uses get_oldest_frame for retrieval
+    // SDK Pattern Step 2: Get frame pointer INSIDE callback
+    // This is the critical difference from the old implementation!
+    // SDK: pl_exp_get_latest_frame(ctx->hcam, &ctx->eofFrame)
+    let hcam = ctx.hcam.load(Ordering::Acquire);
+    let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+    let result = pl_exp_get_latest_frame(hcam, &mut frame_ptr);
+
+    // SDK Pattern Step 3: Store frame pointer for main thread
+    // Trace level logging for callback diagnostics (bd-ffi-sdk-match)
+    if result != 0 && !frame_ptr.is_null() {
+        ctx.store_frame_ptr(frame_ptr);
+        tracing::trace!(
+            frame_nr,
+            frame_ptr = ?frame_ptr,
+            "EOF callback: frame retrieved successfully"
+        );
+    } else {
+        // Frame retrieval failed - store null to signal error to main thread
+        ctx.store_frame_ptr(std::ptr::null_mut());
+        tracing::trace!(
+            frame_nr,
+            result,
+            "EOF callback: pl_exp_get_latest_frame failed or returned null"
+        );
+    }
+
+    // SDK Pattern Step 4: Signal main thread (ctx->eofEvent.cond.notify_all())
     ctx.signal_frame_ready(frame_nr);
 }
 
@@ -548,14 +466,14 @@ pub struct FrameMetadata {
 
 /// Page-aligned buffer for DMA performance (Gemini SDK review).
 /// PVCAM DMA requires 4KB page alignment to avoid internal driver copies.
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 pub struct PageAlignedBuffer {
     ptr: *mut u8,
     layout: Layout,
     len: usize,
 }
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 impl PageAlignedBuffer {
     const PAGE_SIZE: usize = 4096;
 
@@ -587,7 +505,7 @@ impl PageAlignedBuffer {
     }
 }
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 impl Drop for PageAlignedBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
@@ -602,7 +520,7 @@ impl Drop for PageAlignedBuffer {
 // PVCAM SDK (which operates on the same thread). The Arc<Mutex<>> wrapper
 // ensures synchronized access.
 // NOTE: Sync impl removed - Arc<Mutex<T>> only requires T: Send for Arc to be Sync
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 unsafe impl Send for PageAlignedBuffer {}
 
 // =============================================================================
@@ -613,7 +531,7 @@ unsafe impl Send for PageAlignedBuffer {}
 // safety contracts. Each function documents its preconditions and invariants.
 // =============================================================================
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(feature = "pvcam_hardware")]
 mod ffi_safe {
     use super::*;
 
@@ -633,7 +551,7 @@ mod ffi_safe {
 
     /// Restart continuous acquisition on a camera (bd-3gnv).
     ///
-    /// Used for auto-restart workaround when camera stalls (hardware errata).
+    /// Used for auto-restart workaround when camera stalls at 85 frames.
     ///
     /// # Safety Contract
     /// - `hcam` must be a valid, open camera handle
@@ -849,10 +767,6 @@ mod ffi_safe {
     /// # Returns
     /// - `Ok(frame_ptr)` - pointer to the frame data in the circular buffer
     /// - `Err(())` if no frame available or error
-    ///
-    /// bd-non-ex-2026-01-12: Changed from pl_exp_get_oldest_frame_ex to pl_exp_get_oldest_frame
-    /// to match the minimal SDK test that successfully streams 200+ frames.
-    /// The _ex version fills FRAME_INFO, but we get that from the callback already.
     pub fn get_oldest_frame(
         hcam: i16,
         frame_info: &mut FRAME_INFO,
@@ -860,9 +774,8 @@ mod ffi_safe {
         debug_assert!(hcam >= 0, "Invalid camera handle: {}", hcam);
         let mut frame_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
 
-        // SAFETY: hcam is valid, frame_ptr is valid stack allocation
-        // bd-non-ex-2026-01-12: Use non-_ex version to match working minimal test pattern
-        let result = unsafe { pl_exp_get_oldest_frame(hcam, &mut frame_ptr) };
+        // SAFETY: hcam is valid, frame_info and frame_ptr are valid stack allocations
+        let result = unsafe { pl_exp_get_oldest_frame_ex(hcam, &mut frame_ptr, frame_info) };
 
         if result == 0 || frame_ptr.is_null() {
             // bd-3gnv: Log error code to diagnose why get_oldest_frame is failing
@@ -877,10 +790,6 @@ mod ffi_safe {
             );
             Err(())
         } else {
-            // bd-non-ex-2026-01-12: frame_info not filled by non-_ex version
-            // Set FrameNr to -1 to indicate we don't have it from get_oldest_frame
-            // The callback provides FRAME_INFO with the real frame number
-            frame_info.FrameNr = -1;
             Ok(frame_ptr)
         }
     }
@@ -990,10 +899,10 @@ pub struct PvcamAcquisition {
 
     /// Optional metadata channel for hardware timestamps (Gemini SDK review).
     /// When enabled, each frame's decoded metadata is sent here alongside the frame data.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     pub metadata_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<FrameMetadata>>>>,
     /// Whether metadata decoding is enabled for this acquisition.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     metadata_enabled: Arc<AtomicBool>,
 
     /// Frame loss detection counters (bd-ek9n.3).
@@ -1002,7 +911,7 @@ pub struct PvcamAcquisition {
     /// Number of discontinuity events (gaps in frame sequence).
     pub discontinuity_events: Arc<AtomicU64>,
     /// Last hardware frame number for gap detection (-1 = uninitialized).
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     last_hardware_frame_nr: Arc<AtomicI32>,
 
     /// Last error that occurred during acquisition (bd-g9po).
@@ -1011,39 +920,39 @@ pub struct PvcamAcquisition {
 
     /// Shutdown signal for the poll loop (bd-z8q8).
     /// Set to true in Drop to signal the poll thread to exit.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     shutdown: Arc<AtomicBool>,
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     /// Page-aligned circular buffer for DMA performance (Gemini SDK review).
     /// PVCAM DMA requires 4KB alignment to avoid internal driver copies.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     circ_buffer: Arc<Mutex<Option<PageAlignedBuffer>>>,
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     trigger_frame: Arc<Mutex<Option<Vec<u16>>>>,
     /// Error sender for signaling involuntary stops from frame loop (Gemini SDK review).
     /// Fatal errors (READOUT_FAILED, etc.) are sent here so the driver can update streaming state.
     /// Uses tokio::sync::mpsc::unbounded_channel for async-native error watching without polling.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     error_tx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<AcquisitionError>>>>,
     /// Callback context for EOF notifications (bd-ek9n.2).
     /// Pinned to ensure stable address for FFI callback.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     callback_context: Arc<std::pin::Pin<Box<CallbackContext>>>,
     /// Camera handle for cleanup in Drop. Stored during start_stream, cleared in stop_stream.
     /// Uses AtomicI16 with sentinel -1 (invalid handle) for lock-free access in Drop.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     active_hcam: Arc<AtomicI16>,
     /// Whether EOF callback is registered (for cleanup in Drop)
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     callback_registered: Arc<AtomicBool>,
     /// Completion signal for poll thread (bd-g6pr).
     /// Used in Drop to synchronously wait for the poll thread to exit before calling
     /// FFI cleanup functions. This prevents the race condition where pl_exp_stop_cont
     /// is called while pl_exp_get_oldest_frame_ex is still executing.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     poll_thread_done_rx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>>,
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     poll_thread_done_tx: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>>,
 }
 
@@ -1061,46 +970,46 @@ impl PvcamAcquisition {
             arrow_tap: Arc::new(Mutex::new(None)),
 
             // Metadata channel and state (Gemini SDK review)
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             metadata_tx: Arc::new(Mutex::new(None)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             metadata_enabled: Arc::new(AtomicBool::new(false)),
 
             // Frame loss detection counters (bd-ek9n.3)
             lost_frames: Arc::new(AtomicU64::new(0)),
             discontinuity_events: Arc::new(AtomicU64::new(0)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             last_hardware_frame_nr: Arc::new(AtomicI32::new(-1)), // -1 = uninitialized
 
             // Error tracking (bd-g9po)
             last_error: Arc::new(std::sync::Mutex::new(None)),
 
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             shutdown: Arc::new(AtomicBool::new(false)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             poll_handle: Arc::new(Mutex::new(None)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             circ_buffer: Arc::new(Mutex::new(None)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             trigger_frame: Arc::new(Mutex::new(None)),
             // Error channel for involuntary stop signaling (Gemini SDK review)
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             error_tx: Arc::new(Mutex::new(None)),
             // Pinned callback context for EOF notifications (bd-ek9n.2, bd-ffi-sdk-match)
             // Initially created with -1 (invalid handle); hcam is updated before callback registration
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             callback_context: Arc::new(Box::pin(CallbackContext::new(-1))),
             // Camera handle and callback state for Drop cleanup
             // -1 is sentinel for "no active handle"
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             active_hcam: Arc::new(AtomicI16::new(-1)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             callback_registered: Arc::new(AtomicBool::new(false)),
             // Completion channel for poll thread synchronization (bd-g6pr)
             // Created fresh for each acquisition in start_stream
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             poll_thread_done_rx: Arc::new(std::sync::Mutex::new(None)),
-            #[cfg(feature = "pvcam_sdk")]
+            #[cfg(feature = "pvcam_hardware")]
             poll_thread_done_tx: Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -1109,7 +1018,7 @@ impl PvcamAcquisition {
     pub fn reset_frame_loss_metrics(&self) {
         self.lost_frames.store(0, Ordering::SeqCst);
         self.discontinuity_events.store(0, Ordering::SeqCst);
-        #[cfg(feature = "pvcam_sdk")]
+        #[cfg(feature = "pvcam_hardware")]
         {
             self.last_hardware_frame_nr.store(-1, Ordering::SeqCst);
             // Reset callback context state (bd-ek9n.2)
@@ -1157,7 +1066,7 @@ impl PvcamAcquisition {
     /// Calculate optimal circular buffer frame count (bd-ek9n.4)
     ///
     /// Uses PARAM_FRAME_BUFFER_SIZE when available, with heuristic fallback:
-    /// - Minimum 20 frames for reliability (matches working isolation tests)
+    /// - Minimum 32 frames for reliability
     /// - At least 1 second of buffer at current frame rate
     /// - Capped at 255 frames (matches PVCAM example defaults)
     ///
@@ -1166,13 +1075,12 @@ impl PvcamAcquisition {
     /// * `hcam` - Open camera handle
     /// * `frame_bytes` - Size of one frame in bytes
     /// * `exposure_ms` - Exposure time in milliseconds (for frame rate calculation)
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     fn calculate_buffer_count(hcam: i16, frame_bytes: usize, exposure_ms: f64) -> usize {
         // PVCAM examples default to 255-frame circular buffers for full-frame streaming.
         // We align with that default but still clamp to a sane upper bound to avoid
         // excessive host memory use on large frames.
-        // bd-diag-2026-01-11: Reduced to 20 to match working minimal test buffer size
-        const MIN_BUFFER_FRAMES: usize = 20;
+        const MIN_BUFFER_FRAMES: usize = 32;
         const MAX_BUFFER_FRAMES: usize = 255;
         const ONE_SECOND_MS: f64 = 1000.0;
 
@@ -1237,10 +1145,7 @@ impl PvcamAcquisition {
             clamped
         );
 
-        // bd-diag-2026-01-12: Force 21 frames to EXACTLY match working isolation tests
-        // This tests if the 20 vs 21 buffer count difference is causing the 19-frame cutoff
-        eprintln!("[PVCAM DIAG] Buffer count: calculated={}, using=21 (forced to match tests)", clamped);
-        21
+        clamped
     }
 
     /// Get the number of ROIs supported by the camera (bd-vcbd)
@@ -1250,7 +1155,7 @@ impl PvcamAcquisition {
     ///
     /// # SDK Pattern (bd-vcbd)
     /// Checks PARAM_ROI_COUNT availability before access.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     pub fn get_roi_count(conn: &PvcamConnection) -> Result<u16> {
         if let Some(h) = conn.handle() {
             // SDK Pattern: Check availability before access
@@ -1287,7 +1192,7 @@ impl PvcamAcquisition {
     /// Get the number of ROIs supported by the camera (mock mode) (bd-vcbd)
     ///
     /// Mock version that returns a default value when hardware is not available.
-    #[cfg(not(feature = "pvcam_sdk"))]
+    #[cfg(not(feature = "pvcam_hardware"))]
     pub fn get_roi_count(_conn: &PvcamConnection) -> Result<u16> {
         // Mock mode default: 1 ROI (single region)
         Ok(1)
@@ -1316,7 +1221,7 @@ impl PvcamAcquisition {
     ///
     /// Must be called before `start_stream()`. The metadata channel will receive
     /// one `FrameMetadata` per frame in sync with the frame delivery.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     pub async fn enable_metadata(&self, tx: tokio::sync::mpsc::Sender<FrameMetadata>) {
         let mut guard = self.metadata_tx.lock().await;
         *guard = Some(tx);
@@ -1325,7 +1230,7 @@ impl PvcamAcquisition {
     }
 
     /// Disable metadata decoding (Gemini SDK review).
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     pub async fn disable_metadata(&self) {
         let mut guard = self.metadata_tx.lock().await;
         *guard = None;
@@ -1360,7 +1265,7 @@ impl PvcamAcquisition {
         #[cfg(feature = "arrow_tap")]
         let _arrow_tap = self.arrow_tap.lock().await.clone();
 
-        #[cfg(feature = "pvcam_sdk")]
+        #[cfg(feature = "pvcam_hardware")]
         if let Some(h) = conn.handle() {
             // Hardware path
 
@@ -1465,7 +1370,9 @@ impl PvcamAcquisition {
                             get_pvcam_error()
                         );
                     } else if circ_avail == 0 {
-                        tracing::info!("CIRC_OVERWRITE not available per PARAM_CIRC_BUFFER, using NO_OVERWRITE");
+                        tracing::info!(
+                            "CIRC_OVERWRITE not available per PARAM_CIRC_BUFFER, using NO_OVERWRITE"
+                        );
                         circ_overwrite = false;
                         selected_buffer_mode = CIRC_NO_OVERWRITE;
                     } else {
@@ -1501,46 +1408,6 @@ impl PvcamAcquisition {
             }
             let exp_mode = TIMED_MODE; // EXT_TRIG_* are encoded as PL_EXPOSURE_MODES (see pvcam.h)
 
-            // bd-ffi-sdk-match: Register EOF callback BEFORE pl_exp_setup_cont (SDK pattern).
-            // The LiveImage.cpp example shows: 1) register callback, 2) setup_cont, 3) start_cont.
-            // Registering after setup causes callbacks to never fire on some cameras.
-            self.callback_context.set_hcam(h);
-
-            // Get raw pointer to pinned CallbackContext for FFI
-            // Deref Arc -> Pin<Box<T>> -> T, then take address
-            let callback_ctx_ptr = &**self.callback_context as *const CallbackContext;
-
-            // bd-static-ctx-2026-01-12: Set global context BEFORE registering callback
-            // The SDK p_context parameter stops working after ~19 frames on Prime BSI.
-            // Using a static global pointer like the minimal test fixes this.
-            set_global_callback_ctx(callback_ctx_ptr);
-
-            let use_callback = unsafe {
-                // Use bindgen-generated function, cast callback to *mut c_void
-                let result = pl_cam_register_callback_ex3(
-                    h,
-                    PL_CALLBACK_EOF,
-                    pvcam_eof_callback as *mut std::ffi::c_void,
-                    callback_ctx_ptr as *mut std::ffi::c_void, // Still passed for SDK, but callback ignores it
-                );
-                if result == 0 {
-                    tracing::warn!("Failed to register EOF callback, falling back to polling mode");
-                    clear_global_callback_ctx(); // Clear on failure
-                    false
-                } else {
-                    tracing::info!("PVCAM EOF callback registered successfully (before setup)");
-                    // Store callback state for Drop cleanup
-                    self.callback_registered.store(true, Ordering::Release);
-                    true
-                }
-            };
-
-            // If PARAM_CIRC_BUFFER check already determined no overwrite, update callback context (bd-nzcq)
-            if use_callback && !circ_overwrite {
-                let callback_ctx = self.callback_context.as_ref();
-                callback_ctx.set_circ_overwrite(false);
-            }
-
             unsafe {
                 // Try overwrite first
                 if pl_exp_setup_cont(
@@ -1561,11 +1428,6 @@ impl PvcamAcquisition {
                     // Retry with no-overwrite
                     selected_buffer_mode = CIRC_NO_OVERWRITE;
                     circ_overwrite = false;
-                    // Update callback context so callback knows NOT to call get_latest_frame (bd-nzcq)
-                    if use_callback {
-                        let callback_ctx = self.callback_context.as_ref();
-                        callback_ctx.set_circ_overwrite(false);
-                    }
                     frame_bytes = 0;
                     if pl_exp_setup_cont(
                         h,
@@ -1648,6 +1510,36 @@ impl PvcamAcquisition {
                 (actual_frame_bytes * buffer_count) as f64 / (1024.0 * 1024.0)
             );
 
+            // bd-3gnv: Register EOF callback before starting acquisition.
+            // PVCAM Best Practices (bd-ek9n.2): Register EOF callback to avoid polling overhead.
+            // The callback signals frame readiness, eliminating polling overhead.
+
+            // bd-ffi-sdk-match: Set camera handle in CallbackContext BEFORE registering callback.
+            // The callback needs hcam to call pl_exp_get_latest_frame (SDK pattern).
+            self.callback_context.set_hcam(h);
+
+            // Get raw pointer to pinned CallbackContext for FFI
+            // Deref Arc -> Pin<Box<T>> -> T, then take address
+            let callback_ctx_ptr = &**self.callback_context as *const CallbackContext;
+            let use_callback = unsafe {
+                // Use bindgen-generated function, cast callback to *mut c_void
+                let result = pl_cam_register_callback_ex3(
+                    h,
+                    PL_CALLBACK_EOF,
+                    pvcam_eof_callback as *mut std::ffi::c_void,
+                    callback_ctx_ptr as *mut std::ffi::c_void,
+                );
+                if result == 0 {
+                    tracing::warn!("Failed to register EOF callback, falling back to polling mode");
+                    false
+                } else {
+                    tracing::info!("PVCAM EOF callback registered successfully");
+                    // Store callback state for Drop cleanup
+                    self.callback_registered.store(true, Ordering::Release);
+                    true
+                }
+            };
+
             // Store camera handle for Drop cleanup (critical: must happen before acquisition starts)
             // Uses atomic store for lock-free access in Drop
             self.active_hcam.store(h, Ordering::Release);
@@ -1685,115 +1577,17 @@ impl PvcamAcquisition {
                 if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
                     // bd-3gnv: Log SDK error with full message for diagnostics
                     let err_msg = get_pvcam_error();
-
-                    // bd-circ-start-fallback: Prime BSI cameras accept CIRC_OVERWRITE at setup
-                    // but fail at start with error 185 (Invalid Configuration). When this happens,
-                    // re-setup and re-start with CIRC_NO_OVERWRITE.
-                    if circ_overwrite {
-                        tracing::warn!(
-                            "pl_exp_start_cont failed with CIRC_OVERWRITE ({}), retrying with CIRC_NO_OVERWRITE",
-                            err_msg
-                        );
-
-                        // Re-setup with NO_OVERWRITE
-                        let mut retry_frame_bytes: uns32 = 0;
-                        if pl_exp_setup_cont(
-                            h,
-                            1,
-                            &region as *const _,
-                            exp_mode,
-                            exposure_ms as uns32,
-                            &mut retry_frame_bytes,
-                            CIRC_NO_OVERWRITE,
-                        ) == 0
-                        {
-                            let setup_err = get_pvcam_error();
-                            // Deregister callback on failure
-                            if use_callback {
-                                pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
-                                clear_global_callback_ctx(); // bd-static-ctx-2026-01-12
-                                self.callback_registered.store(false, Ordering::Release);
-                            }
-                            self.active_hcam.store(-1, Ordering::Release);
-                            let _ = self.streaming.set(false).await;
-                            return Err(anyhow!(
-                                "Fallback setup with CIRC_NO_OVERWRITE also failed: {}",
-                                setup_err
-                            ));
-                        }
-
-                        // CRITICAL: Update circ_overwrite flag for frame loop FIFO drain path
-                        circ_overwrite = false;
-
-                        // CRITICAL (bd-nzcq): Update callback context so callback knows NOT to call
-                        // get_latest_frame. In CIRC_NO_OVERWRITE mode, main loop must use
-                        // get_oldest_frame for proper FIFO order.
-                        if use_callback {
-                            let callback_ctx = self.callback_context.as_ref();
-                            callback_ctx.set_circ_overwrite(false);
-                        }
-
-                        // CRITICAL FIX (bd-nzcq-callback-rereg): Deregister callback before re-registering.
-                        // Re-registering without deregistering first causes PVCAM internal state corruption
-                        // that manifests as callbacks stopping after ~5 frames. The SDK examples only
-                        // register callbacks ONCE and never re-register during a session.
-                        if use_callback {
-                            pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
-                            tracing::info!("Deregistered EOF callback before fallback re-registration");
-                        }
-
-                        // Re-register callback after fallback setup (setup may invalidate callback)
-                        // This matches the SDK pattern: callback registration before each setup
-                        if use_callback {
-                            let result = pl_cam_register_callback_ex3(
-                                h,
-                                PL_CALLBACK_EOF,
-                                pvcam_eof_callback as *mut std::ffi::c_void,
-                                callback_ctx_ptr as *mut std::ffi::c_void,
-                            );
-                            if result == 0 {
-                                tracing::warn!(
-                                    "Failed to re-register EOF callback after fallback: {}",
-                                    get_pvcam_error()
-                                );
-                            } else {
-                                tracing::info!("EOF callback re-registered after fallback setup");
-                            }
-                        }
-
-                        // Retry start with NO_OVERWRITE
-                        if pl_exp_start_cont(h, circ_ptr as *mut _, circ_size_bytes) == 0 {
-                            let start_err = get_pvcam_error();
-                            // Deregister callback on failure
-                            if use_callback {
-                                pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
-                                clear_global_callback_ctx(); // bd-static-ctx-2026-01-12
-                                self.callback_registered.store(false, Ordering::Release);
-                            }
-                            self.active_hcam.store(-1, Ordering::Release);
-                            let _ = self.streaming.set(false).await;
-                            return Err(anyhow!(
-                                "Fallback start with CIRC_NO_OVERWRITE also failed: {}",
-                                start_err
-                            ));
-                        }
-
-                        tracing::info!("Successfully fell back to CIRC_NO_OVERWRITE mode at start");
-                    } else {
-                        // Already using NO_OVERWRITE, no fallback available
-                        // Deregister callback on failure
-                        if use_callback {
-                            pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
-                            clear_global_callback_ctx(); // bd-static-ctx-2026-01-12
-                            self.callback_registered.store(false, Ordering::Release);
-                        }
-                        self.active_hcam.store(-1, Ordering::Release);
-                        let _ = self.streaming.set(false).await;
-                        return Err(anyhow!(
-                            "Failed to start continuous acquisition: {}",
-                            err_msg
-                        ));
+                    // Deregister callback on failure
+                    if use_callback {
+                        pl_cam_deregister_callback(h, PL_CALLBACK_EOF);
+                        self.callback_registered.store(false, Ordering::Release);
                     }
+                    self.active_hcam.store(-1, Ordering::Release); // -1 = no active handle
+                    let _ = self.streaming.set(false).await;
+                    return Err(anyhow!(
+                        "Failed to start continuous acquisition: {}",
+                        err_msg
+                    ));
                 }
             }
 
@@ -1933,18 +1727,18 @@ impl PvcamAcquisition {
         }
 
         // Mock path (or no handle)
-        #[cfg(not(feature = "pvcam_sdk"))]
+        #[cfg(not(feature = "pvcam_hardware"))]
         {
-            tracing::warn!("start_stream: pvcam_sdk NOT compiled - using mock stream");
+            tracing::warn!("start_stream: pvcam_hardware NOT compiled - using mock stream");
             self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
                 .await?;
         }
 
         // Handle case where hardware feature enabled but handle missing (mock fallback logic)
-        #[cfg(feature = "pvcam_sdk")]
+        #[cfg(feature = "pvcam_hardware")]
         if conn.handle().is_none() {
             tracing::warn!(
-                "start_stream: pvcam_sdk compiled but handle is None - falling back to mock stream"
+                "start_stream: pvcam_hardware compiled but handle is None - falling back to mock stream"
             );
             self.start_mock_stream(roi, binning, exposure_ms, reliable_tx)
                 .await?;
@@ -2042,7 +1836,7 @@ impl PvcamAcquisition {
         }
         self.streaming.set(false).await?;
 
-        #[cfg(feature = "pvcam_sdk")]
+        #[cfg(feature = "pvcam_hardware")]
         {
             // Signal callback context to shutdown (bd-ek9n.2)
             // This wakes any waiting thread in the frame loop
@@ -2084,7 +1878,7 @@ impl PvcamAcquisition {
     ///
     /// Works in batches of SEQUENCE_BATCH_SIZE frames, polling for completion,
     /// then restarting for continuous streaming.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     async fn start_stream_sequence_impl(
         &self,
@@ -2193,7 +1987,7 @@ impl PvcamAcquisition {
     ///
     /// Repeatedly acquires batches of frames using pl_exp_setup_seq/start_seq,
     /// polls for completion, and sends frames to channels.
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_sequence(
         hcam: i16,
@@ -2396,7 +2190,7 @@ impl PvcamAcquisition {
     /// * `circ_ptr` - Pointer to circular buffer (for auto-restart on stall, bd-3gnv)
     /// * `circ_size_bytes` - Size of circular buffer in bytes (for auto-restart)
     /// * `circ_overwrite` - Whether the acquisition was configured with CIRC_OVERWRITE
-    #[cfg(feature = "pvcam_sdk")]
+    #[cfg(feature = "pvcam_hardware")]
     #[allow(clippy::too_many_arguments)]
     fn frame_loop_hardware(
         hcam: i16,
@@ -2425,9 +2219,8 @@ impl PvcamAcquisition {
         binning: (u16, u16),
         metadata_tx: Option<tokio::sync::mpsc::Sender<FrameMetadata>>,
         done_tx: std::sync::mpsc::Sender<()>,
-        // unused in CIRC_OVERWRITE path but kept for signature
-        _circ_ptr: *mut u8,
-        _circ_size_bytes: u32,
+        circ_ptr: *mut u8,
+        circ_size_bytes: u32,
         circ_overwrite: bool,
     ) {
         let loop_span = tracing::debug_span!(
@@ -2451,9 +2244,9 @@ impl PvcamAcquisition {
         let mut bytes_arrived: uns32 = 0;
         let mut buffer_cnt: uns32 = 0;
         let mut consecutive_timeouts: u32 = 0;
-        const CALLBACK_WAIT_TIMEOUT_MS: u64 = 2000; // 2 seconds (align with C++ 5s, but responsive enough)
-                                                   // FORCE LONG TIMEOUT for debugging
-        let max_consecutive_timeouts: u32 = 5; // 10 seconds total
+        const CALLBACK_WAIT_TIMEOUT_MS: u64 = 100; // Short timeout to check shutdown
+        // FORCE LONG TIMEOUT for debugging
+        let max_consecutive_timeouts: u32 = 1000; // 100s
 
         if use_callback {
             tracing::debug!("Using EOF callback mode for frame acquisition");
@@ -2506,46 +2299,21 @@ impl PvcamAcquisition {
 
         while streaming.get() && !shutdown.load(Ordering::Acquire) {
             loop_iteration += 1;
-
-            // TRACING: Loop iteration start with SDK status (bd-trace-2026-01-11)
-            if loop_iteration <= 5 || loop_iteration % 30 == 0 {
-                let (st, bytes, cnt) = match ffi_safe::check_cont_status(hcam) {
-                    Ok(vals) => vals,
-                    Err(_) => (-999, 0, 0),
-                };
-                let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
-                tracing::info!(
-                    target: "pvcam_frame_trace",
-                    iter = loop_iteration,
-                    sdk_status = st,
-                    sdk_bytes = bytes,
-                    sdk_buffer_cnt = cnt,
-                    callback_pending = pending,
-                    "Frame loop iteration start"
-                );
-            }
-
             // Wait for frame notification (callback mode) or poll (fallback mode)
             // bd-g9gq: Use FFI safe wrapper with explicit safety contract
             let has_frames = if use_callback {
                 // Callback mode (bd-ek9n.2): Wait on condvar with timeout
                 // Returns number of pending frames (0 on timeout/shutdown)
-                let wait_start = std::time::Instant::now();
                 let pending = callback_ctx.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
-                let wait_elapsed_ms = wait_start.elapsed().as_millis();
-
-                // TRACING: Wait result (bd-trace-2026-01-11)
-                if pending == 0 || loop_iteration <= 10 {
-                    tracing::info!(
-                        target: "pvcam_frame_trace",
-                        iter = loop_iteration,
-                        pending_after_wait = pending,
-                        wait_ms = wait_elapsed_ms,
-                        timeout_ms = CALLBACK_WAIT_TIMEOUT_MS,
-                        "Callback wait completed"
-                    );
+                if pending > 0 {
+                    true
+                } else {
+                    // Fallback: if callbacks are missed, avoid deadlock by occasionally checking status.
+                    match ffi_safe::check_cont_status(hcam) {
+                        Ok((_, _, cnt)) => cnt > 0,
+                        Err(()) => false,
+                    }
                 }
-                pending > 0
             } else {
                 // Polling mode fallback: Check status with 1ms delay
                 match ffi_safe::check_cont_status(hcam) {
@@ -2566,9 +2334,8 @@ impl PvcamAcquisition {
                 }
                 consecutive_timeouts += 1;
 
-                // DIAGNOSTIC PROBE: Print SDK status on EVERY timeout (bd-diag-2026-01-11)
-                // Changed from % 10 to always print, since we exit after 5 timeouts
-                if true {
+                // DIAGNOSTIC PROBE: Warn every 1 second (bd-3gnv debug)
+                if consecutive_timeouts % 10 == 0 {
                     let (st, bytes, cnt) = match ffi_safe::check_cont_status(hcam) {
                         Ok(vals) => vals,
                         Err(_) => (-999, 0, 0),
@@ -2590,29 +2357,83 @@ impl PvcamAcquisition {
                         callback_ctx.pending_frames.load(Ordering::Acquire),
                         err_code
                     );
-                }
+                    tracing::warn!(
+                        "DIAGNOSTIC: Timeouts: {}, Status: {}, Bytes: {}, BufferCnt: {}, err_code: {}",
+                        consecutive_timeouts,
+                        st,
+                        bytes,
+                        cnt,
+                        err_code
+                    );
 
-                /*
-                // bd-3gnv: Detect stall (hardware errata) and auto-restart
-                // DISABLED: C++ reproduction proved hardware does not stall.
-                // This logic was causing false positives.
-                if consecutive_timeouts >= 2 {
-                    if let Ok((st, _, _)) = ffi_safe::check_cont_status(hcam) {
-                        if st == 0 { // READOUT_NOT_ACTIVE
-                            eprintln!(
-                                "[PVCAM DEBUG] Detected stall (timeouts={}, status=0, frames={}) - attempting auto-restart",
-                                consecutive_timeouts, frame_count.load(Ordering::Relaxed)
-                            );
-                            tracing::info!(
-                                "PVCAM stall detected at {} frames - attempting auto-restart (bd-3gnv)",
-                                frame_count.load(Ordering::Relaxed)
-                            );
+                    // bd-3gnv: Detect 85-frame stall and auto-restart
+                    // Signature: 10+ timeouts (1s), status is READOUT_NOT_ACTIVE (0), 80+ frames received
+                    if consecutive_timeouts >= 10
+                        && st == 0
+                        && frame_count.load(Ordering::Relaxed) >= 80
+                    {
+                        eprintln!(
+                            "[PVCAM DEBUG] Detected 85-frame stall (timeouts={}, status={}, frames={}) - attempting auto-restart",
+                            consecutive_timeouts,
+                            st,
+                            frame_count.load(Ordering::Relaxed)
+                        );
+                        tracing::info!(
+                            "PVCAM stall detected at {} frames - attempting auto-restart (bd-3gnv)",
+                            frame_count.load(Ordering::Relaxed)
+                        );
 
-                            // ... (restart logic removed) ...
+                        // Step 1: Stop acquisition with CCS_CLEAR to fully reset camera state
+                        // CCS_CLEAR may reset more internal state than CCS_HALT
+                        ffi_safe::stop_acquisition(hcam, CCS_CLEAR);
+
+                        // Step 2: Extended delay for camera to fully reset
+                        // The camera may need more time after CCS_CLEAR
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+
+                        // Step 3: Full restart with setup + start (camera may need re-setup)
+                        match ffi_safe::full_restart_acquisition(
+                            hcam,
+                            roi_x,
+                            roi_y,
+                            width,
+                            height,
+                            binning,
+                            exposure_ms,
+                            circ_ptr,
+                            circ_size_bytes,
+                            circ_overwrite,
+                        ) {
+                            Ok(_new_frame_bytes) => {
+                                // Step 4: Re-register EOF callback (setup may invalidate it)
+                                if use_callback {
+                                    let callback_ctx_ptr =
+                                        &**callback_ctx as *const CallbackContext;
+                                    if !ffi_safe::register_eof_callback(hcam, callback_ctx_ptr) {
+                                        tracing::warn!(
+                                            "Failed to re-register EOF callback after restart (bd-3gnv)"
+                                        );
+                                    }
+                                }
+
+                                tracing::info!("PVCAM full auto-restart succeeded (bd-3gnv)");
+
+                                // Reset state for new acquisition cycle
+                                callback_ctx.pending_frames.store(0, Ordering::Release);
+                                last_hw_frame_nr.store(-1, Ordering::Release);
+                                consecutive_timeouts = 0;
+                                continue; // Resume waiting for frames
+                            }
+                            Err(err_msg) => {
+                                tracing::error!(
+                                    "PVCAM full auto-restart failed: {} (bd-3gnv)",
+                                    err_msg
+                                );
+                                // Continue to max_consecutive_timeouts check - will eventually timeout
+                            }
                         }
                     }
                 }
-                */
 
                 if consecutive_timeouts >= max_consecutive_timeouts {
                     tracing::warn!("Frame loop: max consecutive timeouts reached");
@@ -2630,15 +2451,7 @@ impl PvcamAcquisition {
             let mut consecutive_duplicates: u32 = 0;
             let mut fatal_error = false;
             let mut unlock_failures: u32 = 0; // bd-3gnv: Track unlock failures
-
-            // TRACING: Starting drain loop (bd-trace-2026-01-11)
-            if loop_iteration <= 10 {
-                tracing::info!(
-                    target: "pvcam_frame_trace",
-                    iter = loop_iteration,
-                    "Starting frame drain loop"
-                );
-            }
+            let mut stall_detected = false; // bd-3gnv: Flag for auto-restart
 
             // bd-3gnv: Duplicate detection is handled by immediate exit on any duplicate.
             // The drain loop breaks as soon as a duplicate is detected, returning to
@@ -2648,163 +2461,133 @@ impl PvcamAcquisition {
             // Using zeroed struct as PVCAM will fill in the fields on frame retrieval.
             let mut frame_info: FRAME_INFO = unsafe { std::mem::zeroed() };
 
-            // bd-flatten-2026-01-12: CRITICAL FIX - Remove inner drain loop entirely.
-            // The minimal test that works for 200 frames has NO inner loop - just:
-            //   wait → get_oldest_frame → unlock → continue
-            // We were using an inner `loop {}` that breaks after 1 frame, but even that
-            // structure seems to cause issues. Flatten to match minimal test exactly.
+            // bd-3gnv: Now checking buffer_cnt on every iteration to prevent stale frame loop.
+            // This is necessary because the SDK returns stale frames if we don't verify availability first.
 
-            // Check shutdown before attempting frame retrieval
-            if !streaming.get() || shutdown.load(Ordering::Acquire) {
-                break;
-            }
-
-            // FLAT STRUCTURE: ONE frame per wait, matching minimal test pattern exactly.
-            // No inner loop - just try to get the frame and process it.
-            let frame_ptr = match ffi_safe::get_oldest_frame(hcam, &mut frame_info) {
-                Ok(ptr) => ptr,
-                Err(()) => {
-                    // No frame available despite callback - this is unusual
-                    // TRACING: No frame available (bd-trace-2026-01-11)
-                    if loop_iteration <= 10 {
-                        tracing::info!(
-                            target: "pvcam_frame_trace",
-                            iter = loop_iteration,
-                            "get_oldest_frame returned no frame despite callback"
-                        );
-                    }
-                    // Continue outer loop to wait for next callback
-                    continue;
+            loop {
+                // Check shutdown between frames
+                if !streaming.get() || shutdown.load(Ordering::Acquire) {
+                    break;
                 }
-            };
 
-                frames_processed_in_drain += 1;
-
-                // bd-unlock-before-copy-2026-01-12: CRITICAL FIX
-                // The minimal test that works for 200 frames does: get_oldest_frame → UNLOCK → process
-                // We MUST unlock BEFORE any processing to match the SDK's expected timing.
+                // bd-3gnv FIX: Check if there are actually frames available BEFORE calling get_oldest_frame.
+                // The SDK can return stale frames if we don't check properly.
+                // This prevents the 60-million-iteration busy loop caused by the SDK returning
+                // the same frame repeatedly after the camera stops producing new frames.
                 //
-                // Safety: In CIRC_NO_OVERWRITE mode with 20 buffer slots, the frame data remains
-                // valid after unlock because the SDK won't overwrite until ALL 20 slots are filled.
-                // Since we process one frame at a time, the data is safe to access after unlock.
-
-                // Step 1: UNLOCK IMMEDIATELY after get_oldest_frame - EXACTLY like minimal test
-                let unlock_frame_nr = unsafe { frame_info.FrameNr };
-                if frames_processed_in_drain <= 25 || frames_processed_in_drain % 50 == 0 {
-                    eprintln!("[PVCAM DEBUG] Unlocking frame {} (before copy)", unlock_frame_nr);
-                }
-                let unlock_result = ffi_safe::release_oldest_frame(hcam);
-                if !unlock_result {
-                    unlock_failures += 1;
-                    eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
-                } else if frames_processed_in_drain <= 25 || frames_processed_in_drain % 50 == 0 {
-                    eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
-                }
-
-                // bd-diag-2026-01-12: REMOVED - calling check_cont_status after unlock
-                // may cause SDK timing issues that stop callbacks at ~19 frames.
-                // The minimal tests that work for 200 frames don't call check_cont_status
-                // after unlock.
-
-                // bd-diag-skip-processing-2026-01-12: DIAGNOSTIC MODE
-                // When PVCAM_SKIP_PROCESSING=1 is set, skip ALL processing after unlock
-                // to match minimal test behavior exactly (get → unlock → continue).
-                // This isolates whether the issue is in processing vs SDK interaction.
-                static SKIP_PROCESSING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                let skip_processing = *SKIP_PROCESSING.get_or_init(|| {
-                    std::env::var("PVCAM_SKIP_PROCESSING").map(|v| v == "1").unwrap_or(false)
-                });
-                if skip_processing {
-                    // Exactly like minimal test: get → unlock → continue immediately
-                    frame_count.fetch_add(1, Ordering::Relaxed);
-                    if use_callback {
-                        callback_ctx.consume_one();
+                // Strategy: Use callback pending_frames as primary indicator (more reliable),
+                // but also check buffer_cnt as a secondary signal. Exit drain loop when BOTH
+                // the callback says no frames pending AND the SDK says buffer is empty.
+                let pending = callback_ctx.pending_frames.load(Ordering::Acquire);
+                let (check_status, bytes_arrived, buf_cnt) = match ffi_safe::check_cont_status(hcam)
+                {
+                    Ok(result) => result,
+                    Err(()) => {
+                        tracing::error!("PVCAM status check failed");
+                        let _ = error_tx.send(AcquisitionError::StatusCheckFailed);
+                        fatal_error = true;
+                        break;
                     }
-                    loop_iteration += 1;
-                    continue;
+                };
+                status = check_status;
+                buffer_cnt = buf_cnt;
+
+                // Check for fatal errors
+                if status == READOUT_FAILED {
+                    tracing::error!("PVCAM readout failed");
+                    let _ = error_tx.send(AcquisitionError::ReadoutFailed);
+                    fatal_error = true;
+                    break;
                 }
 
-                // Step 2: Copy pixel data AFTER unlock
-                // In CIRC_NO_OVERWRITE mode, the frame_ptr data is still valid because
-                // the SDK won't reuse this buffer slot until all 20 slots are filled.
-                let copy_bytes = frame_bytes.min(expected_frame_bytes);
-                let pixel_data = unsafe {
-                    let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
-                    sdk_bytes.to_vec()
-                };
+                // bd-3gnv: Detect unexpected READOUT_NOT_ACTIVE condition
+                // If the SDK reports READOUT_NOT_ACTIVE while streaming is still true,
+                // we treat it as a stall and trigger a restart (even if we haven't
+                // processed frames in this drain cycle). This covers the case where
+                // the camera goes idle after ~90 frames and never resumes.
+                if status == READOUT_NOT_ACTIVE {
+                    let fc = frame_count.load(Ordering::Relaxed);
+                    // Heuristic: require at least one frame to have been acquired so we
+                    // don't restart a legitimately idle camera before first frame.
+                    if fc > 0 {
+                        // If we have already processed frames in this drain call, restart immediately.
+                        // Otherwise, restart when we've observed several consecutive timeouts.
+                        if frames_processed_in_drain > 0 || consecutive_timeouts >= 5 {
+                            eprintln!(
+                                "[PVCAM DEBUG] READOUT_NOT_ACTIVE stall detected (frames={}, timeouts={}, buf_cnt={}, bytes={}) - scheduling restart",
+                                fc, consecutive_timeouts, buffer_cnt, bytes_arrived
+                            );
+                            tracing::warn!(
+                                "PVCAM stall detected at {} frames (timeouts={}, buf_cnt={}, bytes={}) - restarting (bd-3gnv)",
+                                fc,
+                                consecutive_timeouts,
+                                buffer_cnt,
+                                bytes_arrived
+                            );
+                            stall_detected = true;
+                            break;
+                        }
+                    }
+                }
 
-                // Step 3: Decode metadata (frame_ptr data still valid in NO_OVERWRITE mode)
-                let frame_metadata = if !md_frame_ptr.is_null() {
-                    unsafe {
-                        if ffi_safe::decode_frame_metadata(
-                            md_frame_ptr,
-                            frame_ptr,
-                            frame_bytes as uns32,
-                        ) {
-                            let hdr = &*(*md_frame_ptr).header;
-                            let ts_res = hdr.timestampResNs as u64;
-                            let exp_res = hdr.exposureTimeResNs as u64;
-                            Some(FrameMetadata {
-                                frame_nr: hdr.frameNr,
-                                timestamp_bof_ns: (hdr.timestampBOF as u64) * ts_res,
-                                timestamp_eof_ns: (hdr.timestampEOF as u64) * ts_res,
-                                exposure_time_ns: (hdr.exposureTime as u64) * exp_res,
-                                bit_depth: hdr.bitDepth,
-                                roi_count: hdr.roiCount,
-                            })
-                        } else {
-                            None
+                // bd-3gnv FIX: Only attempt to get a frame if either:
+                // 1. Callback says frames are pending, OR
+                // 2. SDK buffer has frames available
+                // Exit if BOTH say no frames, to prevent stale frame spin.
+                if pending == 0 && buffer_cnt == 0 {
+                    // No frames available from either source - exit drain loop
+                    break;
+                }
+
+                // bd-ffi-sdk-match: Retrieve frame pointer from callback context.
+                // The callback has already called pl_exp_get_latest_frame and stored the
+                // result. This matches the SDK example pattern (LiveImage.cpp).
+                //
+                // Primary path: Use callback-stored frame (SDK pattern)
+                // Fallback path: Use get_oldest_frame for CIRC_NO_OVERWRITE FIFO draining
+                let callback_frame_ptr = callback_ctx.take_frame_ptr();
+
+                let frame_ptr = if !callback_frame_ptr.is_null() {
+                    // Got frame from callback - retrieve the stored FRAME_INFO
+                    frame_info = callback_ctx.take_frame_info();
+                    callback_frame_ptr
+                } else if !circ_overwrite {
+                    // Fallback for CIRC_NO_OVERWRITE: try FIFO drain with get_oldest_frame
+                    match ffi_safe::get_oldest_frame(hcam, &mut frame_info) {
+                        Ok(ptr) => ptr,
+                        Err(()) => {
+                            // No more frames available - exit drain loop normally
+                            break;
                         }
                     }
                 } else {
-                    None
+                    // CIRC_OVERWRITE mode with no callback frame - consume pending and exit.
+                    // This prevents hot-spinning when callback fires but pl_exp_get_latest_frame
+                    // fails or returns null. The callback incremented pending_frames, so we must
+                    // decrement it here to keep the counter consistent with available frames.
+                    // (Codex review: P1 - Consume pending callbacks in overwrite mode)
+                    tracing::trace!(
+                        pending,
+                        buffer_cnt,
+                        "Drain loop: callback frame_ptr is null in CIRC_OVERWRITE mode, exiting"
+                    );
+                    if use_callback {
+                        callback_ctx.consume_one();
+                    }
+                    break;
                 };
 
-                // TRACING: Frame retrieved (bd-trace-2026-01-11)
-                // bd-non-ex-2026-01-12: frame_info.FrameNr may be -1 if using non-_ex get_oldest_frame
-                if loop_iteration <= 10 || frames_processed_in_drain <= 3 {
-                    if unsafe { frame_info.FrameNr } >= 0 {
-                        unsafe {
-                            tracing::info!(
-                                target: "pvcam_frame_trace",
-                                iter = loop_iteration,
-                                drain_frame = frames_processed_in_drain,
-                                hw_frame_nr = frame_info.FrameNr,
-                                timestamp = frame_info.TimeStamp,
-                                timestamp_bof = frame_info.TimeStampBOF,
-                                readout_time = frame_info.ReadoutTime,
-                                "Frame retrieved from PVCAM"
-                            );
-                        }
-                    } else {
-                        tracing::info!(
-                            target: "pvcam_frame_trace",
-                            iter = loop_iteration,
-                            drain_frame = frames_processed_in_drain,
-                            "Frame retrieved from PVCAM (no FRAME_INFO - using non-_ex API)"
-                        );
-                    }
-                }
+                frames_processed_in_drain += 1;
 
-                // Remaining frame processing uses our copies (pixel_data, frame_metadata, frame_info)
-                // frame_ptr is NO LONGER VALID after unlock above
+                // Remaining frame processing is in an unsafe block for pointer operations
                 unsafe {
-                    // bd-non-ex-2026-01-12: Get frame number from callback context when using non-_ex API
-                    // The callback still receives FRAME_INFO from PVCAM even if get_oldest_frame doesn't fill it
-                    let current_frame_nr = if frame_info.FrameNr >= 0 {
-                        frame_info.FrameNr
-                    } else {
-                        // Using non-_ex API - get frame number from callback context
-                        callback_ctx.latest_frame_nr.load(Ordering::Acquire)
-                    };
-
                     // Frame loss detection (bd-ek9n.3): Check for gaps in FrameNr sequence
                     // FrameNr is 1-based hardware counter from PVCAM
-                    // bd-non-ex-2026-01-12: Skip frame number tracking if we don't have valid data
+                    let current_frame_nr = frame_info.FrameNr;
                     let prev_frame_nr = last_hw_frame_nr.load(Ordering::Acquire);
 
-                    if current_frame_nr >= 0 && prev_frame_nr >= 0 {
-                        // Only do frame number checks if we have valid frame numbers
+                    if prev_frame_nr >= 0 {
+                        // Not the first frame - check for gaps
                         let expected_frame_nr = prev_frame_nr + 1;
                         if current_frame_nr > expected_frame_nr {
                             // Gap detected: frames were lost between prev and current
@@ -2829,22 +2612,31 @@ impl PvcamAcquisition {
                             // Log the first duplicate in this drain with FRAME_INFO details for diagnosis.
                             if consecutive_duplicates == 1 {
                                 tracing::warn!(
-                                    "PVCAM duplicate frame detected: FrameNr={}, buffer_cnt={}, bytes_arrived={}",
+                                    "PVCAM duplicate frame detected: FrameNr={}, TimeStamp={}, TimeStampBOF={}, ReadoutTime={}, buffer_cnt={}, bytes_arrived={}",
                                     current_frame_nr,
+                                    frame_info.TimeStamp,
+                                    frame_info.TimeStampBOF,
+                                    frame_info.ReadoutTime,
                                     buffer_cnt,
                                     bytes_arrived
                                 );
                             }
 
-                            // bd-immediate-unlock-2026-01-12: Frame already unlocked at top of loop
-                            // No need to unlock again here - just consume callback and exit
+                            // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames
+                            // to drain the buffer, regardless of which get function was used.
+                            if !circ_overwrite {
+                                if !ffi_safe::release_oldest_frame(hcam) {
+                                    unlock_failures += 1;
+                                }
+                            }
                             if use_callback {
                                 callback_ctx.consume_one();
                             }
 
-                            // bd-flatten-2026-01-12: On duplicate frame, skip processing and
-                            // wait for next callback. (No inner loop anymore - just continue.)
-                            continue; // Wait for next callback
+                            // bd-3gnv: Exit drain loop immediately on ANY duplicate.
+                            // The SDK is returning stale data because no new frame is ready.
+                            // Waiting in outer loop for next callback is more efficient than spinning.
+                            break; // Exit drain loop, wait for next callback
                         } else if current_frame_nr < expected_frame_nr && current_frame_nr != 1 {
                             // Frame number went backwards (not due to wrap to 1)
                             // This is unexpected but log it as discontinuity
@@ -2856,16 +2648,52 @@ impl PvcamAcquisition {
                             );
                         }
                     }
-                    // Update last seen frame number (only if we have valid data)
-                    if current_frame_nr >= 0 {
-                        last_hw_frame_nr.store(current_frame_nr, Ordering::Release);
-                    }
+                    // Update last seen frame number
+                    last_hw_frame_nr.store(current_frame_nr, Ordering::Release);
                     // bd-3gnv: Reset duplicate counter on successful new frame
                     consecutive_duplicates = 0;
 
-                    // bd-immediate-unlock-2026-01-12: pixel_data, frame_metadata, and unlock
-                    // are all handled at the top of the loop immediately after get_oldest_frame.
-                    // frame_ptr is no longer valid here - use only our copies.
+                    // Gemini SDK review: Decode frame metadata for hardware timestamps
+                    // This must happen before copying pixel data as metadata parsing identifies
+                    // the pixel data offset within the buffer.
+                    // bd-g9gq: Use FFI safe wrapper with explicit safety contract
+                    let frame_metadata = if !md_frame_ptr.is_null() {
+                        // Decode the metadata-enabled frame buffer
+                        if ffi_safe::decode_frame_metadata(
+                            md_frame_ptr,
+                            frame_ptr,
+                            frame_bytes as uns32,
+                        ) {
+                            // Successfully decoded - extract timestamps
+                            let hdr = &*(*md_frame_ptr).header;
+                            let ts_res = hdr.timestampResNs as u64;
+                            let exp_res = hdr.exposureTimeResNs as u64;
+                            Some(FrameMetadata {
+                                frame_nr: hdr.frameNr,
+                                timestamp_bof_ns: (hdr.timestampBOF as u64) * ts_res,
+                                timestamp_eof_ns: (hdr.timestampEOF as u64) * ts_res,
+                                exposure_time_ns: (hdr.exposureTime as u64) * exp_res,
+                                bit_depth: hdr.bitDepth,
+                                roi_count: hdr.roiCount,
+                            })
+                        } else {
+                            tracing::warn!(
+                                "pl_md_frame_decode failed for frame {}",
+                                current_frame_nr
+                            );
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Memory optimization (bd-ek9n.5): Single copy from SDK buffer.
+                    // When metadata is enabled, the pixel data starts after the header.
+                    // For simplicity, we copy expected_frame_bytes from the buffer start
+                    // (metadata header is at the END of the buffer per PVCAM design).
+                    let copy_bytes = frame_bytes.min(expected_frame_bytes);
+                    let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
+                    let pixel_data = sdk_bytes.to_vec();
 
                     // Zero-frame detection (bd-ha3w): Check if frame contains valid data
                     // Sample several positions to detect all-zero frames which indicate
@@ -2887,12 +2715,25 @@ impl PvcamAcquisition {
                             "Zero-frame detected for FrameNr {}: buffer appears uninitialized, skipping (bd-ha3w)",
                             current_frame_nr
                         );
-                        // bd-immediate-unlock-2026-01-12: Frame already unlocked at top of loop
-                        // Just consume callback and skip
+                        // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain buffer
+                        if !circ_overwrite {
+                            if !ffi_safe::release_oldest_frame(hcam) {
+                                unlock_failures += 1;
+                            }
+                        }
                         if use_callback {
                             callback_ctx.consume_one();
                         }
                         continue; // Skip to next frame
+                    }
+
+                    // bd-circ: In CIRC_NO_OVERWRITE mode, ALWAYS release frames to drain
+                    // the buffer. unlock_oldest_frame removes the oldest frame; without it
+                    // the buffer fills and acquisition stalls (~85 frames).
+                    if !circ_overwrite {
+                        if !ffi_safe::release_oldest_frame(hcam) {
+                            unlock_failures += 1;
+                        }
                     }
 
                     // Decrement pending frame counter (callback mode)
@@ -2900,12 +2741,10 @@ impl PvcamAcquisition {
                         callback_ctx.consume_one();
                     }
 
-                    let monotonic_frame_count = frame_count.fetch_add(1, Ordering::Relaxed) + 1;
-
                     // Create Frame with ownership transfer - no additional copy (bd-ek9n.5)
                     // Populate metadata using builder pattern (bd-183h)
                     let mut frame = Frame::from_bytes(width, height, 16, pixel_data)
-                        .with_frame_number(monotonic_frame_count)
+                        .with_frame_number(current_frame_nr as u64)
                         .with_roi_offset(roi_x, roi_y);
 
                     // Use hardware timestamps/exposure when available, fall back to software values
@@ -2927,6 +2766,7 @@ impl PvcamAcquisition {
                     };
                     frame = frame.with_metadata(ext_metadata);
 
+                    frame_count.fetch_add(1, Ordering::Relaxed);
                     let frame_arc = Arc::new(frame);
 
                     // Deliver to channels
@@ -2935,18 +2775,6 @@ impl PvcamAcquisition {
                     // measurement pipeline is backpressured. Sending to broadcast
                     // first ensures GUI streaming gets frames regardless.
                     let receiver_count = frame_tx.receiver_count();
-
-                    // TRACING: Broadcast subscriber count (bd-trace-2026-01-11)
-                    if monotonic_frame_count <= 10 || monotonic_frame_count % 30 == 1 {
-                        tracing::info!(
-                            target: "pvcam_frame_trace",
-                            frame_nr = monotonic_frame_count,
-                            hw_frame_nr = current_frame_nr,
-                            receiver_count,
-                            "Sending frame to broadcast channel"
-                        );
-                    }
-
                     if receiver_count == 0 {
                         // Track when we lost all subscribers (bd-cckz)
                         if no_subscribers_since.is_none() {
@@ -3016,17 +2844,7 @@ impl PvcamAcquisition {
                         let _ = tx.try_send(md); // Non-blocking: drop if slow
                     }
                 }
-
-                // bd-flatten-2026-01-12: No inner loop anymore - we process ONE frame per callback
-                // and automatically continue to the outer loop to wait for the next callback.
-                // This matches the minimal test pattern exactly.
-                if loop_iteration <= 10 {
-                    tracing::info!(
-                        target: "pvcam_frame_trace",
-                        iter = loop_iteration,
-                        "Flat frame processing: processed 1 frame, continuing to wait for next callback"
-                    );
-                }
+            }
 
             // bd-3gnv: Critical warning if unlocks are failing - this causes buffer starvation
             if unlock_failures > 0 {
@@ -3034,6 +2852,46 @@ impl PvcamAcquisition {
                     "PVCAM unlock failures: {} in drain loop (bd-3gnv)",
                     unlock_failures
                 );
+            }
+
+            // bd-3gnv: Auto-restart acquisition if stall detected (workaround for 85-frame limit)
+            // The Prime BSI camera stops producing frames after exactly 85 frames regardless of
+            // buffer size, exposure time, or unlock behavior. Restarting acquisition works around this.
+            if stall_detected {
+                tracing::info!(
+                    "PVCAM auto-restart: stopping acquisition to recover from stall (bd-3gnv)"
+                );
+
+                // Step 1: Stop acquisition
+                ffi_safe::stop_acquisition(hcam, CCS_HALT);
+
+                // Step 2: Brief delay for camera to settle
+                std::thread::sleep(std::time::Duration::from_millis(10));
+
+                // Step 3: Restart acquisition with same buffer
+                match ffi_safe::restart_acquisition(hcam, circ_ptr, circ_size_bytes) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "PVCAM auto-restart succeeded after {} frames (bd-3gnv)",
+                            frame_count.load(Ordering::Relaxed)
+                        );
+
+                        // Step 4: Reset callback context (clear pending frames)
+                        callback_ctx.pending_frames.store(0, Ordering::Release);
+
+                        // Step 5: Reset frame number tracking to avoid false gap detection
+                        // Set to -1 so next frame (whatever its FrameNr) is treated as "first"
+                        last_hw_frame_nr.store(-1, Ordering::Release);
+
+                        // Continue to next iteration - acquisition should resume
+                        continue;
+                    }
+                    Err(err_msg) => {
+                        tracing::error!("PVCAM auto-restart failed: {} (bd-3gnv)", err_msg);
+                        // Don't set fatal_error - let outer loop continue with timeout handling
+                        // The camera may recover on its own, or user can stop/restart manually
+                    }
+                }
             }
 
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
@@ -3079,7 +2937,7 @@ impl PvcamAcquisition {
                     }
                 }
             }
-        }  // end of outer while loop
+        }
 
         // bd-3gnv: Debug why we exited the outer loop
         eprintln!(
@@ -3137,7 +2995,7 @@ impl PvcamAcquisition {
 /// 3. Cause use-after-free when PVCAM tries to invoke the callback
 impl Drop for PvcamAcquisition {
     fn drop(&mut self) {
-        #[cfg(feature = "pvcam_sdk")]
+        #[cfg(feature = "pvcam_hardware")]
         {
             // Signal the frame loop to stop via the shutdown flag.
             // The frame loop checks this flag on each iteration and will exit promptly.
@@ -3175,7 +3033,9 @@ impl Drop for PvcamAcquisition {
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                             // Sender was dropped, which means the poll thread exited
                             // (possibly before we could receive the signal)
-                            tracing::debug!("PVCAM poll thread completion channel disconnected (thread already exited)");
+                            tracing::debug!(
+                                "PVCAM poll thread completion channel disconnected (thread already exited)"
+                            );
                             true
                         }
                     }
@@ -3226,7 +3086,6 @@ impl Drop for PvcamAcquisition {
                     // Deregister callback to prevent use-after-free
                     if self.callback_registered.swap(false, Ordering::AcqRel) {
                         let dereg_result = pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
-                        clear_global_callback_ctx(); // bd-static-ctx-2026-01-12
                         if dereg_result == 0 {
                             tracing::warn!("pl_cam_deregister_callback failed in Drop");
                         } else {
