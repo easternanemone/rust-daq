@@ -655,8 +655,7 @@ impl PvcamDriver {
                     let _ = post_trigger_param.set(val).await;
                 }
 
-                // Pixel time is driven by cached speed table listeners; keep last cached value
-                let _ = pixel_time_param.get();
+                // Pixel time is driven by cached speed table listeners; no periodic polling needed here.
             }
         });
 
