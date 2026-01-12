@@ -115,11 +115,26 @@ impl SpeedTable {
             // Actually, Port first, then Speed, then Gain is usually safer because Gain depends on Speed, Speed on Port.
             unsafe {
                 let p = orig_port as i32;
-                let _ = pl_set_param(h, PARAM_READOUT_PORT, &p as *const _ as *mut _);
+                if pl_set_param(h, PARAM_READOUT_PORT, &p as *const _ as *mut _) == 0 {
+                    tracing::warn!(
+                        "Failed to restore original PARAM_READOUT_PORT to {} after building SpeedTable",
+                        orig_port
+                    );
+                }
                 let s = orig_speed as i32;
-                let _ = pl_set_param(h, PARAM_SPDTAB_INDEX, &s as *const _ as *mut _);
+                if pl_set_param(h, PARAM_SPDTAB_INDEX, &s as *const _ as *mut _) == 0 {
+                    tracing::warn!(
+                        "Failed to restore original PARAM_SPDTAB_INDEX to {} after building SpeedTable",
+                        orig_speed
+                    );
+                }
                 let g = orig_gain as i32;
-                let _ = pl_set_param(h, PARAM_GAIN_INDEX, &g as *const _ as *mut _);
+                if pl_set_param(h, PARAM_GAIN_INDEX, &g as *const _ as *mut _) == 0 {
+                    tracing::warn!(
+                        "Failed to restore original PARAM_GAIN_INDEX to {} after building SpeedTable",
+                        orig_gain
+                    );
+                }
             }
 
             Ok(SpeedTable { ports })
