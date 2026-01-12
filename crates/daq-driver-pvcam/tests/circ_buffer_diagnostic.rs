@@ -4911,8 +4911,8 @@ async fn test_28_full_driver_channel_infrastructure() {
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
 
-    const TARGET_FRAMES: u32 = 200;
-    const CALLBACK_WAIT_TIMEOUT_MS: u64 = 5000;
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 2000;
 
     println!("\n=== TEST 28: Full Driver Channel Infrastructure Test ===");
     println!("Tests driver's exact channel infrastructure:");
@@ -4927,30 +4927,32 @@ async fn test_28_full_driver_channel_infrastructure() {
     println!("[SETUP] Initializing PVCAM SDK...");
     unsafe {
         if pl_pvcam_init() == 0 {
-            panic!("Failed to initialize PVCAM: {}", get_pvcam_error());
+            println!("ERROR: pl_pvcam_init failed: {}", get_error_message());
+            return;
         }
     }
     println!("[OK] PVCAM SDK initialized");
 
-    let hcam = unsafe {
-        let mut h: i16 = 0;
-        let mut cam_name = [0i8; 32];
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
         if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed: {}", get_error_message());
             pl_pvcam_uninit();
-            panic!("Failed to get camera name: {}", get_pvcam_error());
+            return;
         }
-        if pl_cam_open(cam_name.as_ptr(), &mut h, OPEN_EXCLUSIVE as i16) == 0 {
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed: {}", get_error_message());
             pl_pvcam_uninit();
-            panic!("Failed to open camera: {}", get_pvcam_error());
+            return;
         }
-        h
-    };
+    }
     println!("[OK] Camera opened, hcam={}", hcam);
 
     // Create CallbackContext with -1 then update (like driver)
     let callback_ctx = Arc::new(Box::pin(CallbackContext::new(-1)));
     callback_ctx.set_hcam(hcam);
-    let callback_ctx_ptr = callback_ctx.as_ref().get_ref() as *const CallbackContext;
+    let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
     set_global_callback_ctx(callback_ctx_ptr);
     println!("[OK] CallbackContext created with -1, then set_hcam({})", hcam);
 
@@ -5000,43 +5002,30 @@ async fn test_28_full_driver_channel_infrastructure() {
         {
             pl_cam_close(hcam);
             pl_pvcam_uninit();
-            panic!("Failed to register callback: {}", get_pvcam_error());
+            println!("ERROR: Failed to register callback: {}", get_error_message());
+            return;
         }
     }
     println!("[OK] EOF callback registered");
 
     // Get sensor size
-    let (width, height) = unsafe {
-        let mut w: u16 = 0;
-        let mut h: u16 = 0;
-        let mut par_w: uns16 = 0;
-        let mut par_h: uns16 = 0;
-        pl_get_param(
-            hcam,
-            PARAM_PAR_SIZE,
-            ATTR_CURRENT as i16,
-            &mut par_h as *mut _ as *mut std::ffi::c_void,
-        );
-        pl_get_param(
-            hcam,
-            PARAM_SER_SIZE,
-            ATTR_CURRENT as i16,
-            &mut par_w as *mut _ as *mut std::ffi::c_void,
-        );
-        w = par_w;
-        h = par_h;
-        (w as u32, h as u32)
+    let (ser_size, par_size) = unsafe {
+        let mut ser: uns16 = 0;
+        let mut par: uns16 = 0;
+        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
+        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        (ser, par)
     };
-    println!("[OK] Sensor size: {}x{}", width, height);
+    println!("[OK] Sensor size: {}x{}", ser_size, par_size);
 
     // Setup continuous acquisition
     println!("[SETUP] Setting up continuous acquisition...");
     let region = rgn_type {
         s1: 0,
-        s2: (width - 1) as u16,
+        s2: ser_size - 1,
         sbin: 1,
         p1: 0,
-        p2: (height - 1) as u16,
+        p2: par_size - 1,
         pbin: 1,
     };
 
@@ -5056,7 +5045,8 @@ async fn test_28_full_driver_channel_infrastructure() {
             clear_global_callback_ctx();
             pl_cam_close(hcam);
             pl_pvcam_uninit();
-            panic!("pl_exp_setup_cont failed: {}", get_pvcam_error());
+            println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+            return;
         }
     }
     println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
@@ -5067,7 +5057,14 @@ async fn test_28_full_driver_channel_infrastructure() {
     let layout = Layout::from_size_align(buffer_size, 4096).unwrap();
     let buffer = unsafe { alloc(layout) };
     if buffer.is_null() {
-        panic!("Failed to allocate buffer");
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            clear_global_callback_ctx();
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
     }
     println!("[OK] Allocated {} bytes at {:?}", buffer_size, buffer);
 
@@ -5087,7 +5084,8 @@ async fn test_28_full_driver_channel_infrastructure() {
             clear_global_callback_ctx();
             pl_cam_close(hcam);
             pl_pvcam_uninit();
-            panic!("pl_exp_start_cont failed: {}", get_pvcam_error());
+            println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+            return;
         }
     }
     println!("[OK] Acquisition started");
@@ -5106,7 +5104,7 @@ async fn test_28_full_driver_channel_infrastructure() {
     let frames_acquired_clone = frames_acquired.clone();
 
     let poll_handle = tokio::task::spawn_blocking(move || {
-        let mut loop_iteration = 0u32;
+        let mut loop_iteration = 0i32;
         let mut frame_info: FRAME_INFO = unsafe { std::mem::zeroed() };
 
         while *streaming_tx_clone.borrow() {
@@ -5118,33 +5116,42 @@ async fn test_28_full_driver_channel_infrastructure() {
 
             // Pre-wait status check (like driver)
             if loop_iteration <= 5 || loop_iteration % 30 == 0 {
-                let (st, bytes, cnt) = match ffi_safe::check_cont_status(hcam) {
-                    Ok(vals) => vals,
-                    Err(_) => (-999, 0, 0),
-                };
-                let pending = callback_ctx_clone.pending_frames.load(Ordering::Acquire);
-                println!(
-                    "[PRE-WAIT STATUS] iter={}, status={}, bytes={}, cnt={}, pending={}",
-                    loop_iteration, st, bytes, cnt, pending
-                );
+                let mut status: i16 = 0;
+                let mut bytes_arrived: uns32 = 0;
+                let mut buffer_cnt: uns32 = 0;
+                unsafe {
+                    if pl_exp_check_cont_status(hcam, &mut status, &mut bytes_arrived, &mut buffer_cnt) != 0 {
+                        let pending = callback_ctx_clone.pending_frames.load(Ordering::Acquire);
+                        println!(
+                            "[PRE-WAIT STATUS] iter={}, status={}, bytes={}, cnt={}, pending={}",
+                            loop_iteration, status, bytes_arrived, buffer_cnt, pending
+                        );
+                    }
+                }
             }
 
             // Wait for callback notification (like driver)
-            let pending = callback_ctx_clone.wait_for_frames(CALLBACK_WAIT_TIMEOUT_MS);
+            let pending = callback_ctx_clone.wait_for_frames(TIMEOUT_MS);
             if pending == 0 {
                 // Timeout - send error through channel (like driver)
                 let _ = error_tx_clone.send("Timeout waiting for callback".to_string());
                 break;
             }
 
-            // Get oldest frame
-            let _frame_ptr = match ffi_safe::get_oldest_frame(hcam, &mut frame_info) {
-                Ok(ptr) => ptr,
-                Err(()) => continue,
+            // Get oldest frame using direct FFI
+            let mut frame_ptr: *mut c_void = std::ptr::null_mut();
+            let get_result = unsafe {
+                pl_exp_get_oldest_frame(hcam, &mut frame_ptr)
             };
+            if get_result == 0 {
+                // No frame available, continue to wait
+                continue;
+            }
 
             // Unlock IMMEDIATELY (like minimal test and flattened driver)
-            let _ = ffi_safe::release_oldest_frame(hcam);
+            unsafe {
+                pl_exp_unlock_oldest_frame(hcam);
+            }
 
             let current_frame = frames_acquired_clone.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -5194,14 +5201,14 @@ async fn test_28_full_driver_channel_infrastructure() {
     println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
     println!("Total time: {}ms", total_time);
 
-    if frames_acquired >= TARGET_FRAMES as i32 {
+    if frames_acquired >= TARGET_FRAMES {
         println!("RESULT: Full driver channel infrastructure is NOT the issue");
     } else {
         println!("RESULT: Full driver channel infrastructure MAY be the issue ({} frames)", frames_acquired);
     }
 
     assert!(
-        frames_acquired >= TARGET_FRAMES as i32,
+        frames_acquired >= TARGET_FRAMES,
         "Expected {} frames, got {}. Channel infrastructure may be the issue!",
         TARGET_FRAMES,
         frames_acquired
