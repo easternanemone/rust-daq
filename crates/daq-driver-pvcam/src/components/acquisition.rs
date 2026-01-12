@@ -267,7 +267,8 @@ impl CallbackContext {
             }
             Err(poisoned) => {
                 // Even with poisoned mutex from wait, we can still check pending_frames
-                let mut guard = poisoned.into_inner();
+                // into_inner returns a tuple (guard, timeout_result) for condvar wait
+                let (mut guard, _timeout_result) = poisoned.into_inner();
                 *guard = false;
                 let pending = self.pending_frames.load(Ordering::Acquire);
                 tracing::warn!(pending, "wait_for_frames: recovered from poisoned condvar wait");
