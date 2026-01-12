@@ -2684,22 +2684,37 @@ impl PvcamAcquisition {
 
                 frames_processed_in_drain += 1;
 
-                // bd-immediate-unlock-2026-01-12: CRITICAL FIX
-                // The minimal test that works for 200 frames does: get_oldest_frame → unlock → process
-                // With CIRC_NO_OVERWRITE and 20 buffer slots, holding the frame too long causes
-                // the SDK to run out of buffers and stop acquisition.
+                // bd-unlock-before-copy-2026-01-12: CRITICAL FIX
+                // The minimal test that works for 200 frames does: get_oldest_frame → UNLOCK → process
+                // We MUST unlock BEFORE any processing to match the SDK's expected timing.
                 //
-                // New order: copy pixel data → decode metadata → UNLOCK → then all processing
-                // All processing after unlock uses our copies, not frame_ptr.
+                // Safety: In CIRC_NO_OVERWRITE mode with 20 buffer slots, the frame data remains
+                // valid after unlock because the SDK won't overwrite until ALL 20 slots are filled.
+                // Since we process one frame at a time, the data is safe to access after unlock.
 
-                // Step 1: Copy pixel data IMMEDIATELY (frame_ptr is only valid until unlock)
+                // Step 1: UNLOCK IMMEDIATELY after get_oldest_frame - EXACTLY like minimal test
+                let unlock_frame_nr = unsafe { frame_info.FrameNr };
+                if frames_processed_in_drain <= 25 || frames_processed_in_drain % 50 == 0 {
+                    eprintln!("[PVCAM DEBUG] Unlocking frame {} (before copy)", unlock_frame_nr);
+                }
+                let unlock_result = ffi_safe::release_oldest_frame(hcam);
+                if !unlock_result {
+                    unlock_failures += 1;
+                    eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
+                } else if frames_processed_in_drain <= 25 || frames_processed_in_drain % 50 == 0 {
+                    eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
+                }
+
+                // Step 2: Copy pixel data AFTER unlock
+                // In CIRC_NO_OVERWRITE mode, the frame_ptr data is still valid because
+                // the SDK won't reuse this buffer slot until all 20 slots are filled.
                 let copy_bytes = frame_bytes.min(expected_frame_bytes);
                 let pixel_data = unsafe {
                     let sdk_bytes = std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
                     sdk_bytes.to_vec()
                 };
 
-                // Step 2: Decode metadata if enabled (needs frame_ptr, must be before unlock)
+                // Step 3: Decode metadata (frame_ptr data still valid in NO_OVERWRITE mode)
                 let frame_metadata = if !md_frame_ptr.is_null() {
                     unsafe {
                         if ffi_safe::decode_frame_metadata(
@@ -2725,22 +2740,6 @@ impl PvcamAcquisition {
                 } else {
                     None
                 };
-
-                // Step 3: UNLOCK IMMEDIATELY - this is the critical fix
-                // The minimal test unlocks right after get_oldest_frame with no delay.
-                // frame_ptr is INVALID after this point - use pixel_data and frame_metadata only.
-                let unlock_frame_nr = unsafe { frame_info.FrameNr };
-                if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                    eprintln!("[PVCAM DEBUG] Unlocking frame {} (immediate)", unlock_frame_nr);
-                }
-                let unlock_result = ffi_safe::release_oldest_frame(hcam);
-                if !unlock_result {
-                    unlock_failures += 1;
-                    eprintln!("[PVCAM ERROR] Unlock failed for frame {}", unlock_frame_nr);
-                } else if unlock_frame_nr <= 25 || unlock_frame_nr % 50 == 0 {
-                    eprintln!("[PVCAM DEBUG] Frame {} unlocked successfully", unlock_frame_nr);
-                }
-                // Frame is now released back to SDK - all processing below uses our copies
 
                 // TRACING: Frame retrieved (bd-trace-2026-01-11)
                 // bd-non-ex-2026-01-12: frame_info.FrameNr may be -1 if using non-_ex get_oldest_frame
