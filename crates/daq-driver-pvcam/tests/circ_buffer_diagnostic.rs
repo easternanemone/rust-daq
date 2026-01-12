@@ -2812,3 +2812,276 @@ async fn test_19_check_cont_status_isolation() {
         frames_acquired
     );
 }
+
+/// Test 20: Parameter Query Isolation Test
+///
+/// HYPOTHESIS: The full driver queries many camera parameters (PARAM_SER_SIZE, PARAM_PAR_SIZE,
+/// speed table, etc.) after opening the camera. These pl_get_param calls might be changing
+/// some camera state that affects callback behavior.
+///
+/// This test adds parameter queries to test_18's working pattern (before streaming starts)
+/// to see if parameter queries are interfering with callback registration or acquisition.
+///
+/// If this test FAILS at ~19 frames: pl_get_param calls are likely causing the issue
+/// If this test PASSES with 200 frames: pl_get_param calls are NOT the issue
+#[tokio::test]
+async fn test_20_param_query_isolation() {
+    println!("\n=== TEST 20: Parameter Query Isolation Test ===");
+    println!("Tests whether pl_get_param calls before streaming cause the 19-frame cutoff.\n");
+
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 2000;
+    const EXPOSURE_MS: u32 = 100;
+    const BUFFER_FRAMES: usize = 21;
+
+    // Initialize SDK
+    println!("[SETUP] Initializing PVCAM SDK...");
+    unsafe {
+        if pl_pvcam_init() == 0 {
+            println!("ERROR: pl_pvcam_init failed");
+            return;
+        }
+    }
+    println!("[OK] PVCAM SDK initialized");
+
+    // Open camera
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
+        if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed");
+            pl_pvcam_uninit();
+            return;
+        }
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed");
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Camera opened, hcam={}", hcam);
+
+    // === PARAMETER QUERIES (like full driver) ===
+    println!("\n[PARAM QUERIES] Querying camera parameters like full driver...");
+    unsafe {
+        // Query sensor size (PARAM_SER_SIZE, PARAM_PAR_SIZE)
+        let mut ser: uns16 = 0;
+        let mut par: uns16 = 0;
+        if pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _) != 0 {
+            println!("  PARAM_SER_SIZE: {}", ser);
+        }
+        if pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _) != 0 {
+            println!("  PARAM_PAR_SIZE: {}", par);
+        }
+
+        // Query bit depth
+        let mut bit_depth: i16 = 0;
+        if pl_get_param(hcam, PARAM_BIT_DEPTH, ATTR_CURRENT, &mut bit_depth as *mut _ as *mut _) != 0 {
+            println!("  PARAM_BIT_DEPTH: {}", bit_depth);
+        }
+
+        // Query chip name
+        let mut chip_name = [0i8; 64];
+        if pl_get_param(hcam, PARAM_CHIP_NAME, ATTR_CURRENT, chip_name.as_mut_ptr() as *mut _) != 0 {
+            let name = std::ffi::CStr::from_ptr(chip_name.as_ptr()).to_string_lossy();
+            println!("  PARAM_CHIP_NAME: {}", name);
+        }
+
+        // Query temperature
+        let mut temp: i16 = 0;
+        if pl_get_param(hcam, PARAM_TEMP, ATTR_CURRENT, &mut temp as *mut _ as *mut _) != 0 {
+            println!("  PARAM_TEMP: {} (raw)", temp);
+        }
+
+        // Query speed table entries (PARAM_SPDTAB_INDEX)
+        let mut speed_idx: i16 = 0;
+        if pl_get_param(hcam, PARAM_SPDTAB_INDEX, ATTR_CURRENT, &mut speed_idx as *mut _ as *mut _) != 0 {
+            println!("  PARAM_SPDTAB_INDEX: {}", speed_idx);
+        }
+
+        // Query gain index
+        let mut gain_idx: i16 = 0;
+        if pl_get_param(hcam, PARAM_GAIN_INDEX, ATTR_CURRENT, &mut gain_idx as *mut _ as *mut _) != 0 {
+            println!("  PARAM_GAIN_INDEX: {}", gain_idx);
+        }
+
+        // Query frame buffer size recommendation
+        let mut frame_buf_size: uns64 = 0;
+        if pl_get_param(hcam, PARAM_FRAME_BUFFER_SIZE, ATTR_CURRENT, &mut frame_buf_size as *mut _ as *mut _) != 0 {
+            println!("  PARAM_FRAME_BUFFER_SIZE: {}", frame_buf_size);
+        }
+
+        // Query metadata capability
+        let mut md_enabled: rs_bool = 0;
+        if pl_get_param(hcam, PARAM_METADATA_ENABLED, ATTR_AVAIL, &mut md_enabled as *mut _ as *mut _) != 0 {
+            println!("  PARAM_METADATA_ENABLED (avail): {}", md_enabled);
+        }
+
+        // Query circular buffer mode capability
+        let mut circ_avail: rs_bool = 0;
+        if pl_get_param(hcam, PARAM_CIRC_BUFFER, ATTR_AVAIL, &mut circ_avail as *mut _ as *mut _) != 0 {
+            println!("  PARAM_CIRC_BUFFER (avail): {}", circ_avail);
+        }
+    }
+    println!("[OK] Parameter queries complete");
+
+    // === REST OF STREAMING SETUP (same as test_18) ===
+
+    // Create callback context
+    let ctx = std::sync::Arc::new(std::pin::Pin::new(Box::new(FullCallbackContext::new(hcam))));
+    let ctx_ptr = &**ctx as *const FullCallbackContext;
+    FULL_CTX.store(ctx_ptr as *mut FullCallbackContext, Ordering::Release);
+    println!("[OK] Callback context created, ptr={:?}", ctx_ptr);
+
+    // Register callback BEFORE setup
+    println!("[SETUP] Registering EOF callback...");
+    unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            full_eof_callback as *mut c_void,
+            ctx_ptr as *mut c_void,
+        );
+        if result == 0 {
+            println!("ERROR: pl_cam_register_callback_ex3 failed: {}", get_error_message());
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] EOF callback registered");
+
+    // Setup region
+    let region = rgn_type {
+        s1: 0,
+        s2: 2047,
+        sbin: 1,
+        p1: 0,
+        p2: 2047,
+        pbin: 1,
+    };
+
+    // Setup continuous acquisition
+    let mut frame_bytes: uns32 = 0;
+    println!("[SETUP] Setting up continuous acquisition...");
+    unsafe {
+        let result = pl_exp_setup_cont(
+            hcam,
+            1,
+            &region as *const rgn_type,
+            TIMED_MODE as i16,
+            EXPOSURE_MS,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE as i16,
+        );
+        if result == 0 {
+            println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+
+    // Allocate buffer
+    const ALIGN_4K: usize = 4096;
+    let buffer_size = (frame_bytes as usize) * BUFFER_FRAMES;
+    let layout = Layout::from_size_align(buffer_size, ALIGN_4K).unwrap();
+    let buffer = unsafe { alloc(layout) };
+    if buffer.is_null() {
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Allocated {} bytes at {:?}", buffer_size, buffer);
+
+    // Start acquisition
+    println!("[SETUP] Starting continuous acquisition...");
+    unsafe {
+        let result = pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as uns32);
+        if result == 0 {
+            println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+            dealloc(buffer, layout);
+            pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Acquisition started");
+
+    // Frame loop
+    let ctx_clone = ctx.clone();
+    let streaming = std::sync::Arc::new(AtomicBool::new(true));
+    let streaming_clone = streaming.clone();
+
+    println!("\n=== FRAME ACQUISITION LOOP (target: {} frames) ===\n", TARGET_FRAMES);
+    let handle = tokio::task::spawn_blocking(move || {
+        let mut frames_acquired: i32 = 0;
+
+        while frames_acquired < TARGET_FRAMES && streaming_clone.load(Ordering::Acquire) {
+            let pending = ctx_clone.wait_for_frames(TIMEOUT_MS);
+            if pending == 0 {
+                println!("[TIMEOUT] No frame after {}ms (acquired {})", TIMEOUT_MS, frames_acquired);
+                continue;
+            }
+
+            let mut frame_ptr: *mut c_void = ptr::null_mut();
+            unsafe {
+                if pl_exp_get_oldest_frame(hcam, &mut frame_ptr) == 0 {
+                    continue;
+                }
+            }
+
+            frames_acquired += 1;
+
+            unsafe {
+                if pl_exp_unlock_oldest_frame(hcam) == 0 {
+                    eprintln!("[ERROR] pl_exp_unlock_oldest_frame failed");
+                }
+            }
+
+            ctx_clone.consume_one();
+
+            if frames_acquired <= 25 || frames_acquired % 50 == 0 {
+                println!("[FRAME {}] acquired", frames_acquired);
+            }
+        }
+
+        frames_acquired
+    });
+
+    let frames_acquired = handle.await.unwrap();
+
+    streaming.store(false, Ordering::Release);
+    ctx.signal_shutdown();
+
+    println!("\n[CLEANUP] Stopping acquisition...");
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+        dealloc(buffer, layout);
+        pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        FULL_CTX.store(std::ptr::null_mut(), Ordering::Release);
+        pl_cam_close(hcam);
+        pl_pvcam_uninit();
+    }
+
+    println!("\n=== TEST 20 COMPLETE ===\n");
+
+    if frames_acquired >= TARGET_FRAMES {
+        println!("RESULT: pl_get_param calls are NOT the issue (200 frames achieved)");
+    } else {
+        println!("RESULT: pl_get_param calls MAY be causing the issue ({} frames)", frames_acquired);
+    }
+    assert!(
+        frames_acquired >= TARGET_FRAMES,
+        "Expected {} frames, got {}. pl_get_param calls may be affecting SDK callback state!",
+        TARGET_FRAMES,
+        frames_acquired
+    );
+}
