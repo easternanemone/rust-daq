@@ -1616,7 +1616,7 @@ pub async fn create_lab_registry() -> Result<DeviceRegistry, DaqError> {
     #[cfg(feature = "pvcam")]
     if let Err(e) = registry
         .register(DeviceConfig {
-            id: "camera".into(),
+            id: "prime_bsi".into(),
             name: "Teledyne Prime BSI sCMOS".into(),
             driver: DriverType::Pvcam {
                 camera_name: "PMUSBCam00".into(),
