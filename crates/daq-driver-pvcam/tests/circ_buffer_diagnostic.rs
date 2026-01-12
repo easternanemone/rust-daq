@@ -4321,3 +4321,271 @@ async fn test_24_driver_callback_infrastructure() {
         frames_acquired
     );
 }
+
+// =============================================================================
+// TEST 26: Watch channel loop condition + CallbackContext(-1) pattern
+// =============================================================================
+//
+// The driver:
+// 1. Creates CallbackContext with hcam=-1 at PvcamAcquisition::new()
+// 2. Calls set_hcam(actual_hcam) before registering callback
+// 3. Uses streaming.get() (watch channel borrow) in loop condition
+//
+// This test replicates that EXACT pattern to see if it causes the 19-frame issue.
+//
+// If this FAILS: The -1 → actual_hcam update or watch channel loop condition is the issue
+// If this PASSES: Something else in the driver's setup is causing the problem
+
+use daq_driver_pvcam::components::acquisition::clear_global_callback_ctx;
+
+#[tokio::test]
+async fn test_26_watch_channel_loop_condition() {
+    println!("\n=== TEST 26: Watch Channel Loop Condition Test ===");
+    println!("Tests driver's exact pattern:");
+    println!("  1. CallbackContext created with hcam=-1");
+    println!("  2. set_hcam(actual_hcam) called before registration");
+    println!("  3. watch::Sender::borrow().clone() in loop condition\n");
+
+    const TARGET_FRAMES: i32 = 200;
+    const TIMEOUT_MS: u64 = 2000;
+    const EXPOSURE_MS: u32 = 100;
+    const BUFFER_FRAMES: usize = 21;
+
+    // Initialize SDK
+    println!("[SETUP] Initializing PVCAM SDK...");
+    unsafe {
+        if pl_pvcam_init() == 0 {
+            println!("ERROR: pl_pvcam_init failed");
+            return;
+        }
+    }
+    println!("[OK] PVCAM SDK initialized");
+
+    // Open camera
+    let mut hcam: i16 = 0;
+    let mut cam_name = [0i8; 32];
+    unsafe {
+        if pl_cam_get_name(0, cam_name.as_mut_ptr()) == 0 {
+            println!("ERROR: pl_cam_get_name failed");
+            pl_pvcam_uninit();
+            return;
+        }
+        if pl_cam_open(cam_name.as_mut_ptr(), &mut hcam, 0) == 0 {
+            println!("ERROR: pl_cam_open failed");
+            pl_pvcam_uninit();
+            return;
+        }
+    }
+    println!("[OK] Camera opened, hcam={}", hcam);
+
+    // KEY DIFFERENCE: Create CallbackContext with -1 (like driver does at construction)
+    // Then call set_hcam() (like driver does in start_stream)
+    let callback_ctx = Arc::new(Box::pin(CallbackContext::new(-1))); // <-- -1 like driver
+    callback_ctx.set_hcam(hcam); // <-- Update to actual hcam
+    let callback_ctx_ptr = &**callback_ctx as *const CallbackContext;
+    println!("[OK] CallbackContext created with -1, then set_hcam({})", hcam);
+    println!("[OK] CallbackContext ptr={:?}", callback_ctx_ptr);
+
+    // Set GLOBAL_CALLBACK_CTX
+    set_global_callback_ctx(callback_ctx_ptr);
+    println!("[OK] GLOBAL_CALLBACK_CTX set");
+
+    // Create watch channel for streaming (like driver's Parameter<bool>)
+    let (streaming_tx, streaming_rx) = tokio::sync::watch::channel(true);
+    let streaming_tx = Arc::new(streaming_tx);
+    println!("[OK] Watch channel created (streaming=true)");
+
+    // Register callback using driver's pvcam_eof_callback
+    println!("[SETUP] Registering EOF callback...");
+    let callback_registered = unsafe {
+        let result = pl_cam_register_callback_ex3(
+            hcam,
+            PL_CALLBACK_EOF,
+            pvcam_eof_callback as *mut std::ffi::c_void,
+            callback_ctx_ptr as *mut std::ffi::c_void,
+        );
+        result != 0
+    };
+    if !callback_registered {
+        println!("ERROR: Failed to register callback: {}", get_error_message());
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] EOF callback registered");
+
+    // Query sensor size
+    let (ser_size, par_size) = unsafe {
+        let mut ser: uns16 = 0;
+        let mut par: uns16 = 0;
+        pl_get_param(hcam, PARAM_SER_SIZE, ATTR_CURRENT, &mut ser as *mut _ as *mut _);
+        pl_get_param(hcam, PARAM_PAR_SIZE, ATTR_CURRENT, &mut par as *mut _ as *mut _);
+        (ser, par)
+    };
+    println!("[OK] Sensor size: {}x{}", ser_size, par_size);
+
+    let region = rgn_type {
+        s1: 0,
+        s2: ser_size - 1,
+        sbin: 1,
+        p1: 0,
+        p2: par_size - 1,
+        pbin: 1,
+    };
+
+    // Setup continuous acquisition
+    println!("[SETUP] Setting up continuous acquisition...");
+    let mut frame_bytes: uns32 = 0;
+    let setup_result = unsafe {
+        pl_exp_setup_cont(
+            hcam,
+            1,
+            &region as *const _,
+            TIMED_MODE as i16,
+            EXPOSURE_MS,
+            &mut frame_bytes,
+            CIRC_NO_OVERWRITE as i16,
+        )
+    };
+    if setup_result == 0 {
+        println!("ERROR: pl_exp_setup_cont failed: {}", get_error_message());
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] pl_exp_setup_cont succeeded, frame_bytes={}", frame_bytes);
+
+    // Allocate buffer
+    let buffer_size = frame_bytes as usize * BUFFER_FRAMES;
+    let layout = Layout::from_size_align(buffer_size, 4096).unwrap();
+    let buffer = unsafe { alloc_zeroed(layout) };
+    if buffer.is_null() {
+        println!("ERROR: Failed to allocate buffer");
+        unsafe {
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Allocated {} bytes at {:?}", buffer_size, buffer);
+
+    // Start acquisition
+    println!("[SETUP] Starting continuous acquisition...");
+    let start_result = unsafe { pl_exp_start_cont(hcam, buffer as *mut c_void, buffer_size as u32) };
+    if start_result == 0 {
+        println!("ERROR: pl_exp_start_cont failed: {}", get_error_message());
+        unsafe {
+            dealloc(buffer, layout);
+            pl_cam_close(hcam);
+            pl_pvcam_uninit();
+        }
+        return;
+    }
+    println!("[OK] Acquisition started");
+
+    // Frame loop with watch channel condition (like driver)
+    println!("\n=== FRAME ACQUISITION LOOP (with watch channel condition, target: {} frames) ===\n", TARGET_FRAMES);
+
+    let callback_ctx_for_loop = callback_ctx.clone();
+    let streaming_tx_for_stop = streaming_tx.clone();
+
+    let loop_start = std::time::Instant::now();
+
+    let frames_acquired = tokio::task::spawn_blocking(move || {
+        let mut frames: i32 = 0;
+        let mut loop_iteration: u64 = 0;
+        let mut consecutive_timeouts: u32 = 0;
+
+        // KEY DIFFERENCE: Use watch channel borrow in loop condition (like streaming.get())
+        while *streaming_tx.borrow() && frames < TARGET_FRAMES {
+            loop_iteration += 1;
+
+            // Pre-wait status check (like driver)
+            if loop_iteration <= 5 || loop_iteration % 30 == 0 {
+                let mut status: i16 = 0;
+                let mut bytes: uns32 = 0;
+                let mut cnt: uns32 = 0;
+                unsafe {
+                    pl_exp_check_cont_status(hcam, &mut status, &mut bytes, &mut cnt);
+                }
+                let pending = callback_ctx_for_loop.pending_frames.load(Ordering::Acquire);
+                eprintln!(
+                    "[PRE-WAIT STATUS] iter={}, status={}, bytes={}, cnt={}, pending={}",
+                    loop_iteration, status, bytes, cnt, pending
+                );
+            }
+
+            // Wait for callback
+            let pending = callback_ctx_for_loop.wait_for_frames(TIMEOUT_MS);
+            if pending == 0 {
+                consecutive_timeouts += 1;
+                eprintln!("[TIMEOUT] #{} at iter={}", consecutive_timeouts, loop_iteration);
+                if consecutive_timeouts >= 5 {
+                    eprintln!("[FATAL] Max timeouts reached");
+                    break;
+                }
+                continue;
+            }
+            consecutive_timeouts = 0;
+
+            // Get oldest frame
+            let mut frame_ptr: *mut c_void = ptr::null_mut();
+            let get_result = unsafe { pl_exp_get_oldest_frame(hcam, &mut frame_ptr) };
+            if get_result == 0 || frame_ptr.is_null() {
+                continue;
+            }
+
+            frames += 1;
+
+            // Unlock immediately
+            unsafe {
+                pl_exp_unlock_oldest_frame(hcam);
+            }
+
+            // Consume callback notification
+            callback_ctx_for_loop.consume_one();
+
+            if frames <= 25 || frames % 50 == 0 {
+                eprintln!("[FRAME {}] acquired (iter={})", frames, loop_iteration);
+            }
+        }
+
+        frames
+    }).await.unwrap();
+
+    let total_time = loop_start.elapsed().as_millis();
+
+    // Set streaming to false (like stop_stream would)
+    let _ = streaming_tx_for_stop.send(false);
+
+    println!("\n[CLEANUP] Stopping acquisition...");
+    unsafe {
+        pl_exp_abort(hcam, CCS_HALT);
+        dealloc(buffer, layout);
+        pl_cam_deregister_callback(hcam, PL_CALLBACK_EOF);
+        clear_global_callback_ctx();
+        pl_cam_close(hcam);
+        pl_pvcam_uninit();
+    }
+
+    println!("\n=== TEST 26 COMPLETE ===\n");
+    println!("Frames acquired: {}/{}", frames_acquired, TARGET_FRAMES);
+    println!("Total time: {}ms", total_time);
+
+    if frames_acquired >= TARGET_FRAMES {
+        println!("RESULT: Watch channel + CallbackContext(-1) pattern is NOT the issue");
+    } else {
+        println!("RESULT: Watch channel or CallbackContext(-1) pattern MAY be the issue ({} frames)", frames_acquired);
+    }
+
+    assert!(
+        frames_acquired >= TARGET_FRAMES,
+        "Expected {} frames, got {}. Watch channel or -1 pattern may be the issue!",
+        TARGET_FRAMES,
+        frames_acquired
+    );
+}
