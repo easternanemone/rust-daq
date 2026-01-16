@@ -104,9 +104,16 @@ Use these for common build configurations:
 | `server` | Full gRPC server | `daq-server`, includes `networking` |
 | `scripting` | Rhai scripting engine | `daq-scripting` |
 | `scripting_python` | Python bindings for scripting | `daq-scripting/python` (PyO3) |
+| `native_plugins` | FFI native plugin system | `daq-plugin-api` (abi_stable) |
 | `gui_egui` | Desktop GUI application | `egui`, `eframe`, `egui_plot`, `egui_extras` |
 | `modules` | Module system with runtime assignment | Requires `scripting` |
 | `plugins_hot_reload` | Hot reload plugin configs | `notify` crate |
+
+**Plugin System Notes:**
+- `scripting` enables Rhai-based script plugins in `rust-daq/src/plugins/`
+- `native_plugins` enables FFI plugins via `daq-plugin-api` (abi_stable)
+- Both features can be enabled together; the `plugins` module conditionally compiles based on which are active
+- When enabling `native_plugins` without `scripting`, only FFI plugin types are available
 
 ---
 
@@ -183,6 +190,11 @@ modules
 
 scripting
   └── daq-scripting (optional dep)
+  └── rust-daq/plugins (script_module, loader)
+
+native_plugins
+  └── daq-plugin-api (optional dep)
+  └── rust-daq/plugins (native_plugins module)
 
 scripting_python
   └── daq-scripting/python
@@ -194,6 +206,17 @@ pvcam_sdk
 instrument_thorlabs
   └── tokio_serial
   └── daq-hardware/driver-thorlabs
+
+instrument_spectra_physics
+  └── tokio_serial
+  └── daq-hardware/driver-spectra-physics
+
+instrument_newport
+  └── tokio_serial
+  └── daq-hardware/driver-newport
+
+instrument_newport_power_meter
+  └── tokio_serial
 
 tokio_serial
   └── instrument_serial

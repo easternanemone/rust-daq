@@ -86,9 +86,10 @@ Successfully opened camera 'pvcamUSB_0' with handle 0
 | `daq-server` | gRPC server with auth and CORS (optional) |
 | `daq-experiment` | RunEngine and Plan definitions |
 | `daq-scripting` | Rhai scripting engine (optional) |
+| `daq-plugin-api` | Native FFI plugin system (abi_stable) |
 | `daq-egui` | GUI application with auto-reconnect |
 | `daq-bin` | CLI binaries and daemon entrypoints |
-| `rust-daq` | Integration layer with `prelude` module |
+| `rust-daq` | Integration layer with `prelude` module and plugin system |
 
 ### Dependency Graph
 
@@ -114,7 +115,16 @@ Successfully opened camera 'pvcamUSB_0' with handle 0
 
 ### Key Abstractions
 
-- **Capability Traits**: `Movable`, `Readable`, `FrameProducer`, `Triggerable`, `ExposureControl` - define what hardware can do
+- **Capability Traits** (defined in `daq-core::capabilities`):
+  - `Movable` - Motion control (motors, stages, rotators)
+  - `Readable` - Scalar value acquisition (sensors, power meters)
+  - `FrameProducer` - 2D image streaming (cameras, detectors)
+  - `Triggerable` - External trigger support
+  - `ExposureControl` - Integration time management
+  - `WavelengthTunable` - Wavelength control (lasers, monochromators)
+  - `ShutterControl` - Beam shutter open/close
+  - `EmissionControl` - Laser emission enable/disable
+  - `Parameterized` - Exposes `Parameter<T>` state
 - **Parameter<T>**: Reactive state with hardware callbacks - use instead of raw Mutex/RwLock
 - **Plan + RunEngine**: Bluesky-inspired experiment orchestration
 - **RingBuffer**: Sync and async variants for data streaming
@@ -126,12 +136,24 @@ Successfully opened camera 'pvcamUSB_0' with handle 0
 - `frontend` - GUI (egui) + networking
 - `cli` - All hardware, CSV storage, scripting
 - `full` - Most features (excludes HDF5)
+- `maitai` - Full Maitai hardware stack (PVCAM + serial instruments)
 
 **Storage:** `storage_csv` (default), `storage_hdf5`, `storage_arrow`, `storage_matlab`
 
-**Hardware (daq-hardware):** `serial`, `driver-thorlabs`, `driver-newport`, `driver-spectra-physics`, `driver_pvcam`, `pvcam_hardware`
+**Hardware (daq-hardware):**
+- `serial` - Base serial port support (tokio-serial)
+- `thorlabs` - Thorlabs ELL14 rotators (requires `serial`)
+- `newport` - Newport ESP300 motion controller (requires `serial`)
+- `spectra_physics` - MaiTai laser (requires `serial`)
+- `newport_power_meter` - Newport 1830-C power meter (requires `serial`)
+- `pvcam_hardware` - Real PVCAM camera support (requires SDK)
 
-**System:** `scripting`, `server`, `networking`, `hardware_tests`
+**Plugin System (rust-daq):**
+- `scripting` - Rhai script-based plugins (`daq-scripting`)
+- `native_plugins` - FFI native plugins (`daq-plugin-api`, abi_stable)
+- Note: Both can be enabled together; the `plugins` module conditionally compiles based on which are enabled
+
+**System:** `server`, `networking`, `modules`, `hardware_tests`
 
 ## Critical Code Patterns
 
@@ -273,12 +295,21 @@ ssh maitai@100.117.5.12 'cd ~/rust-daq && source config/hosts/maitai.env && \
 
 ### Serial Port Inventory (maitai)
 
-| Device | Port | Driver |
-|--------|------|--------|
-| Newport 1830-C Power Meter | `/dev/ttyS0` | `Newport1830CDriver` |
-| MaiTai Laser | `/dev/ttyUSB5` | `MaiTaiDriver` |
-| ELL14 Rotators (addr 2,3,8) | `/dev/ttyUSB1` | `Ell14Driver` |
-| ESP300 Motion Controller | `/dev/ttyUSB0` | `Esp300Driver` |
+| Device | Port | Driver | Feature Flag |
+|--------|------|--------|--------------|
+| Newport 1830-C Power Meter | `/dev/ttyS0` | `Newport1830CDriver` | `newport_power_meter` |
+| MaiTai Laser | `/dev/ttyUSB5` | `MaiTaiDriver` | `spectra_physics` |
+| ELL14 Rotators (addr 2,3,8) | `/dev/ttyUSB1` | `Ell14Driver` | `thorlabs` |
+| ESP300 Motion Controller | `/dev/ttyUSB0` | `Esp300Driver` | `newport` |
+
+### Serial Driver Capabilities
+
+| Driver | Traits Implemented | Protocol |
+|--------|-------------------|----------|
+| `MaiTaiDriver` | `Readable`, `WavelengthTunable`, `ShutterControl`, `EmissionControl`, `Parameterized` | 9600 baud, XON/XOFF flow control |
+| `Newport1830CDriver` | `Readable`, `WavelengthTunable`, `Parameterized` | 9600 baud, simple ASCII (NOT SCPI) |
+| `Esp300Driver` | `Movable`, `Parameterized` | 19200 baud, multi-axis (1-3) |
+| `Ell14Driver` | `Movable`, `Parameterized` | 9600 baud, RS-485 multidrop, hex encoding |
 
 ### ELL14 Rotator (RS-485 Bus)
 

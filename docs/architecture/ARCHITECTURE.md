@@ -30,12 +30,13 @@ The project is structured as a Cargo workspace with distinct responsibilities:
 *   **`daq-server`**: The network interface. Implements a gRPC server (`tonic`) exposing hardware control, script execution, and data streaming. Includes token-based authentication and CORS configuration.
 
 ### 3. Infrastructure
-*   **`daq-hardware`**: The Hardware Abstraction Layer (HAL). Defines capability traits and contains drivers for serial devices (Thorlabs, Newport, MaiTai, etc.).
+*   **`daq-hardware`**: The Hardware Abstraction Layer (HAL). Defines capability traits and contains drivers for serial devices (Thorlabs ELL14, Newport ESP300, MaiTai laser, Newport 1830-C power meter).
 *   **`daq-driver-pvcam`**: Dedicated driver crate for Photometrics PVCAM cameras (Prime 95B, Prime BSI). Requires PVCAM SDK.
 *   **`daq-driver-comedi`**: Driver for Linux Comedi DAQ boards. Provides analog/digital I/O capabilities.
 *   **`daq-pool`**: Zero-allocation object pool for high-performance frame handling. Provides `Pool<T>` for generic objects and `BufferPool` for byte buffers with `bytes::Bytes` integration. Critical for high-FPS camera streaming where per-frame allocations cause latency.
 *   **`daq-storage`**: Handles data persistence. Implements the "Mullet Strategy": fast **Arrow** ring buffer in the front, reliable **HDF5** writer in the back. Also supports CSV, MATLAB (.mat), and NetCDF formats.
 *   **`daq-proto`**: Defines the wire protocol (Protobuf) for all network communication. Includes domain↔proto conversion utilities.
+*   **`daq-plugin-api`**: Native FFI plugin system using `abi_stable` for cross-version binary compatibility. Enables third-party Rust plugins without recompilation.
 
 ### 4. Core
 *   **`daq-core`**: The foundation. Defines shared types (`Parameter<T>`, `Observable<T>`), error handling, size limits (`limits.rs`), and module domain types.
@@ -92,11 +93,15 @@ To resolve the conflict between high-throughput reliable storage and low-latency
 
 ### Hardware Abstraction
 Hardware is modeled by **Capabilities**, not identities. A device is defined by what it can *do*:
-*   `Movable`: Can move to a position (e.g., Motors, Piezo stages).
+*   `Movable`: Can move to a position (e.g., Motors, Piezo stages, rotators).
 *   `Triggerable`: Can accept a start signal (e.g., Cameras).
-*   `Readable`: Can return a scalar value (e.g., Sensors).
-*   `FrameProducer`: Can stream 2D image data (e.g., Detectors).
+*   `Readable`: Can return a scalar value (e.g., Sensors, power meters).
+*   `FrameProducer`: Can stream 2D image data (e.g., Detectors, cameras).
 *   `ExposureControl`: Can set integration time.
+*   `WavelengthTunable`: Can tune wavelength (e.g., Lasers, monochromators).
+*   `ShutterControl`: Can open/close a beam shutter.
+*   `EmissionControl`: Can enable/disable laser emission.
+*   `Parameterized`: Exposes reactive `Parameter<T>` state for observation and persistence.
 
 This allows generic experiment scripts to work with any compatible hardware (e.g., `scan(movable, triggerable)`).
 
@@ -127,15 +132,17 @@ Experiments are written in [Rhai](https://rhai.rs), a scripting language designe
 │   ├── daq-egui/           # Desktop GUI (egui + egui_dock)
 │   ├── daq-examples/       # Example code and usage patterns
 │   ├── daq-experiment/     # RunEngine and Plan definitions
-│   ├── daq-hardware/       # HAL with capability traits and drivers
+│   ├── daq-hardware/       # HAL with capability traits and serial drivers
+│   ├── daq-plugin-api/     # Native FFI plugin system (abi_stable)
 │   ├── daq-pool/           # Zero-allocation object pool for frame handling
 │   ├── daq-proto/          # Protobuf definitions and conversions
 │   ├── daq-scripting/      # Rhai scripting engine integration
 │   ├── daq-server/         # gRPC server implementation
 │   ├── daq-storage/        # Ring buffers, CSV, HDF5, Arrow storage
 │   ├── comedi-sys/         # Raw FFI bindings to Comedi
-│   └── rust-daq/           # Integration layer with prelude module
+│   └── rust-daq/           # Integration layer with prelude and plugins
 ├── config/                 # Runtime configuration (TOML)
+│   └── devices/            # Declarative driver configs (TOML)
 ├── docs/                   # Documentation
 │   ├── architecture/       # ADRs and design decisions
 │   ├── benchmarks/         # Performance documentation
