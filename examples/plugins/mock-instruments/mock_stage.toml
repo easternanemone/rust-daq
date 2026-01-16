@@ -1,0 +1,79 @@
+# Mock Stage Device Configuration
+#
+# Simulates a linear motion stage for testing without physical hardware.
+# Uses MockStage from daq-hardware::drivers::mock with realistic timing.
+#
+# Performance characteristics:
+# - Default speed: 10 mm/s
+# - Settling time: 50 ms after motion
+# - Position tracking: Thread-safe, async-compatible
+#
+# Usage: Include in your hardware.toml or reference directly.
+#
+# Example:
+#   rust-daq daemon --hardware-config examples/plugins/mock-instruments/mock_stage.toml
+
+[[devices]]
+id = "mock_stage_x"
+name = "Mock X-Axis Stage"
+[devices.driver]
+type = "mock_stage"
+# Initial position in millimeters
+initial_position = 0.0
+
+[[devices]]
+id = "mock_stage_y"
+name = "Mock Y-Axis Stage"
+[devices.driver]
+type = "mock_stage"
+initial_position = 0.0
+
+[[devices]]
+id = "mock_stage_z"
+name = "Mock Z-Axis Stage"
+[devices.driver]
+type = "mock_stage"
+initial_position = 0.0
+
+# Example: Multi-axis scanning setup
+# Demonstrates typical configuration for 2D raster scans
+[[devices]]
+id = "scan_stage_fast"
+name = "Fast Scan Axis (Mock)"
+[devices.driver]
+type = "mock_stage"
+initial_position = 0.0
+# Note: Default speed is 10 mm/s with 50 ms settling
+
+[[devices]]
+id = "scan_stage_slow"
+name = "Slow Scan Axis (Mock)"
+[devices.driver]
+type = "mock_stage"
+initial_position = 0.0
+
+# Capabilities provided by MockStage:
+#
+# Movable trait:
+#   - move_abs(target: f64) -> Result<()>   # Absolute motion
+#   - move_rel(distance: f64) -> Result<()> # Relative motion
+#   - position() -> Result<f64>              # Current position
+#   - wait_settled() -> Result<()>           # Wait for settling
+#
+# Parameterized trait:
+#   - parameters() -> &ParameterSet
+#   - Position parameter: "position" (f64, unit: "mm")
+#
+# Example usage in Rhai script:
+#
+#   let stage = devices.get("mock_stage_x");
+#   stage.move_abs(10.0);      // Move to 10mm
+#   stage.wait_settled();      // Wait for settling
+#   let pos = stage.position(); // Read position
+#
+# Example usage in Python client:
+#
+#   stage = client.get_device("mock_stage_x")
+#   await stage.move_abs(10.0)
+#   await stage.wait_settled()
+#   pos = await stage.position()

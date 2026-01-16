@@ -1,0 +1,92 @@
+# Mock Sensor Device Configuration
+#
+# Simulates a readable sensor (e.g., power meter) for testing without hardware.
+# Uses MockPowerMeter from daq-hardware::drivers::mock with configurable jitter.
+#
+# Key features:
+# - Configurable base reading value
+# - ~1% random jitter for realistic noise simulation
+# - Deterministic noise based on timestamp (reproducible)
+#
+# Usage: Include in your hardware.toml or reference directly.
+#
+# Example:
+#   rust-daq daemon --hardware-config examples/plugins/mock-instruments/mock_sensor.toml
+
+[[devices]]
+id = "mock_power_meter"
+name = "Mock Power Meter"
+[devices.driver]
+type = "mock_power_meter"
+# Base power reading in Watts
+reading = 1.0e-6
+
+[[devices]]
+id = "mock_power_meter_high"
+name = "Mock High-Power Meter"
+[devices.driver]
+type = "mock_power_meter"
+# Higher power reading for testing different scales
+reading = 2.5
+
+# Example: Multi-channel sensor setup
+# Demonstrates configuration for parallel measurements
+[[devices]]
+id = "signal_monitor"
+name = "Signal Monitor (Mock)"
+[devices.driver]
+type = "mock_power_meter"
+reading = 0.5
+
+[[devices]]
+id = "reference_monitor"
+name = "Reference Monitor (Mock)"
+[devices.driver]
+type = "mock_power_meter"
+reading = 1.0
+
+# Capabilities provided by MockPowerMeter:
+#
+# Readable trait:
+#   - read() -> Result<f64>  # Returns base_power * (1 + noise)
+#                            # Noise: ~1% variation based on timestamp
+#
+# Parameterized trait:
+#   - parameters() -> &ParameterSet
+#   - Base power parameter: "base_power" (f64, unit: "W", range: 0-10)
+#
+# Jitter characteristics:
+#   The mock sensor adds deterministic noise based on system time:
+#   - Noise factor: 1.0 + (nanoseconds % 200) / 10000.0 - 0.01
+#   - Effective range: ~1% variation around base value
+#   - Deterministic: Same timestamp produces same noise
+#
+# Example usage in Rhai script:
+#
+#   let meter = devices.get("mock_power_meter");
+#   let reading = meter.read();
+#   print(`Power: ${reading} W`);
+#
+# Example usage in Python client:
+#
+#   meter = client.get_device("mock_power_meter")
+#   reading = await meter.read()
+#   print(f"Power: {reading:.6f} W")
+#
+# CI/CD Integration:
+#
+# Mock sensors are ideal for automated testing pipelines:
+#
+#   # In test configuration
+#   [[devices]]
+#   id = "test_sensor"
+#   name = "CI Test Sensor"
+#   [devices.driver]
+#   type = "mock_power_meter"
+#   reading = 1.0
+#
+# Tests can verify:
+#   - Sensor read operations work correctly
+#   - Data logging captures expected values
+#   - Threshold alerting triggers at correct levels
+#   - Pipeline processing handles jitter appropriately

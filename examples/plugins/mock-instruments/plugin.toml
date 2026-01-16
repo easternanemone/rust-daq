@@ -1,0 +1,119 @@
+# Mock Instruments Plugin
+#
+# Provides simulated hardware devices for testing without physical hardware.
+# Useful for CI/CD pipelines, development, and system integration testing.
+
+[plugin]
+name = "mock-instruments"
+version = "1.0.0"
+description = "Mock/simulation hardware plugin for testing without physical devices"
+author = "rust-daq team"
+license = "MIT"
+
+categories = ["testing", "simulation", "hardware"]
+keywords = ["mock", "simulation", "testing", "ci-cd", "hardware"]
+
+# Plugin type: uses built-in mock drivers
+type = "native"
+
+[plugin.requires]
+rust_daq = ">=0.5.0"
+api_version = "0.1"
+
+[plugin.entry]
+# Uses built-in mock drivers from daq-hardware crate
+# No external library needed - references internal MockStage, MockPowerMeter
+library = "mock_instruments"
+
+[plugin.activation]
+trigger = "on_demand"
+
+# Module definition for mock devices
+[module]
+type_id = "mock_instruments"
+display_name = "Mock Instruments"
+description = "Simulated hardware devices for testing and CI/CD integration"
+category = "testing"
+
+# Roles this plugin can fulfill
+[[module.roles]]
+role_id = "movable_stage"
+display_name = "Mock Stage"
+description = "Simulated motion stage with configurable speed and position"
+capability = "movable"
+required = false
+
+[[module.roles]]
+role_id = "readable_sensor"
+display_name = "Mock Sensor"
+description = "Simulated readable sensor with configurable jitter"
+capability = "readable"
+required = false
+
+# Module parameters for configuration
+[[module.parameters]]
+param_id = "stage_speed_mm_per_sec"
+display_name = "Stage Speed"
+description = "Mock stage motion speed"
+param_type = "float"
+default_value = "10.0"
+min_value = "0.1"
+max_value = "1000.0"
+units = "mm/s"
+required = false
+
+[[module.parameters]]
+param_id = "stage_initial_position"
+display_name = "Initial Position"
+description = "Mock stage starting position"
+param_type = "float"
+default_value = "0.0"
+min_value = "-1000.0"
+max_value = "1000.0"
+units = "mm"
+required = false
+
+[[module.parameters]]
+param_id = "sensor_base_value"
+display_name = "Base Sensor Value"
+description = "Base reading value for mock sensor"
+param_type = "float"
+default_value = "1.0"
+min_value = "0.0"
+max_value = "100.0"
+units = "W"
+required = false
+[module.parameters.mock]
+default = 1.0
+jitter = 0.01
+
+[[module.parameters]]
+param_id = "sensor_jitter_percent"
+display_name = "Sensor Jitter"
+description = "Random noise as percentage of base value"
+param_type = "float"
+default_value = "1.0"
+min_value = "0.0"
+max_value = "50.0"
+units = "%"
+required = false
+
+[[module.parameters]]
+param_id = "settling_time_ms"
+display_name = "Settling Time"
+description = "Simulated settling delay after motion"
+param_type = "float"
+default_value = "50.0"
+min_value = "0.0"
+max_value = "5000.0"
+units = "ms"
+required = false
+
+[module.events]
+types = ["position_changed", "reading_acquired", "settled", "error"]
+
+[module.data]
+types = ["position", "reading", "timestamp"]
+
+[module.errors]
+patterns = ["SIMULATION_ERROR", "INVALID_PARAMETER"]

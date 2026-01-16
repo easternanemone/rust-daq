@@ -1,0 +1,78 @@
+# examples/plugins/maitai-config/plugin.toml
+# Config-only plugin for Spectra-Physics MaiTai Ti:Sapphire Laser
+#
+# This is a config-only plugin that provides device protocol configuration
+# without any native code, scripts, or WASM. The GenericSerialDriver
+# interprets the device.toml to communicate with the hardware.
+#
+# Config-only plugins demonstrate:
+# - Zero-code device driver definition
+# - TOML-based protocol specification
+# - Automatic capability trait implementation
+
+[plugin]
+name = "maitai-laser"
+version = "1.0.0"
+description = "Spectra-Physics MaiTai Ti:Sapphire tunable laser driver (config-only)"
+author = "rust-daq contributors"
+license = "MIT"
+categories = ["instrument", "laser", "source"]
+keywords = ["maitai", "spectra-physics", "ti-sapphire", "tunable", "laser", "wavelength"]
+type = "config"
+
+[plugin.requires]
+rust_daq = ">=0.5.0"
+api_version = "0.1"
+
+[plugin.entry]
+# Config-only plugins reference a device configuration file
+device_config = "device.toml"
+
+[plugin.activation]
+trigger = "on_demand"
+
+# Module definition for GenericSerialDriver instantiation
+[module]
+type_id = "maitai_laser"
+display_name = "MaiTai Ti:Sapphire Laser"
+description = "Tunable Ti:Sapphire laser with wavelength control and shutter"
+category = "source"
+
+# Device capabilities exposed by this plugin
+[[module.roles]]
+role_id = "laser_source"
+display_name = "Laser Source"
+description = "Tunable laser source with wavelength and shutter control"
+capability = "wavelength_tunable"
+required = true
+allows_multiple = false
+
+# Wavelength parameter
+[[module.parameters]]
+param_id = "wavelength_nm"
+display_name = "Wavelength"
+description = "Output wavelength in nanometers"
+param_type = "float"
+default_value = "800.0"
+min_value = "690.0"
+max_value = "1040.0"
+units = "nm"
+required = false
+
+# Shutter state
+[[module.parameters]]
+param_id = "shutter_open"
+display_name = "Shutter State"
+description = "Whether the beam shutter is open"
+param_type = "bool"
+default_value = "false"
+required = false
+
+[module.events]
+types = ["wavelength_changed", "shutter_opened", "shutter_closed", "error"]
+
+[module.data]
+types = ["wavelength_reading", "power_reading", "shutter_state"]
+
+[module.errors]
+patterns = ["ERR", "TIMEOUT", "RANGE"]

@@ -1,0 +1,87 @@
+# ESP300 Native Plugin Manifest
+#
+# Demonstrates native Rust plugin development with abi_stable.
+# This plugin provides a motion controller module for Newport ESP300 stages.
+
+[plugin]
+name = "esp300-native"
+version = "1.0.0"
+description = "Native Rust plugin for Newport ESP300 translation stage control"
+author = "rust-daq Team"
+license = "MIT OR Apache-2.0"
+categories = ["motion_control", "hardware"]
+keywords = ["esp300", "newport", "stage", "motion", "translation"]
+type = "native"
+
+[plugin.requires]
+rust_daq = ">=0.1.0"
+api_version = "0.1"
+
+[plugin.entry]
+library = "esp300_native"
+
+[plugin.activation]
+trigger = "on_demand"
+
+[module]
+type_id = "esp300_stage"
+display_name = "ESP300 Translation Stage"
+description = "Newport ESP300 multi-axis motion controller driver"
+category = "motion_control"
+
+[[module.roles]]
+role_id = "serial_port"
+display_name = "Serial Port"
+description = "Serial port for ESP300 communication"
+capability = "serial"
+required = true
+allows_multiple = false
+
+[[module.parameters]]
+param_id = "port_path"
+display_name = "Serial Port"
+description = "Path to the serial port (e.g., /dev/ttyUSB0, COM3)"
+param_type = "string"
+default_value = "/dev/ttyUSB0"
+required = true
+
+[[module.parameters]]
+param_id = "axis"
+display_name = "Axis Number"
+description = "ESP300 axis number (1-3)"
+param_type = "int"
+default_value = "1"
+min_value = "1"
+max_value = "3"
+required = true
+
+[[module.parameters]]
+param_id = "velocity"
+display_name = "Velocity"
+description = "Motion velocity"
+param_type = "float"
+default_value = "10.0"
+min_value = "0.1"
+max_value = "100.0"
+units = "mm/s"
+required = false
+
+[[module.parameters]]
+param_id = "acceleration"
+display_name = "Acceleration"
+description = "Motion acceleration"
+param_type = "float"
+default_value = "50.0"
+min_value = "1.0"
+max_value = "500.0"
+units = "mm/s²"
+required = false
+
+[module.events]
+types = ["motion_started", "motion_complete", "position_update", "error", "homed"]
+
+[module.data]
+types = ["position", "velocity", "status"]
+
+[module.errors]
+patterns = ["SERIAL_ERROR", "TIMEOUT", "AXIS_ERROR", "LIMIT_SWITCH"]

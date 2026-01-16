@@ -1,0 +1,67 @@
+# ELL14 Config-Only Plugin
+#
+# This demonstrates the simplest plugin path: adding a new device with
+# just configuration files and ZERO code. The GenericSerialDriver
+# interprets the device.toml at runtime.
+#
+# Usage:
+#   1. Copy this plugin directory to your plugins path
+#   2. The driver factory will discover device.toml and create drivers
+#   3. No compilation required - just config!
+
+[plugin]
+name = "ell14-config"
+version = "1.0.0"
+description = "Thorlabs ELL14 rotation mount via config-driven driver"
+author = "rust-daq contributors"
+license = "MIT"
+categories = ["stage", "motion"]
+keywords = ["thorlabs", "ell14", "rotation", "elliptec", "config-only"]
+
+# Config-only plugins have no compiled entry point.
+# The driver factory loads device.toml and creates a GenericSerialDriver.
+# Note: type = "config" support is planned; this example demonstrates the pattern.
+
+[plugin.requires]
+rust_daq = ">=0.5.0"
+api_version = "0.1"
+
+[plugin.activation]
+trigger = "on_demand"
+device_types = ["ell14", "elliptec"]
+
+# Device configuration for the driver factory
+[device]
+config_file = "device.toml"
+protocol = "elliptec"
+model = "ELL14"
+manufacturer = "Thorlabs"
+
+# Module metadata for discovery and UI
+[module]
+type_id = "ell14_rotation_mount"
+display_name = "ELL14 Rotation Mount"
+description = "Thorlabs Elliptec ELL14 rotation stage with RS-485 multidrop support"
+category = "stage"
+
+[[module.roles]]
+role_id = "rotation_stage"
+display_name = "Rotation Stage"
+description = "Provides rotation positioning via Movable trait"
+capability = "movable"
+required = true
+
+[[module.parameters]]
+param_id = "address"
+display_name = "Device Address"
+description = "RS-485 bus address (0-F)"
+param_type = "string"
+default_value = "0"
+required = false
+
+[[module.parameters]]
+param_id = "port"
+display_name = "Serial Port"
+description = "Serial port path (e.g., /dev/ttyUSB0)"
+param_type = "string"
+required = true

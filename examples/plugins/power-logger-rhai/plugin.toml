@@ -1,0 +1,71 @@
+# Plugin manifest for power-logger-rhai
+# Demonstrates script-based module plugins using the Rhai scripting engine
+
+[plugin]
+name = "power-logger-rhai"
+version = "1.0.0"
+description = "Continuously logs power meter readings to CSV file using Rhai scripting"
+author = "rust_daq contributors"
+license = "MIT"
+categories = ["data_acquisition", "logging", "examples"]
+keywords = ["power", "meter", "csv", "logging", "rhai", "script"]
+type = "script"
+
+[plugin.requires]
+rust_daq = ">=0.5.0"
+api_version = "0.1"
+
+[plugin.entry]
+engine = "rhai"
+script = "power_logger.rhai"
+
+[plugin.activation]
+trigger = "on_demand"
+
+[module]
+type_id = "power_logger"
+display_name = "Power Logger"
+description = "Logs power readings with timestamps. Demonstrates the script module interface for experiment workflows."
+category = "data_acquisition"
+
+[[module.roles]]
+role_id = "power_source"
+display_name = "Power Source"
+description = "Device providing power readings (requires Readable capability)"
+capability = "readable"
+required = true
+allows_multiple = false
+
+[[module.parameters]]
+param_id = "log_interval_ms"
+display_name = "Log Interval"
+description = "Time between log entries in milliseconds"
+param_type = "int"
+default_value = "1000"
+min_value = "100"
+max_value = "60000"
+units = "ms"
+required = false
+
+[[module.parameters]]
+param_id = "log_format"
+display_name = "Log Format"
+description = "Format for log output (simple, verbose, or csv)"
+param_type = "enum"
+default_value = "simple"
+enum_values = ["simple", "verbose", "csv"]
+required = false
+
+[[module.parameters]]
+param_id = "output_path"
+display_name = "Output Path"
+description = "File path for CSV output (when log_format is csv)"
+param_type = "string"
+default_value = "/tmp/power_log.csv"
+required = false
+
+[module.events]
+types = ["log_started", "log_stopped", "power_reading"]
+
+[module.data]
+types = ["power_log"]

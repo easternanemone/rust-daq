@@ -1,0 +1,100 @@
+# Python Data Processor Plugin
+#
+# A script-based module demonstrating Python integration via PyO3 for real-time
+# FFT analysis and signal processing of acquired data streams.
+#
+# REQUIRES: pyo3 feature enabled in daq-scripting
+
+[plugin]
+name = "data-processor-python"
+version = "1.0.0"
+description = "Real-time FFT analysis and signal processing using Python/NumPy"
+author = "rust_daq contributors"
+license = "MIT"
+categories = ["data_processing", "signal_analysis"]
+keywords = ["fft", "numpy", "python", "signal", "processing"]
+type = "script"
+
+[plugin.requires]
+rust_daq = ">=0.5.0"
+api_version = "0.1"
+
+[plugin.entry]
+engine = "python"
+script = "processor.py"
+
+[plugin.activation]
+trigger = "on_demand"
+
+[module]
+type_id = "python_fft_processor"
+display_name = "Python FFT Processor"
+description = "Real-time FFT analysis using NumPy for frequency domain analysis of acquired signals"
+category = "data_processing"
+
+[[module.roles]]
+role_id = "data_source"
+display_name = "Data Source"
+description = "Device or stream providing time-domain data for FFT analysis"
+capability = "readable"
+required = true
+allows_multiple = false
+
+[[module.parameters]]
+param_id = "fft_size"
+display_name = "FFT Size"
+description = "Number of samples per FFT window (must be power of 2)"
+param_type = "int"
+default_value = "1024"
+min_value = "64"
+max_value = "16384"
+required = false
+
+[[module.parameters]]
+param_id = "window_type"
+display_name = "Window Function"
+description = "Windowing function applied before FFT"
+param_type = "enum"
+default_value = "hanning"
+enum_values = ["none", "hanning", "hamming", "blackman", "kaiser"]
+required = false
+
+[[module.parameters]]
+param_id = "overlap_percent"
+display_name = "Overlap Percentage"
+description = "Percentage overlap between consecutive FFT windows"
+param_type = "float"
+default_value = "50.0"
+min_value = "0.0"
+max_value = "90.0"
+units = "%"
+required = false
+
+[[module.parameters]]
+param_id = "sample_rate_hz"
+display_name = "Sample Rate"
+description = "Input signal sample rate for frequency axis calculation"
+param_type = "float"
+default_value = "10000.0"
+min_value = "1.0"
+max_value = "1000000.0"
+units = "Hz"
+required = true
+
+[[module.parameters]]
+param_id = "output_type"
+display_name = "Output Type"
+description = "Type of FFT output to produce"
+param_type = "enum"
+default_value = "magnitude"
+enum_values = ["magnitude", "power", "psd", "phase"]
+required = false
+
+[module.events]
+types = ["fft_started", "fft_completed", "peak_detected", "error"]
+
+[module.data]
+types = ["fft_result", "frequency_bins", "peak_frequencies"]
+
+[module.errors]
+patterns = ["FFT_SIZE_ERROR", "BUFFER_UNDERRUN", "NUMPY_ERROR"]

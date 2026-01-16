@@ -1,0 +1,11 @@
+# Python FFT Data Processor Plugin Dependencies
+#
+# Install with: pip install -r requirements.txt
+# Or with uv: uv pip install -r requirements.txt
+
+# NumPy - required for FFT and signal processing
+numpy>=1.20.0
+
+# Optional: SciPy provides additional signal processing functions
+# Uncomment if advanced filtering or spectral analysis is needed
+# scipy>=1.7.0
