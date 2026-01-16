@@ -243,7 +243,7 @@ impl ScanServiceImpl {
 
         // Build combined points based on scan type
         let mut points = Vec::new();
-        Self::build_scan_points_recursive(config, &axis_positions, 0, vec![], &mut points);
+        Self::build_scan_points_recursive(config, &axis_positions, 0, vec![], false, &mut points);
         points
     }
 
@@ -252,6 +252,7 @@ impl ScanServiceImpl {
         axis_positions: &[Vec<f64>],
         axis_idx: usize,
         current_point: Vec<f64>,
+        outer_parity: bool,
         result: &mut Vec<Vec<f64>>,
     ) {
         if axis_idx >= axis_positions.len() {
@@ -262,23 +263,26 @@ impl ScanServiceImpl {
         let positions = &axis_positions[axis_idx];
         let is_snake = config.scan_type() == ScanType::SnakeScan;
 
-        // For snake scan, reverse direction on odd iterations of outer axes
-        let should_reverse = is_snake && (result.len() / positions.len()) % 2 == 1;
+        // For snake scan with N axes, reverse direction based on parity of outer axis indices.
+        // This keeps traversal consistent for 2+ dimensions (boustrophedon ordering).
+        let should_reverse = is_snake && outer_parity;
 
-        let iter: Box<dyn Iterator<Item = &f64>> = if should_reverse {
-            Box::new(positions.iter().rev())
+        let iter: Box<dyn Iterator<Item = (usize, &f64)>> = if should_reverse {
+            Box::new(positions.iter().enumerate().rev())
         } else {
-            Box::new(positions.iter())
+            Box::new(positions.iter().enumerate())
         };
 
-        for &pos in iter {
+        for (idx, &pos) in iter {
             let mut next_point = current_point.clone();
             next_point.push(pos);
+            let next_parity = outer_parity ^ (idx % 2 == 1);
             Self::build_scan_points_recursive(
                 config,
                 axis_positions,
                 axis_idx + 1,
                 next_point,
+                next_parity,
                 result,
             );
         }
@@ -983,6 +987,48 @@ mod tests {
         assert_eq!(points[0], vec![0.0]);
         assert_eq!(points[1], vec![1.0]);
         assert_eq!(points[2], vec![2.0]);
+    }
+
+    #[test]
+    fn test_generate_scan_points_snake_three_axes() {
+        let config = ScanConfig {
+            axes: vec![
+                AxisConfig {
+                    device_id: "x".to_string(),
+                    start_position: 0.0,
+                    end_position: 1.0,
+                    num_points: 2,
+                },
+                AxisConfig {
+                    device_id: "y".to_string(),
+                    start_position: 0.0,
+                    end_position: 1.0,
+                    num_points: 2,
+                },
+                AxisConfig {
+                    device_id: "z".to_string(),
+                    start_position: 0.0,
+                    end_position: 1.0,
+                    num_points: 2,
+                },
+            ],
+            scan_type: ScanType::SnakeScan.into(),
+            ..Default::default()
+        };
+
+        let points = ScanServiceImpl::generate_scan_points(&config);
+        let expected = vec![
+            vec![0.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0],
+            vec![0.0, 1.0, 1.0],
+            vec![0.0, 1.0, 0.0],
+            vec![1.0, 1.0, 0.0],
+            vec![1.0, 1.0, 1.0],
+            vec![1.0, 0.0, 1.0],
+            vec![1.0, 0.0, 0.0],
+        ];
+
+        assert_eq!(points, expected);
     }
 
     /// Test backpressure handling for progress channel (bd-6qaj)
