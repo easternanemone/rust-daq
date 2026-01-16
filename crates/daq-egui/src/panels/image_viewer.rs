@@ -101,6 +101,176 @@ pub struct ParamSetResult {
     pub error: Option<String>,
 }
 
+/// Request for background RGBA conversion (bd-xifj)
+struct RgbaConversionRequest {
+    /// Raw frame data
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    bit_depth: u32,
+    frame_number: u64,
+    /// Display parameters for conversion
+    colormap: Colormap,
+    scale_mode: ScaleMode,
+    display_min: f32,
+    display_max: f32,
+    auto_contrast: bool,
+}
+
+/// Result of background RGBA conversion (bd-xifj)
+struct RgbaConversionResult {
+    /// Converted RGBA data
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    /// Frame number for debugging and ordering (kept for future use)
+    #[allow(dead_code)]
+    frame_number: u64,
+    /// Computed display min/max (for auto-contrast feedback)
+    computed_min: f32,
+    computed_max: f32,
+}
+
+/// Convert raw frame data to RGBA, reusing the provided buffer (bd-wdx3, bd-xifj)
+///
+/// This is a free function that can be called from both the UI thread and background threads.
+/// The buffer is resized as needed but not shrunk, avoiding allocations for same-size frames.
+fn convert_frame_to_rgba_into(req: &RgbaConversionRequest, buffer: &mut Vec<u8>) -> (f32, f32) {
+    let width = req.width;
+    let height = req.height;
+    let bit_depth = req.bit_depth;
+    let colormap = req.colormap;
+    let scale_mode = req.scale_mode;
+    let display_min = req.display_min;
+    let display_max = req.display_max;
+    let auto_contrast = req.auto_contrast;
+    let data = &req.data;
+
+    // Guard against zero or invalid dimensions
+    if width == 0 || height == 0 {
+        buffer.clear();
+        return (0.0, 1.0);
+    }
+
+    // Use checked arithmetic to prevent overflow on large dimensions
+    let Some(pixel_count) = (width as u64).checked_mul(height as u64) else {
+        buffer.clear();
+        return (0.0, 1.0);
+    };
+
+    // Cap allocation to reasonable size (256 MB max for RGBA)
+    const MAX_PIXELS: u64 = 64 * 1024 * 1024; // 64M pixels = 256MB RGBA
+    if pixel_count > MAX_PIXELS {
+        tracing::warn!(width, height, "Frame too large, capping allocation");
+        buffer.clear();
+        return (0.0, 1.0);
+    }
+
+    let pixel_count = pixel_count as usize;
+    let required_size = pixel_count * 4;
+
+    // bd-wdx3: Resize buffer only when needed (grows but never shrinks during session)
+    buffer.resize(required_size, 255); // Pre-fill alpha channel
+
+    // Get the bit depth's max value for normalization
+    let bit_max = match bit_depth {
+        8 => 255.0f32,
+        12 => 4095.0,
+        16 => 65535.0,
+        _ => 65535.0,
+    };
+
+    // Compute min/max for auto-contrast
+    let (effective_min, effective_max) = if auto_contrast {
+        compute_minmax_from_data(data, bit_depth, bit_max)
+    } else {
+        (display_min, display_max)
+    };
+
+    // Compute contrast range (avoid division by zero)
+    let range = (effective_max - effective_min).max(0.001);
+
+    match bit_depth {
+        8 => {
+            // 8-bit grayscale
+            for (i, &pixel) in data.iter().take(pixel_count).enumerate() {
+                let normalized = pixel as f32 / bit_max;
+                let contrasted = ((normalized - effective_min) / range).clamp(0.0, 1.0);
+                let scaled = scale_mode.apply(contrasted);
+                let [r, g, b] = colormap.apply(scaled);
+                buffer[i * 4] = r;
+                buffer[i * 4 + 1] = g;
+                buffer[i * 4 + 2] = b;
+                // Alpha already set to 255
+            }
+        }
+        12 | 16 => {
+            // 16-bit (or 12-bit stored as 16-bit) little-endian
+            for i in 0..pixel_count {
+                let byte_idx = i * 2;
+                if byte_idx + 1 >= data.len() {
+                    break;
+                }
+                let pixel = u16::from_le_bytes([data[byte_idx], data[byte_idx + 1]]);
+                let normalized = pixel as f32 / bit_max;
+                let contrasted = ((normalized - effective_min) / range).clamp(0.0, 1.0);
+                let scaled = scale_mode.apply(contrasted);
+                let [r, g, b] = colormap.apply(scaled);
+                buffer[i * 4] = r;
+                buffer[i * 4 + 1] = g;
+                buffer[i * 4 + 2] = b;
+            }
+        }
+        _ => {
+            // Unknown bit depth - show error pattern (checkerboard)
+            let width_usize = width as usize;
+            for i in 0..pixel_count {
+                let checkerboard = ((i % width_usize) / 16 + (i / width_usize) / 16) % 2;
+                let color = if checkerboard == 0 { 255u8 } else { 128u8 };
+                buffer[i * 4] = color;
+                buffer[i * 4 + 1] = 0;
+                buffer[i * 4 + 2] = color;
+            }
+        }
+    }
+
+    (effective_min, effective_max)
+}
+
+/// Compute min/max values from frame data for auto-contrast (free function version)
+fn compute_minmax_from_data(data: &[u8], bit_depth: u32, bit_max: f32) -> (f32, f32) {
+    let mut min_val = f32::MAX;
+    let mut max_val = f32::MIN;
+
+    match bit_depth {
+        8 => {
+            for &pixel in data {
+                let val = pixel as f32;
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+        12 | 16 => {
+            for chunk in data.chunks_exact(2) {
+                let pixel = u16::from_le_bytes([chunk[0], chunk[1]]);
+                let val = pixel as f32;
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+        _ => {
+            return (0.0, 1.0);
+        }
+    }
+
+    // Normalize to 0.0-1.0 range
+    if min_val < max_val {
+        (min_val / bit_max, max_val / bit_max)
+    } else {
+        (0.0, 1.0)
+    }
+}
+
 /// Whitelist for quick access camera parameters
 const QUICK_ACCESS_PARAMS: &[&str] = &[
     "exposure",    // Matches exposure_ms, exposure_mode, etc.
@@ -543,6 +713,16 @@ pub struct ImageViewerPanel {
     // -- Stream Quality Settings --
     /// Stream quality level for server-side downsampling
     stream_quality: StreamQuality,
+
+    // -- Background RGBA Conversion (bd-xifj: move CPU work off UI thread) --
+    /// Receiver for completed RGBA conversions from background thread
+    rgba_rx: Option<std::sync::mpsc::Receiver<RgbaConversionResult>>,
+    /// Sender for RGBA conversion requests (cloned to background thread)
+    rgba_request_tx: Option<std::sync::mpsc::SyncSender<RgbaConversionRequest>>,
+    /// Pending RGBA data ready to be applied to texture
+    pending_rgba: Option<RgbaConversionResult>,
+    /// Sender to recycle used buffers back to the converter thread (bd-wdx3)
+    rgba_recycle_tx: Option<std::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 impl Default for ImageViewerPanel {
@@ -611,6 +791,13 @@ impl Default for ImageViewerPanel {
 
             // Stream quality for bandwidth control
             stream_quality: StreamQuality::Full,
+
+            // Background RGBA conversion (bd-xifj)
+            // Buffer reuse via recycling channel (bd-wdx3)
+            rgba_rx: None,
+            rgba_request_tx: None,
+            pending_rgba: None,
+            rgba_recycle_tx: None,
         }
     }
 }
@@ -619,6 +806,141 @@ impl ImageViewerPanel {
     /// Create a new image viewer panel
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Spawn background thread for RGBA conversion (bd-xifj)
+    ///
+    /// This moves CPU-intensive pixel conversion off the UI thread to prevent
+    /// UI freezes on 4K 16-bit images at high frame rates.
+    fn spawn_rgba_converter(&mut self) {
+        // Use bounded channel to prevent unbounded queue growth
+        // Queue size of 2 is sufficient: 1 processing, 1 waiting
+        let (request_tx, request_rx) = std::sync::mpsc::sync_channel::<RgbaConversionRequest>(2);
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<RgbaConversionResult>();
+        // Channel for recycling buffers from UI thread back to converter (bd-wdx3)
+        let (recycle_tx, recycle_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+
+        self.rgba_request_tx = Some(request_tx);
+        self.rgba_rx = Some(result_rx);
+        self.rgba_recycle_tx = Some(recycle_tx);
+
+        // Spawn dedicated thread for RGBA conversion
+        std::thread::Builder::new()
+            .name("rgba-converter".into())
+            .spawn(move || {
+                tracing::debug!("RGBA converter thread started");
+
+                while let Ok(req) = request_rx.recv() {
+                    // Get a buffer to reuse: prefer recycled, else allocate new (bd-wdx3)
+                    let mut buffer = recycle_rx
+                        .try_recv()
+                        .unwrap_or_else(|_| Vec::with_capacity(1920 * 1080 * 4));
+
+                    // Perform CPU-intensive conversion
+                    let (computed_min, computed_max) =
+                        convert_frame_to_rgba_into(&req, &mut buffer);
+
+                    // Send result back to UI thread - move buffer ownership (no clone!)
+                    let result = RgbaConversionResult {
+                        rgba: buffer,
+                        width: req.width,
+                        height: req.height,
+                        frame_number: req.frame_number,
+                        computed_min,
+                        computed_max,
+                    };
+
+                    if result_tx.send(result).is_err() {
+                        // Receiver dropped, exit thread
+                        tracing::debug!("RGBA converter result receiver dropped, exiting");
+                        break;
+                    }
+                }
+
+                tracing::debug!("RGBA converter thread exiting");
+            })
+            .expect("Failed to spawn RGBA converter thread");
+    }
+
+    /// Poll for completed RGBA conversions from background thread (bd-xifj)
+    fn poll_rgba_results(&mut self) {
+        if let Some(rx) = &self.rgba_rx {
+            // Drain all available results, keeping only the most recent
+            let mut latest: Option<RgbaConversionResult> = None;
+            while let Ok(result) = rx.try_recv() {
+                latest = Some(result);
+            }
+            if latest.is_some() {
+                self.pending_rgba = latest;
+            }
+        }
+    }
+
+    /// Submit frame for background RGBA conversion (bd-xifj)
+    ///
+    /// Returns true if frame was submitted, false if queue is full (frame dropped)
+    fn submit_for_rgba_conversion(&mut self, frame: &FrameUpdate) -> bool {
+        // Spawn converter thread lazily on first use
+        if self.rgba_request_tx.is_none() {
+            self.spawn_rgba_converter();
+        }
+
+        if let Some(tx) = &self.rgba_request_tx {
+            let request = RgbaConversionRequest {
+                data: frame.data.clone(),
+                width: frame.width,
+                height: frame.height,
+                bit_depth: frame.bit_depth,
+                frame_number: frame.frame_number,
+                colormap: self.colormap,
+                scale_mode: self.scale_mode,
+                display_min: self.display_min,
+                display_max: self.display_max,
+                auto_contrast: self.auto_contrast,
+            };
+
+            match tx.try_send(request) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    // Queue full, frame will be dropped (normal under load)
+                    false
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    // Thread died, clear sender to trigger respawn
+                    self.rgba_request_tx = None;
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Apply pending RGBA result to texture (bd-xifj)
+    fn apply_pending_rgba(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.pending_rgba.take() {
+            // Update auto-contrast display values
+            if self.auto_contrast {
+                self.display_min = result.computed_min;
+                self.display_max = result.computed_max;
+            }
+
+            // Create or update texture
+            let size = [result.width as usize, result.height as usize];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, &result.rgba);
+
+            if let Some(texture) = &mut self.texture {
+                texture.set(image, egui::TextureOptions::NEAREST);
+            } else {
+                self.texture =
+                    Some(ctx.load_texture("camera_frame", image, egui::TextureOptions::NEAREST));
+            }
+
+            // Recycle the buffer back to the converter thread (bd-wdx3)
+            if let Some(tx) = &self.rgba_recycle_tx {
+                let _ = tx.send(result.rgba);
+            }
+        }
     }
 
     /// Poll for async action results
@@ -1451,6 +1773,10 @@ impl ImageViewerPanel {
     /// Fully drains the channel to prevent latency buildup.
     /// With bounded channel, producer blocks when queue is full.
     fn drain_updates(&mut self, ctx: &egui::Context) {
+        // bd-xifj: Poll for completed RGBA conversions from background thread
+        self.poll_rgba_results();
+        self.apply_pending_rgba(ctx);
+
         let Some(rx) = &self.frame_rx else { return };
 
         // Drain ALL pending frames, keeping only the last one
@@ -1468,7 +1794,7 @@ impl ImageViewerPanel {
     }
 
     /// Process a single frame update
-    fn process_frame(&mut self, ctx: &egui::Context, frame: FrameUpdate) {
+    fn process_frame(&mut self, _ctx: &egui::Context, frame: FrameUpdate) {
         // Validate frame belongs to currently selected device (bd-tjwm.3)
         if let Some(expected_device) = &self.device_id {
             if &frame.device_id != expected_device {
@@ -1526,155 +1852,11 @@ impl ImageViewerPanel {
         self.histogram
             .from_frame_data(&frame.data, frame.width, frame.height, frame.bit_depth);
 
-        // Convert frame data to RGBA based on bit depth
-        let rgba = self.convert_to_rgba(&frame);
-
-        // Create or update texture
-        let size = [frame.width as usize, frame.height as usize];
-        let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
-
-        if let Some(texture) = &mut self.texture {
-            texture.set(image, egui::TextureOptions::NEAREST);
-        } else {
-            self.texture =
-                Some(ctx.load_texture("camera_frame", image, egui::TextureOptions::NEAREST));
-        }
-    }
-
-    /// Convert raw frame data to RGBA based on bit depth and colormap
-    fn convert_to_rgba(&mut self, frame: &FrameUpdate) -> Vec<u8> {
-        // Guard against zero or invalid dimensions
-        if frame.width == 0 || frame.height == 0 {
-            return Vec::new();
-        }
-
-        // Use checked arithmetic to prevent overflow on large dimensions
-        let Some(pixel_count) = (frame.width as u64).checked_mul(frame.height as u64) else {
-            return Vec::new();
-        };
-
-        // Cap allocation to reasonable size (256 MB max for RGBA)
-        const MAX_PIXELS: u64 = 64 * 1024 * 1024; // 64M pixels = 256MB RGBA
-        if pixel_count > MAX_PIXELS {
-            tracing::warn!(
-                width = frame.width,
-                height = frame.height,
-                "Frame too large, capping allocation"
-            );
-            return Vec::new();
-        }
-
-        let pixel_count = pixel_count as usize;
-        let mut rgba = vec![255u8; pixel_count * 4]; // Pre-fill alpha
-
-        // Get the bit depth's max value for normalization
-        let bit_max = match frame.bit_depth {
-            8 => 255.0,
-            12 => 4095.0,
-            16 => 65535.0,
-            _ => 65535.0,
-        };
-
-        // If auto-contrast, compute min/max from frame data
-        if self.auto_contrast {
-            let (data_min, data_max) = self.compute_frame_minmax(frame, bit_max);
-            self.display_min = data_min;
-            self.display_max = data_max;
-        }
-
-        // Compute contrast range (avoid division by zero)
-        let range = (self.display_max - self.display_min).max(0.001);
-
-        match frame.bit_depth {
-            8 => {
-                // 8-bit grayscale - validate data length (bd-tjwm.7)
-                if frame.data.len() < pixel_count {
-                    tracing::warn!(
-                        expected = pixel_count,
-                        actual = frame.data.len(),
-                        "8-bit frame data truncated"
-                    );
-                }
-                for (i, &pixel) in frame.data.iter().take(pixel_count).enumerate() {
-                    let normalized = pixel as f32 / bit_max;
-                    // Apply contrast stretch
-                    let contrasted = ((normalized - self.display_min) / range).clamp(0.0, 1.0);
-                    let scaled = self.scale_mode.apply(contrasted);
-                    let [r, g, b] = self.colormap.apply(scaled);
-                    rgba[i * 4] = r;
-                    rgba[i * 4 + 1] = g;
-                    rgba[i * 4 + 2] = b;
-                    // Alpha already set to 255
-                }
-            }
-            12 | 16 => {
-                // 16-bit (or 12-bit stored as 16-bit) little-endian
-                for i in 0..pixel_count {
-                    let byte_idx = i * 2;
-                    if byte_idx + 1 >= frame.data.len() {
-                        break;
-                    }
-                    let pixel =
-                        u16::from_le_bytes([frame.data[byte_idx], frame.data[byte_idx + 1]]);
-                    let normalized = pixel as f32 / bit_max;
-                    // Apply contrast stretch
-                    let contrasted = ((normalized - self.display_min) / range).clamp(0.0, 1.0);
-                    let scaled = self.scale_mode.apply(contrasted);
-                    let [r, g, b] = self.colormap.apply(scaled);
-                    rgba[i * 4] = r;
-                    rgba[i * 4 + 1] = g;
-                    rgba[i * 4 + 2] = b;
-                }
-            }
-            _ => {
-                // Unknown bit depth - show error pattern (checkerboard)
-                // Safe: width already validated as non-zero above
-                let width = frame.width as usize;
-                for i in 0..pixel_count {
-                    let checkerboard = ((i % width) / 16 + (i / width) / 16) % 2;
-                    let color = if checkerboard == 0 { 255u8 } else { 128u8 };
-                    rgba[i * 4] = color;
-                    rgba[i * 4 + 1] = 0;
-                    rgba[i * 4 + 2] = color;
-                }
-            }
-        }
-
-        rgba
-    }
-
-    /// Compute min/max values from frame data for auto-contrast
-    fn compute_frame_minmax(&self, frame: &FrameUpdate, bit_max: f32) -> (f32, f32) {
-        let mut min_val = f32::MAX;
-        let mut max_val = f32::MIN;
-
-        match frame.bit_depth {
-            8 => {
-                for &pixel in &frame.data {
-                    let val = pixel as f32;
-                    min_val = min_val.min(val);
-                    max_val = max_val.max(val);
-                }
-            }
-            12 | 16 => {
-                for chunk in frame.data.chunks_exact(2) {
-                    let pixel = u16::from_le_bytes([chunk[0], chunk[1]]);
-                    let val = pixel as f32;
-                    min_val = min_val.min(val);
-                    max_val = max_val.max(val);
-                }
-            }
-            _ => {
-                return (0.0, 1.0);
-            }
-        }
-
-        // Normalize to 0.0-1.0 range
-        if min_val < max_val {
-            (min_val / bit_max, max_val / bit_max)
-        } else {
-            (0.0, 1.0)
-        }
+        // bd-xifj: Submit frame for background RGBA conversion to prevent UI freezes
+        // The converted RGBA will be applied to texture when polled in drain_updates
+        let _submitted = self.submit_for_rgba_conversion(&frame);
+        // Note: If submission fails (queue full), frame is dropped which is acceptable
+        // under high load - we'll display the next successful frame
     }
 
     /// Render the image viewer panel

@@ -743,6 +743,9 @@ message StreamObservablesRequest {
   repeated string observable_names = 2;
   // Target sample rate in Hz (0 = as fast as available)
   uint32 sample_rate_hz = 3;
+  // Minimum change threshold for sending updates (default: 0.001)
+  // Values smaller than this are treated as noise and won't trigger updates
+  double deadband = 4;
 }
 
 message ObservableValue {

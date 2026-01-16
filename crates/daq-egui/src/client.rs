@@ -757,6 +757,7 @@ impl DaqClient {
             device_ids,
             observable_names,
             sample_rate_hz,
+            deadband: 0.001, // Default minimum change threshold
         };
         // Use hardware_streaming client (no request timeout) for long-lived streams
         let response = self.hardware_streaming.stream_observables(request).await?;

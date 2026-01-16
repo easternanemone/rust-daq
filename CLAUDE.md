@@ -308,6 +308,35 @@ allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 **Security Note:** For production, consider `bind_address = "127.0.0.1"` (loopback only) and enabling `auth_enabled`.
 
+## Streaming Quality Modes
+
+The gRPC frame streaming supports three quality modes to optimize bandwidth:
+
+| Mode | Downsampling | Bandwidth Reduction | Use Case |
+|------|--------------|---------------------|----------|
+| `Full` | None | 0% | Local network, full analysis |
+| `Preview` | 2x2 binning | ~75% (4x smaller) | Remote preview, monitoring |
+| `Fast` | 4x4 binning | ~94% (16x smaller) | Low bandwidth, thumbnails |
+
+### Backpressure Handling
+
+The server implements adaptive frame skipping when the gRPC channel is congested:
+- Channel buffer: 8 frames
+- Skip threshold: 75% full (6 frames queued)
+- When backpressure detected, newest frames are dropped to prevent lag accumulation
+
+### Client Usage
+
+```rust
+// In GUI: Quality selector in image viewer toolbar
+// In gRPC: Set quality field in StreamFramesRequest
+let request = StreamFramesRequest {
+    device_id: "camera0".to_string(),
+    max_fps: 30,
+    quality: StreamQuality::Preview.into(),
+};
+```
+
 ## Development Tools
 
 This project uses three complementary Rust tools:

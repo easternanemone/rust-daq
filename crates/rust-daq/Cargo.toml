@@ -90,7 +90,7 @@ futures = "0.3.30"
 # gRPC & Protobuf (for remote control API)
 # tonic = { version = "0.10", default-features = false, features = ["prost", "codegen"] }
 # prost = "0.12"
-tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["sync", "net"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 similar = "2.3"
 sha2 = "0.10"

@@ -452,14 +452,18 @@ impl HardwareService for HardwareServiceImpl {
                 .await
                 {
                     Ok(Ok(_)) => {
-                        let pos = movable.position().await.unwrap_or(req.value);
+                        let pos = movable.position().await.map_err(|e| {
+                            tracing::error!(device_id = %req.device_id, error = %e, "Failed to verify position after move");
+                            Status::unavailable(format!("Move completed but position verification failed: {}", e))
+                        })?;
                         (pos, Some(true))
                     }
                     Ok(Err(e)) => {
                         return Err(map_hardware_error_to_status(&e.to_string()));
                     }
                     Err(_) => {
-                        let pos = movable.position().await.unwrap_or(req.value);
+                        // On timeout, try to get position but use NaN if read fails (don't mislead with target)
+                        let pos = movable.position().await.unwrap_or(f64::NAN);
                         return Err(Status::deadline_exceeded(format!(
                             "Motion did not complete within {} ms, current position: {}",
                             req.timeout_ms.unwrap_or(0),
@@ -470,11 +474,17 @@ impl HardwareService for HardwareServiceImpl {
             } else {
                 self.await_with_timeout("wait_settled", movable.wait_settled())
                     .await?;
-                let pos = movable.position().await.unwrap_or(req.value);
+                let pos = movable.position().await.map_err(|e| {
+                    tracing::error!(device_id = %req.device_id, error = %e, "Failed to verify position after move");
+                    Status::unavailable(format!("Move completed but position verification failed: {}", e))
+                })?;
                 (pos, Some(true))
             }
         } else {
-            let pos = movable.position().await.unwrap_or(req.value);
+            let pos = movable.position().await.map_err(|e| {
+                tracing::error!(device_id = %req.device_id, error = %e, "Failed to read position after move");
+                Status::unavailable(format!("Move initiated but position read failed: {}", e))
+            })?;
             (pos, None)
         };
 
@@ -515,14 +525,18 @@ impl HardwareService for HardwareServiceImpl {
                 .await
                 {
                     Ok(Ok(_)) => {
-                        let pos = movable.position().await.unwrap_or(0.0);
+                        let pos = movable.position().await.map_err(|e| {
+                            tracing::error!(device_id = %req.device_id, error = %e, "Failed to verify position after relative move");
+                            Status::unavailable(format!("Move completed but position verification failed: {}", e))
+                        })?;
                         (pos, Some(true))
                     }
                     Ok(Err(e)) => {
                         return Err(map_hardware_error_to_status(&e.to_string()));
                     }
                     Err(_) => {
-                        let pos = movable.position().await.unwrap_or(0.0);
+                        // On timeout, try to get position but use NaN if read fails (don't mislead with 0.0)
+                        let pos = movable.position().await.unwrap_or(f64::NAN);
                         return Err(Status::deadline_exceeded(format!(
                             "Motion did not complete within {} ms, current position: {}",
                             req.timeout_ms.unwrap_or(0),
@@ -533,11 +547,17 @@ impl HardwareService for HardwareServiceImpl {
             } else {
                 self.await_with_timeout("wait_settled", movable.wait_settled())
                     .await?;
-                let pos = movable.position().await.unwrap_or(0.0);
+                let pos = movable.position().await.map_err(|e| {
+                    tracing::error!(device_id = %req.device_id, error = %e, "Failed to verify position after relative move");
+                    Status::unavailable(format!("Move completed but position verification failed: {}", e))
+                })?;
                 (pos, Some(true))
             }
         } else {
-            let pos = movable.position().await.unwrap_or(0.0);
+            let pos = movable.position().await.map_err(|e| {
+                tracing::error!(device_id = %req.device_id, error = %e, "Failed to read position after relative move");
+                Status::unavailable(format!("Move initiated but position read failed: {}", e))
+            })?;
             (pos, None)
         };
 
@@ -569,7 +589,10 @@ impl HardwareService for HardwareServiceImpl {
         self.await_with_timeout("stop_motion", movable.stop())
             .await?;
 
-        let position = movable.position().await.unwrap_or(0.0);
+        let position = movable.position().await.map_err(|e| {
+            tracing::error!(device_id = %req.device_id, error = %e, "Failed to read position after stop");
+            Status::unavailable(format!("Stop completed but position read failed: {}", e))
+        })?;
         Ok(Response::new(StopMotionResponse {
             success: true,
             stopped_position: position,
@@ -613,7 +636,10 @@ impl HardwareService for HardwareServiceImpl {
                 .await?;
         }
 
-        let position = movable.position().await.unwrap_or(0.0);
+        let position = movable.position().await.map_err(|e| {
+            tracing::error!(device_id = %req.device_id, error = %e, "Failed to read position after wait_settled");
+            Status::unavailable(format!("Wait settled completed but position read failed: {}", e))
+        })?;
         Ok(Response::new(WaitSettledResponse {
             success: true,
             settled: true,
@@ -1950,6 +1976,15 @@ impl HardwareService for HardwareServiceImpl {
         let observable_names = req.observable_names;
         let sample_rate_hz = req.sample_rate_hz.max(1); // Minimum 1 Hz
 
+        // Deadband: minimum change threshold for sending updates (bd-3j0o)
+        // Default to 0.001 if not specified or zero, but ensure at least f64::EPSILON
+        const DEFAULT_DEADBAND: f64 = 0.001;
+        let deadband = if req.deadband <= 0.0 {
+            DEFAULT_DEADBAND
+        } else {
+            req.deadband.max(f64::EPSILON)
+        };
+
         // Calculate sample interval
         let sample_interval = std::time::Duration::from_secs_f64(1.0 / sample_rate_hz as f64);
 
@@ -2026,8 +2061,8 @@ impl HardwareService for HardwareServiceImpl {
                     // Get current value from watch receiver
                     let current_value = *rx.borrow();
 
-                    // Only send if value changed and rate limit elapsed
-                    if (current_value - *last_value).abs() > f64::EPSILON
+                    // Only send if value changed beyond deadband and rate limit elapsed
+                    if (current_value - *last_value).abs() > deadband
                         && last_sent.elapsed() >= sample_interval
                     {
                         let msg = ObservableValue {
