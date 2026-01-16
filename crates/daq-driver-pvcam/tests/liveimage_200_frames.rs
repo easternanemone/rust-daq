@@ -26,6 +26,30 @@ async fn liveimage_200_frames() {
         return;
     }
 
+    let trace_enabled = std::env::var("PVCAM_TRACE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if trace_enabled {
+        println!(
+            "[PVCAM TRACE] env PVCAM_TRACE=1 PVCAM_TRACE_EVERY={:?}",
+            std::env::var("PVCAM_TRACE_EVERY").ok()
+        );
+        println!("[PVCAM TRACE] env RUST_LOG={:?}", std::env::var("RUST_LOG").ok());
+        println!(
+            "[PVCAM TRACE] env PVCAM_SMOKE_TEST={:?}",
+            std::env::var("PVCAM_SMOKE_TEST").ok()
+        );
+        println!(
+            "[PVCAM TRACE] env PVCAM_CAMERA_NAME={:?}",
+            std::env::var("PVCAM_CAMERA_NAME").ok()
+        );
+        let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .try_init();
+    }
+
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║     200 Frame Streaming Test (C++ LiveImage Equivalent)      ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
@@ -75,7 +99,7 @@ async fn liveimage_200_frames() {
 
                 // Save first frame for analysis
                 if frames_received == 1 {
-                    first_frame_data = Some(frame.data.clone());
+                    first_frame_data = Some(frame.data.to_vec());
                 }
 
                 // Progress indicator

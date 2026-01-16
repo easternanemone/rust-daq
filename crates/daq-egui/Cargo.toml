@@ -81,6 +81,7 @@ rerun_viewer = ["dep:rerun", "dep:mimalloc", "dep:bytemuck", "dep:egui_dock", "d
 # - pvcam_sdk: enables real hardware mode (requires PVCAM SDK)
 pvcam = ["dep:daq-core", "dep:daq-driver-pvcam"]
 pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]
+pvcam_hardware = ["pvcam_sdk"]
 
 [package.metadata.cargo-machete]
 ignored = ["egui_extras", "prost"]  # egui_extras: feature-gated; prost: used by tonic codegen

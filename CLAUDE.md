@@ -53,6 +53,7 @@ bd close <id> --reason "Done"            # Complete work
 | `daq-hardware` | HAL, capability traits (`Movable`, `Readable`, `FrameProducer`), serial drivers |
 | `daq-driver-pvcam` | PVCAM camera driver (requires SDK) |
 | `daq-driver-comedi` | Comedi DAQ driver for Linux boards |
+| `daq-pool` | Zero-allocation object pool for high-FPS frame handling |
 | `daq-storage` | Data persistence (CSV, HDF5, Arrow), ring buffers |
 | `daq-proto` | Protobuf definitions and domain↔proto conversions |
 | `daq-server` | gRPC server with auth and CORS (optional) |

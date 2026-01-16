@@ -13,12 +13,12 @@
 
 use crate::components::connection::PvcamConnection;
 use anyhow::Result;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
 use anyhow::anyhow;
 
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
 use crate::components::connection::get_pvcam_error;
-#[cfg(feature = "pvcam_sdk")]
+#[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
 use pvcam_sys::*;
 #[cfg(feature = "pvcam_sdk")]
 use std::ffi::CStr;
@@ -3507,8 +3507,8 @@ impl PvcamFeatures {
         Ok((width as u32, height as u32))
     }
 
-    #[cfg(feature = "pvcam_sdk")]
-    fn get_u16_param_impl(h: i16, param: u32) -> Result<u16> {
+    #[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
+    pub(crate) fn get_u16_param_impl(h: i16, param: u32) -> Result<u16> {
         let mut value: i32 = 0;
         unsafe {
             // SAFETY: h is valid; value is writable i32 on stack.
@@ -3523,8 +3523,8 @@ impl PvcamFeatures {
         Ok(value as u16)
     }
 
-    #[cfg(feature = "pvcam_sdk")]
-    fn get_enum_count_impl(h: i16, param: u32) -> Result<u32> {
+    #[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
+    pub(crate) fn get_enum_count_impl(h: i16, param: u32) -> Result<u32> {
         let mut count: uns32 = 0;
         unsafe {
             // SAFETY: h is valid; count is writable uns32 on stack.
@@ -3540,7 +3540,7 @@ impl PvcamFeatures {
     }
 
     #[cfg(feature = "pvcam_sdk")]
-    fn get_enum_string_impl(h: i16, param: u32) -> Result<String> {
+    pub(crate) fn get_enum_string_impl(h: i16, param: u32) -> Result<String> {
         // Get current value first
         let mut value: i32 = 0;
         unsafe {
@@ -3572,8 +3572,8 @@ impl PvcamFeatures {
         Ok(format!("{}", value))
     }
 
-    #[cfg(feature = "pvcam_sdk")]
-    fn get_u32_param_impl(h: i16, param: u32) -> Result<u32> {
+    #[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
+    pub(crate) fn get_u32_param_impl(h: i16, param: u32) -> Result<u32> {
         let mut value: uns32 = 0;
         unsafe {
             // SAFETY: h is valid; value is writable uns32 on stack.

@@ -326,7 +326,61 @@ let connection = tokio::task::spawn_blocking({
 
 ---
 
-### 10. Mock Mode for Testing
+### 10. Zero-Allocation Frame Pool (bd-0dax)
+
+**Decision:** Use pre-allocated buffer pools for frame handling to eliminate per-frame heap allocations.
+
+**Location:** `crates/daq-pool/` (new crate), `components/frame_pool.rs`
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      BufferPool                              │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Pre-allocated: 30 × 8MB buffers (~240MB at startup)     ││
+│  │ Lock-free: SegQueue<Vec<u8>> + Semaphore                ││
+│  │ Zero-copy: Bytes::from_owner() integration              ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+                              │
+                    acquire() │ (no allocation)
+                              ▼
+         ┌──────────────────────────────────────────┐
+         │            PooledBuffer                  │
+         │  • copy_from_ptr(sdk_ptr, len)           │
+         │  • freeze() → Bytes (zero-copy)          │
+         └──────────────────────────────────────────┘
+                              │
+                     freeze() │ (Arc increment only)
+                              ▼
+         ┌──────────────────────────────────────────┐
+         │               Bytes                       │
+         │  • Clone = Arc::clone (no copy)          │
+         │  • Drop = returns buffer to pool         │
+         └──────────────────────────────────────────┘
+```
+
+**Memory Flow:**
+1. `BufferPool` pre-allocates `Vec<u8>` buffers at startup
+2. `acquire()` returns `PooledBuffer` (wraps buffer + pool reference)
+3. SDK frame data copied into buffer via `copy_from_ptr()`
+4. `freeze()` converts to `Bytes` (zero-copy, just Arc increment)
+5. `Bytes` passed to Frame, broadcast to consumers
+6. When all `Bytes` clones dropped, `PooledBuffer::drop()` runs
+7. Buffer returned to pool for reuse
+
+**Justification:**
+- **Performance Critical:** At 100 FPS with 8MB frames, per-frame allocation causes GC pressure and latency spikes
+- **Lock-Free Access:** Slot pointers cached at acquire time; no per-access locking
+- **Backpressure Detection:** `try_acquire_timeout()` with 50-100ms timeout detects when consumers lag behind SDK
+- **SDK Compatibility:** CIRC_NO_OVERWRITE mode with 20-slot buffer gives ~200ms before data overwritten
+
+**Alternative Considered:** Per-frame `Vec::with_capacity()` allocation.
+**Why Rejected:** At high frame rates, allocation latency exceeded SDK buffer window.
+
+---
+
+### 11. Mock Mode for Testing
 
 **Decision:** Feature-gate hardware calls; provide mock implementations.
 
@@ -433,3 +487,4 @@ If code reduction is desired, these optional features could be feature-gated:
 |------|--------|-------------|
 | 2025-01-09 | Architecture Review | Initial analysis and documentation |
 | 2025-01-10 | bd-ffi-sdk-match | Updated EOF callback to match SDK examples (pl_exp_get_latest_frame inside callback) |
+| 2026-01-16 | bd-0dax | Added zero-allocation frame pool architecture (daq-pool crate) |

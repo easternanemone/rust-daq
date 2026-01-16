@@ -27,6 +27,7 @@ storage_hdf5 = ["rust_daq/storage_hdf5"]
 storage_arrow = ["rust_daq/storage_arrow"]
 # Real PVCAM SDK (requires installation)
 pvcam_sdk = ["rust_daq/pvcam_sdk", "daq-hardware/pvcam_sdk"]
+pvcam_hardware = ["pvcam_sdk"]
 
 [package.metadata.cargo-machete]
 ignored = ["daq-hardware"]  # Needed for pvcam feature passthrough

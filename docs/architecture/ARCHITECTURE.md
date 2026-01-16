@@ -33,6 +33,7 @@ The project is structured as a Cargo workspace with distinct responsibilities:
 *   **`daq-hardware`**: The Hardware Abstraction Layer (HAL). Defines capability traits and contains drivers for serial devices (Thorlabs, Newport, MaiTai, etc.).
 *   **`daq-driver-pvcam`**: Dedicated driver crate for Photometrics PVCAM cameras (Prime 95B, Prime BSI). Requires PVCAM SDK.
 *   **`daq-driver-comedi`**: Driver for Linux Comedi DAQ boards. Provides analog/digital I/O capabilities.
+*   **`daq-pool`**: Zero-allocation object pool for high-performance frame handling. Provides `Pool<T>` for generic objects and `BufferPool` for byte buffers with `bytes::Bytes` integration. Critical for high-FPS camera streaming where per-frame allocations cause latency.
 *   **`daq-storage`**: Handles data persistence. Implements the "Mullet Strategy": fast **Arrow** ring buffer in the front, reliable **HDF5** writer in the back. Also supports CSV, MATLAB (.mat), and NetCDF formats.
 *   **`daq-proto`**: Defines the wire protocol (Protobuf) for all network communication. Includes domain↔proto conversion utilities.
 
@@ -127,6 +128,7 @@ Experiments are written in [Rhai](https://rhai.rs), a scripting language designe
 │   ├── daq-examples/       # Example code and usage patterns
 │   ├── daq-experiment/     # RunEngine and Plan definitions
 │   ├── daq-hardware/       # HAL with capability traits and drivers
+│   ├── daq-pool/           # Zero-allocation object pool for frame handling
 │   ├── daq-proto/          # Protobuf definitions and conversions
 │   ├── daq-scripting/      # Rhai scripting engine integration
 │   ├── daq-server/         # gRPC server implementation

@@ -15,11 +15,14 @@ pub mod grpc;
 pub mod health;
 #[cfg(feature = "modules")]
 pub mod modules;
+#[cfg(feature = "rerun_sink")]
 pub mod rerun_sink;
 
 #[cfg(feature = "server")]
 pub use grpc::server::DaqServer;
 
 // Re-export Rerun types for server configuration
+#[cfg(feature = "rerun_sink")]
 pub use rerun::{MemoryLimit, ServerOptions};
+#[cfg(feature = "rerun_sink")]
 pub use rerun_sink::{APP_ID, DEFAULT_RERUN_PORT, RerunSink};

@@ -6,7 +6,6 @@ PVCAM camera driver for rust-daq. Defaults to mock mode; hardware mode uses the 
 
 - `mock` (default): build without PVCAM SDK, uses synthetic frames.
 - `pvcam_sdk`: enable PVCAM SDK bindings (requires env vars + libraries).
-- `arrow_tap`: stream frames as Arrow `UInt16Array` for downstream consumers.
 
 ## Dynamic Discovery
 
@@ -134,11 +133,5 @@ Notes:
 - Continuous tests exercise FIFO drain, auto-restart recovery from hardware stalls, and sustained 20s streaming.
 
 ## Examples
-
-- Arrow tap (hardware + Arrow):
-
-  ```bash
-  cargo run -p daq-driver-pvcam --example arrow_tap --features "pvcam_sdk,arrow_tap" -- PrimeBSI
-  ```
 
 - SDK reference binaries: run via `scripts/pvcam_sdk_examples.sh` (see above) when comparing driver behavior to the vendor samples.

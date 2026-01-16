@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -30,12 +31,22 @@ pub struct FrameMetadata {
 ///
 /// Designed to be flexible for FFI (C-compatible memory layout) and efficient storage.
 ///
-/// # Storage
-/// Data is stored as a raw byte vector (`Vec<u8>`).
+/// # Storage (bd-0dax.4)
+///
+/// Data is stored as `bytes::Bytes` for zero-copy sharing and pool integration.
 /// - 8-bit images: 1 byte per pixel.
 /// - 12/16-bit images: 2 bytes per pixel, Little Endian.
 ///
 /// Use `as_u16_slice()` to access 16-bit data safely.
+///
+/// # Zero-Copy Design
+///
+/// The `Bytes` type enables zero-allocation frame handling:
+/// - `Bytes::clone()` is O(1) - just increments a reference count
+/// - When the last reference is dropped, the buffer returns to its pool
+/// - `Bytes` implements `Deref<Target=[u8]>` for slice-like access
+///
+/// For mutating pixel data, use `data.to_vec()` to get an owned copy.
 ///
 /// # Metadata (bd-183h)
 /// Frames include timing and acquisition metadata for end-to-end traceability:
@@ -55,8 +66,8 @@ pub struct Frame {
     /// Bits per pixel (e.g., 8, 12, 16)
     pub bit_depth: u32,
 
-    /// Raw pixel data
-    pub data: Vec<u8>,
+    /// Raw pixel data (zero-copy via bytes::Bytes, bd-0dax.4)
+    pub data: Bytes,
 
     // === Timing & Identification (bd-183h) ===
     /// Driver-provided frame sequence number (monotonically increasing)
@@ -90,7 +101,7 @@ pub struct Frame {
 impl Frame {
     /// Create a new frame from 16-bit pixel data.
     ///
-    /// Copies the data into a byte vector.
+    /// Copies the data into a byte buffer.
     /// Frame metadata fields default to zero/None; use builder methods to set.
     pub fn from_u16(width: u32, height: u32, pixels: &[u16]) -> Self {
         // Convert u16 pixels to u8 bytes (Little Endian)
@@ -103,7 +114,7 @@ impl Frame {
             width,
             height,
             bit_depth: 16,
-            data,
+            data: Bytes::from(data),
             frame_number: 0,
             timestamp_ns: 0,
             exposure_ms: None,
@@ -113,15 +124,16 @@ impl Frame {
         }
     }
 
-    /// Create a new frame from 8-bit pixel data.
+    /// Create a new frame from 8-bit pixel data (Vec<u8>).
     ///
+    /// Takes ownership of the vector.
     /// Frame metadata fields default to zero/None; use builder methods to set.
     pub fn from_u8(width: u32, height: u32, data: Vec<u8>) -> Self {
         Self {
             width,
             height,
             bit_depth: 8,
-            data,
+            data: Bytes::from(data),
             frame_number: 0,
             timestamp_ns: 0,
             exposure_ms: None,
@@ -131,11 +143,33 @@ impl Frame {
         }
     }
 
-    /// Create a frame from raw byte data with explicit bit depth.
+    /// Create a frame from raw byte data (Vec<u8>) with explicit bit depth.
     ///
+    /// Takes ownership of the vector.
     /// The caller must ensure the buffer length matches the expected size for the bit depth.
     /// Frame metadata fields default to zero/None; use builder methods to set.
-    pub fn from_bytes(width: u32, height: u32, bit_depth: u32, data: Vec<u8>) -> Self {
+    pub fn from_vec(width: u32, height: u32, bit_depth: u32, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            bit_depth,
+            data: Bytes::from(data),
+            frame_number: 0,
+            timestamp_ns: 0,
+            exposure_ms: None,
+            roi_x: 0,
+            roi_y: 0,
+            metadata: None,
+        }
+    }
+
+    /// Create a frame from `bytes::Bytes` with explicit bit depth (zero-copy).
+    ///
+    /// This is the preferred constructor for zero-allocation frame handling.
+    /// Use this when you have a `Bytes` from a buffer pool.
+    ///
+    /// Frame metadata fields default to zero/None; use builder methods to set.
+    pub fn from_bytes(width: u32, height: u32, bit_depth: u32, data: Bytes) -> Self {
         Self {
             width,
             height,

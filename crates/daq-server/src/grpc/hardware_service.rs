@@ -1316,7 +1316,7 @@ impl HardwareService for HardwareServiceImpl {
                             width: frame.width,
                             height: frame.height,
                             bit_depth: frame.bit_depth,
-                            data: frame.data.clone(),
+                            data: frame.data.to_vec(),
                             // Use driver-provided frame number and timestamp (bd-183h)
                             frame_number: frame.frame_number,
                             timestamp_ns: frame.timestamp_ns,

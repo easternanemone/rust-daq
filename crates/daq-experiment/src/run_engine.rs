@@ -535,7 +535,8 @@ impl RunEngine {
                             // Wait for a frame (async)
                             match rx.recv().await {
                                 Ok(frame) => {
-                                    let data_copy = frame.data.clone();
+                                    // Convert Bytes to Vec<u8> for EventDoc serialization
+                                    let data_copy = frame.data.to_vec();
                                     ctx.collected_frames.insert(device_id.clone(), data_copy);
                                     debug!(device = %device_id, size = %frame.data.len(), "Captured frame");
                                 }

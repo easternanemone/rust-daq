@@ -80,7 +80,7 @@ newport_power_meter = ["serial"] # Newport 1830-C power meter
 # PVCAM camera support
 pvcam = ["dep:daq-driver-pvcam"]                           # Mock driver (fast compile)
 pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]        # Real SDK (requires installation)
-pvcam_arrow = ["pvcam", "daq-driver-pvcam/arrow_tap"]      # Arrow data format
+pvcam_hardware = ["pvcam_sdk"]                             # Back-compat alias for pvcam_sdk
 
 # Comedi DAQ support (Linux only)
 comedi = ["dep:daq-driver-comedi"]                         # Mock driver (fast compile)

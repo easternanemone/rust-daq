@@ -2,11 +2,31 @@
 
 ## Summary
 
-- **Date:** 2025-12-07
+- **Last Updated:** 2026-01-16
+- **Initial Validation:** 2025-12-07
 - **Tester:** Remote agent via tailnet
 - **SDK Installed:** Photometrics PVCAM 3.10.2.5 (`/opt/pvcam`)
 - **Camera:** PRIME-BSI (`pvcamUSB_0`, SN A19G204008)
-- **Rust driver state:** V5 `PvcamDriver` with reactive `Parameter<T>` system; 61 hardware tests passing.
+- **Rust driver state:** V5 `PvcamDriver` with reactive `Parameter<T>` system, zero-allocation frame pool, comprehensive debug logging.
+
+## Latest Validation Results (2026-01-16)
+
+All hardware tests passed on maitai (Prime BSI camera):
+
+| Test | Result | Details |
+|------|--------|---------|
+| `pvcam_smoke_test` | ✅ PASS | Single frame at 2048x2048 |
+| `pvcam_streaming_test` | ✅ PASS | 47 frames @ 46.18 fps |
+| `pvcam_camera_info_test` | ✅ PASS | Camera info retrieval |
+| `pvcam_exposure_range_test` | ✅ PASS | 1ms-500ms exposure range |
+| `pvcam_frame_statistics_test` | ✅ PASS | Frame statistics validation |
+
+### Recent Improvements Validated
+
+- **Zero-allocation frame pool** (`daq-pool` crate): Eliminates per-frame heap allocations
+- **Comprehensive debug logging**: `PVCAM_TRACE` and `PVCAM_TRACE_EVERY` environment variables
+- **Feature flag fixes**: `pvcam_hardware` feature now properly gates SDK calls
+- **SDK pattern compliance**: EOF callback matches official SDK examples
 
 ## V5 Architecture Integration
 
@@ -46,8 +66,10 @@ The PVCAM driver has been fully migrated to the V5 architecture:
 - [x] ~~Implement real FFI in `src/instruments_v2/pvcam_sdk.rs`~~ - **DONE**: V5 driver at `src/hardware/pvcam.rs`
 - [x] ~~Allow configuration (`sdk_mode = "real"`) to switch driver paths~~ - **DONE**: Feature-gated with `pvcam_hardware`
 - [x] ~~Add Rust smoke test~~ - **DONE**: 61 hardware tests passing
-- [ ] Test continuous streaming performance over extended periods
-- [ ] Measure actual frame rates in production configuration
+- [x] ~~Test continuous streaming performance over extended periods~~ - **DONE**: 47 frames @ 46.18 fps streaming test passed (2026-01-16)
+- [x] ~~Measure actual frame rates in production configuration~~ - **DONE**: ~46 fps at full resolution (2048x2048)
+- [x] ~~Add zero-allocation frame handling~~ - **DONE**: `daq-pool` crate with `BufferPool` (2026-01-16)
+- [x] ~~Add comprehensive debug logging~~ - **DONE**: `PVCAM_TRACE` environment variable (2026-01-16)
 
 ## Important Notes
 

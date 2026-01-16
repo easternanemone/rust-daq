@@ -1322,10 +1322,12 @@ pub async fn start_server_with_hardware(
                             if let Some(slice) = frame.as_u16_slice() {
                                 daq_core::core::PixelBuffer::U16(slice.to_vec())
                             } else {
-                                daq_core::core::PixelBuffer::U8(frame.data.clone())
+                                // Convert Bytes to Vec<u8> for PixelBuffer
+                                daq_core::core::PixelBuffer::U8(frame.data.to_vec())
                             }
                         }
-                        _ => daq_core::core::PixelBuffer::U8(frame.data.clone()),
+                        // Convert Bytes to Vec<u8> for PixelBuffer
+                        _ => daq_core::core::PixelBuffer::U8(frame.data.to_vec()),
                     };
 
                     let measurement = daq_core::core::Measurement::Image {

@@ -176,6 +176,7 @@ newport_power_meter = ["serial", "daq-hardware/newport_power_meter"]
 # PVCAM camera support
 pvcam = ["serial", "daq-hardware/pvcam"]
 pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
+pvcam_hardware = ["pvcam_sdk"]
 
 # All hardware drivers (with mock PVCAM)
 all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam"]

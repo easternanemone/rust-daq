@@ -348,6 +348,51 @@ Wait for camera to cool down after power-on. Typical stabilization time: 5-10 mi
 2. Check for external trigger if in triggered mode
 3. Verify camera isn't in an error state
 
+### Debug Logging
+
+For diagnosing camera issues, enable detailed trace logging with environment variables:
+
+```bash
+# Enable general PVCAM debug logging
+export PVCAM_TRACE=1
+export RUST_LOG=daq_driver_pvcam=debug
+
+# Enable high-frequency frame loop tracing (very verbose)
+export PVCAM_TRACE_EVERY=1
+
+# Run with trace-level logging
+RUST_LOG=daq_driver_pvcam=trace cargo test --features pvcam_hardware
+```
+
+**Environment Variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `PVCAM_TRACE=1` | Enable debug logging for connection, setup, and acquisition |
+| `PVCAM_TRACE_EVERY=1` | Log every frame in the acquisition loop (very verbose) |
+| `RUST_LOG=daq_driver_pvcam=debug` | Standard Rust tracing at debug level |
+| `RUST_LOG=daq_driver_pvcam=trace` | Maximum verbosity including FFI calls |
+
+**What gets logged:**
+- Camera open/close operations with PVCAM error codes
+- Acquisition setup parameters (buffer count, frame size, mode)
+- EOF callback registration and invocation
+- Frame retrieval attempts and status
+- Stream start/stop lifecycle
+
+### Camera Busy Error (Error 195)
+
+If you see `LIBUSB_ERROR_BUSY` or error 195:
+
+```bash
+# Find and kill any process holding the camera
+ps aux | grep -E "(rust-daq|pvcam)" | grep -v grep
+kill <pid>
+
+# Or kill all rust-daq processes
+pkill -f rust-daq-daemon
+```
+
 ## API Quick Reference
 
 ### Capability Traits Implemented
