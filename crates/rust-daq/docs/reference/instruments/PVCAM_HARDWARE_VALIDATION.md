@@ -70,6 +70,7 @@ The PVCAM driver has been fully migrated to the V5 architecture:
 - [x] ~~Measure actual frame rates in production configuration~~ - **DONE**: ~46 fps at full resolution (2048x2048)
 - [x] ~~Add zero-allocation frame handling~~ - **DONE**: `daq-pool` crate with `BufferPool` (2026-01-16)
 - [x] ~~Add comprehensive debug logging~~ - **DONE**: `PVCAM_TRACE` environment variable (2026-01-16)
+- gRPC real-world scenario specification: `crates/rust-daq/docs/reference/instruments/PVCAM_GRPC_REAL_WORLD_SCENARIO.md`
 
 ## Important Notes
 
@@ -107,3 +108,22 @@ The smoke test performs the following actions:
 If `PVCAM_SMOKE_TEST` is unset the test prints a skip message and exits immediately. This allows the test to live in the repository without impacting CI environments that lack hardware access.
 
 **CI Integration:** The smoke test is configured to run in `.github/workflows/ci.yml` under the `hardware-tests` job (main branch pushes only).
+
+## gRPC Real-World Harness
+
+Use the harness to exercise the full gRPC streaming path with real hardware and
+capture a JSON summary of throughput, drop rate, latency, and system load.
+
+```bash
+RUST_LOG=info,daq_pvcam=debug,daq_server=info \
+  cargo run --release -p rust-daq --bin pvcam_grpc_harness \
+    --features 'server,instrument_photometrics,pvcam_hardware' -- \
+    --scenario baseline \
+    --duration-secs 1800 \
+    --output /tmp/pvcam_grpc_harness_summary.json
+```
+
+Notes:
+- Set `--scenario stress` for the higher throughput run.
+- Set `--scenario multiclient` to validate secondary subscriber behavior.
+- Use `--no-server` if a daemon is already running on the target host.

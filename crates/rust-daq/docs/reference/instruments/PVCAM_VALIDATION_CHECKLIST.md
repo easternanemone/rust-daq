@@ -146,6 +146,16 @@ cargo test --test hardware_pvcam_validation \
   -- --test-threads=1 --nocapture
 ```
 
+### gRPC Real-World Harness (End-to-End Streaming)
+```bash
+RUST_LOG=info,daq_pvcam=debug,daq_server=info \
+  cargo run --release -p rust-daq --bin pvcam_grpc_harness \
+    --features 'server,instrument_photometrics,pvcam_hardware' -- \
+    --scenario baseline \
+    --duration-secs 1800 \
+    --output /tmp/pvcam_grpc_harness_summary.json
+```
+
 ## Known Limitations
 
 1. **Speed Table Name**: PARAM_SPDTAB_NAME not available on Prime BSI (returns PL_ERR_PARAMETER_NOT_AVAILABLE). This is expected per Photometrics documentation.
@@ -190,7 +200,8 @@ cargo test --test pvcam_hardware_smoke \
 
 ## Next Steps
 
-- [ ] Validate with Prime 95B when hardware available
-- [ ] Test continuous streaming performance over extended periods
-- [ ] Measure actual frame rates in production configuration
-- [ ] Test with different triggering modes (external hardware trigger)
+- Validate with Prime 95B when hardware available.
+- Test continuous streaming performance over extended periods.
+- Measure actual frame rates in production configuration.
+- Test with different triggering modes (external hardware trigger).
+- gRPC real-world scenario specification: `crates/rust-daq/docs/reference/instruments/PVCAM_GRPC_REAL_WORLD_SCENARIO.md`.

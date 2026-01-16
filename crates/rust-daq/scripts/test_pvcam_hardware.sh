@@ -23,6 +23,10 @@ REMOTE_DIR="/home/maitai/rust-daq"
 PVCAM_SDK_DIR="/opt/pvcam/sdk"
 PVCAM_LIB_DIR="/opt/pvcam/library/x86_64"
 PVCAM_UMD_PATH="/opt/pvcam/drivers/user-mode"
+RUN_GRPC_HARNESS="${PVCAM_GRPC_HARNESS:-0}"
+GRPC_SCENARIO="${PVCAM_GRPC_SCENARIO:-baseline}"
+GRPC_DURATION_SECS="${PVCAM_GRPC_DURATION_SECS:-1800}"
+GRPC_OUTPUT_PATH="${PVCAM_GRPC_OUTPUT_PATH:-/tmp/pvcam_grpc_harness_summary.json}"
 
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -126,6 +130,22 @@ cargo test --features 'instrument_photometrics,pvcam_hardware,hardware_tests' --
 }
 echo ""
 
+# Test 4: gRPC real-world harness (optional, long-running)
+echo "=== Test 4: gRPC Real-World Harness ==="
+if [ "$RUN_GRPC_HARNESS" = "1" ]; then
+    echo "Running gRPC harness scenario: $GRPC_SCENARIO (${GRPC_DURATION_SECS}s)"
+    RUST_LOG=info,daq_pvcam=debug,daq_server=info \
+      cargo run --release -p rust-daq --bin pvcam_grpc_harness \
+        --features 'server,instrument_photometrics,pvcam_hardware' -- \
+        --scenario "$GRPC_SCENARIO" \
+        --duration-secs "$GRPC_DURATION_SECS" \
+        --output "$GRPC_OUTPUT_PATH"
+    echo "gRPC harness summary: $GRPC_OUTPUT_PATH"
+else
+    echo "Skipping gRPC harness (set PVCAM_GRPC_HARNESS=1 to enable)"
+fi
+echo ""
+
 # Summary
 echo "=== Test Summary ==="
 echo ""
@@ -145,6 +165,18 @@ if grep -q "test result: ok" /tmp/pvcam_streaming_results.txt 2>/dev/null; then
     echo "  [PASS] Streaming tests passed"
 else
     echo "  [FAIL] Some streaming tests failed - check output above"
+fi
+
+echo ""
+echo "gRPC harness:"
+if [ "$RUN_GRPC_HARNESS" = "1" ]; then
+    if [ -f "$GRPC_OUTPUT_PATH" ]; then
+        echo "  [INFO] Summary file: $GRPC_OUTPUT_PATH"
+    else
+        echo "  [WARN] No harness summary file found"
+    fi
+else
+    echo "  [SKIP] PVCAM_GRPC_HARNESS not set"
 fi
 
 echo ""
