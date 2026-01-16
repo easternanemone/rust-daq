@@ -43,6 +43,7 @@ daq-storage = { path = "../daq-storage", default-features = false }
 daq-server = { path = "../daq-server", optional = true }
 daq-scripting = { path = "../daq-scripting", optional = true }
 daq-experiment = { path = "../daq-experiment" }
+daq-plugin-api = { path = "../daq-plugin-api", optional = true }
 
 # Memory Allocator (Microsoft Rust Guidelines: M-MIMALLOC-APPS)
 # mimalloc removed (moved to daq-bin)
@@ -197,6 +198,9 @@ scripting_python = ["daq-scripting/python"]
 
 # Plugin hot-reload (development only)
 plugins_hot_reload = ["dep:notify"]
+
+# Native plugin loading (abi_stable)
+native_plugins = ["dep:daq-plugin-api"]
 
 # Binaries and Examples moved to separate crates
 # [[bin]]

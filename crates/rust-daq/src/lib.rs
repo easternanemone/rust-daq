@@ -126,6 +126,9 @@ pub mod modules;
 #[cfg(all(not(target_arch = "wasm32"), feature = "scripting"))]
 pub mod plugins;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "native_plugins"))]
+pub mod plugins;
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "scripting"))]
 #[deprecated(
     since = "0.5.0",
