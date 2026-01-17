@@ -2118,6 +2118,7 @@ impl PvcamAcquisition {
                 // Async recv() suspends the task until a message arrives or channel closes.
                 // No polling loop needed - tokio handles the wake-up efficiently.
                 if let Some(err) = error_rx.recv().await {
+                    eprintln!("[PVCAM DEBUG] Error watcher received error: {:?} - setting streaming=false", err);
                     tracing::error!("Acquisition error (involuntary stop): {:?}", err);
 
                     // bd-g9po: Store error for recovery detection
@@ -2312,13 +2313,16 @@ impl PvcamAcquisition {
     }
 
     pub async fn stop_stream(&self, conn: &PvcamConnection) -> Result<()> {
+        eprintln!("[PVCAM DEBUG] stop_stream() called - setting streaming=false");
         tracing::debug!("stop_stream called");
         // Avoid unused parameter warnings when hardware feature is disabled.
         let _ = conn;
         if !self.streaming.get() {
+            eprintln!("[PVCAM DEBUG] stop_stream: not streaming, returning early");
             tracing::debug!("stop_stream: not streaming, returning early");
             return Ok(());
         }
+        eprintln!("[PVCAM DEBUG] stop_stream: setting streaming=false NOW");
         tracing::debug!("stop_stream: setting streaming=false");
         self.streaming.set(false).await?;
 
