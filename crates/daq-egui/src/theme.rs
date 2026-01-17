@@ -40,7 +40,15 @@ impl ThemePreference {
             Self::Dark => true,
             Self::System => {
                 // Detect system preference - default to dark if unavailable
-                dark_light::detect().map_or(true, |mode| mode == dark_light::Mode::Dark)
+                #[cfg(feature = "dark-light")]
+                {
+                    dark_light::detect().map_or(true, |mode| mode == dark_light::Mode::Dark)
+                }
+                #[cfg(not(feature = "dark-light"))]
+                {
+                    // Fall back to dark mode when dark-light crate not available
+                    true
+                }
             }
         }
     }

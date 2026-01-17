@@ -78,7 +78,8 @@ daq-driver-pvcam = { path = "../daq-driver-pvcam", optional = true }
 
 [features]
 default = ["standalone"]
-standalone = ["dep:eframe", "dep:egui_extras", "dep:egui_dock", "dep:egui_plot", "dep:egui-phosphor", "dep:egui-notify", "dep:dark-light"]
+# Note: dark-light temporarily removed due to ashpd/zbus version conflict (2025-01-17)
+standalone = ["dep:eframe", "dep:egui_extras", "dep:egui_dock", "dep:egui_plot", "dep:egui-phosphor", "dep:egui-notify"]
 # Embedded Rerun viewer with gRPC camera streaming support
 rerun_viewer = ["dep:rerun", "dep:mimalloc", "dep:bytemuck", "dep:egui_dock", "dep:egui_plot"]
 
