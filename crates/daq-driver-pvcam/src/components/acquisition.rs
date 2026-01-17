@@ -3059,6 +3059,14 @@ impl PvcamAcquisition {
                             "get_oldest_frame returned no frame despite callback"
                         );
                     }
+                    // bd-spin-fix-2026-01-17: CRITICAL - Must consume pending count on failure!
+                    // Without this, the fast-path in wait_for_frames sees pending_frames > 0,
+                    // returns immediately, and we spin at 100% CPU trying to fetch a
+                    // non-existent frame. Decrement counter and yield to break spin cycle.
+                    if use_callback {
+                        callback_ctx.consume_one();
+                        std::thread::yield_now();
+                    }
                     // Continue outer loop to wait for next callback
                     continue;
                 }
