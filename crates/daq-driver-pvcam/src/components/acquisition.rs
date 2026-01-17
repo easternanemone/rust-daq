@@ -3007,6 +3007,11 @@ impl PvcamAcquisition {
 
                 if consecutive_timeouts >= max_consecutive_timeouts {
                     tracing::warn!("Frame loop: max consecutive timeouts reached");
+                    eprintln!(
+                        "[PVCAM DEBUG] Breaking due to max consecutive timeouts (iter={}, timeouts={})",
+                        loop_iteration,
+                        consecutive_timeouts
+                    );
                     // Gemini SDK review: Signal involuntary stop on timeout
                     let _ = error_tx.send(AcquisitionError::Timeout);
                     break;
@@ -3473,6 +3478,12 @@ impl PvcamAcquisition {
                                 "No subscribers for {} seconds, stopping acquisition (bd-cckz)",
                                 NO_SUBSCRIBER_TIMEOUT.as_secs()
                             );
+                            eprintln!(
+                                "[PVCAM DEBUG] Breaking due to no subscribers for {} seconds (iter={}, receiver_count={})",
+                                NO_SUBSCRIBER_TIMEOUT.as_secs(),
+                                loop_iteration,
+                                receiver_count
+                            );
                             break;
                         }
                     }
@@ -3550,6 +3561,10 @@ impl PvcamAcquisition {
             // Gemini SDK review: Exit outer loop on fatal error to prevent zombie streaming
             if fatal_error {
                 tracing::error!("Exiting frame loop due to fatal acquisition error");
+                eprintln!(
+                    "[PVCAM DEBUG] Breaking due to fatal_error (iter={})",
+                    loop_iteration
+                );
                 break;
             }
 
