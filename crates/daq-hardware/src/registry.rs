@@ -78,6 +78,7 @@ use daq_core::capabilities::{
     Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
 };
 use daq_core::data::Frame;
+use daq_core::driver::{DeviceComponents, DriverFactory};
 use daq_core::error::DaqError;
 use daq_core::pipeline::MeasurementSource;
 
@@ -583,9 +584,30 @@ struct RegisteredDevice {
 /// Usage:
 /// - Pass as `Arc<DeviceRegistry>`
 /// - Call methods directly (no `.read().await` needed)
+///
+/// # Plugin Architecture (DriverFactory)
+///
+/// The registry supports dynamic driver registration via the [`DriverFactory`] trait.
+/// Driver crates can register their factories at startup, which are then used to
+/// instantiate devices based on TOML configuration.
+///
+/// ```rust,ignore
+/// // In main.rs or setup code:
+/// registry.register_factory(Box::new(MyDriverFactory));
+///
+/// // Later, devices with driver_type matching the factory are auto-instantiated:
+/// registry.register_from_config(config).await?;
+/// ```
 pub struct DeviceRegistry {
     /// Registered devices by ID (thread-safe via DashMap)
     devices: DashMap<DeviceId, RegisteredDevice>,
+
+    /// Registered driver factories by driver_type (thread-safe via DashMap)
+    ///
+    /// Factories are consulted first when registering a device. If a factory
+    /// matches the driver_type, it's used to build the device. Otherwise,
+    /// the legacy DriverType enum matching is used as fallback.
+    factories: DashMap<String, Box<dyn DriverFactory>>,
 
     /// Shared serial ports for ELL14 multidrop bus (interior mutability for async access)
     /// Key: port path (e.g., "/dev/ttyUSB0"), Value: shared Arc<Mutex<SerialStream>>
@@ -595,6 +617,33 @@ pub struct DeviceRegistry {
     /// Plugin factory for loading YAML-defined drivers (tokio_serial feature only)
     #[cfg(feature = "serial")]
     plugin_factory: Arc<RwLock<crate::plugin::registry::PluginFactory>>,
+
+    /// Registration failures for debugging (device_id, driver_type, error_message)
+    registration_failures: DashMap<DeviceId, RegistrationFailure>,
+}
+
+/// Information about a failed device registration
+#[derive(Debug, Clone)]
+pub struct RegistrationFailure {
+    /// Device ID that failed to register
+    pub device_id: String,
+    /// Device name from config
+    pub device_name: String,
+    /// Driver type that failed
+    pub driver_type: String,
+    /// Error message describing the failure
+    pub error: String,
+}
+
+/// Information about a registered driver factory
+#[derive(Debug, Clone)]
+pub struct FactoryInfo {
+    /// The driver_type string this factory handles
+    pub driver_type: String,
+    /// Human-readable factory name
+    pub name: String,
+    /// List of capabilities this driver provides
+    pub capabilities: Vec<String>,
 }
 
 impl DeviceRegistry {
@@ -602,10 +651,12 @@ impl DeviceRegistry {
     pub fn new() -> Self {
         Self {
             devices: DashMap::new(),
+            factories: DashMap::new(),
             #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             #[cfg(feature = "serial")]
             plugin_factory: Arc::new(RwLock::new(crate::plugin::registry::PluginFactory::new())),
+            registration_failures: DashMap::new(),
         }
     }
 
@@ -616,9 +667,11 @@ impl DeviceRegistry {
     ) -> Self {
         Self {
             devices: DashMap::new(),
+            factories: DashMap::new(),
             #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             plugin_factory,
+            registration_failures: DashMap::new(),
         }
     }
 
@@ -644,6 +697,256 @@ impl DeviceRegistry {
             .load_plugins(path)
             .await
             .map_err(|e| DaqError::Configuration(e.to_string()))
+    }
+
+    // =========================================================================
+    // Driver Factory Management
+    // =========================================================================
+
+    /// Register a driver factory for a specific driver type.
+    ///
+    /// When a device with matching driver_type is registered, this factory's
+    /// `build()` method will be called instead of the legacy DriverType matching.
+    ///
+    /// # Arguments
+    /// * `factory` - The factory to register
+    ///
+    /// # Returns
+    /// The previous factory for this driver_type, if any was registered.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use daq_core::driver::DriverFactory;
+    ///
+    /// struct MyMotorFactory;
+    /// impl DriverFactory for MyMotorFactory {
+    ///     fn driver_type(&self) -> &'static str { "my_motor" }
+    ///     // ... other methods
+    /// }
+    ///
+    /// registry.register_factory(Box::new(MyMotorFactory));
+    /// ```
+    ///
+    /// # Thread Safety
+    /// This method is thread-safe and can be called concurrently.
+    pub fn register_factory(
+        &self,
+        factory: Box<dyn DriverFactory>,
+    ) -> Option<Box<dyn DriverFactory>> {
+        let driver_type = factory.driver_type().to_string();
+        tracing::info!(
+            driver_type = %driver_type,
+            name = %factory.name(),
+            capabilities = ?factory.capabilities(),
+            "Registering driver factory"
+        );
+        self.factories.insert(driver_type, factory)
+    }
+
+    /// Unregister a driver factory by driver type.
+    ///
+    /// # Arguments
+    /// * `driver_type` - The driver type string to unregister
+    ///
+    /// # Returns
+    /// The removed factory, if one was registered with this driver_type.
+    pub fn unregister_factory(&self, driver_type: &str) -> Option<Box<dyn DriverFactory>> {
+        self.factories
+            .remove(driver_type)
+            .map(|(_, factory)| factory)
+    }
+
+    /// Check if a factory is registered for a driver type.
+    pub fn has_factory(&self, driver_type: &str) -> bool {
+        self.factories.contains_key(driver_type)
+    }
+
+    /// List all registered factory driver types.
+    pub fn list_factories(&self) -> Vec<String> {
+        self.factories
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get factory information for debugging/introspection.
+    pub fn factory_info(&self, driver_type: &str) -> Option<FactoryInfo> {
+        self.factories.get(driver_type).map(|entry| {
+            let factory = entry.value();
+            FactoryInfo {
+                driver_type: factory.driver_type().to_string(),
+                name: factory.name().to_string(),
+                capabilities: factory
+                    .capabilities()
+                    .iter()
+                    .map(|c| format!("{:?}", c))
+                    .collect(),
+            }
+        })
+    }
+
+    /// Register a device from TOML configuration using registered factories.
+    ///
+    /// This method is the preferred way to register devices when using the
+    /// DriverFactory plugin architecture. It:
+    /// 1. Looks up a factory matching the driver_type in the TOML config
+    /// 2. Validates the config using the factory's validate() method
+    /// 3. Builds the device using the factory's build() method
+    /// 4. Registers the resulting DeviceComponents
+    ///
+    /// # Arguments
+    /// * `device_id` - Unique identifier for the device
+    /// * `device_name` - Human-readable name for the device
+    /// * `driver_type` - The driver type string (must match a registered factory)
+    /// * `config` - TOML configuration value for the driver
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Device ID is already registered
+    /// - No factory is registered for the driver_type
+    /// - Configuration validation fails
+    /// - Driver build fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use toml::Value;
+    ///
+    /// let config: Value = toml::from_str(r#"
+    ///     port = "/dev/ttyUSB0"
+    ///     address = "2"
+    /// "#)?;
+    ///
+    /// registry.register_from_toml(
+    ///     "rotator_2",
+    ///     "ELL14 Rotator #2",
+    ///     "ell14",
+    ///     config,
+    /// ).await?;
+    /// ```
+    pub async fn register_from_toml(
+        &self,
+        device_id: &str,
+        device_name: &str,
+        driver_type: &str,
+        config: toml::Value,
+    ) -> Result<(), DaqError> {
+        if self.devices.contains_key(device_id) {
+            return Err(DaqError::Configuration(format!(
+                "Device '{}' is already registered",
+                device_id
+            )));
+        }
+
+        // Look up factory
+        let factory = self.factories.get(driver_type).ok_or_else(|| {
+            DaqError::Configuration(format!(
+                "No factory registered for driver_type '{}'. \
+                 Available factories: {:?}",
+                driver_type,
+                self.list_factories()
+            ))
+        })?;
+
+        // Validate configuration
+        factory.validate(&config).map_err(|e| {
+            DaqError::Configuration(format!(
+                "Configuration validation failed for device '{}' ({}): {}",
+                device_id, driver_type, e
+            ))
+        })?;
+
+        // Build device components
+        tracing::info!(
+            device_id = %device_id,
+            device_name = %device_name,
+            driver_type = %driver_type,
+            "Building device from factory"
+        );
+
+        let components = factory.build(config).await.map_err(|e| {
+            DaqError::Instrument(format!(
+                "Factory build failed for device '{}' ({}): {}",
+                device_id, driver_type, e
+            ))
+        })?;
+
+        // Convert to RegisteredDevice
+        let registered = self.components_to_registered(
+            device_id.to_string(),
+            device_name.to_string(),
+            driver_type.to_string(),
+            components,
+        );
+
+        self.devices.insert(device_id.to_string(), registered);
+        tracing::info!(device_id = %device_id, "Device registered successfully");
+        Ok(())
+    }
+
+    /// Convert DeviceComponents from a factory into a RegisteredDevice.
+    ///
+    /// This bridges the new DriverFactory pattern with the legacy RegisteredDevice
+    /// structure used internally by the registry.
+    fn components_to_registered(
+        &self,
+        device_id: String,
+        device_name: String,
+        driver_type: String,
+        components: DeviceComponents,
+    ) -> RegisteredDevice {
+        // Create a synthetic DeviceConfig for the legacy structure
+        // Note: We use MockStage as a placeholder since the actual driver type
+        // doesn't matter once the device is instantiated.
+        let config = DeviceConfig {
+            id: device_id,
+            name: device_name,
+            driver: DriverType::MockStage {
+                initial_position: 0.0,
+            },
+        };
+
+        // Convert daq_core::driver::DeviceMetadata to local DeviceMetadata
+        let metadata = DeviceMetadata {
+            category: components.metadata.category,
+            position_units: components.metadata.position_units.clone(),
+            min_position: components.metadata.min_position,
+            max_position: components.metadata.max_position,
+            measurement_units: components.metadata.measurement_units.clone(),
+            frame_width: components.metadata.frame_width,
+            frame_height: components.metadata.frame_height,
+            bits_per_pixel: components.metadata.bits_per_pixel,
+            min_exposure_ms: components.metadata.min_exposure_ms,
+            max_exposure_ms: components.metadata.max_exposure_ms,
+            min_wavelength_nm: components.metadata.min_wavelength_nm,
+            max_wavelength_nm: components.metadata.max_wavelength_nm,
+        };
+
+        // Log the actual driver_type for debugging (not the synthetic one)
+        tracing::debug!(
+            driver_type = %driver_type,
+            capabilities = ?components.capabilities(),
+            "Converting DeviceComponents to RegisteredDevice"
+        );
+
+        RegisteredDevice {
+            config,
+            movable: components.movable,
+            readable: components.readable,
+            triggerable: components.triggerable,
+            frame_producer: components.frame_producer,
+            source_frame: components.source_frame,
+            exposure_control: components.exposure_control,
+            settable: components.settable,
+            stageable: components.stageable,
+            commandable: components.commandable,
+            parameterized: components.parameterized,
+            shutter_control: components.shutter_control,
+            emission_control: components.emission_control,
+            wavelength_tunable: components.wavelength_tunable,
+            metadata,
+        }
     }
 
     /// Register a device from configuration
@@ -757,6 +1060,48 @@ impl DeviceRegistry {
                 }
             })
             .collect()
+    }
+
+    /// Record a registration failure for debugging
+    ///
+    /// Called when a device fails to register, allowing the failure to be
+    /// queried later (e.g., shown in the GUI).
+    pub fn record_registration_failure(&self, failure: RegistrationFailure) {
+        tracing::error!(
+            device_id = %failure.device_id,
+            device_name = %failure.device_name,
+            driver_type = %failure.driver_type,
+            error = %failure.error,
+            "Device registration failed"
+        );
+        self.registration_failures
+            .insert(failure.device_id.clone(), failure);
+    }
+
+    /// List all registration failures
+    ///
+    /// Returns devices that failed to register during initialization.
+    /// Useful for GUI display and debugging.
+    pub fn list_registration_failures(&self) -> Vec<RegistrationFailure> {
+        self.registration_failures
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
+    /// Check if there are any registration failures
+    pub fn has_registration_failures(&self) -> bool {
+        !self.registration_failures.is_empty()
+    }
+
+    /// Get the number of registration failures
+    pub fn registration_failure_count(&self) -> usize {
+        self.registration_failures.len()
+    }
+
+    /// Clear all registration failures (e.g., after user acknowledges)
+    pub fn clear_registration_failures(&self) {
+        self.registration_failures.clear();
     }
 
     /// Get device info by ID
@@ -1082,10 +1427,14 @@ impl DeviceRegistry {
                     }
                 };
 
-                let driver = Arc::new(crate::drivers::ell14::Ell14Driver::with_shared_port(
-                    shared_port,
-                    &address,
-                ));
+                // Use with_shared_port_calibrated() to validate device responds and get calibration
+                let driver = Arc::new(
+                    crate::drivers::ell14::Ell14Driver::with_shared_port_calibrated(
+                        shared_port,
+                        &address,
+                    )
+                    .await?,
+                );
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver.clone()),
@@ -1112,9 +1461,10 @@ impl DeviceRegistry {
 
             #[cfg(feature = "newport")]
             DriverType::Newport1830C { port } => {
-                let driver = Arc::new(crate::drivers::newport_1830c::Newport1830CDriver::new(
-                    &port,
-                )?);
+                // Use new_async() to validate device responds correctly on connection
+                let driver = Arc::new(
+                    crate::drivers::newport_1830c::Newport1830CDriver::new_async(&port).await?,
+                );
                 // Newport1830C implements WavelengthTunable (bd-3xw2.5)
                 let wavelength_range = driver.wavelength_range();
                 Ok(RegisteredDevice {
@@ -1143,7 +1493,8 @@ impl DeviceRegistry {
 
             #[cfg(feature = "spectra_physics")]
             DriverType::MaiTai { port } => {
-                let driver = Arc::new(crate::drivers::maitai::MaiTaiDriver::new(&port)?);
+                // Use new_async() to validate device identity on connection
+                let driver = Arc::new(crate::drivers::maitai::MaiTaiDriver::new_async(&port).await?);
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
@@ -1168,7 +1519,9 @@ impl DeviceRegistry {
 
             #[cfg(feature = "newport")]
             DriverType::Esp300 { port, axis } => {
-                let driver = Arc::new(crate::drivers::esp300::Esp300Driver::new(&port, axis)?);
+                // Use new_async() to validate device responds correctly on connection
+                let driver =
+                    Arc::new(crate::drivers::esp300::Esp300Driver::new_async(&port, axis).await?);
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver.clone()),
@@ -1510,18 +1863,46 @@ pub async fn create_registry_from_config(
     }
 
     // Register all configured devices
+    let mut success_count = 0;
+    let mut failure_count = 0;
+
     for device_config in &config.devices {
-        println!("Attempting to register device: {}", device_config.id);
+        tracing::info!(
+            device_id = %device_config.id,
+            device_name = %device_config.name,
+            driver_type = %device_config.driver.driver_name(),
+            "Registering device"
+        );
+
         if let Err(e) = registry.register(device_config.clone()).await {
-            println!("ERROR registering device '{}': {}", device_config.id, e);
-            tracing::warn!(
-                "Failed to register device '{}': {} (continuing with other devices)",
-                device_config.id,
-                e
-            );
+            failure_count += 1;
+            registry.record_registration_failure(RegistrationFailure {
+                device_id: device_config.id.clone(),
+                device_name: device_config.name.clone(),
+                driver_type: device_config.driver.driver_name().to_string(),
+                error: e.to_string(),
+            });
         } else {
-            println!("SUCCESS registering device '{}'", device_config.id);
+            success_count += 1;
+            tracing::info!(
+                device_id = %device_config.id,
+                "Device registered successfully"
+            );
         }
+    }
+
+    // Summary logging
+    if failure_count > 0 {
+        tracing::warn!(
+            success_count,
+            failure_count,
+            "Device registration completed with failures"
+        );
+    } else {
+        tracing::info!(
+            success_count,
+            "All devices registered successfully"
+        );
     }
 
     Ok(registry)
@@ -1669,6 +2050,107 @@ pub async fn create_mock_registry() -> Result<DeviceRegistry, DaqError> {
         .await?;
 
     Ok(registry)
+}
+
+/// Register all mock driver factories with a registry.
+///
+/// This enables using `register_from_toml()` for mock devices:
+///
+/// ```rust,ignore
+/// use daq_hardware::registry::{DeviceRegistry, register_mock_factories};
+///
+/// let registry = DeviceRegistry::new();
+/// register_mock_factories(&registry);
+///
+/// // Now register mock devices via TOML config
+/// registry.register_from_toml(
+///     "my_stage",
+///     "My Test Stage",
+///     "mock_stage",
+///     toml::Value::Table(Default::default()),
+/// ).await?;
+/// ```
+pub fn register_mock_factories(registry: &DeviceRegistry) {
+    use daq_driver_mock::{MockCameraFactory, MockPowerMeterFactory, MockStageFactory};
+
+    registry.register_factory(Box::new(MockStageFactory));
+    registry.register_factory(Box::new(MockCameraFactory));
+    registry.register_factory(Box::new(MockPowerMeterFactory));
+}
+
+/// Register all available hardware driver factories.
+///
+/// This registers factories for all enabled hardware drivers:
+/// - Mock drivers (always available)
+/// - Thorlabs ELL14 (when `thorlabs` feature enabled)
+/// - Newport ESP300 and 1830-C (when `newport` feature enabled)
+/// - Spectra-Physics MaiTai (when `spectra_physics` feature enabled)
+/// - Config-driven devices from TOML files
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use daq_hardware::registry::{DeviceRegistry, register_all_factories};
+/// use std::path::Path;
+///
+/// let registry = DeviceRegistry::new();
+/// register_all_factories(&registry, Some(Path::new("config/devices"))).await?;
+///
+/// // Now use register_from_toml() for any supported driver type
+/// ```
+pub async fn register_all_factories(
+    registry: &DeviceRegistry,
+    config_dir: Option<&std::path::Path>,
+) -> Result<(), DaqError> {
+    // Register mock factories (always available)
+    register_mock_factories(registry);
+
+    // Register Thorlabs factories
+    #[cfg(feature = "thorlabs")]
+    {
+        use daq_driver_thorlabs::Ell14Factory;
+        registry.register_factory(Box::new(Ell14Factory));
+    }
+
+    // Register Newport factories
+    #[cfg(feature = "newport")]
+    {
+        use daq_driver_newport::{Esp300Factory, Newport1830CFactory};
+        registry.register_factory(Box::new(Esp300Factory));
+        registry.register_factory(Box::new(Newport1830CFactory));
+    }
+
+    // Register Spectra-Physics factories
+    #[cfg(feature = "spectra_physics")]
+    {
+        use daq_driver_spectra_physics::MaiTaiFactory;
+        registry.register_factory(Box::new(MaiTaiFactory));
+    }
+
+    // Load and register config-driven factories from TOML files
+    #[cfg(feature = "serial")]
+    if let Some(dir) = config_dir {
+        if dir.exists() {
+            match crate::factory::load_all_factories(dir) {
+                Ok(factories) => {
+                    for factory in factories {
+                        let driver_type = factory.driver_type().to_string();
+                        registry.register_factory(Box::new(factory));
+                        tracing::debug!(driver_type = %driver_type, "Registered config factory");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load config factories from {}: {}",
+                        dir.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // =============================================================================
@@ -1913,6 +2395,45 @@ mod tests {
 
         // Clean up
         std::fs::remove_file(temp_port).ok();
+    }
+
+    #[test]
+    fn test_ell14_driver_capabilities() {
+        // Verify ELL14 driver type has the Movable capability
+        let driver = DriverType::Ell14 {
+            port: "/dev/ttyUSB0".to_string(),
+            address: "2".to_string(),
+        };
+
+        let capabilities = driver.capabilities();
+        assert!(
+            capabilities.contains(&Capability::Movable),
+            "ELL14 should have Movable capability, got: {:?}",
+            capabilities
+        );
+        assert_eq!(
+            capabilities.len(),
+            1,
+            "ELL14 should have exactly one capability (Movable)"
+        );
+
+        // Verify driver name
+        assert_eq!(driver.driver_name(), "ell14");
+    }
+
+    #[test]
+    fn test_ell14_address_validation() {
+        // Valid addresses: 0-9, A-F
+        for addr in ["0", "1", "9", "A", "F", "a", "f"] {
+            let result = validate_ell14_address(addr);
+            assert!(result.is_ok(), "Address '{}' should be valid", addr);
+        }
+
+        // Invalid addresses
+        for addr in ["", "00", "G", "z", "10", "FF"] {
+            let result = validate_ell14_address(addr);
+            assert!(result.is_err(), "Address '{}' should be invalid", addr);
+        }
     }
 
     #[tokio::test]

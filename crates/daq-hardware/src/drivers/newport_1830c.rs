@@ -19,13 +19,14 @@
 //!
 //! # Example Usage
 //!
-//! ```no_run
-//! use rust_daq::hardware::newport_1830c::Newport1830CDriver;
-//! use rust_daq::hardware::capabilities::Readable;
+//! ```ignore
+//! use daq_hardware::drivers::newport_1830c::Newport1830CDriver;
+//! use daq_hardware::capabilities::Readable;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let meter = Newport1830CDriver::new("/dev/ttyS0")?;
+//!     // Use new_async() for production - validates device identity
+//!     let meter = Newport1830CDriver::new_async("/dev/ttyS0").await?;
 //!
 //!     // Configure attenuator and filter
 //!     meter.set_attenuator(false).await?;  // 0=off, 1=on
@@ -55,6 +56,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
 use tracing::instrument;
 
@@ -140,6 +142,69 @@ impl Newport1830CDriver {
             wavelength_nm,
             params,
         }
+    }
+
+    /// Create a new Newport 1830-C driver with device validation
+    ///
+    /// This is the **preferred constructor** for production use. It uses
+    /// `spawn_blocking` to avoid blocking the async runtime during serial port
+    /// opening, and validates that a Newport 1830-C is actually connected.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyS0", "COM3")
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Serial port cannot be opened
+    /// - Device doesn't respond to wavelength query
+    /// - Response is not a valid wavelength (indicates wrong device)
+    pub async fn new_async(port_path: &str) -> Result<Self> {
+        let port_path_owned = port_path.to_string();
+
+        // Use spawn_blocking to avoid blocking the async runtime
+        let port = spawn_blocking(move || {
+            tokio_serial::new(&port_path_owned, 9600)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .flow_control(tokio_serial::FlowControl::None)
+                .open_native_async()
+                .context(format!(
+                    "Failed to open Newport 1830-C serial port: {}",
+                    port_path_owned
+                ))
+        })
+        .await
+        .context("spawn_blocking for Newport 1830-C port opening failed")??;
+
+        let driver = Self::build(Arc::new(Mutex::new(BufReader::new(Box::new(port)))));
+
+        // Validate device by querying wavelength - this confirms a 1830-C is connected
+        // Other devices won't respond with a 4-digit wavelength value
+        match driver.query_wavelength().await {
+            Ok(wavelength) => {
+                if !(300.0..=1100.0).contains(&wavelength) {
+                    return Err(anyhow!(
+                        "Newport 1830-C validation failed: wavelength {} nm out of expected range (300-1100 nm). \
+                         Check that the correct device is connected to this port.",
+                        wavelength
+                    ));
+                }
+                tracing::info!(
+                    "Newport 1830-C validated: wavelength calibration at {} nm",
+                    wavelength
+                );
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Newport 1830-C validation failed: no response to wavelength query. \
+                     Check that the correct device is connected to this port. Error: {}",
+                    e
+                ));
+            }
+        }
+
+        Ok(driver)
     }
 
     #[cfg(test)]

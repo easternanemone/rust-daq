@@ -53,32 +53,38 @@
 //! See `tests/hardware_serial_tests.rs` for comprehensive integration tests.
 
 // Re-export capabilities, registry, resource_pool
-pub use daq_hardware::drivers::mock;
 pub use daq_hardware::{capabilities, registry, resource_pool};
 
 #[cfg(feature = "serial")]
 pub use daq_hardware::plugin;
 
-// Common capability imports
-// pub use capabilities::{ExposureControl, FrameProducer, Movable, Readable, Triggerable}; (Removed duplicate)
+// =============================================================================
+// Driver Re-exports from standalone crates
+// =============================================================================
 
-// Real Hardware Drivers
+/// Mock drivers for testing and simulation
+#[cfg(feature = "mock")]
+pub use daq_driver_mock as mock;
+
+/// Thorlabs ELL14 rotation mount
 #[cfg(feature = "thorlabs")]
-pub use daq_hardware::drivers::ell14;
+pub use daq_driver_thorlabs as ell14;
 
+/// Newport ESP300 motion controller
 #[cfg(feature = "newport")]
-pub use daq_hardware::drivers::esp300;
+pub use daq_driver_newport::esp300;
 
+/// Newport 1830-C power meter
+#[cfg(feature = "newport")]
+pub use daq_driver_newport::newport_1830c;
+
+/// Spectra-Physics MaiTai laser
+#[cfg(feature = "spectra_physics")]
+pub use daq_driver_spectra_physics as maitai;
+
+/// PVCAM camera driver
 #[cfg(all(feature = "pvcam", feature = "pvcam_sdk"))]
 pub use daq_hardware::drivers::pvcam;
-
-// PvcamDriver is available via pvcam::PvcamDriver when the above features are enabled
-
-#[cfg(feature = "spectra_physics")]
-pub use daq_hardware::drivers::maitai;
-
-#[cfg(feature = "newport_power_meter")]
-pub use daq_hardware::drivers::newport_1830c;
 
 // Configure daq-hardware mock serial for tests
 /// Mock serial port support for testing without hardware

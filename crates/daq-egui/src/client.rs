@@ -226,6 +226,23 @@ impl DaqClient {
         Ok(response.into_inner().devices)
     }
 
+    /// List all devices with registration failures included
+    pub async fn list_devices_full(
+        &mut self,
+    ) -> Result<(
+        Vec<daq_proto::daq::DeviceInfo>,
+        Vec<daq_proto::daq::RegistrationFailure>,
+    )> {
+        let response = self
+            .hardware
+            .list_devices(ListDevicesRequest {
+                capability_filter: None,
+            })
+            .await?;
+        let inner = response.into_inner();
+        Ok((inner.devices, inner.registration_failures))
+    }
+
     /// Get device state
     pub async fn get_device_state(
         &mut self,

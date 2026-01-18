@@ -240,6 +240,15 @@ message ListDevicesRequest {
 
 message ListDevicesResponse {
   repeated DeviceInfo devices = 1;
+  repeated RegistrationFailure registration_failures = 2;
+}
+
+// Information about a device that failed to register
+message RegistrationFailure {
+  string device_id = 1;
+  string device_name = 2;
+  string driver_type = 3;
+  string error = 4;
 }
 
 // Device categorization for GUI organization

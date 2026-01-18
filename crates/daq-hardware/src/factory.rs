@@ -36,8 +36,14 @@ use crate::config::load_device_config;
 use crate::config::schema::DeviceConfig;
 use crate::drivers::generic_serial::{GenericSerialDriver, SharedPort};
 use anyhow::{anyhow, Context, Result};
+use daq_core::driver::{
+    Capability as CoreCapability, DeviceComponents, DriverFactory as DriverFactoryTrait,
+};
 use enum_dispatch::enum_dispatch;
+use futures::future::BoxFuture;
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // =============================================================================
 // ConfiguredDriver Enum
@@ -176,19 +182,14 @@ impl DriverFactory {
 
     /// Create a driver from a TOML configuration file.
     ///
+    /// **Note:** This is a synchronous version that does NOT run the init sequence.
+    /// For production use, prefer [`create_from_file_async`] which validates the
+    /// device by running the init sequence.
+    ///
     /// # Arguments
     /// * `config_path` - Path to the TOML configuration file
     /// * `port` - Shared serial port for communication
     /// * `address` - Device address (for RS-485 multidrop protocols)
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let driver = DriverFactory::create_from_file(
-    ///     Path::new("config/devices/ell14.toml"),
-    ///     shared_port,
-    ///     "2"
-    /// )?;
-    /// ```
     pub fn create_from_file(
         config_path: &Path,
         port: SharedPort,
@@ -200,15 +201,95 @@ impl DriverFactory {
         Self::create(config, port, address)
     }
 
-    /// Create a driver with custom calibration parameter.
+    /// Create a driver with device validation via init sequence.
+    ///
+    /// This is the **preferred method** for production use. It:
+    /// 1. Creates the driver from the config
+    /// 2. Runs the `init_sequence` defined in the TOML config
+    /// 3. Validates responses match expected patterns
+    ///
+    /// # Arguments
+    /// * `config` - Loaded device configuration
+    /// * `port` - Shared serial port for communication
+    /// * `address` - Device address (for RS-485 multidrop protocols)
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Driver creation fails
+    /// - Init sequence fails (device doesn't respond correctly)
+    pub async fn create_async(
+        config: DeviceConfig,
+        port: SharedPort,
+        address: &str,
+    ) -> Result<ConfiguredDriver> {
+        let protocol = config.device.protocol.to_lowercase();
+        let driver = GenericSerialDriver::new(config, port, address)?;
+
+        // Run init sequence to validate device responds correctly
+        driver.run_init_sequence().await.with_context(|| {
+            format!(
+                "Device validation failed for protocol '{}' at address '{}'. \
+                 Check that the correct device is connected.",
+                protocol, address
+            )
+        })?;
+
+        // Map protocol to enum variant
+        let configured = match protocol.as_str() {
+            "elliptec" | "ell14" => ConfiguredDriver::Ell14(driver),
+            "esp300" | "newport_esp300" => ConfiguredDriver::Esp300(driver),
+            "newport_1830c" | "newport1830c" => ConfiguredDriver::Newport1830C(driver),
+            "maitai" | "mai_tai" => ConfiguredDriver::MaiTai(driver),
+            _ => ConfiguredDriver::Generic(driver),
+        };
+
+        Ok(configured)
+    }
+
+    /// Create a driver from a TOML file with device validation.
+    ///
+    /// This is the **preferred method** for production use. It runs the
+    /// `init_sequence` defined in the TOML config to validate the device.
+    ///
+    /// # Arguments
+    /// * `config_path` - Path to the TOML configuration file
+    /// * `port` - Shared serial port for communication
+    /// * `address` - Device address (for RS-485 multidrop protocols)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let driver = DriverFactory::create_from_file_async(
+    ///     Path::new("config/devices/ell14.toml"),
+    ///     shared_port,
+    ///     "2"
+    /// ).await?;
+    /// ```
+    pub async fn create_from_file_async(
+        config_path: &Path,
+        port: SharedPort,
+        address: &str,
+    ) -> Result<ConfiguredDriver> {
+        let config = load_device_config(config_path)
+            .with_context(|| format!("Failed to load config: {}", config_path.display()))?;
+
+        Self::create_async(config, port, address).await
+    }
+
+    /// Create a driver with custom calibration parameter and device validation.
     ///
     /// Useful for devices that need runtime calibration override.
+    /// Runs the init sequence to validate the device responds correctly.
     ///
     /// # Arguments
     /// * `config_path` - Path to the TOML configuration file
     /// * `port` - Shared serial port for communication
     /// * `address` - Device address
     /// * `pulses_per_degree` - Custom calibration factor
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Config loading or driver creation fails
+    /// - Init sequence fails (device doesn't respond correctly)
     pub async fn create_calibrated(
         config_path: &Path,
         port: SharedPort,
@@ -220,6 +301,15 @@ impl DriverFactory {
 
         let protocol = config.device.protocol.to_lowercase();
         let driver = GenericSerialDriver::new(config, port, address)?;
+
+        // Run init sequence to validate device responds correctly
+        driver.run_init_sequence().await.with_context(|| {
+            format!(
+                "Device validation failed for protocol '{}' at address '{}'. \
+                 Check that the correct device is connected.",
+                protocol, address
+            )
+        })?;
 
         // Set custom calibration
         driver
@@ -334,6 +424,282 @@ impl ConfiguredBus {
     pub fn shared_port(&self) -> SharedPort {
         self.port.clone()
     }
+}
+
+// =============================================================================
+// GenericSerialDriverFactory - Implements DriverFactory Trait
+// =============================================================================
+
+/// Configuration for GenericSerialDriver instances.
+///
+/// This config is passed to `build()` and contains instance-specific
+/// settings like port path and device address.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GenericSerialInstanceConfig {
+    /// Serial port path (e.g., "/dev/ttyUSB0")
+    pub port: String,
+
+    /// Device address on the bus (for RS-485 multidrop protocols)
+    #[serde(default = "default_address")]
+    pub address: String,
+
+    /// Baud rate override (uses config default if not specified)
+    pub baud_rate: Option<u32>,
+}
+
+fn default_address() -> String {
+    "0".to_string()
+}
+
+/// Factory for creating GenericSerialDriver instances from TOML device configs.
+///
+/// This factory bridges the TOML-based config system with the DriverFactory trait,
+/// enabling config-driven devices to be registered via the plugin architecture.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use daq_hardware::factory::GenericSerialDriverFactory;
+/// use daq_hardware::config::load_device_config;
+/// use std::path::Path;
+///
+/// // Load device definition TOML
+/// let device_config = load_device_config(Path::new("config/devices/ell14.toml"))?;
+///
+/// // Create factory with embedded device config
+/// let factory = GenericSerialDriverFactory::new(device_config);
+///
+/// // Register with DeviceRegistry
+/// registry.register_factory(Box::new(factory));
+///
+/// // Later, register device instances with port/address config
+/// let instance_config = toml::from_str(r#"
+///     port = "/dev/ttyUSB1"
+///     address = "2"
+/// "#)?;
+/// registry.register_from_toml("rotator_2", "ELL14 Rotator #2", "ell14", instance_config).await?;
+/// ```
+pub struct GenericSerialDriverFactory {
+    /// The device configuration (commands, responses, conversions, etc.)
+    device_config: DeviceConfig,
+
+    /// Cached capabilities derived from device config
+    capabilities: Vec<CoreCapability>,
+
+    /// Driver type string (from device protocol)
+    driver_type: String,
+
+    /// Human-readable name
+    name: String,
+
+    /// Optional shared port cache for RS-485 bus sharing
+    /// Map from port path -> shared port
+    #[cfg(feature = "serial")]
+    port_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, SharedPort>>>,
+}
+
+impl GenericSerialDriverFactory {
+    /// Create a new factory with the given device configuration.
+    ///
+    /// The factory extracts the driver type from the device protocol
+    /// and capabilities from the device config.
+    pub fn new(device_config: DeviceConfig) -> Self {
+        let driver_type = device_config.device.protocol.to_lowercase();
+        let name = device_config.device.name.clone();
+
+        // Convert device config capabilities to CoreCapability
+        use crate::config::schema::CapabilityType;
+        let capabilities = device_config
+            .device
+            .capabilities
+            .iter()
+            .filter_map(|cap| match cap {
+                CapabilityType::Movable => Some(CoreCapability::Movable),
+                CapabilityType::Readable => Some(CoreCapability::Readable),
+                CapabilityType::WavelengthTunable => Some(CoreCapability::WavelengthTunable),
+                CapabilityType::ShutterControl => Some(CoreCapability::ShutterControl),
+                CapabilityType::EmissionControl => Some(CoreCapability::EmissionControl),
+                CapabilityType::Triggerable => Some(CoreCapability::Triggerable),
+                CapabilityType::ExposureControl => Some(CoreCapability::ExposureControl),
+                CapabilityType::Settable => Some(CoreCapability::Settable),
+                CapabilityType::Stageable => Some(CoreCapability::Stageable),
+                CapabilityType::Commandable => Some(CoreCapability::Commandable),
+                CapabilityType::Parameterized => Some(CoreCapability::Parameterized),
+                _ => None,
+            })
+            .collect();
+
+        Self {
+            device_config,
+            capabilities,
+            driver_type,
+            name,
+            #[cfg(feature = "serial")]
+            port_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Create a new factory from a TOML configuration file.
+    pub fn from_file(config_path: &Path) -> Result<Self> {
+        let device_config = load_device_config(config_path)
+            .with_context(|| format!("Failed to load config: {}", config_path.display()))?;
+        Ok(Self::new(device_config))
+    }
+
+    /// Get the embedded device configuration.
+    pub fn device_config(&self) -> &DeviceConfig {
+        &self.device_config
+    }
+
+}
+
+impl DriverFactoryTrait for GenericSerialDriverFactory {
+    fn driver_type(&self) -> &'static str {
+        // Leak the string to get 'static lifetime
+        // This is acceptable since factories are long-lived
+        Box::leak(self.driver_type.clone().into_boxed_str())
+    }
+
+    fn name(&self) -> &'static str {
+        Box::leak(self.name.clone().into_boxed_str())
+    }
+
+    fn capabilities(&self) -> &'static [CoreCapability] {
+        // Leak the slice to get 'static lifetime
+        Box::leak(self.capabilities.clone().into_boxed_slice())
+    }
+
+    fn validate(&self, config: &toml::Value) -> Result<()> {
+        // Try to deserialize as instance config
+        let _: GenericSerialInstanceConfig = config.clone().try_into().map_err(|e| {
+            anyhow!(
+                "Invalid instance config for '{}': {}. \
+                 Expected 'port' (string) and optional 'address' (string)",
+                self.driver_type,
+                e
+            )
+        })?;
+        Ok(())
+    }
+
+    #[cfg(feature = "serial")]
+    fn build(&self, config: toml::Value) -> BoxFuture<'static, Result<DeviceComponents>> {
+        let device_config = self.device_config.clone();
+        let port_cache = self.port_cache.clone();
+        let driver_type = self.driver_type.clone();
+
+        Box::pin(async move {
+            let instance: GenericSerialInstanceConfig = config.try_into().map_err(|e| {
+                anyhow!(
+                    "Failed to parse instance config for '{}': {}",
+                    driver_type,
+                    e
+                )
+            })?;
+
+            // Determine baud rate
+            let baud_rate = instance
+                .baud_rate
+                .unwrap_or(device_config.connection.baud_rate);
+
+            // Get or open the shared port
+            let resolved_path = crate::port_resolver::resolve_port(&instance.port)
+                .map_err(|e| anyhow!("Failed to resolve port '{}': {}", instance.port, e))?;
+
+            let shared_port = {
+                let cache = port_cache.lock().unwrap();
+                cache.get(&resolved_path).cloned()
+            };
+
+            let shared_port = match shared_port {
+                Some(port) => port,
+                None => {
+                    use tokio_serial::SerialPortBuilderExt;
+
+                    let path_clone = resolved_path.clone();
+                    let port = tokio::task::spawn_blocking(move || {
+                        tokio_serial::new(&path_clone, baud_rate)
+                            .data_bits(tokio_serial::DataBits::Eight)
+                            .parity(tokio_serial::Parity::None)
+                            .stop_bits(tokio_serial::StopBits::One)
+                            .flow_control(tokio_serial::FlowControl::None)
+                            .open_native_async()
+                            .context("Failed to open serial port")
+                    })
+                    .await
+                    .context("spawn_blocking failed")??;
+
+                    let boxed: crate::drivers::generic_serial::DynSerial = Box::new(port);
+                    let shared: SharedPort = Arc::new(Mutex::new(boxed));
+
+                    // Cache it
+                    {
+                        let mut cache = port_cache.lock().unwrap();
+                        cache.insert(resolved_path, shared.clone());
+                    }
+
+                    shared
+                }
+            };
+
+            // Create the driver
+            let driver = GenericSerialDriver::new(device_config, shared_port, &instance.address)?;
+
+            // Run init sequence to validate device
+            driver.run_init_sequence().await.with_context(|| {
+                format!(
+                    "Device validation failed for '{}' at address '{}'. \
+                     Check that the correct device is connected.",
+                    driver_type, instance.address
+                )
+            })?;
+
+            // Build DeviceComponents with capabilities
+            // GenericSerialDriver implements all the capability traits directly
+            let driver_arc = Arc::new(driver);
+
+            Ok(DeviceComponents {
+                movable: Some(driver_arc.clone() as Arc<dyn crate::capabilities::Movable>),
+                readable: Some(driver_arc.clone() as Arc<dyn crate::capabilities::Readable>),
+                wavelength_tunable: Some(
+                    driver_arc.clone() as Arc<dyn crate::capabilities::WavelengthTunable>
+                ),
+                shutter_control: Some(driver_arc as Arc<dyn crate::capabilities::ShutterControl>),
+                ..Default::default()
+            })
+        })
+    }
+
+    #[cfg(not(feature = "serial"))]
+    fn build(&self, _config: toml::Value) -> BoxFuture<'static, Result<DeviceComponents>> {
+        Box::pin(async move {
+            Err(anyhow!(
+                "Serial feature not enabled. Cannot build GenericSerialDriver."
+            ))
+        })
+    }
+}
+
+/// Load all device configs from a directory and create factories.
+///
+/// This is useful for loading all device definitions at startup.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use daq_hardware::factory::load_all_factories;
+/// use std::path::Path;
+///
+/// let factories = load_all_factories(Path::new("config/devices"))?;
+/// for factory in factories {
+///     registry.register_factory(Box::new(factory));
+/// }
+/// ```
+pub fn load_all_factories(dir: &Path) -> Result<Vec<GenericSerialDriverFactory>> {
+    use crate::config::load_all_devices;
+
+    let configs = load_all_devices(dir)?;
+    Ok(configs.into_iter().map(GenericSerialDriverFactory::new).collect())
 }
 
 // =============================================================================

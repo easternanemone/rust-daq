@@ -45,6 +45,12 @@ daq-scripting = { path = "../daq-scripting", optional = true }
 daq-experiment = { path = "../daq-experiment" }
 daq-plugin-api = { path = "../daq-plugin-api", optional = true }
 
+# Standalone driver crates
+daq-driver-mock = { path = "../daq-driver-mock", optional = true }
+daq-driver-thorlabs = { path = "../daq-driver-thorlabs", optional = true }
+daq-driver-newport = { path = "../daq-driver-newport", optional = true }
+daq-driver-spectra-physics = { path = "../daq-driver-spectra-physics", optional = true }
+
 # Memory Allocator (Microsoft Rust Guidelines: M-MIMALLOC-APPS)
 # mimalloc removed (moved to daq-bin)
 
@@ -168,11 +174,14 @@ storage_matlab = ["dep:matrw"]
 serial = ["dep:tokio-serial", "dep:serialport", "daq-hardware/serial"]
 visa = ["dep:visa-rs"]
 
-# Hardware drivers (pass-through to daq-hardware)
-thorlabs = ["serial", "daq-hardware/thorlabs"]
-newport = ["serial", "daq-hardware/newport"]
-spectra_physics = ["serial", "daq-hardware/spectra_physics"]
-newport_power_meter = ["serial", "daq-hardware/newport_power_meter"]
+# Mock drivers for testing
+mock = ["dep:daq-driver-mock"]
+
+# Hardware drivers (standalone crates)
+thorlabs = ["serial", "dep:daq-driver-thorlabs"]
+newport = ["serial", "dep:daq-driver-newport"]
+spectra_physics = ["serial", "dep:daq-driver-spectra-physics"]
+newport_power_meter = ["newport"]
 
 # PVCAM camera support
 pvcam = ["serial", "daq-hardware/pvcam"]

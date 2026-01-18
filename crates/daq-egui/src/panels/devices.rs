@@ -73,9 +73,19 @@ enum PendingAction {
     },
 }
 
+/// Registration failure from the daemon
+#[derive(Clone)]
+struct RegistrationFailureCache {
+    #[allow(dead_code)]
+    device_id: String,
+    device_name: String,
+    driver_type: String,
+    error: String,
+}
+
 /// Result of an async device action
 enum DeviceActionResult {
-    Refresh(Result<Vec<DeviceCache>, String>),
+    Refresh(Result<(Vec<DeviceCache>, Vec<RegistrationFailureCache>), String>),
     Move {
         device_id: String,
         success: bool,
@@ -100,6 +110,8 @@ enum DeviceActionResult {
 pub struct DevicesPanel {
     /// Cached device list
     devices: Vec<DeviceCache>,
+    /// Devices that failed to register (for debugging visibility)
+    registration_failures: Vec<RegistrationFailureCache>,
     /// Selected device ID
     selected_device: Option<String>,
     /// Last refresh timestamp
@@ -152,6 +164,7 @@ impl Default for DevicesPanel {
         let (param_set_tx, param_set_rx) = mpsc::channel(32);
         Self {
             devices: Vec::new(),
+            registration_failures: Vec::new(),
             selected_device: None,
             last_refresh: None,
             initial_refresh_done: false,
@@ -216,11 +229,20 @@ impl DevicesPanel {
                     self.action_in_flight = self.action_in_flight.saturating_sub(1);
                     match result {
                         DeviceActionResult::Refresh(result) => match result {
-                            Ok(devices) => {
+                            Ok((devices, failures)) => {
                                 self.devices = devices;
+                                self.registration_failures = failures;
                                 self.last_refresh = Some(std::time::Instant::now());
-                                self.status =
-                                    Some(format!("Loaded {} devices", self.devices.len()));
+                                if self.registration_failures.is_empty() {
+                                    self.status =
+                                        Some(format!("Loaded {} devices", self.devices.len()));
+                                } else {
+                                    self.status = Some(format!(
+                                        "Loaded {} devices ({} failed to register)",
+                                        self.devices.len(),
+                                        self.registration_failures.len()
+                                    ));
+                                }
                                 self.error = None;
                             }
                             Err(e) => {
@@ -414,6 +436,47 @@ impl DevicesPanel {
         }
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::GREEN, status);
+        }
+
+        // Show registration failures warning if any devices failed to register
+        if !self.registration_failures.is_empty() {
+            ui.add_space(4.0);
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(80, 40, 40))
+                .inner_margin(8.0)
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 180, 100),
+                            format!("⚠ {} device(s) failed to register", self.registration_failures.len()),
+                        );
+                    });
+                    egui::CollapsingHeader::new("Show details")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for failure in &self.registration_failures {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&failure.device_name)
+                                            .color(egui::Color32::WHITE)
+                                            .strong(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("({})", failure.driver_type))
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                });
+                                ui.label(
+                                    egui::RichText::new(&failure.error)
+                                        .color(egui::Color32::from_rgb(255, 150, 150))
+                                        .small(),
+                                );
+                                ui.add_space(4.0);
+                            }
+                        });
+                });
+            ui.add_space(4.0);
         }
 
         // Clone selected device for rendering (avoids borrow issues)
@@ -1086,9 +1149,22 @@ impl DevicesPanel {
         tracing::info!("Refreshing device list from daemon");
         runtime.spawn(async move {
             let result = async {
-                let devices = client.list_devices().await?;
+                let (devices, failures) = client.list_devices_full().await?;
                 let device_count = devices.len();
-                tracing::info!(device_count, "Discovered devices from daemon");
+                let failure_count = failures.len();
+                tracing::info!(device_count, failure_count, "Discovered devices from daemon");
+
+                if failure_count > 0 {
+                    for f in &failures {
+                        tracing::warn!(
+                            device_id = %f.device_id,
+                            device_name = %f.device_name,
+                            driver_type = %f.driver_type,
+                            error = %f.error,
+                            "Device failed to register"
+                        );
+                    }
+                }
 
                 let mut cached = Vec::new();
 
@@ -1103,7 +1179,18 @@ impl DevicesPanel {
                     });
                 }
 
-                Ok::<_, anyhow::Error>(cached)
+                // Convert proto failures to cache
+                let failures_cache: Vec<RegistrationFailureCache> = failures
+                    .into_iter()
+                    .map(|f| RegistrationFailureCache {
+                        device_id: f.device_id,
+                        device_name: f.device_name,
+                        driver_type: f.driver_type,
+                        error: f.error,
+                    })
+                    .collect();
+
+                Ok::<_, anyhow::Error>((cached, failures_cache))
             }
             .await
             .map_err(|e| e.to_string());

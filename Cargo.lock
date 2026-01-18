@@ -2593,6 +2593,7 @@ dependencies = [
  "mimalloc",
  "rust_daq",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -2615,6 +2616,8 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-serial",
+ "toml 0.9.11+spec-1.1.0",
  "tracing",
  "uuid",
  "wasm-timer",
@@ -2638,6 +2641,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "daq-driver-mock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "daq-core",
+ "daq-pool",
+ "futures",
+ "serde",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "daq-driver-newport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "daq-core",
+ "futures",
+ "log",
+ "serde",
+ "serialport",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "daq-driver-pvcam"
 version = "0.1.0"
 dependencies = [
@@ -2655,6 +2691,55 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "daq-driver-spectra-physics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "daq-core",
+ "futures",
+ "log",
+ "serde",
+ "serialport",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "daq-driver-thorlabs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "daq-core",
+ "futures",
+ "parking_lot 0.12.5",
+ "serde",
+ "serialport",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "daq-drivers"
+version = "0.1.0"
+dependencies = [
+ "daq-core",
+ "daq-driver-comedi",
+ "daq-driver-mock",
+ "daq-driver-newport",
+ "daq-driver-pvcam",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
 ]
 
 [[package]]
@@ -2713,7 +2798,11 @@ dependencies = [
  "crc",
  "daq-core",
  "daq-driver-comedi",
+ "daq-driver-mock",
+ "daq-driver-newport",
  "daq-driver-pvcam",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
  "daq-pool",
  "dashmap",
  "dirs 5.0.1",
@@ -2792,6 +2881,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "daq-core",
+ "daq-driver-mock",
  "daq-experiment",
  "daq-hardware",
  "pyo3",
@@ -10979,7 +11069,11 @@ dependencies = [
  "criterion",
  "csv",
  "daq-core",
+ "daq-driver-mock",
+ "daq-driver-newport",
  "daq-driver-pvcam",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
  "daq-experiment",
  "daq-hardware",
  "daq-plugin-api",
