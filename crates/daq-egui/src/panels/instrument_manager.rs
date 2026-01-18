@@ -166,6 +166,8 @@ pub struct InstrumentManagerPanel {
     groups: Vec<DeviceGroup>,
     /// Last refresh timestamp
     last_refresh: Option<std::time::Instant>,
+    /// Whether initial auto-refresh has been triggered
+    initial_refresh_done: bool,
     /// Error message
     error: Option<String>,
     /// Status message
@@ -229,6 +231,7 @@ impl Default for InstrumentManagerPanel {
         Self {
             groups: Vec::new(),
             last_refresh: None,
+            initial_refresh_done: false,
             error: None,
             status: None,
             selected_device: None,
@@ -644,6 +647,12 @@ impl InstrumentManagerPanel {
         // Show offline notice if not connected (bd-j3xz.4.4)
         if offline_notice(ui, client.is_none(), OfflineContext::Devices) {
             return;
+        }
+
+        // Auto-refresh on first render when connected
+        if !self.initial_refresh_done && client.is_some() && self.action_in_flight == 0 {
+            self.initial_refresh_done = true;
+            self.refresh(client.as_deref_mut(), runtime);
         }
 
         // Toolbar

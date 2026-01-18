@@ -104,6 +104,8 @@ pub struct DevicesPanel {
     selected_device: Option<String>,
     /// Last refresh timestamp
     last_refresh: Option<std::time::Instant>,
+    /// Whether initial auto-refresh has been triggered
+    initial_refresh_done: bool,
     /// Move target position
     move_target: f64,
     /// Error message
@@ -152,6 +154,7 @@ impl Default for DevicesPanel {
             devices: Vec::new(),
             selected_device: None,
             last_refresh: None,
+            initial_refresh_done: false,
             move_target: 0.0,
             error: None,
             status: None,
@@ -377,6 +380,12 @@ impl DevicesPanel {
         // Show offline notice if not connected (bd-j3xz.4.4)
         if offline_notice(ui, client.is_none(), OfflineContext::Devices) {
             return;
+        }
+
+        // Auto-refresh on first render when connected
+        if !self.initial_refresh_done && client.is_some() && self.action_in_flight == 0 {
+            self.initial_refresh_done = true;
+            self.pending_action = Some(PendingAction::Refresh);
         }
 
         ui.horizontal(|ui| {
