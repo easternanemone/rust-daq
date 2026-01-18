@@ -137,18 +137,66 @@ enum UiAction {
     FocusTab(Panel),
     /// Open a device control panel as a docked tab
     OpenDeviceControl {
-        device_id: String,
-        device_name: String,
-        driver_type: String,
+        /// Full device info with capability flags
+        device_info: DeviceInfo,
     },
 }
 
-/// Info about a docked device control panel
+/// Info about a docked device control panel (runtime state)
 #[derive(Debug, Clone)]
-struct DevicePanelInfo {
+pub(crate) struct DevicePanelInfo {
+    /// Full device info with capability flags (avoids inferring capabilities from driver_type)
+    device_info: DeviceInfo,
+}
+
+/// Serializable version of device panel info for layout persistence.
+/// Contains only the fields needed to restore the panel on app restart.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedPanelInfo {
     device_id: String,
     device_name: String,
     driver_type: String,
+    // Capability flags for panel type determination
+    is_emission_controllable: bool,
+    is_shutter_controllable: bool,
+    is_wavelength_tunable: bool,
+    is_readable: bool,
+    is_movable: bool,
+}
+
+impl From<&DeviceInfo> for PersistedPanelInfo {
+    fn from(info: &DeviceInfo) -> Self {
+        Self {
+            device_id: info.id.clone(),
+            device_name: info.name.clone(),
+            driver_type: info.driver_type.clone(),
+            is_emission_controllable: info.is_emission_controllable,
+            is_shutter_controllable: info.is_shutter_controllable,
+            is_wavelength_tunable: info.is_wavelength_tunable,
+            is_readable: info.is_readable,
+            is_movable: info.is_movable,
+        }
+    }
+}
+
+impl From<PersistedPanelInfo> for DeviceInfo {
+    fn from(info: PersistedPanelInfo) -> Self {
+        Self {
+            id: info.device_id,
+            name: info.device_name,
+            driver_type: info.driver_type,
+            category: 0, // Will be updated when daemon connects
+            is_movable: info.is_movable,
+            is_readable: info.is_readable,
+            is_triggerable: false,
+            is_frame_producer: false,
+            is_exposure_controllable: false,
+            is_shutter_controllable: info.is_shutter_controllable,
+            is_wavelength_tunable: info.is_wavelength_tunable,
+            is_emission_controllable: info.is_emission_controllable,
+            metadata: None,
+        }
+    }
 }
 
 /// Available panels in the UI
@@ -238,12 +286,81 @@ impl DaqApp {
         // Create health check channel
         let (health_tx, health_rx) = mpsc::channel(4);
 
-        // Initialize dock state
-        let dock_state = if let Some(storage) = cc.storage {
+        // Load persisted device panel info
+        let (device_panel_info, next_device_panel_id, docked_maitai_panels, docked_power_meter_panels, docked_rotator_panels, docked_stage_panels) =
+            if let Some(storage) = cc.storage {
+                let persisted: HashMap<usize, PersistedPanelInfo> =
+                    eframe::get_value(storage, "device_panel_info").unwrap_or_default();
+                let next_id: usize =
+                    eframe::get_value(storage, "next_device_panel_id").unwrap_or(0);
+
+                // Convert persisted panels to runtime structures and create panel widgets
+                let mut device_info_map = HashMap::new();
+                let mut maitai = HashMap::new();
+                let mut power_meter = HashMap::new();
+                let mut rotator = HashMap::new();
+                let mut stage = HashMap::new();
+
+                for (id, persisted_info) in persisted {
+                    let device_info: DeviceInfo = persisted_info.clone().into();
+
+                    // Create the appropriate panel widget based on capability flags
+                    if device_info.is_emission_controllable
+                        || device_info.is_shutter_controllable
+                        || device_info.is_wavelength_tunable
+                    {
+                        maitai.insert(id, MaiTaiControlPanel::default());
+                    } else if device_info.is_readable && !device_info.is_movable {
+                        power_meter.insert(id, PowerMeterControlPanel::default());
+                    } else if device_info.is_movable {
+                        let driver_lower = device_info.driver_type.to_lowercase();
+                        if driver_lower.contains("ell14")
+                            || driver_lower.contains("rotator")
+                            || driver_lower.contains("thorlabs")
+                        {
+                            rotator.insert(id, RotatorControlPanel::default());
+                        } else {
+                            stage.insert(id, StageControlPanel::default());
+                        }
+                    } else {
+                        stage.insert(id, StageControlPanel::default());
+                    }
+
+                    device_info_map.insert(id, DevicePanelInfo { device_info });
+                }
+
+                (device_info_map, next_id, maitai, power_meter, rotator, stage)
+            } else {
+                (HashMap::new(), 0, HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new())
+            };
+
+        // Initialize dock state and filter out orphaned DeviceControl panels
+        let mut dock_state = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_else(Self::default_dock_state)
         } else {
             Self::default_dock_state()
         };
+
+        // Remove DeviceControl panels that have no matching device_panel_info
+        // (can happen if storage is corrupted or panels were manually edited)
+        let orphaned_ids: Vec<usize> = dock_state
+            .iter_all_tabs()
+            .filter_map(|(_, tab)| {
+                if let Panel::DeviceControl { id } = tab {
+                    if !device_panel_info.contains_key(id) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for id in orphaned_ids {
+            dock_state.retain_tabs(|tab| !matches!(tab, Panel::DeviceControl { id: panel_id } if *panel_id == id));
+        }
 
         Self {
             client: None,
@@ -277,12 +394,12 @@ impl DaqApp {
             log_receiver,
             theme_preference,
             status_bar: StatusBar::new(),
-            device_panel_info: HashMap::new(),
-            next_device_panel_id: 0,
-            docked_maitai_panels: HashMap::new(),
-            docked_power_meter_panels: HashMap::new(),
-            docked_rotator_panels: HashMap::new(),
-            docked_stage_panels: HashMap::new(),
+            device_panel_info,
+            next_device_panel_id,
+            docked_maitai_panels,
+            docked_power_meter_panels,
+            docked_rotator_panels,
+            docked_stage_panels,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             pvcam_streaming: false,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
@@ -795,6 +912,21 @@ impl DaqApp {
 
 /// Additional DaqApp methods in a separate impl block (split for helper functions)
 impl DaqApp {
+    /// Remove all state associated with a device control panel.
+    ///
+    /// Returns the removed DevicePanelInfo if the panel existed, None otherwise.
+    /// Used for cleanup when panels are closed or during app shutdown.
+    pub(crate) fn remove_panel_data(&mut self, id: usize) -> Option<DevicePanelInfo> {
+        // Remove from all panel-type-specific maps
+        self.docked_maitai_panels.remove(&id);
+        self.docked_power_meter_panels.remove(&id);
+        self.docked_rotator_panels.remove(&id);
+        self.docked_stage_panels.remove(&id);
+
+        // Remove and return the panel info
+        self.device_panel_info.remove(&id)
+    }
+
     fn poll_connect_results(&mut self, ctx: &egui::Context) {
         // Poll connection manager for results
         if let Some((client, daemon_version)) =
@@ -1040,7 +1172,7 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
             Panel::DeviceControl { id } => {
                 // Look up device name from the panel ID mapping
                 if let Some(info) = self.app.device_panel_info.get(id) {
-                    format!("🎛 {}", info.device_name).into()
+                    format!("🎛 {}", info.device_info.name).into()
                 } else {
                     "🎛 Device".into()
                 }
@@ -1055,11 +1187,7 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
     fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         // Clean up device panel state when a DeviceControl tab is closed
         if let Panel::DeviceControl { id } = tab {
-            self.app.device_panel_info.remove(id);
-            self.app.docked_maitai_panels.remove(id);
-            self.app.docked_power_meter_panels.remove(id);
-            self.app.docked_rotator_panels.remove(id);
-            self.app.docked_stage_panels.remove(id);
+            self.app.remove_panel_data(*id);
         }
         OnCloseResponse::Close
     }
@@ -1234,73 +1362,41 @@ impl<'a> DaqTabViewer<'a> {
 
     /// Render a docked device control panel
     fn render_device_control(&mut self, ui: &mut egui::Ui, panel_id: usize) {
-        // Get device info for this panel
+        // Get device info for this panel (stored with full capability flags)
         let Some(info) = self.app.device_panel_info.get(&panel_id).cloned() else {
             ui.label("Device panel not found");
             return;
         };
 
-        // Create a DeviceInfo for the panel widget based on driver type
-        let driver_lower = info.driver_type.to_lowercase();
-        let (category, is_movable, is_readable, is_wavelength_tunable, is_emission_controllable, is_shutter_controllable) =
-            if driver_lower.contains("maitai") || driver_lower.contains("mai_tai") {
-                (4, false, true, true, true, true) // LASER
-            } else if driver_lower.contains("1830") || driver_lower.contains("power_meter") {
-                (5, false, true, false, false, false) // POWER_METER
-            } else if driver_lower.contains("ell14") || driver_lower.contains("thorlabs") {
-                (2, true, false, false, false, false) // STAGE (rotator)
-            } else {
-                (2, true, false, false, false, false) // STAGE (default)
-            };
+        let device_info = &info.device_info;
 
-        let device_info = DeviceInfo {
-            id: info.device_id.clone(),
-            name: info.device_name.clone(),
-            driver_type: info.driver_type.clone(),
-            category,
-            is_movable,
-            is_readable,
-            is_triggerable: false,
-            is_frame_producer: false,
-            is_exposure_controllable: false,
-            is_shutter_controllable,
-            is_wavelength_tunable,
-            is_emission_controllable,
-            metadata: None,
-        };
-
-        // Render the appropriate panel widget based on driver type
-        if driver_lower.contains("maitai") || driver_lower.contains("mai_tai") {
-            if let Some(panel) = self.app.docked_maitai_panels.get_mut(&panel_id) {
-                panel.ui(
-                    ui,
-                    &device_info,
-                    self.app.client.as_mut(),
-                    &self.app.runtime,
-                );
-            }
-        } else if driver_lower.contains("1830") || driver_lower.contains("power_meter") {
-            if let Some(panel) = self.app.docked_power_meter_panels.get_mut(&panel_id) {
-                panel.ui(
-                    ui,
-                    &device_info,
-                    self.app.client.as_mut(),
-                    &self.app.runtime,
-                );
-            }
-        } else if driver_lower.contains("ell14") || driver_lower.contains("thorlabs") {
-            if let Some(panel) = self.app.docked_rotator_panels.get_mut(&panel_id) {
-                panel.ui(
-                    ui,
-                    &device_info,
-                    self.app.client.as_mut(),
-                    &self.app.runtime,
-                );
-            }
+        // Render the appropriate panel widget based on which HashMap contains the panel
+        // (panel type was determined at creation time using capability flags)
+        if let Some(panel) = self.app.docked_maitai_panels.get_mut(&panel_id) {
+            panel.ui(
+                ui,
+                device_info,
+                self.app.client.as_mut(),
+                &self.app.runtime,
+            );
+        } else if let Some(panel) = self.app.docked_power_meter_panels.get_mut(&panel_id) {
+            panel.ui(
+                ui,
+                device_info,
+                self.app.client.as_mut(),
+                &self.app.runtime,
+            );
+        } else if let Some(panel) = self.app.docked_rotator_panels.get_mut(&panel_id) {
+            panel.ui(
+                ui,
+                device_info,
+                self.app.client.as_mut(),
+                &self.app.runtime,
+            );
         } else if let Some(panel) = self.app.docked_stage_panels.get_mut(&panel_id) {
             panel.ui(
                 ui,
-                &device_info,
+                device_info,
                 self.app.client.as_mut(),
                 &self.app.runtime,
             );
@@ -1348,9 +1444,7 @@ impl eframe::App for DaqApp {
         // Check for pop-out requests from InstrumentManagerPanel
         if let Some(request) = self.instrument_manager_panel.take_pop_out_request() {
             self.ui_actions.push(UiAction::OpenDeviceControl {
-                device_id: request.device_id,
-                device_name: request.device_name,
-                driver_type: request.driver_type,
+                device_info: request.device_info,
             });
         }
 
@@ -1366,39 +1460,51 @@ impl eframe::App for DaqApp {
                         dock_state.main_surface_mut().push_to_focused_leaf(panel);
                     }
                 }
-                UiAction::OpenDeviceControl {
-                    device_id,
-                    device_name,
-                    driver_type,
-                } => {
-                    // Generate a new panel ID
+                UiAction::OpenDeviceControl { device_info } => {
+                    // Generate a new panel ID with overflow protection
                     let panel_id = self.next_device_panel_id;
-                    self.next_device_panel_id += 1;
+                    self.next_device_panel_id = self
+                        .next_device_panel_id
+                        .checked_add(1)
+                        .expect("panel ID overflow - app has created too many device panels");
 
-                    // Store device info
+                    // Store device info (full proto with capability flags)
                     self.device_panel_info.insert(
                         panel_id,
                         DevicePanelInfo {
-                            device_id: device_id.clone(),
-                            device_name,
-                            driver_type: driver_type.clone(),
+                            device_info: device_info.clone(),
                         },
                     );
 
-                    // Create the appropriate panel widget based on driver type
-                    let driver_lower = driver_type.to_lowercase();
-                    if driver_lower.contains("maitai") || driver_lower.contains("mai_tai") {
+                    // Create the appropriate panel widget based on capability flags
+                    // Priority: laser controls > readable (power meter) > movable (rotator/stage)
+                    if device_info.is_emission_controllable
+                        || device_info.is_shutter_controllable
+                        || device_info.is_wavelength_tunable
+                    {
+                        // Laser with full control capabilities
                         self.docked_maitai_panels
                             .insert(panel_id, MaiTaiControlPanel::default());
-                    } else if driver_lower.contains("1830") || driver_lower.contains("power_meter")
-                    {
+                    } else if device_info.is_readable && !device_info.is_movable {
+                        // Pure readable device (power meter, sensor)
                         self.docked_power_meter_panels
                             .insert(panel_id, PowerMeterControlPanel::default());
-                    } else if driver_lower.contains("ell14") || driver_lower.contains("thorlabs") {
-                        self.docked_rotator_panels
-                            .insert(panel_id, RotatorControlPanel::default());
+                    } else if device_info.is_movable {
+                        // Check driver_type for rotator vs stage distinction
+                        // (both are movable, but rotators have different UI)
+                        let driver_lower = device_info.driver_type.to_lowercase();
+                        if driver_lower.contains("ell14")
+                            || driver_lower.contains("rotator")
+                            || driver_lower.contains("thorlabs")
+                        {
+                            self.docked_rotator_panels
+                                .insert(panel_id, RotatorControlPanel::default());
+                        } else {
+                            self.docked_stage_panels
+                                .insert(panel_id, StageControlPanel::default());
+                        }
                     } else {
-                        // Default to stage for other movable devices
+                        // Fallback to stage panel for unknown devices
                         self.docked_stage_panels
                             .insert(panel_id, StageControlPanel::default());
                     }
@@ -1423,6 +1529,36 @@ impl eframe::App for DaqApp {
         }
 
         eframe::set_value(storage, "theme_preference", &self.theme_preference);
+
+        // Persist device panel info for layout restoration
+        let persisted_panels: HashMap<usize, PersistedPanelInfo> = self
+            .device_panel_info
+            .iter()
+            .map(|(id, info)| (*id, PersistedPanelInfo::from(&info.device_info)))
+            .collect();
+        eframe::set_value(storage, "device_panel_info", &persisted_panels);
+        eframe::set_value(storage, "next_device_panel_id", &self.next_device_panel_id);
+    }
+}
+
+impl Drop for DaqApp {
+    fn drop(&mut self) {
+        tracing::debug!("DaqApp shutting down, cleaning up device panel state");
+
+        // Collect panel IDs to avoid borrow conflicts during cleanup
+        let panel_ids: Vec<usize> = self.device_panel_info.keys().copied().collect();
+
+        // Clean up all device panel state
+        for id in panel_ids {
+            self.remove_panel_data(id);
+        }
+
+        // Shutdown daemon launcher if running
+        if let Some(launcher) = self.daemon_launcher.take() {
+            drop(launcher); // DaemonLauncher should have its own Drop that terminates the process
+        }
+
+        tracing::debug!("DaqApp shutdown complete");
     }
 }
 
