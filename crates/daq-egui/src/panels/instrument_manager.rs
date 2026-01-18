@@ -216,6 +216,10 @@ pub struct InstrumentManagerPanel {
     rotator_panels: HashMap<String, RotatorControlPanel>,
     /// Stage control panels
     stage_panels: HashMap<String, StageControlPanel>,
+
+    /// Pending pop-out request (device_id, device_name, driver_type)
+    /// Checked by DaqApp after each ui() call
+    pending_pop_out: Option<(String, String, String)>,
 }
 
 /// Context menu actions
@@ -271,11 +275,32 @@ impl Default for InstrumentManagerPanel {
             power_meter_panels: HashMap::new(),
             rotator_panels: HashMap::new(),
             stage_panels: HashMap::new(),
+            pending_pop_out: None,
         }
     }
 }
 
+/// Request to pop out a device control panel into a dockable window
+#[derive(Debug, Clone)]
+pub struct PopOutRequest {
+    pub device_id: String,
+    pub device_name: String,
+    pub driver_type: String,
+}
+
 impl InstrumentManagerPanel {
+    /// Take a pending pop-out request (if any).
+    /// Called by DaqApp after each ui() call to handle pop-out actions.
+    pub fn take_pop_out_request(&mut self) -> Option<PopOutRequest> {
+        self.pending_pop_out.take().map(|(device_id, device_name, driver_type)| {
+            PopOutRequest {
+                device_id,
+                device_name,
+                driver_type,
+            }
+        })
+    }
+
     /// Check if auto-refresh is due (for future auto-refresh feature)
     #[allow(dead_code)]
     fn should_auto_refresh(&self) -> bool {
@@ -1417,6 +1442,21 @@ impl InstrumentManagerPanel {
             ui.label("Device not found");
             return;
         };
+
+        // Pop Out button header
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("⬜ Pop Out").on_hover_text("Open in separate dockable panel").clicked() {
+                    self.pending_pop_out = Some((
+                        device.id.clone(),
+                        device.name.clone(),
+                        device.driver_type.clone(),
+                    ));
+                }
+            });
+        });
+
+        ui.separator();
 
         // Determine which device-specific panel to use based on driver type and capabilities
         let driver_lower = device.driver_type.to_lowercase();
