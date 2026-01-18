@@ -56,6 +56,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
 use tracing::instrument;
 
@@ -145,9 +146,9 @@ impl Newport1830CDriver {
 
     /// Create a new Newport 1830-C driver with device validation
     ///
-    /// This is the **preferred constructor** for production use. Unlike `new()`,
-    /// this method validates that the connected device responds correctly,
-    /// failing fast if a different device is connected to the port.
+    /// This is the **preferred constructor** for production use. It uses
+    /// `spawn_blocking` to avoid blocking the async runtime during serial port
+    /// opening, and validates that a Newport 1830-C is actually connected.
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyS0", "COM3")
@@ -158,7 +159,25 @@ impl Newport1830CDriver {
     /// - Device doesn't respond to wavelength query
     /// - Response is not a valid wavelength (indicates wrong device)
     pub async fn new_async(port_path: &str) -> Result<Self> {
-        let driver = Self::new(port_path)?;
+        let port_path_owned = port_path.to_string();
+
+        // Use spawn_blocking to avoid blocking the async runtime
+        let port = spawn_blocking(move || {
+            tokio_serial::new(&port_path_owned, 9600)
+                .data_bits(tokio_serial::DataBits::Eight)
+                .parity(tokio_serial::Parity::None)
+                .stop_bits(tokio_serial::StopBits::One)
+                .flow_control(tokio_serial::FlowControl::None)
+                .open_native_async()
+                .context(format!(
+                    "Failed to open Newport 1830-C serial port: {}",
+                    port_path_owned
+                ))
+        })
+        .await
+        .context("spawn_blocking for Newport 1830-C port opening failed")??;
+
+        let driver = Self::build(Arc::new(Mutex::new(BufReader::new(Box::new(port)))));
 
         // Validate device by querying wavelength - this confirms a 1830-C is connected
         // Other devices won't respond with a 4-digit wavelength value

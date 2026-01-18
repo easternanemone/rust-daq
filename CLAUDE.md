@@ -209,6 +209,47 @@ use daq_core::limits::{validate_frame_size, MAX_SCRIPT_SIZE, MAX_FRAME_BYTES};
 let frame_size = validate_frame_size(width, height, bytes_per_pixel)?;
 ```
 
+### Serial Driver Conventions
+
+All serial hardware drivers MUST follow these patterns:
+
+**1. Use `new_async()` as the primary constructor:**
+- `new()` is for internal/test use only
+- `new_async()` validates device identity before returning
+- Prevents silent misconfiguration (wrong device on port)
+
+**2. Wrap serial port opening in `spawn_blocking`:**
+```rust
+let port = spawn_blocking(move || {
+    tokio_serial::new(&port_path, 9600)
+        .open_native_async()
+        .context("Failed to open port")
+}).await??;
+```
+
+**3. Validate device identity on connection:**
+```rust
+// Query a device-specific command and validate response
+let response = driver.query("*IDN?").await?;
+if !response.contains("EXPECTED_DEVICE") {
+    return Err(anyhow!("Wrong device connected"));
+}
+```
+
+**4. ELL14 RS-485 Bus Pattern:**
+- Use `Ell14Bus::open()` to manage the shared connection
+- `bus.device("addr")` returns calibrated driver (fail-fast)
+- `bus.device_uncalibrated("addr")` for lenient mode (warns but continues)
+
+```rust
+let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
+let rotator = bus.device("2").await?;  // Validates & loads calibration
+```
+
+**5. DriverFactory for TOML-based drivers:**
+- Use `DriverFactory::create_async()` to run init sequences
+- TOML `init_sequence` validates device on connection
+
 ## Common Pitfalls
 
 1. **Feature Mismatches:** Many compilation errors = missing features. Check Cargo.toml.
@@ -306,7 +347,7 @@ ssh maitai@100.117.5.12 'cd ~/rust-daq && source config/hosts/maitai.env && \
 
 | Driver | Traits Implemented | Protocol |
 |--------|-------------------|----------|
-| `MaiTaiDriver` | `Readable`, `WavelengthTunable`, `ShutterControl`, `EmissionControl`, `Parameterized` | 9600 baud, XON/XOFF flow control |
+| `MaiTaiDriver` | `Readable`, `WavelengthTunable`, `ShutterControl`, `EmissionControl`, `Parameterized` | 115200 baud, no flow control |
 | `Newport1830CDriver` | `Readable`, `WavelengthTunable`, `Parameterized` | 9600 baud, simple ASCII (NOT SCPI) |
 | `Esp300Driver` | `Movable`, `Parameterized` | 19200 baud, multi-axis (1-3) |
 | `Ell14Driver` | `Movable`, `Parameterized` | 9600 baud, RS-485 multidrop, hex encoding |
