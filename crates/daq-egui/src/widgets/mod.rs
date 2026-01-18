@@ -3,6 +3,7 @@
 //! This module contains parameter editors and other UI components
 //! that can be shared across different panels.
 
+pub mod device_controls;
 pub mod gauge;
 pub mod histogram;
 pub mod offline_notice;
@@ -14,8 +15,10 @@ pub mod status_bar;
 pub mod toast;
 pub mod toggle;
 
-// gauge, toast, toggle are available but not yet integrated - keep modules for future use
-#[allow(unused_imports)]
+pub use device_controls::{
+    create_control_panel, DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel,
+    RotatorControlPanel, StageControlPanel,
+};
 pub use gauge::*;
 pub use histogram::*;
 pub use offline_notice::*;
@@ -26,5 +29,4 @@ pub use smart_stream_editor::*;
 pub use status_bar::*;
 #[allow(unused_imports)]
 pub use toast::*;
-#[allow(unused_imports)]
 pub use toggle::*;

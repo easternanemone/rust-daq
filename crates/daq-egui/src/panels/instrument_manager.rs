@@ -11,7 +11,10 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
-use crate::widgets::{offline_notice, OfflineContext};
+use crate::widgets::{
+    offline_notice, DeviceControlWidget, MaiTaiControlPanel, OfflineContext, PowerMeterControlPanel,
+    RotatorControlPanel, StageControlPanel,
+};
 use daq_proto::daq::DeviceInfo;
 
 /// Auto-refresh interval (for future auto-refresh feature)
@@ -203,6 +206,16 @@ pub struct InstrumentManagerPanel {
     last_reading: HashMap<String, (f64, std::time::Instant)>,
     /// Operation in progress (keyed by device_id)
     operation_pending: HashMap<String, String>,
+
+    // Device-specific control panels (keyed by device_id)
+    /// MaiTai laser control panels
+    maitai_panels: HashMap<String, MaiTaiControlPanel>,
+    /// Power meter control panels
+    power_meter_panels: HashMap<String, PowerMeterControlPanel>,
+    /// Rotator control panels
+    rotator_panels: HashMap<String, RotatorControlPanel>,
+    /// Stage control panels
+    stage_panels: HashMap<String, StageControlPanel>,
 }
 
 /// Context menu actions
@@ -253,6 +266,11 @@ impl Default for InstrumentManagerPanel {
             exposure_input: HashMap::new(),
             last_reading: HashMap::new(),
             operation_pending: HashMap::new(),
+            // Device-specific control panels
+            maitai_panels: HashMap::new(),
+            power_meter_panels: HashMap::new(),
+            rotator_panels: HashMap::new(),
+            stage_panels: HashMap::new(),
         }
     }
 }
@@ -1399,6 +1417,69 @@ impl InstrumentManagerPanel {
             ui.label("Device not found");
             return;
         };
+
+        // Determine which device-specific panel to use based on driver type and capabilities
+        let driver_lower = device.driver_type.to_lowercase();
+
+        // Check for MaiTai laser
+        if driver_lower.contains("maitai")
+            || driver_lower.contains("mai_tai")
+            || (device.is_wavelength_tunable && device.is_emission_controllable)
+        {
+            let panel = self
+                .maitai_panels
+                .entry(device_id.clone())
+                .or_insert_with(MaiTaiControlPanel::default);
+            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            return;
+        }
+
+        // Check for power meter
+        if driver_lower.contains("1830")
+            || driver_lower.contains("power_meter")
+            || (device.is_readable && !device.is_movable && !device.is_frame_producer)
+        {
+            let panel = self
+                .power_meter_panels
+                .entry(device_id.clone())
+                .or_insert_with(PowerMeterControlPanel::default);
+            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            return;
+        }
+
+        // Check for ELL14 rotator
+        if driver_lower.contains("ell14") || driver_lower.contains("thorlabs") {
+            let panel = self
+                .rotator_panels
+                .entry(device_id.clone())
+                .or_insert_with(RotatorControlPanel::default);
+            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            return;
+        }
+
+        // Check for ESP300 stage or other movable devices
+        if device.is_movable {
+            let panel = self
+                .stage_panels
+                .entry(device_id.clone())
+                .or_insert_with(StageControlPanel::default);
+            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            return;
+        }
+
+        // Fallback: use the original generic control panel
+        self.render_generic_control_panel(ui, &device, client, runtime);
+    }
+
+    /// Render the generic (legacy) control panel for devices without specialized panels
+    fn render_generic_control_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        device: &DeviceInfo,
+        mut client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+    ) {
+        let device_id = device.id.clone();
 
         // Clone state to avoid borrow issues
         let state = self.device_states.get(&device_id).cloned();

@@ -66,10 +66,14 @@ use daq_proto::daq::{
     DeviceCommandRequest,
     DeviceStateRequest,
     FrameData,
+    // Laser control types (bd-pwjo)
+    GetEmissionRequest,
     GetParameterRequest,
     GetRecordingStatusRequest,
+    GetShutterRequest,
     // Storage types
     GetStorageConfigRequest,
+    GetWavelengthRequest,
     ListAcquisitionsRequest,
     ListDevicesRequest,
     ListExecutionsRequest,
@@ -88,7 +92,10 @@ use daq_proto::daq::{
     ReadValueRequest,
     ResumeScanRequest,
     ScanConfig,
+    SetEmissionRequest,
     SetParameterRequest,
+    SetShutterRequest,
+    SetWavelengthRequest,
     StartModuleRequest,
     StartRecordingRequest,
     // Script execution types (Phase 6: bd-uu9t)
@@ -816,5 +823,114 @@ impl DaqClient {
             .stream_documents(StreamDocumentsRequest { run_uid, doc_types })
             .await?;
         Ok(response.into_inner())
+    }
+
+    // =========================================================================
+    // Laser Control (bd-pwjo)
+    // =========================================================================
+
+    /// Set shutter state for a device implementing ShutterControl
+    ///
+    /// # Arguments
+    /// * `device_id` - Device ID (e.g., "maitai")
+    /// * `open` - true to open shutter, false to close
+    ///
+    /// # Returns
+    /// The actual shutter state after the operation
+    pub async fn set_shutter(&mut self, device_id: &str, open: bool) -> Result<bool> {
+        let response = self
+            .hardware
+            .set_shutter(SetShutterRequest {
+                device_id: device_id.to_string(),
+                open,
+            })
+            .await?;
+        let inner = response.into_inner();
+        if inner.success {
+            Ok(inner.is_open)
+        } else {
+            anyhow::bail!("Set shutter failed: {}", inner.error_message)
+        }
+    }
+
+    /// Get current shutter state for a device
+    pub async fn get_shutter(&mut self, device_id: &str) -> Result<bool> {
+        let response = self
+            .hardware
+            .get_shutter(GetShutterRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner().is_open)
+    }
+
+    /// Set wavelength for a device implementing WavelengthTunable
+    ///
+    /// # Arguments
+    /// * `device_id` - Device ID (e.g., "maitai")
+    /// * `wavelength_nm` - Target wavelength in nanometers (e.g., 800.0)
+    ///
+    /// # Returns
+    /// The actual wavelength after the operation (may differ from requested)
+    pub async fn set_wavelength(&mut self, device_id: &str, wavelength_nm: f64) -> Result<f64> {
+        let response = self
+            .hardware
+            .set_wavelength(SetWavelengthRequest {
+                device_id: device_id.to_string(),
+                wavelength_nm,
+            })
+            .await?;
+        let inner = response.into_inner();
+        if inner.success {
+            Ok(inner.actual_wavelength_nm)
+        } else {
+            anyhow::bail!("Set wavelength failed: {}", inner.error_message)
+        }
+    }
+
+    /// Get current wavelength for a device
+    pub async fn get_wavelength(&mut self, device_id: &str) -> Result<f64> {
+        let response = self
+            .hardware
+            .get_wavelength(GetWavelengthRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner().wavelength_nm)
+    }
+
+    /// Set emission state for a device implementing EmissionControl
+    ///
+    /// # Arguments
+    /// * `device_id` - Device ID (e.g., "maitai")
+    /// * `enabled` - true to enable emission (laser on), false to disable
+    ///
+    /// # Returns
+    /// The actual emission state after the operation
+    pub async fn set_emission(&mut self, device_id: &str, enabled: bool) -> Result<bool> {
+        let response = self
+            .hardware
+            .set_emission(SetEmissionRequest {
+                device_id: device_id.to_string(),
+                enabled,
+            })
+            .await?;
+        let inner = response.into_inner();
+        if inner.success {
+            Ok(inner.is_enabled)
+        } else {
+            anyhow::bail!("Set emission failed: {}", inner.error_message)
+        }
+    }
+
+    /// Get current emission state for a device
+    pub async fn get_emission(&mut self, device_id: &str) -> Result<bool> {
+        let response = self
+            .hardware
+            .get_emission(GetEmissionRequest {
+                device_id: device_id.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner().is_enabled)
     }
 }
