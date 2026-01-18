@@ -501,7 +501,10 @@ impl InstrumentManagerPanel {
     /// - Overwhelming the daemon with too many concurrent requests
     /// - action_in_flight counter getting stuck
     fn refresh_device_states(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
-        let Some(client) = client else { return };
+        let Some(client) = client else {
+            tracing::debug!("refresh_device_states: no client");
+            return;
+        };
 
         // Collect all device IDs first
         let device_ids: Vec<String> = self
@@ -510,7 +513,13 @@ impl InstrumentManagerPanel {
             .flat_map(|g| g.devices.iter().map(|d| d.id.clone()))
             .collect();
 
+        tracing::info!(
+            device_count = device_ids.len(),
+            "refresh_device_states: fetching states for devices"
+        );
+
         if device_ids.is_empty() {
+            tracing::debug!("refresh_device_states: no devices to query");
             return;
         }
 
@@ -615,6 +624,7 @@ impl InstrumentManagerPanel {
 
         // Fetch device states if refresh completed
         if should_fetch_states {
+            tracing::info!("ui: should_fetch_states=true, calling refresh_device_states");
             self.refresh_device_states(client.as_deref_mut(), runtime);
         }
 

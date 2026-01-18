@@ -396,6 +396,7 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<DeviceStateRequest>,
     ) -> Result<Response<DeviceStateResponse>, Status> {
         let req = request.into_inner();
+        tracing::info!(device_id = %req.device_id, "GetDeviceState called");
 
         // Acquire device references without lock
         // This prevents deadlock when hardware operations take time
@@ -428,8 +429,14 @@ impl HardwareService for HardwareServiceImpl {
         // Now perform async operations WITHOUT holding the lock
         if let Some(movable) = movable {
             match movable.position().await {
-                Ok(pos) => response.position = Some(pos),
-                Err(_) => response.online = false,
+                Ok(pos) => {
+                    tracing::debug!(device_id = %req.device_id, position = pos, "Got position");
+                    response.position = Some(pos);
+                }
+                Err(e) => {
+                    tracing::warn!(device_id = %req.device_id, error = %e, "Position query failed, marking offline");
+                    response.online = false;
+                }
             }
         }
 
