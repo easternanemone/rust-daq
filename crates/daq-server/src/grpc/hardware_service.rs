@@ -39,6 +39,7 @@ use crate::grpc::proto::{
     PositionUpdate,
     ReadValueRequest,
     ReadValueResponse,
+    RegistrationFailure as ProtoRegistrationFailure,
     SetEmissionRequest,
     SetEmissionResponse,
     SetExposureRequest,
@@ -387,7 +388,30 @@ impl HardwareService for HardwareServiceImpl {
                 .collect()
         };
 
-        Ok(Response::new(ListDevicesResponse { devices }))
+        // Include registration failures for debugging visibility
+        let registration_failures: Vec<ProtoRegistrationFailure> = self
+            .registry
+            .list_registration_failures()
+            .into_iter()
+            .map(|f| ProtoRegistrationFailure {
+                device_id: f.device_id,
+                device_name: f.device_name,
+                driver_type: f.driver_type,
+                error: f.error,
+            })
+            .collect();
+
+        if !registration_failures.is_empty() {
+            tracing::warn!(
+                failure_count = registration_failures.len(),
+                "ListDevices response includes registration failures"
+            );
+        }
+
+        Ok(Response::new(ListDevicesResponse {
+            devices,
+            registration_failures,
+        }))
     }
 
     #[instrument(skip(self, request), fields(method = "get_device_state"))]

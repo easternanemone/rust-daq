@@ -595,6 +595,22 @@ pub struct DeviceRegistry {
     /// Plugin factory for loading YAML-defined drivers (tokio_serial feature only)
     #[cfg(feature = "serial")]
     plugin_factory: Arc<RwLock<crate::plugin::registry::PluginFactory>>,
+
+    /// Registration failures for debugging (device_id, driver_type, error_message)
+    registration_failures: DashMap<DeviceId, RegistrationFailure>,
+}
+
+/// Information about a failed device registration
+#[derive(Debug, Clone)]
+pub struct RegistrationFailure {
+    /// Device ID that failed to register
+    pub device_id: String,
+    /// Device name from config
+    pub device_name: String,
+    /// Driver type that failed
+    pub driver_type: String,
+    /// Error message describing the failure
+    pub error: String,
 }
 
 impl DeviceRegistry {
@@ -606,6 +622,7 @@ impl DeviceRegistry {
             ell14_shared_ports: RwLock::new(HashMap::new()),
             #[cfg(feature = "serial")]
             plugin_factory: Arc::new(RwLock::new(crate::plugin::registry::PluginFactory::new())),
+            registration_failures: DashMap::new(),
         }
     }
 
@@ -619,6 +636,7 @@ impl DeviceRegistry {
             #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             plugin_factory,
+            registration_failures: DashMap::new(),
         }
     }
 
@@ -757,6 +775,48 @@ impl DeviceRegistry {
                 }
             })
             .collect()
+    }
+
+    /// Record a registration failure for debugging
+    ///
+    /// Called when a device fails to register, allowing the failure to be
+    /// queried later (e.g., shown in the GUI).
+    pub fn record_registration_failure(&self, failure: RegistrationFailure) {
+        tracing::error!(
+            device_id = %failure.device_id,
+            device_name = %failure.device_name,
+            driver_type = %failure.driver_type,
+            error = %failure.error,
+            "Device registration failed"
+        );
+        self.registration_failures
+            .insert(failure.device_id.clone(), failure);
+    }
+
+    /// List all registration failures
+    ///
+    /// Returns devices that failed to register during initialization.
+    /// Useful for GUI display and debugging.
+    pub fn list_registration_failures(&self) -> Vec<RegistrationFailure> {
+        self.registration_failures
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
+    /// Check if there are any registration failures
+    pub fn has_registration_failures(&self) -> bool {
+        !self.registration_failures.is_empty()
+    }
+
+    /// Get the number of registration failures
+    pub fn registration_failure_count(&self) -> usize {
+        self.registration_failures.len()
+    }
+
+    /// Clear all registration failures (e.g., after user acknowledges)
+    pub fn clear_registration_failures(&self) {
+        self.registration_failures.clear();
     }
 
     /// Get device info by ID
@@ -1510,18 +1570,46 @@ pub async fn create_registry_from_config(
     }
 
     // Register all configured devices
+    let mut success_count = 0;
+    let mut failure_count = 0;
+
     for device_config in &config.devices {
-        println!("Attempting to register device: {}", device_config.id);
+        tracing::info!(
+            device_id = %device_config.id,
+            device_name = %device_config.name,
+            driver_type = %device_config.driver.driver_name(),
+            "Registering device"
+        );
+
         if let Err(e) = registry.register(device_config.clone()).await {
-            println!("ERROR registering device '{}': {}", device_config.id, e);
-            tracing::warn!(
-                "Failed to register device '{}': {} (continuing with other devices)",
-                device_config.id,
-                e
-            );
+            failure_count += 1;
+            registry.record_registration_failure(RegistrationFailure {
+                device_id: device_config.id.clone(),
+                device_name: device_config.name.clone(),
+                driver_type: device_config.driver.driver_name().to_string(),
+                error: e.to_string(),
+            });
         } else {
-            println!("SUCCESS registering device '{}'", device_config.id);
+            success_count += 1;
+            tracing::info!(
+                device_id = %device_config.id,
+                "Device registered successfully"
+            );
         }
+    }
+
+    // Summary logging
+    if failure_count > 0 {
+        tracing::warn!(
+            success_count,
+            failure_count,
+            "Device registration completed with failures"
+        );
+    } else {
+        tracing::info!(
+            success_count,
+            "All devices registered successfully"
+        );
     }
 
     Ok(registry)
@@ -1913,6 +2001,45 @@ mod tests {
 
         // Clean up
         std::fs::remove_file(temp_port).ok();
+    }
+
+    #[test]
+    fn test_ell14_driver_capabilities() {
+        // Verify ELL14 driver type has the Movable capability
+        let driver = DriverType::Ell14 {
+            port: "/dev/ttyUSB0".to_string(),
+            address: "2".to_string(),
+        };
+
+        let capabilities = driver.capabilities();
+        assert!(
+            capabilities.contains(&Capability::Movable),
+            "ELL14 should have Movable capability, got: {:?}",
+            capabilities
+        );
+        assert_eq!(
+            capabilities.len(),
+            1,
+            "ELL14 should have exactly one capability (Movable)"
+        );
+
+        // Verify driver name
+        assert_eq!(driver.driver_name(), "ell14");
+    }
+
+    #[test]
+    fn test_ell14_address_validation() {
+        // Valid addresses: 0-9, A-F
+        for addr in ["0", "1", "9", "A", "F", "a", "f"] {
+            let result = validate_ell14_address(addr);
+            assert!(result.is_ok(), "Address '{}' should be valid", addr);
+        }
+
+        // Invalid addresses
+        for addr in ["", "00", "G", "z", "10", "FF"] {
+            let result = validate_ell14_address(addr);
+            assert!(result.is_err(), "Address '{}' should be invalid", addr);
+        }
     }
 
     #[tokio::test]
