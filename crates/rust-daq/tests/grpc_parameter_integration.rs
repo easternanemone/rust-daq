@@ -214,7 +214,7 @@ async fn test_maitai_parameter_integration() -> Result<()> {
 
         // Create MaiTai driver with mock serial port
         // bd-9thk: Handle macOS PTY limitation (Not a typewriter/ENOTTY)
-        let driver = match MaiTaiDriver::new_async(slave_path_str).await {
+        let driver = match MaiTaiDriver::new_async(slave_path_str, 9600).await {
             Ok(d) => d,
             Err(e) => {
                 // Use Debug format to check the full error chain (context + root cause)

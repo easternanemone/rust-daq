@@ -8,7 +8,7 @@ name = "rust-daq-daemon"
 path = "src/main.rs"
 
 [dependencies]
-rust_daq = { path = "../rust-daq", features = ["server", "all_hardware", "serial", "modules", "storage_csv"] }
+rust_daq = { path = "../rust-daq", features = ["server", "all_hardware", "serial", "modules", "storage_csv", "mock"] }
 daq-server = { path = "../daq-server" }
 daq-hardware = { path = "../daq-hardware" }
 daq-proto = { path = "../daq-proto" }
@@ -16,6 +16,7 @@ daq-storage = { path = "../daq-storage" }
 daq-scripting = { path = "../daq-scripting" }
 anyhow = "1.0"
 clap = { version = "4.5.4", features = ["derive"] }
+tracing = "0.1"
 tokio = { version = "1.36", features = ["full"] }
 mimalloc = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

@@ -2593,6 +2593,7 @@ dependencies = [
  "mimalloc",
  "rust_daq",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

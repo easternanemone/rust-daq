@@ -302,6 +302,7 @@ async fn start_daemon(
         // use daq_server::grpc::start_server_with_hardware; // Imported at top level
         use rust_daq::hardware::registry::{
             create_lab_registry, create_mock_registry, create_registry_from_file,
+            register_all_factories,
         };
         use std::sync::Arc;
 
@@ -319,6 +320,17 @@ async fn start_daemon(
             println!("   Using mock devices (no hardware config specified)");
             create_mock_registry().await?
         };
+
+        // Register driver factories for plugin-based device creation
+        // This enables using register_from_toml() for dynamic device registration
+        let config_dir = std::path::Path::new("config/devices");
+        if let Err(e) = register_all_factories(&registry, Some(config_dir)).await {
+            tracing::warn!("Failed to register some factories: {}", e);
+        }
+        let factory_count = registry.list_factories().len();
+        if factory_count > 0 {
+            println!("   Registered {} driver factories", factory_count);
+        }
 
         let device_count = registry.len();
         println!("   Registered {} device(s)", device_count);

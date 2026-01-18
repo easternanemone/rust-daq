@@ -2052,6 +2052,107 @@ pub async fn create_mock_registry() -> Result<DeviceRegistry, DaqError> {
     Ok(registry)
 }
 
+/// Register all mock driver factories with a registry.
+///
+/// This enables using `register_from_toml()` for mock devices:
+///
+/// ```rust,ignore
+/// use daq_hardware::registry::{DeviceRegistry, register_mock_factories};
+///
+/// let registry = DeviceRegistry::new();
+/// register_mock_factories(&registry);
+///
+/// // Now register mock devices via TOML config
+/// registry.register_from_toml(
+///     "my_stage",
+///     "My Test Stage",
+///     "mock_stage",
+///     toml::Value::Table(Default::default()),
+/// ).await?;
+/// ```
+pub fn register_mock_factories(registry: &DeviceRegistry) {
+    use daq_driver_mock::{MockCameraFactory, MockPowerMeterFactory, MockStageFactory};
+
+    registry.register_factory(Box::new(MockStageFactory));
+    registry.register_factory(Box::new(MockCameraFactory));
+    registry.register_factory(Box::new(MockPowerMeterFactory));
+}
+
+/// Register all available hardware driver factories.
+///
+/// This registers factories for all enabled hardware drivers:
+/// - Mock drivers (always available)
+/// - Thorlabs ELL14 (when `thorlabs` feature enabled)
+/// - Newport ESP300 and 1830-C (when `newport` feature enabled)
+/// - Spectra-Physics MaiTai (when `spectra_physics` feature enabled)
+/// - Config-driven devices from TOML files
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use daq_hardware::registry::{DeviceRegistry, register_all_factories};
+/// use std::path::Path;
+///
+/// let registry = DeviceRegistry::new();
+/// register_all_factories(&registry, Some(Path::new("config/devices"))).await?;
+///
+/// // Now use register_from_toml() for any supported driver type
+/// ```
+pub async fn register_all_factories(
+    registry: &DeviceRegistry,
+    config_dir: Option<&std::path::Path>,
+) -> Result<(), DaqError> {
+    // Register mock factories (always available)
+    register_mock_factories(registry);
+
+    // Register Thorlabs factories
+    #[cfg(feature = "thorlabs")]
+    {
+        use daq_driver_thorlabs::Ell14Factory;
+        registry.register_factory(Box::new(Ell14Factory));
+    }
+
+    // Register Newport factories
+    #[cfg(feature = "newport")]
+    {
+        use daq_driver_newport::{Esp300Factory, Newport1830CFactory};
+        registry.register_factory(Box::new(Esp300Factory));
+        registry.register_factory(Box::new(Newport1830CFactory));
+    }
+
+    // Register Spectra-Physics factories
+    #[cfg(feature = "spectra_physics")]
+    {
+        use daq_driver_spectra_physics::MaiTaiFactory;
+        registry.register_factory(Box::new(MaiTaiFactory));
+    }
+
+    // Load and register config-driven factories from TOML files
+    #[cfg(feature = "serial")]
+    if let Some(dir) = config_dir {
+        if dir.exists() {
+            match crate::factory::load_all_factories(dir) {
+                Ok(factories) => {
+                    for factory in factories {
+                        let driver_type = factory.driver_type().to_string();
+                        registry.register_factory(Box::new(factory));
+                        tracing::debug!(driver_type = %driver_type, "Registered config factory");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load config factories from {}: {}",
+                        dir.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
