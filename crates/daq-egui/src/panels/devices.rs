@@ -383,7 +383,14 @@ impl DevicesPanel {
         }
 
         // Auto-refresh on first render when connected
+        tracing::debug!(
+            initial_refresh_done = self.initial_refresh_done,
+            client_connected = client.is_some(),
+            action_in_flight = self.action_in_flight,
+            "Devices panel: checking auto-refresh conditions"
+        );
         if !self.initial_refresh_done && client.is_some() && self.action_in_flight == 0 {
+            tracing::info!("Devices panel: triggering auto-refresh on first render");
             self.initial_refresh_done = true;
             self.pending_action = Some(PendingAction::Refresh);
         }

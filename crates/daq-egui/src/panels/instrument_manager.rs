@@ -651,6 +651,7 @@ impl InstrumentManagerPanel {
 
         // Auto-refresh on first render when connected
         if !self.initial_refresh_done && client.is_some() && self.action_in_flight == 0 {
+            tracing::info!("Instruments panel: triggering auto-refresh on first render");
             self.initial_refresh_done = true;
             self.refresh(client.as_deref_mut(), runtime);
         }
@@ -680,48 +681,51 @@ impl InstrumentManagerPanel {
         ui.add_space(4.0);
 
         // Split view: device tree on left, control panel on right
-        // Uses StripBuilder for proportional, responsive layout (bd-xxxx: fix cutoff)
+        // Uses horizontal StripBuilder for proper height allocation
+        let available_height = ui.available_height();
         StripBuilder::new(ui)
-            .size(Size::remainder()) // Use all available height
-            .vertical(|mut strip| {
+            .size(Size::exact(250.0)) // Left column: Device tree
+            .size(Size::exact(4.0))   // Separator
+            .size(Size::remainder())  // Right column: Control panel
+            .horizontal(|mut strip| {
+                // Left side: Device tree
                 strip.cell(|ui| {
-                    ui.horizontal(|ui| {
-                        // Left side: Device tree (proportional ~40%)
-                        ui.vertical(|ui| {
-                            ui.set_min_width(250.0);
-                            ui.set_max_width(400.0);
-
-                            ui.label(egui::RichText::new("Device Tree").strong());
-                            ui.separator();
-
-                            if self.groups.is_empty() {
-                                ui.label("No devices. Click Refresh to load.");
-                            } else {
-                                egui::ScrollArea::vertical()
-                                    .id_salt("instrument_tree")
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        self.render_tree(ui);
-                                    });
-                            }
-                        });
-
+                    ui.set_min_height(available_height);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Device Tree").strong());
                         ui.separator();
 
-                        // Right side: Control panel (fills remainder)
-                        ui.vertical(|ui| {
-                            ui.set_min_width(300.0);
-
-                            ui.label(egui::RichText::new("Control Panel").strong());
-                            ui.separator();
-
+                        if self.groups.is_empty() {
+                            ui.label("No devices. Click Refresh to load.");
+                        } else {
                             egui::ScrollArea::vertical()
-                                .id_salt("control_panel")
+                                .id_salt("instrument_tree")
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    self.render_device_control_panel(ui, client, runtime);
+                                    self.render_tree(ui);
                                 });
-                        });
+                        }
+                    });
+                });
+
+                // Separator
+                strip.cell(|ui| {
+                    ui.separator();
+                });
+
+                // Right side: Control panel
+                strip.cell(|ui| {
+                    ui.set_min_height(available_height);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Control Panel").strong());
+                        ui.separator();
+
+                        egui::ScrollArea::vertical()
+                            .id_salt("control_panel")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                self.render_device_control_panel(ui, client, runtime);
+                            });
                     });
                 });
             });
