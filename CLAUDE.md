@@ -76,8 +76,12 @@ Successfully opened camera 'pvcamUSB_0' with handle 0
 
 | Crate | Purpose |
 |-------|---------|
-| `daq-core` | Foundation types, errors, parameters, observables, size limits |
-| `daq-hardware` | HAL, capability traits (`Movable`, `Readable`, `FrameProducer`), serial drivers |
+| `daq-core` | Foundation types, errors, parameters, observables, DriverFactory trait |
+| `daq-hardware` | HAL, capability traits (`Movable`, `Readable`, `FrameProducer`), device registry |
+| `daq-driver-mock` | Mock drivers for testing (MockStage, MockCamera, MockPowerMeter) |
+| `daq-driver-thorlabs` | Thorlabs ELL14 rotation mount driver |
+| `daq-driver-newport` | Newport ESP300 motion controller, 1830-C power meter drivers |
+| `daq-driver-spectra-physics` | Spectra-Physics MaiTai laser driver |
 | `daq-driver-pvcam` | PVCAM camera driver (requires SDK) |
 | `daq-driver-comedi` | Comedi DAQ driver for Linux boards |
 | `daq-pool` | Zero-allocation object pool for high-FPS frame handling |
@@ -86,20 +90,21 @@ Successfully opened camera 'pvcamUSB_0' with handle 0
 | `daq-server` | gRPC server with auth and CORS (optional) |
 | `daq-experiment` | RunEngine and Plan definitions |
 | `daq-scripting` | Rhai scripting engine (optional) |
-| `daq-plugin-api` | Native FFI plugin system (abi_stable) |
 | `daq-egui` | GUI application with auto-reconnect |
 | `daq-bin` | CLI binaries and daemon entrypoints |
-| `rust-daq` | Integration layer with `prelude` module and plugin system |
+| `rust-daq` | Integration layer with `prelude` module |
 
 ### Dependency Graph
 
 ```
-                           daq-core (foundation)
+                           daq-core (foundation + DriverFactory trait)
                                ↑
                 ┌──────────────┼──────────────┬─────────────┐
                 │              │              │             │
-         daq-driver-pvcam  daq-proto    daq-storage   daq-experiment
-         daq-driver-comedi                   ↑             ↑
+         daq-driver-*      daq-proto    daq-storage   daq-experiment
+         (mock, thorlabs,                    ↑             ↑
+          newport, spectra,                  │             │
+          pvcam, comedi)                     │             │
                 │                            │             │
                 └────────→ daq-hardware ─────┴─────────────┤
                                ↑                           │
@@ -246,9 +251,34 @@ let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
 let rotator = bus.device("2").await?;  // Validates & loads calibration
 ```
 
-**5. DriverFactory for TOML-based drivers:**
-- Use `DriverFactory::create_async()` to run init sequences
-- TOML `init_sequence` validates device on connection
+**5. DriverFactory Pattern (Plugin Architecture):**
+
+Driver crates implement `daq_core::driver::DriverFactory` for registry integration:
+
+```rust
+use daq_core::driver::{DriverFactory, DeviceComponents, Capability};
+use futures::future::BoxFuture;
+
+pub struct MyDriverFactory;
+
+impl DriverFactory for MyDriverFactory {
+    fn driver_type(&self) -> &'static str { "my_driver" }
+    fn name(&self) -> &'static str { "My Custom Driver" }
+    fn capabilities(&self) -> &'static [Capability] { &[Capability::Movable] }
+    fn validate(&self, config: &toml::Value) -> Result<()> { Ok(()) }
+    fn build(&self, config: toml::Value) -> BoxFuture<'static, Result<DeviceComponents>> {
+        Box::pin(async move {
+            let driver = Arc::new(MyDriver::new().await?);
+            Ok(DeviceComponents::new().with_movable(driver))
+        })
+    }
+}
+```
+
+Register factories at startup in daq-bin:
+```rust
+registry.register_factory(Box::new(MyDriverFactory));
+```
 
 ## Common Pitfalls
 
