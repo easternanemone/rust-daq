@@ -176,19 +176,14 @@ impl DriverFactory {
 
     /// Create a driver from a TOML configuration file.
     ///
+    /// **Note:** This is a synchronous version that does NOT run the init sequence.
+    /// For production use, prefer [`create_from_file_async`] which validates the
+    /// device by running the init sequence.
+    ///
     /// # Arguments
     /// * `config_path` - Path to the TOML configuration file
     /// * `port` - Shared serial port for communication
     /// * `address` - Device address (for RS-485 multidrop protocols)
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let driver = DriverFactory::create_from_file(
-    ///     Path::new("config/devices/ell14.toml"),
-    ///     shared_port,
-    ///     "2"
-    /// )?;
-    /// ```
     pub fn create_from_file(
         config_path: &Path,
         port: SharedPort,
@@ -200,15 +195,95 @@ impl DriverFactory {
         Self::create(config, port, address)
     }
 
-    /// Create a driver with custom calibration parameter.
+    /// Create a driver with device validation via init sequence.
+    ///
+    /// This is the **preferred method** for production use. It:
+    /// 1. Creates the driver from the config
+    /// 2. Runs the `init_sequence` defined in the TOML config
+    /// 3. Validates responses match expected patterns
+    ///
+    /// # Arguments
+    /// * `config` - Loaded device configuration
+    /// * `port` - Shared serial port for communication
+    /// * `address` - Device address (for RS-485 multidrop protocols)
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Driver creation fails
+    /// - Init sequence fails (device doesn't respond correctly)
+    pub async fn create_async(
+        config: DeviceConfig,
+        port: SharedPort,
+        address: &str,
+    ) -> Result<ConfiguredDriver> {
+        let protocol = config.device.protocol.to_lowercase();
+        let driver = GenericSerialDriver::new(config, port, address)?;
+
+        // Run init sequence to validate device responds correctly
+        driver.run_init_sequence().await.with_context(|| {
+            format!(
+                "Device validation failed for protocol '{}' at address '{}'. \
+                 Check that the correct device is connected.",
+                protocol, address
+            )
+        })?;
+
+        // Map protocol to enum variant
+        let configured = match protocol.as_str() {
+            "elliptec" | "ell14" => ConfiguredDriver::Ell14(driver),
+            "esp300" | "newport_esp300" => ConfiguredDriver::Esp300(driver),
+            "newport_1830c" | "newport1830c" => ConfiguredDriver::Newport1830C(driver),
+            "maitai" | "mai_tai" => ConfiguredDriver::MaiTai(driver),
+            _ => ConfiguredDriver::Generic(driver),
+        };
+
+        Ok(configured)
+    }
+
+    /// Create a driver from a TOML file with device validation.
+    ///
+    /// This is the **preferred method** for production use. It runs the
+    /// `init_sequence` defined in the TOML config to validate the device.
+    ///
+    /// # Arguments
+    /// * `config_path` - Path to the TOML configuration file
+    /// * `port` - Shared serial port for communication
+    /// * `address` - Device address (for RS-485 multidrop protocols)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let driver = DriverFactory::create_from_file_async(
+    ///     Path::new("config/devices/ell14.toml"),
+    ///     shared_port,
+    ///     "2"
+    /// ).await?;
+    /// ```
+    pub async fn create_from_file_async(
+        config_path: &Path,
+        port: SharedPort,
+        address: &str,
+    ) -> Result<ConfiguredDriver> {
+        let config = load_device_config(config_path)
+            .with_context(|| format!("Failed to load config: {}", config_path.display()))?;
+
+        Self::create_async(config, port, address).await
+    }
+
+    /// Create a driver with custom calibration parameter and device validation.
     ///
     /// Useful for devices that need runtime calibration override.
+    /// Runs the init sequence to validate the device responds correctly.
     ///
     /// # Arguments
     /// * `config_path` - Path to the TOML configuration file
     /// * `port` - Shared serial port for communication
     /// * `address` - Device address
     /// * `pulses_per_degree` - Custom calibration factor
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Config loading or driver creation fails
+    /// - Init sequence fails (device doesn't respond correctly)
     pub async fn create_calibrated(
         config_path: &Path,
         port: SharedPort,
@@ -220,6 +295,15 @@ impl DriverFactory {
 
         let protocol = config.device.protocol.to_lowercase();
         let driver = GenericSerialDriver::new(config, port, address)?;
+
+        // Run init sequence to validate device responds correctly
+        driver.run_init_sequence().await.with_context(|| {
+            format!(
+                "Device validation failed for protocol '{}' at address '{}'. \
+                 Check that the correct device is connected.",
+                protocol, address
+            )
+        })?;
 
         // Set custom calibration
         driver

@@ -126,7 +126,7 @@ impl MaiTaiDriver {
                         .await
                         .context("Failed to flush wavelength command")
                         .map_err(|e| DaqError::Instrument(e.to_string()))?;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
 
                     // Read and discard any response/echo to clear the buffer
                     let mut response = String::new();
@@ -218,7 +218,7 @@ impl MaiTaiDriver {
                         .await
                         .context("Failed to flush wavelength command")
                         .map_err(|e| DaqError::Instrument(e.to_string()))?;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
 
                     // Read and discard any response/echo to clear the buffer
                     let mut response = String::new();
@@ -427,7 +427,7 @@ impl MaiTaiDriver {
             .context("MaiTai flush failed")?;
 
         // Small delay for device to process command
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Read response with timeout
         let mut response = String::new();
@@ -461,7 +461,7 @@ impl MaiTaiDriver {
             .context("MaiTai flush failed")?;
 
         // Wait for device to process command
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Read and discard any response/echo to clear the buffer
         // Device may send acknowledgment, echo, or error

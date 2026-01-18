@@ -1142,10 +1142,14 @@ impl DeviceRegistry {
                     }
                 };
 
-                let driver = Arc::new(crate::drivers::ell14::Ell14Driver::with_shared_port(
-                    shared_port,
-                    &address,
-                ));
+                // Use with_shared_port_calibrated() to validate device responds and get calibration
+                let driver = Arc::new(
+                    crate::drivers::ell14::Ell14Driver::with_shared_port_calibrated(
+                        shared_port,
+                        &address,
+                    )
+                    .await?,
+                );
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver.clone()),
@@ -1172,9 +1176,10 @@ impl DeviceRegistry {
 
             #[cfg(feature = "newport")]
             DriverType::Newport1830C { port } => {
-                let driver = Arc::new(crate::drivers::newport_1830c::Newport1830CDriver::new(
-                    &port,
-                )?);
+                // Use new_async() to validate device responds correctly on connection
+                let driver = Arc::new(
+                    crate::drivers::newport_1830c::Newport1830CDriver::new_async(&port).await?,
+                );
                 // Newport1830C implements WavelengthTunable (bd-3xw2.5)
                 let wavelength_range = driver.wavelength_range();
                 Ok(RegisteredDevice {
@@ -1229,7 +1234,9 @@ impl DeviceRegistry {
 
             #[cfg(feature = "newport")]
             DriverType::Esp300 { port, axis } => {
-                let driver = Arc::new(crate::drivers::esp300::Esp300Driver::new(&port, axis)?);
+                // Use new_async() to validate device responds correctly on connection
+                let driver =
+                    Arc::new(crate::drivers::esp300::Esp300Driver::new_async(&port, axis).await?);
                 Ok(RegisteredDevice {
                     config,
                     movable: Some(driver.clone()),

@@ -782,6 +782,14 @@ impl Ell14Driver {
     /// let rotator_3 = Ell14Driver::with_shared_port_calibrated(shared.clone(), "3").await?;
     /// let rotator_8 = Ell14Driver::with_shared_port_calibrated(shared.clone(), "8").await?;
     /// ```
+    /// Create a calibrated ELL14 driver with device validation
+    ///
+    /// This is the **preferred constructor** for production use. It queries the
+    /// device for calibration data and **fails if the device doesn't respond**,
+    /// ensuring early detection of misconfiguration.
+    ///
+    /// For backwards-compatible behavior that falls back to defaults on error,
+    /// use [`with_shared_port_lenient`].
     pub async fn with_shared_port_calibrated(
         shared_port: SharedPort,
         address: &str,
@@ -793,7 +801,53 @@ impl Ell14Driver {
             Self::DEFAULT_PULSES_PER_DEGREE,
         );
 
-        // Query device for actual calibration
+        // Query device for actual calibration - FAIL if device doesn't respond
+        let info = driver.get_device_info().await.context(format!(
+            "ELL14 device validation failed at address '{}'. \
+             Check that an ELL14 device is connected and responding at this address.",
+            address
+        ))?;
+
+        if info.pulses_per_unit > 0 {
+            let pulses_per_degree = info.pulses_per_unit as f64 / 360.0;
+            tracing::info!(
+                address = %address,
+                device_type = %info.device_type,
+                serial = %info.serial,
+                firmware = %info.firmware,
+                pulses_per_degree = pulses_per_degree,
+                total_pulses = info.pulses_per_unit,
+                "ELL14 device validated and calibration loaded"
+            );
+            driver.pulses_per_degree = pulses_per_degree;
+        } else {
+            return Err(anyhow!(
+                "ELL14 device at address '{}' returned invalid calibration (0 pulses_per_unit). \
+                 Device may be malfunctioning or incompatible.",
+                address
+            ));
+        }
+
+        Ok(driver)
+    }
+
+    /// Create a calibrated ELL14 driver with lenient error handling
+    ///
+    /// Unlike [`with_shared_port_calibrated`], this method logs warnings but
+    /// continues with default calibration if the device doesn't respond.
+    /// Use this only when you need backwards-compatible behavior.
+    pub async fn with_shared_port_lenient(
+        shared_port: SharedPort,
+        address: &str,
+    ) -> Self {
+        // Create driver with default calibration first (needed for get_device_info)
+        let mut driver = Self::build(
+            shared_port,
+            address.to_string(),
+            Self::DEFAULT_PULSES_PER_DEGREE,
+        );
+
+        // Query device for actual calibration - fall back to defaults on error
         match driver.get_device_info().await {
             Ok(info) => {
                 if info.pulses_per_unit > 0 {
@@ -823,7 +877,7 @@ impl Ell14Driver {
             }
         }
 
-        Ok(driver)
+        driver
     }
 
     /// Internal helper to open a serial port with ELL14 settings

@@ -10,14 +10,14 @@
 //!
 //! # Example Usage
 //!
-//! ```no_run
-//! use rust_daq::hardware::esp300::Esp300Driver;
-//! use rust_daq::hardware::capabilities::Movable;
+//! ```ignore
+//! use daq_hardware::drivers::esp300::Esp300Driver;
+//! use daq_hardware::capabilities::Movable;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     // Create driver for axis 1
-//!     let stage = Esp300Driver::new("/dev/ttyUSB0", 1)?;
+//!     // Use new_async() for production - validates device identity
+//!     let stage = Esp300Driver::new_async("/dev/ttyUSB0", 1).await?;
 //!
 //!     // Move to absolute position
 //!     stage.move_abs(10.5).await?;
@@ -134,41 +134,75 @@ impl Esp300Driver {
         ))
     }
 
-    /// Create a new ESP300 driver instance asynchronously
+    /// Create a new ESP300 driver instance asynchronously with device validation
     ///
-    /// This is the preferred constructor as it uses `spawn_blocking` to avoid
-    /// blocking the async runtime during serial port opening.
+    /// This is the **preferred constructor** for production use. It uses
+    /// `spawn_blocking` to avoid blocking the async runtime during serial port
+    /// opening, and validates that an ESP300 controller is actually connected.
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
     /// * `axis` - Axis number (1-3)
     ///
     /// # Errors
-    /// Returns error if serial port cannot be opened or axis is invalid
+    /// Returns error if:
+    /// - Serial port cannot be opened
+    /// - Axis is invalid (not 1-3)
+    /// - Device doesn't respond to version query (VE)
+    /// - Response doesn't contain "ESP" (indicates wrong device)
     pub async fn new_async(port_path: &str, axis: u8) -> Result<Self> {
         if !(1..=3).contains(&axis) {
             return Err(anyhow!("ESP300 axis must be 1-3, got {}", axis));
         }
 
-        let port_path = port_path.to_string();
+        let port_path_owned = port_path.to_string();
 
         // Use spawn_blocking to avoid blocking the async runtime
         let port = spawn_blocking(move || {
-            tokio_serial::new(&port_path, 19200)
+            tokio_serial::new(&port_path_owned, 19200)
                 .data_bits(tokio_serial::DataBits::Eight)
                 .parity(tokio_serial::Parity::None)
                 .stop_bits(tokio_serial::StopBits::One)
                 .flow_control(tokio_serial::FlowControl::None)
                 .open_native_async()
-                .context(format!("Failed to open ESP300 serial port: {}", port_path))
+                .context(format!(
+                    "Failed to open ESP300 serial port: {}",
+                    port_path_owned
+                ))
         })
         .await
         .context("spawn_blocking for ESP300 port opening failed")??;
 
-        Ok(Self::build(
+        let driver = Self::build(
             Arc::new(Mutex::new(BufReader::new(Box::new(port)))),
             axis,
-        ))
+        );
+
+        // Validate device identity by querying version
+        // ESP300 responds with something like "ESP300 Version 3.04"
+        match driver.query("VE").await {
+            Ok(version) => {
+                if !version.to_uppercase().contains("ESP") {
+                    return Err(anyhow!(
+                        "ESP300 validation failed: version response '{}' doesn't indicate an ESP controller. \
+                         Check that the correct device is connected to port {}.",
+                        version,
+                        port_path
+                    ));
+                }
+                tracing::info!("ESP300 axis {} validated: {}", axis, version);
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "ESP300 validation failed: no response to version query (VE). \
+                     Check that the correct device is connected to port {}. Error: {}",
+                    port_path,
+                    e
+                ));
+            }
+        }
+
+        Ok(driver)
     }
 
     fn build(port: SharedPort, axis: u8) -> Self {

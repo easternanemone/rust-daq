@@ -19,13 +19,14 @@
 //!
 //! # Example Usage
 //!
-//! ```no_run
-//! use rust_daq::hardware::newport_1830c::Newport1830CDriver;
-//! use rust_daq::hardware::capabilities::Readable;
+//! ```ignore
+//! use daq_hardware::drivers::newport_1830c::Newport1830CDriver;
+//! use daq_hardware::capabilities::Readable;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let meter = Newport1830CDriver::new("/dev/ttyS0")?;
+//!     // Use new_async() for production - validates device identity
+//!     let meter = Newport1830CDriver::new_async("/dev/ttyS0").await?;
 //!
 //!     // Configure attenuator and filter
 //!     meter.set_attenuator(false).await?;  // 0=off, 1=on
@@ -140,6 +141,51 @@ impl Newport1830CDriver {
             wavelength_nm,
             params,
         }
+    }
+
+    /// Create a new Newport 1830-C driver with device validation
+    ///
+    /// This is the **preferred constructor** for production use. Unlike `new()`,
+    /// this method validates that the connected device responds correctly,
+    /// failing fast if a different device is connected to the port.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyS0", "COM3")
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Serial port cannot be opened
+    /// - Device doesn't respond to wavelength query
+    /// - Response is not a valid wavelength (indicates wrong device)
+    pub async fn new_async(port_path: &str) -> Result<Self> {
+        let driver = Self::new(port_path)?;
+
+        // Validate device by querying wavelength - this confirms a 1830-C is connected
+        // Other devices won't respond with a 4-digit wavelength value
+        match driver.query_wavelength().await {
+            Ok(wavelength) => {
+                if !(300.0..=1100.0).contains(&wavelength) {
+                    return Err(anyhow!(
+                        "Newport 1830-C validation failed: wavelength {} nm out of expected range (300-1100 nm). \
+                         Check that the correct device is connected to this port.",
+                        wavelength
+                    ));
+                }
+                tracing::info!(
+                    "Newport 1830-C validated: wavelength calibration at {} nm",
+                    wavelength
+                );
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "Newport 1830-C validation failed: no response to wavelength query. \
+                     Check that the correct device is connected to this port. Error: {}",
+                    e
+                ));
+            }
+        }
+
+        Ok(driver)
     }
 
     #[cfg(test)]
