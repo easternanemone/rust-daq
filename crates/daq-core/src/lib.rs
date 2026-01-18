@@ -18,3 +18,10 @@ pub mod observable;
 pub mod parameter;
 pub mod pipeline;
 pub mod platform;
+
+// Driver factory and capability types for plugin architecture
+pub mod driver;
+
+// Serial port abstractions for driver crates (requires "serial" feature)
+#[cfg(feature = "serial")]
+pub mod serial;

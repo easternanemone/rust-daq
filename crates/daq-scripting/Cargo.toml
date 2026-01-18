@@ -7,6 +7,7 @@ edition = "2021"
 daq-core = { path = "../daq-core" }
 daq-hardware = { path = "../daq-hardware" }
 daq-experiment = { path = "../daq-experiment" }
+daq-driver-mock = { path = "../daq-driver-mock" }
 thiserror = "1.0"
 async-trait = "0.1"
 tokio = { version = "1.36", features = ["sync", "time", "rt", "rt-multi-thread", "macros"] }

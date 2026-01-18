@@ -1,0 +1,37 @@
+[package]
+name = "daq-driver-thorlabs"
+version = "0.1.0"
+edition = "2021"
+description = "Thorlabs ELL14 rotation mount driver for rust-daq"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TheFermiSea/rust-daq"
+
+[dependencies]
+# Core dependencies (DriverFactory trait, capabilities)
+daq-core = { path = "../daq-core" }
+
+# Async runtime
+tokio = { version = "1", features = ["sync", "time", "io-util", "rt"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Serial communication
+tokio-serial = "5.4"
+serialport = "4"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Configuration
+serde = { version = "1", features = ["derive"] }
+toml = "0.9.8"
+
+# Concurrency
+parking_lot = "0.12"
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

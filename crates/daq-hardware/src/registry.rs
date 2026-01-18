@@ -78,6 +78,7 @@ use daq_core::capabilities::{
     Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
 };
 use daq_core::data::Frame;
+use daq_core::driver::{DeviceComponents, DriverFactory};
 use daq_core::error::DaqError;
 use daq_core::pipeline::MeasurementSource;
 
@@ -583,9 +584,30 @@ struct RegisteredDevice {
 /// Usage:
 /// - Pass as `Arc<DeviceRegistry>`
 /// - Call methods directly (no `.read().await` needed)
+///
+/// # Plugin Architecture (DriverFactory)
+///
+/// The registry supports dynamic driver registration via the [`DriverFactory`] trait.
+/// Driver crates can register their factories at startup, which are then used to
+/// instantiate devices based on TOML configuration.
+///
+/// ```rust,ignore
+/// // In main.rs or setup code:
+/// registry.register_factory(Box::new(MyDriverFactory));
+///
+/// // Later, devices with driver_type matching the factory are auto-instantiated:
+/// registry.register_from_config(config).await?;
+/// ```
 pub struct DeviceRegistry {
     /// Registered devices by ID (thread-safe via DashMap)
     devices: DashMap<DeviceId, RegisteredDevice>,
+
+    /// Registered driver factories by driver_type (thread-safe via DashMap)
+    ///
+    /// Factories are consulted first when registering a device. If a factory
+    /// matches the driver_type, it's used to build the device. Otherwise,
+    /// the legacy DriverType enum matching is used as fallback.
+    factories: DashMap<String, Box<dyn DriverFactory>>,
 
     /// Shared serial ports for ELL14 multidrop bus (interior mutability for async access)
     /// Key: port path (e.g., "/dev/ttyUSB0"), Value: shared Arc<Mutex<SerialStream>>
@@ -613,11 +635,23 @@ pub struct RegistrationFailure {
     pub error: String,
 }
 
+/// Information about a registered driver factory
+#[derive(Debug, Clone)]
+pub struct FactoryInfo {
+    /// The driver_type string this factory handles
+    pub driver_type: String,
+    /// Human-readable factory name
+    pub name: String,
+    /// List of capabilities this driver provides
+    pub capabilities: Vec<String>,
+}
+
 impl DeviceRegistry {
     /// Create a new empty device registry
     pub fn new() -> Self {
         Self {
             devices: DashMap::new(),
+            factories: DashMap::new(),
             #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             #[cfg(feature = "serial")]
@@ -633,6 +667,7 @@ impl DeviceRegistry {
     ) -> Self {
         Self {
             devices: DashMap::new(),
+            factories: DashMap::new(),
             #[cfg(feature = "thorlabs")]
             ell14_shared_ports: RwLock::new(HashMap::new()),
             plugin_factory,
@@ -662,6 +697,256 @@ impl DeviceRegistry {
             .load_plugins(path)
             .await
             .map_err(|e| DaqError::Configuration(e.to_string()))
+    }
+
+    // =========================================================================
+    // Driver Factory Management
+    // =========================================================================
+
+    /// Register a driver factory for a specific driver type.
+    ///
+    /// When a device with matching driver_type is registered, this factory's
+    /// `build()` method will be called instead of the legacy DriverType matching.
+    ///
+    /// # Arguments
+    /// * `factory` - The factory to register
+    ///
+    /// # Returns
+    /// The previous factory for this driver_type, if any was registered.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use daq_core::driver::DriverFactory;
+    ///
+    /// struct MyMotorFactory;
+    /// impl DriverFactory for MyMotorFactory {
+    ///     fn driver_type(&self) -> &'static str { "my_motor" }
+    ///     // ... other methods
+    /// }
+    ///
+    /// registry.register_factory(Box::new(MyMotorFactory));
+    /// ```
+    ///
+    /// # Thread Safety
+    /// This method is thread-safe and can be called concurrently.
+    pub fn register_factory(
+        &self,
+        factory: Box<dyn DriverFactory>,
+    ) -> Option<Box<dyn DriverFactory>> {
+        let driver_type = factory.driver_type().to_string();
+        tracing::info!(
+            driver_type = %driver_type,
+            name = %factory.name(),
+            capabilities = ?factory.capabilities(),
+            "Registering driver factory"
+        );
+        self.factories.insert(driver_type, factory)
+    }
+
+    /// Unregister a driver factory by driver type.
+    ///
+    /// # Arguments
+    /// * `driver_type` - The driver type string to unregister
+    ///
+    /// # Returns
+    /// The removed factory, if one was registered with this driver_type.
+    pub fn unregister_factory(&self, driver_type: &str) -> Option<Box<dyn DriverFactory>> {
+        self.factories
+            .remove(driver_type)
+            .map(|(_, factory)| factory)
+    }
+
+    /// Check if a factory is registered for a driver type.
+    pub fn has_factory(&self, driver_type: &str) -> bool {
+        self.factories.contains_key(driver_type)
+    }
+
+    /// List all registered factory driver types.
+    pub fn list_factories(&self) -> Vec<String> {
+        self.factories
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get factory information for debugging/introspection.
+    pub fn factory_info(&self, driver_type: &str) -> Option<FactoryInfo> {
+        self.factories.get(driver_type).map(|entry| {
+            let factory = entry.value();
+            FactoryInfo {
+                driver_type: factory.driver_type().to_string(),
+                name: factory.name().to_string(),
+                capabilities: factory
+                    .capabilities()
+                    .iter()
+                    .map(|c| format!("{:?}", c))
+                    .collect(),
+            }
+        })
+    }
+
+    /// Register a device from TOML configuration using registered factories.
+    ///
+    /// This method is the preferred way to register devices when using the
+    /// DriverFactory plugin architecture. It:
+    /// 1. Looks up a factory matching the driver_type in the TOML config
+    /// 2. Validates the config using the factory's validate() method
+    /// 3. Builds the device using the factory's build() method
+    /// 4. Registers the resulting DeviceComponents
+    ///
+    /// # Arguments
+    /// * `device_id` - Unique identifier for the device
+    /// * `device_name` - Human-readable name for the device
+    /// * `driver_type` - The driver type string (must match a registered factory)
+    /// * `config` - TOML configuration value for the driver
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Device ID is already registered
+    /// - No factory is registered for the driver_type
+    /// - Configuration validation fails
+    /// - Driver build fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use toml::Value;
+    ///
+    /// let config: Value = toml::from_str(r#"
+    ///     port = "/dev/ttyUSB0"
+    ///     address = "2"
+    /// "#)?;
+    ///
+    /// registry.register_from_toml(
+    ///     "rotator_2",
+    ///     "ELL14 Rotator #2",
+    ///     "ell14",
+    ///     config,
+    /// ).await?;
+    /// ```
+    pub async fn register_from_toml(
+        &self,
+        device_id: &str,
+        device_name: &str,
+        driver_type: &str,
+        config: toml::Value,
+    ) -> Result<(), DaqError> {
+        if self.devices.contains_key(device_id) {
+            return Err(DaqError::Configuration(format!(
+                "Device '{}' is already registered",
+                device_id
+            )));
+        }
+
+        // Look up factory
+        let factory = self.factories.get(driver_type).ok_or_else(|| {
+            DaqError::Configuration(format!(
+                "No factory registered for driver_type '{}'. \
+                 Available factories: {:?}",
+                driver_type,
+                self.list_factories()
+            ))
+        })?;
+
+        // Validate configuration
+        factory.validate(&config).map_err(|e| {
+            DaqError::Configuration(format!(
+                "Configuration validation failed for device '{}' ({}): {}",
+                device_id, driver_type, e
+            ))
+        })?;
+
+        // Build device components
+        tracing::info!(
+            device_id = %device_id,
+            device_name = %device_name,
+            driver_type = %driver_type,
+            "Building device from factory"
+        );
+
+        let components = factory.build(config).await.map_err(|e| {
+            DaqError::Instrument(format!(
+                "Factory build failed for device '{}' ({}): {}",
+                device_id, driver_type, e
+            ))
+        })?;
+
+        // Convert to RegisteredDevice
+        let registered = self.components_to_registered(
+            device_id.to_string(),
+            device_name.to_string(),
+            driver_type.to_string(),
+            components,
+        );
+
+        self.devices.insert(device_id.to_string(), registered);
+        tracing::info!(device_id = %device_id, "Device registered successfully");
+        Ok(())
+    }
+
+    /// Convert DeviceComponents from a factory into a RegisteredDevice.
+    ///
+    /// This bridges the new DriverFactory pattern with the legacy RegisteredDevice
+    /// structure used internally by the registry.
+    fn components_to_registered(
+        &self,
+        device_id: String,
+        device_name: String,
+        driver_type: String,
+        components: DeviceComponents,
+    ) -> RegisteredDevice {
+        // Create a synthetic DeviceConfig for the legacy structure
+        // Note: We use MockStage as a placeholder since the actual driver type
+        // doesn't matter once the device is instantiated.
+        let config = DeviceConfig {
+            id: device_id,
+            name: device_name,
+            driver: DriverType::MockStage {
+                initial_position: 0.0,
+            },
+        };
+
+        // Convert daq_core::driver::DeviceMetadata to local DeviceMetadata
+        let metadata = DeviceMetadata {
+            category: components.metadata.category,
+            position_units: components.metadata.position_units.clone(),
+            min_position: components.metadata.min_position,
+            max_position: components.metadata.max_position,
+            measurement_units: components.metadata.measurement_units.clone(),
+            frame_width: components.metadata.frame_width,
+            frame_height: components.metadata.frame_height,
+            bits_per_pixel: components.metadata.bits_per_pixel,
+            min_exposure_ms: components.metadata.min_exposure_ms,
+            max_exposure_ms: components.metadata.max_exposure_ms,
+            min_wavelength_nm: components.metadata.min_wavelength_nm,
+            max_wavelength_nm: components.metadata.max_wavelength_nm,
+        };
+
+        // Log the actual driver_type for debugging (not the synthetic one)
+        tracing::debug!(
+            driver_type = %driver_type,
+            capabilities = ?components.capabilities(),
+            "Converting DeviceComponents to RegisteredDevice"
+        );
+
+        RegisteredDevice {
+            config,
+            movable: components.movable,
+            readable: components.readable,
+            triggerable: components.triggerable,
+            frame_producer: components.frame_producer,
+            source_frame: components.source_frame,
+            exposure_control: components.exposure_control,
+            settable: components.settable,
+            stageable: components.stageable,
+            commandable: components.commandable,
+            parameterized: components.parameterized,
+            shutter_control: components.shutter_control,
+            emission_control: components.emission_control,
+            wavelength_tunable: components.wavelength_tunable,
+            metadata,
+        }
     }
 
     /// Register a device from configuration

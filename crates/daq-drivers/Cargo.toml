@@ -1,0 +1,65 @@
+[package]
+name = "daq-drivers"
+version = "0.1.0"
+edition = "2021"
+description = "Metacrate aggregating all rust-daq driver crates with unified feature flags"
+
+[dependencies]
+# Core dependency for DriverFactory trait
+daq-core = { path = "../daq-core" }
+
+# Driver crates (all optional, enabled via features)
+#
+# Note: The following driver crates will be created during the driver decoupling migration:
+# - daq-driver-thorlabs (Phase 4) - ELL14 rotation mounts
+# - daq-driver-newport (Phase 5) - ESP300, 1830-C
+# - daq-driver-spectra-physics (Phase 6) - MaiTai laser
+# - daq-driver-mock (Phase 3) - Mock devices for testing
+#
+# For now, we include the existing driver crates:
+daq-driver-pvcam = { path = "../daq-driver-pvcam", optional = true }
+daq-driver-comedi = { path = "../daq-driver-comedi", optional = true }
+
+# Mock drivers for testing and simulation
+daq-driver-mock = { path = "../daq-driver-mock", optional = true }
+
+# Thorlabs ELL14 rotation mount driver
+daq-driver-thorlabs = { path = "../daq-driver-thorlabs", optional = true }
+
+# Newport ESP300 motion controller and 1830-C power meter
+daq-driver-newport = { path = "../daq-driver-newport", optional = true }
+
+# Spectra-Physics MaiTai Ti:Sapphire laser
+daq-driver-spectra-physics = { path = "../daq-driver-spectra-physics", optional = true }
+
+[features]
+default = []
+
+# Individual driver features
+pvcam = ["dep:daq-driver-pvcam"]
+pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]
+comedi = ["dep:daq-driver-comedi"]
+comedi_hardware = ["comedi", "daq-driver-comedi/hardware"]
+
+# Mock drivers for testing/simulation
+mock = ["dep:daq-driver-mock"]
+
+# Thorlabs ELL14 rotation mount
+thorlabs = ["dep:daq-driver-thorlabs"]
+
+# Newport ESP300 motion controller and 1830-C power meter
+newport = ["dep:daq-driver-newport"]
+
+# Spectra-Physics MaiTai Ti:Sapphire laser
+spectra_physics = ["dep:daq-driver-spectra-physics"]
+
+# Convenience feature sets
+#
+# all: All drivers with mock implementations (for development/testing)
+all = ["thorlabs", "newport", "spectra_physics", "pvcam", "comedi", "mock"]
+
+# maitai: Hardware configuration for the maitai lab system
+maitai = ["thorlabs", "newport", "spectra_physics", "pvcam_sdk"]
+
+# hardware: All drivers with real hardware support
+hardware = ["thorlabs", "newport", "spectra_physics", "pvcam_sdk", "comedi_hardware"]

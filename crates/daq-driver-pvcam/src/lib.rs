@@ -7,6 +7,25 @@
 
 pub mod components;
 
+/// Linker reference function to ensure this crate is not stripped.
+///
+/// This function is called by `daq_drivers::link_drivers()` to force the linker
+/// to include this crate's driver registration code. Without this explicit
+/// reference, the linker may optimize away driver crates that register factories
+/// via constructor functions.
+///
+/// # Usage
+///
+/// This function is automatically called by `daq_drivers::link_drivers()` when
+/// the `pvcam` feature is enabled. You typically don't need to call it directly.
+#[inline(never)]
+pub fn link() {
+    // Reference a type from the crate to create a dependency that the linker
+    // cannot optimize away. This ensures driver factory registration code
+    // (when added) will be included in the final binary.
+    std::hint::black_box(std::any::TypeId::of::<PvcamDriver>());
+}
+
 use anyhow::Result;
 use async_trait::async_trait;
 use daq_core::capabilities::{

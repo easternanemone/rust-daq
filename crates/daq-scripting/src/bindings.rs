@@ -415,7 +415,7 @@ pub fn register_hardware(engine: &mut Engine) {
 
     // create_mock_stage() - Create a mock stage for testing (unlimited soft limits)
     engine.register_fn("create_mock_stage", || -> StageHandle {
-        use daq_hardware::drivers::mock::MockStage;
+        use daq_driver_mock::MockStage;
         StageHandle {
             driver: Arc::new(MockStage::new()),
             data_tx: None,
@@ -427,7 +427,7 @@ pub fn register_hardware(engine: &mut Engine) {
     engine.register_fn(
         "create_mock_stage_limited",
         |min: f64, max: f64| -> StageHandle {
-            use daq_hardware::drivers::mock::MockStage;
+            use daq_driver_mock::MockStage;
             StageHandle {
                 driver: Arc::new(MockStage::new()),
                 data_tx: None,
@@ -440,7 +440,7 @@ pub fn register_hardware(engine: &mut Engine) {
     engine.register_fn(
         "create_mock_camera",
         |width: i64, height: i64| -> CameraHandle {
-            use daq_hardware::drivers::mock::MockCamera;
+            use daq_driver_mock::MockCamera;
             CameraHandle {
                 driver: Arc::new(MockCamera::new(width as u32, height as u32)),
                 data_tx: None,
@@ -455,7 +455,7 @@ pub fn register_hardware(engine: &mut Engine) {
         |_base_power: f64| -> StageHandle {
             // Mock power meter uses MockStage for now (no dedicated mock)
             // Real scripts should use actual Newport 1830-C
-            use daq_hardware::drivers::mock::MockStage;
+            use daq_driver_mock::MockStage;
             StageHandle {
                 driver: Arc::new(MockStage::new()),
                 data_tx: None,
@@ -491,7 +491,7 @@ pub fn register_hardware(engine: &mut Engine) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daq_hardware::drivers::mock::{MockCamera, MockStage};
+    use daq_driver_mock::{MockCamera, MockStage};
     use rhai::Scope;
 
     #[test]

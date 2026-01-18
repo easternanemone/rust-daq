@@ -10,6 +10,7 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 anyhow = "1.0"
 serde_json = "1.0"
+toml = "0.9.8"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
@@ -20,8 +21,11 @@ config = { version = "0.14.0", features = ["toml"] }
 arrow = { version = "57", optional = true, features = ["ipc"] }
 daq-pool = { path = "../daq-pool" }
 
+# Serial port support (optional, for driver crates)
+tokio-serial = { version = "5.4", optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time", "io-util"] }
 hostname = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -32,6 +36,7 @@ wasm-timer = "0.2"
 
 [features]
 storage_arrow = ["dep:arrow"]
+serial = ["dep:tokio-serial"]  # Serial port support for driver crates
 
 [package.metadata.cargo-machete]
 ignored = ["getrandom", "schemars"]  # getrandom: wasm32 feature enabler; schemars: optional
