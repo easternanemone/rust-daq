@@ -37,8 +37,13 @@ use async_trait::async_trait;
 use evalexpr::{eval_number_with_context, ContextWithMutableVariables, HashMapContext, Value};
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+/// Cached regex for template interpolation (compiled once).
+/// Matches patterns like `${param}` or `${param:format}`.
+static INTERPOLATION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$\{([^}]+)\}").expect("Invalid interpolation regex"));
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{debug, instrument, trace, warn};
@@ -293,11 +298,9 @@ impl GenericSerialDriver {
     ) -> Result<String> {
         let mut result = template.to_string();
 
-        // Find all ${...} patterns
-        let pattern = Regex::new(r"\$\{([^}]+)\}").expect("Invalid interpolation regex");
-
+        // Use cached regex for ${...} patterns (compiled once via LazyLock)
         // Collect all matches first (to avoid borrowing issues)
-        let matches: Vec<_> = pattern
+        let matches: Vec<_> = INTERPOLATION_REGEX
             .captures_iter(template)
             .map(|cap| (cap.get(0).unwrap().as_str().to_string(), cap[1].to_string()))
             .collect();
