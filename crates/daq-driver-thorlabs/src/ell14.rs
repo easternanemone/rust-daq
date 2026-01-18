@@ -20,8 +20,8 @@
 //! let components = factory.build(config.into()).await?;
 //! ```
 
-use crate::shared_ports::{get_or_open_port, SharedPort};
-use anyhow::{anyhow, Context, Result};
+use crate::shared_ports::{SharedPort, get_or_open_port, get_or_open_port_with_timeout};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use daq_core::capabilities::{Movable, Parameterized};
 use daq_core::driver::{Capability, DeviceComponents, DriverFactory};
@@ -49,6 +49,9 @@ pub struct Ell14Config {
     /// Optional custom calibration (pulses per degree)
     #[serde(default)]
     pub pulses_per_degree: Option<f64>,
+    /// Optional port timeout in milliseconds (default: 500)
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 /// Factory for creating ELL14 driver instances.
@@ -79,8 +82,12 @@ impl DriverFactory for Ell14Factory {
         Box::pin(async move {
             let cfg: Ell14Config = config.try_into().context("Invalid ELL14 config")?;
 
-            // Get or create shared port for this path
-            let port = get_or_open_port(&cfg.port).await?;
+            // Get or create shared port for this path with optional custom timeout
+            let port = if let Some(timeout_ms) = cfg.timeout_ms {
+                get_or_open_port_with_timeout(&cfg.port, Duration::from_millis(timeout_ms)).await?
+            } else {
+                get_or_open_port(&cfg.port).await?
+            };
 
             // Create driver with calibration
             let driver = if let Some(ppd) = cfg.pulses_per_degree {
@@ -296,7 +303,9 @@ impl Ell14Driver {
                         }
                     }
                 }
-                Err(DaqError::Instrument("Failed to parse position response".to_string()))
+                Err(DaqError::Instrument(
+                    "Failed to parse position response".to_string(),
+                ))
             })
         });
     }

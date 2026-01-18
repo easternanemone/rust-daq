@@ -1,3 +1,8 @@
+//! Icon library using egui-phosphor.
+//!
+//! Some icons are defined for future use and may not currently be referenced.
+#![allow(dead_code)]
+
 pub use egui_phosphor::Variant;
 pub use egui_phosphor::regular::*;
 

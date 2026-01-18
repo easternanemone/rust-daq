@@ -39,20 +39,68 @@ pub fn register_port(port_path: &str, port: SharedPort) {
     tracing::info!(port = port_path, "Registered new ELL14 shared port");
 }
 
-/// Get or create a shared port for the given path.
+/// Remove a port from the registry (e.g., when it becomes stale).
+pub fn remove_port(port_path: &str) -> bool {
+    let mut registry = port_registry().write();
+    let removed = registry.remove(port_path).is_some();
+    if removed {
+        tracing::info!(
+            port = port_path,
+            "Removed stale ELL14 shared port from registry"
+        );
+    }
+    removed
+}
+
+/// Get or create a shared port for the given path with default timeout (500ms).
 ///
 /// If a port is already open for this path, returns the existing connection.
 /// Otherwise, opens a new port and registers it.
 pub async fn get_or_open_port(port_path: &str) -> anyhow::Result<SharedPort> {
+    get_or_open_port_with_timeout(port_path, std::time::Duration::from_millis(500)).await
+}
+
+/// Get or create a shared port for the given path with custom timeout.
+///
+/// If a port is already open for this path, performs a health check and returns
+/// the existing connection if healthy. Otherwise, opens a new port and registers it.
+pub async fn get_or_open_port_with_timeout(
+    port_path: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<SharedPort> {
+    use tokio::io::AsyncWriteExt;
+
     // Check if already open
     if let Some(port) = get_existing_port(port_path) {
-        tracing::debug!(port = port_path, "Reusing existing ELL14 shared port");
-        return Ok(port);
+        // Health check: try to flush the port to verify it's still connected
+        let health_check = async {
+            let mut guard = port.lock().await;
+            guard.flush().await
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_millis(100), health_check).await {
+            Ok(Ok(())) => {
+                tracing::debug!(port = port_path, "Reusing healthy ELL14 shared port");
+                return Ok(port);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(port = port_path, error = %e, "ELL14 shared port health check failed, reopening");
+                remove_port(port_path);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    port = port_path,
+                    "ELL14 shared port health check timed out, reopening"
+                );
+                remove_port(port_path);
+            }
+        }
     }
 
     // Open new port
     let port_path_owned = port_path.to_string();
-    let port = tokio::task::spawn_blocking(move || open_serial_port(&port_path_owned)).await??;
+    let port =
+        tokio::task::spawn_blocking(move || open_serial_port(&port_path_owned, timeout)).await??;
 
     let shared: SharedPort = Arc::new(Mutex::new(Box::new(port)));
 
@@ -63,7 +111,10 @@ pub async fn get_or_open_port(port_path: &str) -> anyhow::Result<SharedPort> {
 }
 
 /// Open a serial port with ELL14 default settings.
-fn open_serial_port(port_path: &str) -> anyhow::Result<tokio_serial::SerialStream> {
+fn open_serial_port(
+    port_path: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<tokio_serial::SerialStream> {
     use tokio_serial::SerialPortBuilderExt;
 
     let port = tokio_serial::new(port_path, 9600)
@@ -71,10 +122,10 @@ fn open_serial_port(port_path: &str) -> anyhow::Result<tokio_serial::SerialStrea
         .parity(tokio_serial::Parity::None)
         .stop_bits(tokio_serial::StopBits::One)
         .flow_control(tokio_serial::FlowControl::None)
-        .timeout(std::time::Duration::from_millis(500))
+        .timeout(timeout)
         .open_native_async()?;
 
-    tracing::info!(port = port_path, "Opened ELL14 serial port");
+    tracing::info!(port = port_path, timeout_ms = ?timeout.as_millis(), "Opened ELL14 serial port");
     Ok(port)
 }
 
@@ -90,10 +141,7 @@ pub fn close_all_ports() {
 
 /// Get the number of currently open shared ports.
 pub fn port_count() -> usize {
-    SHARED_PORTS
-        .get()
-        .map(|r| r.read().len())
-        .unwrap_or(0)
+    SHARED_PORTS.get().map(|r| r.read().len()).unwrap_or(0)
 }
 
 #[cfg(test)]

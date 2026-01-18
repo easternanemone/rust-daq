@@ -1,3 +1,8 @@
+//! Layout constants and frame helpers for the DAQ GUI.
+//!
+//! Some constants are defined for future use and may not currently be referenced.
+#![allow(dead_code)]
+
 use egui::{Color32, CornerRadius, Stroke, Vec2};
 
 pub const NAV_PANEL_WIDTH: f32 = 200.0;

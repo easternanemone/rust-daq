@@ -1,3 +1,8 @@
+//! Toast notification widget for temporary status messages.
+//!
+//! This widget is available for integration but not currently used.
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -135,7 +140,7 @@ impl Toasts {
 
         ctx.request_repaint();
 
-        let screen_rect = ctx.input(|i| i.screen_rect());
+        let screen_rect = ctx.input(|i| i.content_rect());
         let margin = 16.0;
         let toast_width = 300.0;
         let toast_spacing = 8.0;

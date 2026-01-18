@@ -2,6 +2,9 @@
 //!
 //! Displays connection state, breadcrumb navigation, transient status messages,
 //! and version information in a fixed-height bottom panel.
+//!
+//! Some methods are defined for future use and may not currently be called.
+#![allow(dead_code)]
 
 use eframe::egui;
 

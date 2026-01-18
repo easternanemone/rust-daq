@@ -25,7 +25,7 @@
 //! let components = factory.build(config.into()).await?;
 //! ```
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use daq_core::capabilities::{Movable, Parameterized};
 use daq_core::driver::{Capability, DeviceComponents, DriverFactory};
@@ -88,9 +88,11 @@ impl DriverFactory for Esp300Factory {
     fn build(&self, config: toml::Value) -> BoxFuture<'static, Result<DeviceComponents>> {
         Box::pin(async move {
             let cfg: Esp300Config = config.try_into().context("Invalid ESP300 config")?;
+            let timeout = Duration::from_secs(cfg.timeout_secs.unwrap_or(5));
 
             // Create driver with validation
-            let driver = Arc::new(Esp300Driver::new_async(&cfg.port, cfg.axis).await?);
+            let driver =
+                Arc::new(Esp300Driver::new_async_with_timeout(&cfg.port, cfg.axis, timeout).await?);
 
             Ok(DeviceComponents {
                 movable: Some(driver.clone()),
@@ -128,9 +130,9 @@ pub struct Esp300Driver {
 }
 
 impl Esp300Driver {
-    /// Create a new ESP300 driver instance asynchronously with device validation
+    /// Create a new ESP300 driver instance asynchronously with device validation.
     ///
-    /// This is the **preferred constructor** for production use.
+    /// Uses default timeout of 5 seconds.
     ///
     /// # Arguments
     /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
@@ -142,6 +144,28 @@ impl Esp300Driver {
     /// - Axis is invalid (not 1-3)
     /// - Device doesn't respond to version query
     pub async fn new_async(port_path: &str, axis: u8) -> Result<Self> {
+        Self::new_async_with_timeout(port_path, axis, Duration::from_secs(5)).await
+    }
+
+    /// Create a new ESP300 driver instance asynchronously with custom timeout.
+    ///
+    /// This is the **preferred constructor** for production use.
+    ///
+    /// # Arguments
+    /// * `port_path` - Serial port path (e.g., "/dev/ttyUSB0", "COM3")
+    /// * `axis` - Axis number (1-3)
+    /// * `timeout` - Command timeout duration
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Serial port cannot be opened
+    /// - Axis is invalid (not 1-3)
+    /// - Device doesn't respond to version query
+    pub async fn new_async_with_timeout(
+        port_path: &str,
+        axis: u8,
+        timeout: Duration,
+    ) -> Result<Self> {
         if !(1..=3).contains(&axis) {
             return Err(anyhow!("ESP300 axis must be 1-3, got {}", axis));
         }
@@ -167,6 +191,7 @@ impl Esp300Driver {
         let driver = Self::build(
             Arc::new(Mutex::new(BufReader::new(Box::new(port)))),
             axis,
+            timeout,
         );
 
         // Validate device identity by querying version
@@ -191,7 +216,7 @@ impl Esp300Driver {
         Ok(driver)
     }
 
-    fn build(port: SharedPort, axis: u8) -> Self {
+    fn build(port: SharedPort, axis: u8, timeout: Duration) -> Self {
         let mut params = ParameterSet::new();
 
         let mut position = Parameter::new("position", 0.0)
@@ -206,7 +231,7 @@ impl Esp300Driver {
         Self {
             port,
             axis,
-            timeout: Duration::from_secs(5),
+            timeout,
             position_mm: position,
             params: Arc::new(params),
         }
@@ -219,11 +244,16 @@ impl Esp300Driver {
             Box::pin(async move {
                 let mut guard = port.lock().await;
                 let cmd = format!("{}PA{:.6}\r\n", axis, target);
-                guard
-                    .get_mut()
+                let writer = guard.get_mut();
+                writer
                     .write_all(cmd.as_bytes())
                     .await
                     .context("ESP300 position write failed")
+                    .map_err(|e| DaqError::Instrument(e.to_string()))?;
+                writer
+                    .flush()
+                    .await
+                    .context("ESP300 position flush failed")
                     .map_err(|e| DaqError::Instrument(e.to_string()))?;
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -234,7 +264,7 @@ impl Esp300Driver {
 
     #[cfg(test)]
     pub(crate) fn with_test_port(port: SharedPort, axis: u8) -> Self {
-        Self::build(port, axis)
+        Self::build(port, axis, Duration::from_secs(5))
     }
 
     /// Get the axis number.
@@ -268,10 +298,12 @@ impl Esp300Driver {
         let mut port = self.port.lock().await;
 
         let cmd = format!("{}\r\n", command);
-        port.get_mut()
+        let writer = port.get_mut();
+        writer
             .write_all(cmd.as_bytes())
             .await
             .context("ESP300 write failed")?;
+        writer.flush().await.context("ESP300 flush failed")?;
 
         let mut response = String::new();
         tokio::time::timeout(self.timeout, port.read_line(&mut response))
@@ -287,10 +319,12 @@ impl Esp300Driver {
         let mut port = self.port.lock().await;
 
         let cmd = format!("{}\r\n", command);
-        port.get_mut()
+        let writer = port.get_mut();
+        writer
             .write_all(cmd.as_bytes())
             .await
             .context("ESP300 write failed")?;
+        writer.flush().await.context("ESP300 flush failed")?;
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         Ok(())

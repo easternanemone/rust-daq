@@ -14,6 +14,8 @@ pub mod status_bar;
 pub mod toast;
 pub mod toggle;
 
+// gauge, toast, toggle are available but not yet integrated - keep modules for future use
+#[allow(unused_imports)]
 pub use gauge::*;
 pub use histogram::*;
 pub use offline_notice::*;
@@ -22,5 +24,7 @@ pub use pp_editor::*;
 pub use roi_selector::*;
 pub use smart_stream_editor::*;
 pub use status_bar::*;
+#[allow(unused_imports)]
 pub use toast::*;
+#[allow(unused_imports)]
 pub use toggle::*;
