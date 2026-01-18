@@ -4,6 +4,7 @@
 //! with expandable nodes showing device state and quick actions.
 
 use eframe::egui;
+use egui_extras::{Size, StripBuilder};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -670,46 +671,51 @@ impl InstrumentManagerPanel {
         ui.add_space(4.0);
 
         // Split view: device tree on left, control panel on right
-        let available_height = ui.available_height();
+        // Uses StripBuilder for proportional, responsive layout (bd-xxxx: fix cutoff)
+        StripBuilder::new(ui)
+            .size(Size::remainder()) // Use all available height
+            .vertical(|mut strip| {
+                strip.cell(|ui| {
+                    ui.horizontal(|ui| {
+                        // Left side: Device tree (proportional ~40%)
+                        ui.vertical(|ui| {
+                            ui.set_min_width(250.0);
+                            ui.set_max_width(400.0);
 
-        ui.horizontal(|ui| {
-            // Left side: Device tree (40% width)
-            ui.vertical(|ui| {
-                ui.set_min_width(250.0);
-                ui.set_max_width(350.0);
+                            ui.label(egui::RichText::new("Device Tree").strong());
+                            ui.separator();
 
-                ui.label(egui::RichText::new("Device Tree").strong());
-                ui.separator();
-
-                if self.groups.is_empty() {
-                    ui.label("No devices. Click Refresh to load.");
-                } else {
-                    egui::ScrollArea::vertical()
-                        .id_salt("instrument_tree")
-                        .max_height(available_height - 50.0)
-                        .show(ui, |ui| {
-                            self.render_tree(ui);
+                            if self.groups.is_empty() {
+                                ui.label("No devices. Click Refresh to load.");
+                            } else {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("instrument_tree")
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        self.render_tree(ui);
+                                    });
+                            }
                         });
-                }
-            });
 
-            ui.separator();
+                        ui.separator();
 
-            // Right side: Control panel (60% width)
-            ui.vertical(|ui| {
-                ui.set_min_width(300.0);
+                        // Right side: Control panel (fills remainder)
+                        ui.vertical(|ui| {
+                            ui.set_min_width(300.0);
 
-                ui.label(egui::RichText::new("Control Panel").strong());
-                ui.separator();
+                            ui.label(egui::RichText::new("Control Panel").strong());
+                            ui.separator();
 
-                egui::ScrollArea::vertical()
-                    .id_salt("control_panel")
-                    .max_height(available_height - 50.0)
-                    .show(ui, |ui| {
-                        self.render_device_control_panel(ui, client, runtime);
+                            egui::ScrollArea::vertical()
+                                .id_salt("control_panel")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    self.render_device_control_panel(ui, client, runtime);
+                                });
+                        });
                     });
+                });
             });
-        });
     }
 
     /// Render the device tree
