@@ -820,7 +820,10 @@ impl ImageViewerPanel {
     ///
     /// This moves CPU-intensive pixel conversion off the UI thread to prevent
     /// UI freezes on 4K 16-bit images at high frame rates.
-    fn spawn_rgba_converter(&mut self) {
+    ///
+    /// Returns true if the converter thread was spawned successfully, false otherwise.
+    /// On failure, RGBA conversion will fall back to synchronous mode.
+    fn spawn_rgba_converter(&mut self) -> bool {
         // Use bounded channel to prevent unbounded queue growth
         // Queue size of 2 is sufficient: 1 processing, 1 waiting
         let (request_tx, request_rx) = std::sync::mpsc::sync_channel::<RgbaConversionRequest>(2);
@@ -828,12 +831,8 @@ impl ImageViewerPanel {
         // Channel for recycling buffers from UI thread back to converter (bd-wdx3)
         let (recycle_tx, recycle_rx) = std::sync::mpsc::channel::<Vec<u8>>();
 
-        self.rgba_request_tx = Some(request_tx);
-        self.rgba_rx = Some(result_rx);
-        self.rgba_recycle_tx = Some(recycle_tx);
-
         // Spawn dedicated thread for RGBA conversion
-        std::thread::Builder::new()
+        let spawn_result = std::thread::Builder::new()
             .name("rgba-converter".into())
             .spawn(move || {
                 tracing::debug!("RGBA converter thread started");
@@ -866,8 +865,20 @@ impl ImageViewerPanel {
                 }
 
                 tracing::debug!("RGBA converter thread exiting");
-            })
-            .expect("Failed to spawn RGBA converter thread");
+            });
+
+        match spawn_result {
+            Ok(_handle) => {
+                self.rgba_request_tx = Some(request_tx);
+                self.rgba_rx = Some(result_rx);
+                self.rgba_recycle_tx = Some(recycle_tx);
+                true
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn RGBA converter thread: {}. Falling back to synchronous conversion.", e);
+                false
+            }
+        }
     }
 
     /// Poll for completed RGBA conversions from background thread (bd-xifj)

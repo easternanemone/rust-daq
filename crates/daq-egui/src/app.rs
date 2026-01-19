@@ -1461,12 +1461,10 @@ impl eframe::App for DaqApp {
                     }
                 }
                 UiAction::OpenDeviceControl { device_info } => {
-                    // Generate a new panel ID with overflow protection
+                    // Generate a new panel ID with wrapping on overflow
+                    // (practically impossible to hit 2^64 panels, but safe regardless)
                     let panel_id = self.next_device_panel_id;
-                    self.next_device_panel_id = self
-                        .next_device_panel_id
-                        .checked_add(1)
-                        .expect("panel ID overflow - app has created too many device panels");
+                    self.next_device_panel_id = self.next_device_panel_id.wrapping_add(1);
 
                     // Store device info (full proto with capability flags)
                     self.device_panel_info.insert(
