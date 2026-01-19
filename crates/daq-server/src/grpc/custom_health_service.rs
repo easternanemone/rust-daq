@@ -9,6 +9,7 @@ use crate::grpc::proto::{
     SystemHealthStatus as ProtoSystemHealthStatus, health_service_server::HealthService,
 };
 use daq_core::health::{ErrorSeverity, SystemHealth, SystemHealthMonitor};
+use daq_core::limits::HEALTH_CHECK_INTERVAL;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
@@ -205,7 +206,7 @@ impl HealthService for HealthServiceImpl {
         let update_interval = if req.update_interval_ms > 0 {
             Duration::from_millis(req.update_interval_ms as u64)
         } else {
-            Duration::from_secs(5) // Default 5 seconds
+            HEALTH_CHECK_INTERVAL // Default 5 seconds
         };
 
         let monitor = self.monitor.clone();

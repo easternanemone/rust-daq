@@ -53,6 +53,7 @@ use crate::grpc::proto::{
     StartScanResponse, StopScanRequest, StopScanResponse, StreamScanProgressRequest,
     scan_service_server::ScanService,
 };
+use daq_core::limits::RPC_TIMEOUT;
 use daq_hardware::registry::DeviceRegistry;
 use daq_storage::ring_buffer::RingBuffer;
 use log::warn;
@@ -173,19 +174,16 @@ pub struct ScanServiceImpl {
 // Allow self-referential deprecation warnings within the deprecated module
 #[allow(deprecated)]
 impl ScanServiceImpl {
-    const RPC_TIMEOUT: Duration = Duration::from_secs(15);
-
     async fn with_request_deadline<F, T>(&self, operation: &str, fut: F) -> Result<T, Status>
     where
         F: Future<Output = Result<T, Status>> + Send,
         T: Send,
     {
-        match tokio::time::timeout(Self::RPC_TIMEOUT, fut).await {
+        match tokio::time::timeout(RPC_TIMEOUT, fut).await {
             Ok(result) => result,
             Err(_) => Err(Status::deadline_exceeded(format!(
                 "{} timed out after {:?}",
-                operation,
-                Self::RPC_TIMEOUT
+                operation, RPC_TIMEOUT
             ))),
         }
     }

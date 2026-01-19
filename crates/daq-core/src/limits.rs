@@ -1,6 +1,56 @@
 //! Shared hard limits to prevent unbounded allocations or payload growth.
+//!
+//! This module centralizes:
+//! - Payload size limits (frames, responses, scripts)
+//! - Timeout durations for gRPC and health checks
+//!
+//! Using centralized constants ensures consistency across services and
+//! makes tuning easier.
 
 use crate::error::DaqError;
+use std::time::Duration;
+
+// =============================================================================
+// Timeout Constants
+// =============================================================================
+
+/// Default timeout for gRPC RPC calls (15 seconds).
+///
+/// Used by hardware_service, scan_service, and other gRPC handlers
+/// to prevent hung operations from blocking indefinitely.
+pub const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Interval between health check probes (5 seconds).
+///
+/// Used by health services and system monitors to periodically
+/// check service/system status.
+pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Duration window for FPS calculation (1 second).
+///
+/// Frame timestamps older than this are discarded when computing
+/// the current frames-per-second rate.
+pub const FPS_WINDOW: Duration = Duration::from_secs(1);
+
+/// Timeout for graceful shutdown operations (2 seconds).
+///
+/// Used when stopping background tasks to allow cleanup before
+/// forcing termination.
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+// =============================================================================
+// Rate Limiting
+// =============================================================================
+
+/// Maximum concurrent frame streams per client IP (default: 3).
+///
+/// Prevents a single client from consuming all server bandwidth by opening
+/// too many simultaneous frame streams. Returns `ResourceExhausted` when exceeded.
+pub const MAX_STREAMS_PER_CLIENT: usize = 3;
+
+// =============================================================================
+// Size Limits
+// =============================================================================
 
 /// Maximum allowed frame payload in bytes (default: 100MB).
 pub const MAX_FRAME_BYTES: usize = 100 * 1024 * 1024;

@@ -1,10 +1,16 @@
 //! Type definitions for the Instrument Manager Panel.
+//!
+//! Note: DeviceCategory here is a GUI-specific type with `from_device_info()` inference
+//! and icon methods. It mirrors `daq_core::capabilities::DeviceCategory` but adds
+//! GUI presentation logic that depends on `daq_proto::daq::DeviceInfo`.
 
 use daq_proto::daq::DeviceInfo;
 
-/// Device category for grouping in the tree view
+/// Device category for grouping in the tree view.
+///
+/// This is a GUI-specific type that provides inference from `DeviceInfo` proto
+/// and presentation methods (icons, labels). Mirrors `daq_core::capabilities::DeviceCategory`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)] // All variants defined for completeness
 pub enum DeviceCategory {
     Camera,
     Stage,
@@ -26,12 +32,13 @@ impl DeviceCategory {
         }
     }
 
+    /// Icon for UI display (aligned with daq-core::capabilities::DeviceCategory)
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Camera => "📷",
             Self::Stage => "🔄",
             Self::Detector => "📊",
-            Self::Laser => "🔴",
+            Self::Laser => "💡",
             Self::PowerMeter => "⚡",
             Self::Other => "🔧",
         }
@@ -39,7 +46,13 @@ impl DeviceCategory {
 
     /// Infer category from device capabilities
     pub fn from_device_info(info: &DeviceInfo) -> Self {
-        if info.is_frame_producer {
+        // Priority: Laser > Camera > Stage > PowerMeter > Detector > Other
+        if info.is_emission_controllable
+            || info.is_shutter_controllable
+            || info.is_wavelength_tunable
+        {
+            Self::Laser
+        } else if info.is_frame_producer {
             Self::Camera
         } else if info.is_movable {
             Self::Stage

@@ -39,6 +39,7 @@
 use super::{Module, ModuleContext};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use daq_core::limits::SHUTDOWN_TIMEOUT;
 use daq_core::modules::{
     ModuleEventSeverity, ModuleParameter, ModuleRole, ModuleState, ModuleTypeInfo,
 };
@@ -413,9 +414,7 @@ impl Module for PowerMonitor {
         // Wait for task to complete
         if let Some(handle) = self.task_handle.take() {
             // Give it a moment to finish gracefully
-            tokio::time::timeout(Duration::from_secs(2), handle)
-                .await
-                .ok();
+            tokio::time::timeout(SHUTDOWN_TIMEOUT, handle).await.ok();
         }
 
         self.state = ModuleState::Stopped;

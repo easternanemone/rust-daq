@@ -41,8 +41,7 @@ struct DeviceState {
     online: bool,
 }
 
-/// Async action results
-#[allow(dead_code)]
+/// Async action results from background device operations
 enum ActionResult {
     Refresh(Result<Vec<DeviceInfo>, String>),
     GetDeviceState {
@@ -80,10 +79,6 @@ enum ActionResult {
     StopStream {
         device_id: String,
         result: Result<(), String>,
-    },
-    AcquireFrame {
-        device_id: String,
-        result: Result<(u32, u32), String>, // (width, height)
     },
 }
 
@@ -364,18 +359,6 @@ impl InstrumentManagerPanel {
                                 }
                                 Err(e) => {
                                     self.error = Some(format!("Failed to stop stream: {}", e));
-                                }
-                            }
-                        }
-                        ActionResult::AcquireFrame { device_id, result } => {
-                            self.operation_pending.remove(&device_id);
-                            match result {
-                                Ok((width, height)) => {
-                                    self.status =
-                                        Some(format!("Acquired frame: {}x{}", width, height));
-                                }
-                                Err(e) => {
-                                    self.error = Some(format!("Frame acquisition failed: {}", e));
                                 }
                             }
                         }

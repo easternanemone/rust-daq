@@ -79,12 +79,14 @@ use crate::grpc::proto::{
 use anyhow::Error as AnyError;
 use daq_core::capabilities::FrameObserver;
 use daq_core::data::FrameView;
+use daq_core::limits::{FPS_WINDOW, MAX_STREAMS_PER_CLIENT, RPC_TIMEOUT};
 use daq_core::observable::Observable;
 use daq_core::parameter::Parameter;
 use daq_hardware::registry::{Capability, DeviceRegistry};
 use daq_proto::downsample::{downsample_2x2, downsample_4x4};
 use serde_json;
 use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -219,6 +221,74 @@ impl FrameObserver for GrpcStreamObserver {
 }
 
 // =============================================================================
+// Per-Client Stream Rate Limiter (bd-64hu)
+// =============================================================================
+
+/// Tracks active frame streams per client IP for DoS prevention.
+///
+/// Each client IP is limited to `MAX_STREAMS_PER_CLIENT` concurrent frame streams.
+/// Returns `ResourceExhausted` when the limit is exceeded.
+#[derive(Debug, Default)]
+pub struct StreamLimiter {
+    /// Map of client IP to active stream count
+    active_streams: std::sync::Mutex<HashMap<IpAddr, usize>>,
+}
+
+impl StreamLimiter {
+    /// Create a new stream limiter.
+    pub fn new() -> Self {
+        Self {
+            active_streams: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Try to acquire a stream slot for the given client IP.
+    ///
+    /// Returns `Ok(())` if the client is under the limit, or `Err(Status)` if exceeded.
+    pub fn try_acquire(&self, client_ip: IpAddr) -> Result<(), Status> {
+        let mut streams = self.active_streams.lock().unwrap();
+        let count = streams.entry(client_ip).or_insert(0);
+
+        if *count >= MAX_STREAMS_PER_CLIENT {
+            tracing::warn!(
+                client_ip = %client_ip,
+                active_streams = *count,
+                max_allowed = MAX_STREAMS_PER_CLIENT,
+                "Client exceeded maximum concurrent streams"
+            );
+            return Err(Status::resource_exhausted(format!(
+                "Maximum concurrent streams ({}) exceeded for client {}",
+                MAX_STREAMS_PER_CLIENT, client_ip
+            )));
+        }
+
+        *count += 1;
+        tracing::debug!(
+            client_ip = %client_ip,
+            active_streams = *count,
+            "Acquired stream slot"
+        );
+        Ok(())
+    }
+
+    /// Release a stream slot for the given client IP.
+    pub fn release(&self, client_ip: IpAddr) {
+        let mut streams = self.active_streams.lock().unwrap();
+        if let Some(count) = streams.get_mut(&client_ip) {
+            *count = count.saturating_sub(1);
+            tracing::debug!(
+                client_ip = %client_ip,
+                active_streams = *count,
+                "Released stream slot"
+            );
+            if *count == 0 {
+                streams.remove(&client_ip);
+            }
+        }
+    }
+}
+
+// =============================================================================
 // Hardware Service Implementation
 // =============================================================================
 
@@ -228,25 +298,24 @@ impl FrameObserver for GrpcStreamObserver {
 /// All hardware operations are delegated to the appropriate capability traits.
 pub struct HardwareServiceImpl {
     registry: Arc<DeviceRegistry>,
+    /// Per-client stream limiter for DoS prevention (bd-64hu)
+    stream_limiter: Arc<StreamLimiter>,
     /// Broadcast sender for parameter changes (enables real-time GUI synchronization)
     param_change_tx: tokio::sync::broadcast::Sender<ParameterChange>,
 }
 
 impl HardwareServiceImpl {
-    const RPC_TIMEOUT: Duration = Duration::from_secs(15);
-
     async fn await_with_timeout<F, T>(&self, operation: &str, fut: F) -> Result<T, Status>
     where
         F: Future<Output = Result<T, AnyError>> + Send,
         T: Send,
     {
-        match tokio::time::timeout(Self::RPC_TIMEOUT, fut).await {
+        match tokio::time::timeout(RPC_TIMEOUT, fut).await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(err)) => Err(map_hardware_error_to_status(&err.to_string())),
             Err(_) => Err(Status::deadline_exceeded(format!(
                 "{} timed out after {:?}",
-                operation,
-                Self::RPC_TIMEOUT
+                operation, RPC_TIMEOUT
             ))),
         }
     }
@@ -313,6 +382,7 @@ impl HardwareServiceImpl {
 
         Self {
             registry,
+            stream_limiter: Arc::new(StreamLimiter::new()),
             param_change_tx,
         }
     }
@@ -325,6 +395,7 @@ impl HardwareServiceImpl {
     ) -> Self {
         Self {
             registry,
+            stream_limiter: Arc::new(StreamLimiter::new()),
             param_change_tx,
         }
     }
@@ -1396,10 +1467,22 @@ impl HardwareService for HardwareServiceImpl {
     /// - Backpressure is handled locally in the observer
     ///
     /// Supports optional rate limiting via max_fps.
+    ///
+    /// Per-client rate limiting (bd-64hu): Each client IP is limited to
+    /// MAX_STREAMS_PER_CLIENT concurrent frame streams to prevent DoS.
     async fn stream_frames(
         &self,
         request: Request<StreamFramesRequest>,
     ) -> Result<Response<Self::StreamFramesStream>, Status> {
+        // Extract client IP for rate limiting (bd-64hu)
+        let client_ip = request
+            .remote_addr()
+            .map(|addr| addr.ip())
+            .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
+        // Check per-client stream limit (bd-64hu)
+        self.stream_limiter.try_acquire(client_ip)?;
+
         let req = request.into_inner();
         let device_id = req.device_id.clone();
         let max_fps = req.max_fps;
@@ -1470,6 +1553,7 @@ impl HardwareService for HardwareServiceImpl {
         // Spawn task to forward frames from observer channel to gRPC stream
         let device_id_clone = device_id.clone();
         let frame_producer_clone = frame_producer.clone();
+        let stream_limiter_clone = self.stream_limiter.clone();
         tokio::spawn(async move {
             // Initialize to allow first frame through immediately
             let mut last_frame_time = match min_interval {
@@ -1556,7 +1640,7 @@ impl HardwareService for HardwareServiceImpl {
                         let now_instant = std::time::Instant::now();
                         fps_window.push_back(now_instant);
                         while let Some(front) = fps_window.front() {
-                            if now_instant.duration_since(*front) > Duration::from_secs(1) {
+                            if now_instant.duration_since(*front) > FPS_WINDOW {
                                 fps_window.pop_front();
                             } else {
                                 break;
@@ -1734,12 +1818,16 @@ impl HardwareService for HardwareServiceImpl {
                 }
             }
 
+            // Release stream slot (bd-64hu)
+            stream_limiter_clone.release(client_ip);
+
             // Final summary log
             tracing::info!(
                 device_id = %device_id_clone,
                 exit_reason = exit_reason,
                 frames_sent = frames_sent,
                 frames_dropped = frames_dropped,
+                client_ip = %client_ip,
                 "Tap-based frame stream forwarding task ended"
             );
         });
@@ -2951,5 +3039,77 @@ mod tests {
         assert!(p.writable);
         assert!(p.readable);
         // units might differ based on mock implementation details
+    }
+
+    // =========================================================================
+    // StreamLimiter Tests (bd-64hu)
+    // =========================================================================
+
+    #[test]
+    fn test_stream_limiter_acquire_release() {
+        use super::StreamLimiter;
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let limiter = StreamLimiter::new();
+        let client_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+
+        // Should be able to acquire up to MAX_STREAMS_PER_CLIENT streams
+        for i in 0..daq_core::limits::MAX_STREAMS_PER_CLIENT {
+            assert!(
+                limiter.try_acquire(client_ip).is_ok(),
+                "Failed to acquire stream slot {}",
+                i
+            );
+        }
+
+        // Next acquire should fail with ResourceExhausted
+        let result = limiter.try_acquire(client_ip);
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+
+        // Release one slot
+        limiter.release(client_ip);
+
+        // Now should be able to acquire again
+        assert!(limiter.try_acquire(client_ip).is_ok());
+    }
+
+    #[test]
+    fn test_stream_limiter_different_clients() {
+        use super::StreamLimiter;
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let limiter = StreamLimiter::new();
+        let client1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        let client2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 101));
+
+        // Fill up client1's slots
+        for _ in 0..daq_core::limits::MAX_STREAMS_PER_CLIENT {
+            assert!(limiter.try_acquire(client1).is_ok());
+        }
+
+        // Client2 should still be able to acquire
+        assert!(limiter.try_acquire(client2).is_ok());
+
+        // Client1 should be blocked
+        assert!(limiter.try_acquire(client1).is_err());
+    }
+
+    #[test]
+    fn test_stream_limiter_cleanup_on_release() {
+        use super::StreamLimiter;
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let limiter = StreamLimiter::new();
+        let client_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+
+        // Acquire and release should clean up the entry
+        limiter.try_acquire(client_ip).unwrap();
+        limiter.release(client_ip);
+
+        // Internal state should be empty (client removed when count hits 0)
+        let streams = limiter.active_streams.lock().unwrap();
+        assert!(!streams.contains_key(&client_ip));
     }
 }

@@ -4,6 +4,7 @@
 //! SystemHealthMonitor.
 
 use daq_core::health::{ErrorSeverity, SystemHealthMonitor};
+use daq_core::limits::HEALTH_CHECK_INTERVAL;
 use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
@@ -21,7 +22,7 @@ impl SystemMetricsCollector {
         Self {
             monitor,
             system: System::new_all(),
-            update_interval: Duration::from_secs(5),
+            update_interval: HEALTH_CHECK_INTERVAL,
         }
     }
 
