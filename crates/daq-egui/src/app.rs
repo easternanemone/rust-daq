@@ -1000,15 +1000,15 @@ impl DaqApp {
         if !self.connection.should_health_check() {
             return;
         }
-        if self.client.is_none() {
+        let Some(ref client) = self.client else {
             return;
-        }
+        };
 
         // Mark health check as started
         self.connection.mark_health_check_started();
 
         // Clone what we need for the async task
-        let mut client = self.client.clone().unwrap();
+        let mut client = client.clone();
         let tx = self.health_tx.clone();
 
         self.runtime.spawn(async move {

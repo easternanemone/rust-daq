@@ -142,8 +142,10 @@ impl CounterState {
             return 0.0;
         }
 
-        let first = self.rate_history.front().unwrap();
-        let last = self.rate_history.back().unwrap();
+        let (Some(first), Some(last)) = (self.rate_history.front(), self.rate_history.back())
+        else {
+            return 0.0;
+        };
 
         let dt = last.0.duration_since(first.0).as_secs_f64();
         if dt < 0.001 {

@@ -540,8 +540,9 @@ impl FpsCounter {
         if self.frame_times.len() < 2 {
             return 0.0;
         }
-        let first = self.frame_times.front().unwrap();
-        let last = self.frame_times.back().unwrap();
+        let (Some(first), Some(last)) = (self.frame_times.front(), self.frame_times.back()) else {
+            return 0.0;
+        };
         let duration = last.duration_since(*first).as_secs_f32();
         if duration > 0.0 {
             (self.frame_times.len() - 1) as f32 / duration
@@ -1339,7 +1340,7 @@ impl ImageViewerPanel {
 
                 // Update buffer immediately for visual feedback
                 if val != original {
-                    *self.param_edit_buffers.get_mut(&buffer_key).unwrap() = val.to_string();
+                    self.param_edit_buffers.insert(buffer_key.clone(), val.to_string());
                 }
 
                 // Commit on release or focus lost
@@ -1384,7 +1385,7 @@ impl ImageViewerPanel {
                 }
 
                 if (val - original).abs() > f64::EPSILON {
-                    *self.param_edit_buffers.get_mut(&buffer_key).unwrap() = val.to_string();
+                    self.param_edit_buffers.insert(buffer_key.clone(), val.to_string());
                 }
 
                 let current_float: f64 = param.current_value.parse().unwrap_or(0.0);

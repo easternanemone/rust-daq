@@ -410,7 +410,7 @@ fn rand_voltage() -> f64 {
     use std::time::SystemTime;
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .subsec_nanos();
     (nanos % 1000) as f64 / 10000.0 - 0.05
 }
