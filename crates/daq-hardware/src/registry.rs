@@ -290,6 +290,8 @@ pub enum Capability {
     Commandable,
     /// Can be staged/unstaged for acquisition sequences (Bluesky pattern) - bd-7aq6
     Stageable,
+    /// Has observable parameters with subscriptions (Parameterized trait)
+    Parameterized,
 }
 
 // =============================================================================
@@ -395,7 +397,13 @@ impl DriverType {
                 vec![Capability::Readable, Capability::WavelengthTunable]
             }
             #[cfg(feature = "serial")]
-            DriverType::MaiTai { .. } => vec![Capability::Readable],
+            DriverType::MaiTai { .. } => vec![
+                Capability::Readable,
+                Capability::ShutterControl,
+                Capability::WavelengthTunable,
+                Capability::EmissionControl,
+                Capability::Parameterized,
+            ],
             #[cfg(feature = "serial")]
             DriverType::Ell14 { .. } => vec![Capability::Movable],
             #[cfg(feature = "serial")]
@@ -560,6 +568,50 @@ struct RegisteredDevice {
     wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
     /// Device metadata (units, ranges, etc.)
     metadata: DeviceMetadata,
+}
+
+impl RegisteredDevice {
+    /// Compute capabilities from the actual registered trait objects.
+    ///
+    /// This introspects which trait implementations are present rather than
+    /// relying on the config's DriverType enum (which may be synthetic for
+    /// factory-registered devices).
+    fn capabilities(&self) -> Vec<Capability> {
+        let mut caps = Vec::new();
+
+        if self.movable.is_some() {
+            caps.push(Capability::Movable);
+        }
+        if self.readable.is_some() {
+            caps.push(Capability::Readable);
+        }
+        if self.triggerable.is_some() {
+            caps.push(Capability::Triggerable);
+        }
+        if self.frame_producer.is_some() {
+            caps.push(Capability::FrameProducer);
+        }
+        if self.exposure_control.is_some() {
+            caps.push(Capability::ExposureControl);
+        }
+        if self.settable.is_some() {
+            caps.push(Capability::Settable);
+        }
+        if self.parameterized.is_some() {
+            caps.push(Capability::Parameterized);
+        }
+        if self.shutter_control.is_some() {
+            caps.push(Capability::ShutterControl);
+        }
+        if self.emission_control.is_some() {
+            caps.push(Capability::EmissionControl);
+        }
+        if self.wavelength_tunable.is_some() {
+            caps.push(Capability::WavelengthTunable);
+        }
+
+        caps
+    }
 }
 
 // =============================================================================
@@ -1055,7 +1107,9 @@ impl DeviceRegistry {
                     id: d.config.id.clone(),
                     name: d.config.name.clone(),
                     driver_type: d.config.driver.driver_name().to_string(),
-                    capabilities: d.config.driver.capabilities(),
+                    // Use introspected capabilities from actual trait objects,
+                    // not the config's DriverType enum (which may be synthetic)
+                    capabilities: d.capabilities(),
                     metadata: d.metadata.clone(),
                 }
             })
@@ -1110,7 +1164,9 @@ impl DeviceRegistry {
             id: d.config.id.clone(),
             name: d.config.name.clone(),
             driver_type: d.config.driver.driver_name().to_string(),
-            capabilities: d.config.driver.capabilities(),
+            // Use introspected capabilities from actual trait objects,
+            // not the config's DriverType enum (which may be synthetic)
+            capabilities: d.capabilities(),
             metadata: d.metadata.clone(),
         })
     }
