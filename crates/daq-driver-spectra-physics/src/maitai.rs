@@ -277,7 +277,26 @@ impl MaiTaiDriver {
                 .await
                 {
                     Ok(Ok(_)) => {
-                        log::debug!("MaiTai wavelength response: {}", response.trim())
+                        log::debug!("MaiTai wavelength response: {}", response.trim());
+
+                        // Drain any additional lines
+                        loop {
+                            let mut extra = String::new();
+                            match tokio::time::timeout(
+                                Duration::from_millis(50),
+                                guard.read_line(&mut extra),
+                            )
+                            .await
+                            {
+                                Ok(Ok(n)) if n > 0 => {
+                                    log::debug!(
+                                        "MaiTai wavelength extra response: {}",
+                                        extra.trim()
+                                    );
+                                }
+                                _ => break,
+                            }
+                        }
                     }
                     Ok(Err(e)) => {
                         log::debug!("MaiTai wavelength read error (may be OK): {}", e)
@@ -446,6 +465,26 @@ impl MaiTaiDriver {
         {
             Ok(Ok(_)) => {
                 log::debug!("MaiTai command '{}' response: {}", command, response.trim());
+
+                // Drain any additional lines (e.g. echo + status)
+                loop {
+                    let mut extra = String::new();
+                    match tokio::time::timeout(
+                        Duration::from_millis(50),
+                        port.read_line(&mut extra),
+                    )
+                    .await
+                    {
+                        Ok(Ok(n)) if n > 0 => {
+                            log::debug!(
+                                "MaiTai command '{}' extra response: {}",
+                                command,
+                                extra.trim()
+                            );
+                        }
+                        _ => break, // Timeout, EOF, or error
+                    }
+                }
             }
             Ok(Err(_)) | Err(_) => {
                 // No response or timeout - OK for set commands
