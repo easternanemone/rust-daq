@@ -178,6 +178,14 @@ impl Newport1830CDriver {
 
         let driver = Self::build(Arc::new(Mutex::new(BufReader::new(Box::new(port)))));
 
+        // Disable echo mode (E0) FIRST to prevent command echoes in responses.
+        // The 1830-C has E0/E1 for echo off/on. Without this, responses may include
+        // the echoed command which corrupts parsing.
+        driver.send_config_command("E0").await.context(
+            "Newport 1830-C: failed to disable echo mode (E0) during initialization",
+        )?;
+        tracing::info!("Newport 1830-C: disabled echo mode (E0)");
+
         // Set units to Watts (U1) to ensure consistent scientific notation response format.
         // CRITICAL: If device is in dBm mode, D? returns decimal (e.g., "-15.24") instead
         // of scientific notation, causing incorrect parsing.
@@ -311,9 +319,39 @@ impl Newport1830CDriver {
     }
 
     /// Query power measurement
+    ///
+    /// Re-asserts Watts mode (U1) before each read to handle potential
+    /// front-panel changes that could switch units unexpectedly.
     async fn query_power(&self) -> Result<f64> {
+        // Re-assert Watts mode before reading to handle front-panel changes.
+        // This adds ~100ms overhead but ensures consistent scientific notation format.
+        self.send_config_command("U1").await?;
+
         let response = self.query("D?").await?;
-        self.parse_power_response(&response)
+        let power = self.parse_power_response(&response)?;
+
+        // Log with magnitude classification for debugging wild swings
+        let magnitude = if power == 0.0 {
+            "zero"
+        } else if power.abs() >= 1.0 {
+            "W"
+        } else if power.abs() >= 1e-3 {
+            "mW"
+        } else if power.abs() >= 1e-6 {
+            "µW"
+        } else if power.abs() >= 1e-9 {
+            "nW"
+        } else {
+            "pW"
+        };
+        tracing::debug!(
+            "Newport 1830-C: power = {:.6e} W ({}), raw = {:?}",
+            power,
+            magnitude,
+            response
+        );
+
+        Ok(power)
     }
 
     /// Parse wavelength response (4-digit nm format)
@@ -405,13 +443,59 @@ impl Newport1830CDriver {
             .await
             .context("Newport 1830-C write failed")?;
 
-        let mut response = String::new();
-        tokio::time::timeout(self.timeout, port.read_line(&mut response))
-            .await
-            .context("Newport 1830-C read timeout")??;
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() > self.timeout {
+                return Err(anyhow!("Newport 1830-C read timeout (buffer drain exceeded)"));
+            }
 
-        tracing::debug!("Newport 1830-C: raw response {:?}", response);
-        Ok(response.trim().to_string())
+            let mut response = String::new();
+            match tokio::time::timeout(self.timeout, port.read_line(&mut response)).await {
+                Ok(Ok(0)) => return Err(anyhow!("Newport 1830-C connection closed")),
+                Ok(Ok(_)) => {
+                    let trimmed = response.trim();
+                    let cmd_trimmed = command.trim();
+
+                    // Skip empty lines
+                    if trimmed.is_empty() {
+                        tracing::debug!("Newport 1830-C: skipping empty line");
+                        continue;
+                    }
+
+                    // Skip exact echoes of the command
+                    if trimmed == cmd_trimmed {
+                        tracing::debug!("Newport 1830-C: skipping exact echo {:?}", trimmed);
+                        continue;
+                    }
+
+                    // Skip partial echoes (command appears at start of response)
+                    if trimmed.starts_with(cmd_trimmed) {
+                        tracing::debug!("Newport 1830-C: skipping partial echo {:?}", trimmed);
+                        continue;
+                    }
+
+                    // For D? queries, ensure response looks like a number (scientific notation)
+                    // Valid formats: "+.75E-9", "1.234E-6", "5E-9", "-1.5E-3"
+                    if cmd_trimmed == "D?" {
+                        // Check if it looks like scientific notation: contains E/e and can parse as f64
+                        let looks_numeric = (trimmed.contains('E') || trimmed.contains('e'))
+                            && trimmed.parse::<f64>().is_ok();
+                        if !looks_numeric {
+                            tracing::warn!(
+                                "Newport 1830-C: D? response {:?} doesn't look like scientific notation, skipping",
+                                trimmed
+                            );
+                            continue;
+                        }
+                    }
+
+                    tracing::debug!("Newport 1830-C: raw response {:?}", response);
+                    return Ok(trimmed.to_string());
+                }
+                Ok(Err(e)) => return Err(anyhow!("Newport 1830-C read error: {}", e)),
+                Err(_) => return Err(anyhow!("Newport 1830-C read timeout")),
+            }
+        }
     }
 
     /// Send configuration command and clear any response/echo
