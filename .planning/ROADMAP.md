@@ -89,9 +89,9 @@ Plans:
 **Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 04-01-PLAN.md — Enhanced node types and device selector widget
-- [ ] 04-02-PLAN.md — Property inspector panels for Move, Wait, Acquire, Loop nodes
-- [ ] 04-03-PLAN.md — Loop body translation and validation
+- [x] 04-01-PLAN.md — Enhanced node types and device selector widget
+- [x] 04-02-PLAN.md — Property inspector panels for Move, Wait, Acquire, Loop nodes
+- [x] 04-03-PLAN.md — Loop body translation and validation
 
 ### Phase 5: Live Visualization
 **Goal**: Scientists see real-time plots and images updating during acquisition
@@ -194,7 +194,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Form-Based Scan Builder | 3/3 | Complete | 2026-01-22 |
 | 2. Node Graph Editor Core | 4/4 | Complete | 2026-01-22 |
 | 3. Plan Translation and Execution | 4/4 | Complete (human approved) | 2026-01-22 |
-| 4. Sequences and Control Flow | 0/3 | Planned | - |
+| 4. Sequences and Control Flow | 3/3 | Complete | 2026-01-22 |
 | 5. Live Visualization | 0/TBD | Not started | - |
 | 6. Data Management | 0/TBD | Not started | - |
 | 7. Code Export and Provenance | 0/TBD | Not started | - |

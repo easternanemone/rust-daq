@@ -16,10 +16,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Sequences
 
-- [ ] **SEQ-01**: User can add move commands (position actuators with absolute or relative moves)
-- [ ] **SEQ-02**: User can add wait/delay steps (pause for settling time, configurable duration)
-- [ ] **SEQ-03**: User can add acquire commands (trigger detectors, capture data points)
-- [ ] **SEQ-04**: User can create loops (repeat sequences N times or until condition met)
+- [x] **SEQ-01**: User can add move commands (position actuators with absolute or relative moves)
+- [x] **SEQ-02**: User can add wait/delay steps (pause for settling time, configurable duration)
+- [x] **SEQ-03**: User can add acquire commands (trigger detectors, capture data points)
+- [x] **SEQ-04**: User can create loops (repeat sequences N times or until condition met)
 
 ### Visual Editor
 
