@@ -9,8 +9,13 @@
 #
 # Protocol Notes:
 # - Uses simple ASCII commands (NOT SCPI)
-# - Response format: Scientific notation (e.g., "+.11E-9" for 0.11 nW)
+# - Terminator: LF only (\n), NOT CRLF
+# - Response format depends on unit mode:
+#   - Watts (U1): Scientific notation (e.g., "+.11E-9" for 0.11 nW)
+#   - dBm (U2): Decimal (e.g., "-15.24")
+# - Driver sets U1 (Watts) on initialization for consistent parsing
 # - No hardware flow control required
+# - Unit commands are 1-indexed: U1=W, U2=dBm, U3=dB, U4=REL
 
 [device]
 name = "Newport 1830-C"
@@ -89,8 +94,13 @@ response = "range"
 
 [commands.get_units]
 template = "U?"
-description = "Query units setting (0=W, 1=dBm, 2=dB)"
+description = "Query units setting (1=W, 2=dBm, 3=dB, 4=REL) - 1-indexed"
 response = "units"
+
+[commands.set_units_watts]
+template = "U1"
+description = "Set units to Watts (required for scientific notation response)"
+expects_response = false
 
 [commands.set_attenuator_on]
 template = "A1"
@@ -149,9 +159,10 @@ pattern = "^\\s*(?P<range>[1-8])\\s*$"
 [responses.range.fields.range]
 type = "int"
 
-# Units response: 0=W, 1=dBm, 2=dB
+# Units response: 1=W, 2=dBm, 3=dB, 4=REL (1-indexed)
+# Note: Commands are also 1-indexed: U1=Watts, U2=dBm, U3=dB, U4=REL
 [responses.units]
-pattern = "^\\s*(?P<units>[012])\\s*$"
+pattern = "^\\s*(?P<units>[1234])\\s*$"
 
 [responses.units.fields.units]
 type = "int"
@@ -173,6 +184,11 @@ recoverable = true
 [error_codes."UNDER"]
 name = "Underrange"
 description = "Power reading below range"
+recoverable = true
+
+[error_codes."SAT"]
+name = "Saturated"
+description = "Detector saturated (overloaded)"
 recoverable = true
 
 # ==============================================================================

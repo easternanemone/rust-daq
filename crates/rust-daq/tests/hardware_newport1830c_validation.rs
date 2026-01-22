@@ -46,8 +46,7 @@
 //!
 //! 4. **Serial Connection**:
 //!    - USB-to-RS232 adapter (if needed)
-//!    - Baud rate: 19200 (non-negotiable)
-//!    - No flow control required
+//!    - Baud rate: 9600, 8N1 (no hardware flow control)
 //!    - Cable shield grounded on both ends
 //!
 //! 5. **Safety Equipment**:
@@ -992,7 +991,7 @@ mod hardware_tests {
 /// # Calibration Checklist
 ///
 /// - [ ] Newport meter powered on (allow 30 min warmup)
-/// - [ ] Serial connection verified (baud 19200, no flow control)
+/// - [ ] Serial connection verified (baud 9600, 8N1, no flow control)
 /// - [ ] Reference meter (if comparing) warmed up
 /// - [ ] Room temperature stable (±2°C)
 /// - [ ] Room lighting level consistent

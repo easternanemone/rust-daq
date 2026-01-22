@@ -57,9 +57,15 @@ polling_rate_hz = 2.0
 - **LF only** (`\n`), NOT CR+LF
 
 #### Response Format
-- Power readings: Scientific notation (e.g., `5E-9`, `+.75E-9`)
+- **Watts mode (U1)**: Scientific notation (e.g., `5E-9`, `+.75E-9`)
+- **dBm mode (U2)**: Decimal notation (e.g., `-15.24`)
+- **dB mode (U3)**: Decimal notation (e.g., `3.02`)
 - Configuration commands (A0, A1, F1, F2, F3): **NO RESPONSE**
 - Query commands (D?, A?, F?): Return values
+
+**CRITICAL**: The driver sets the device to Watts mode (U1) on initialization
+to ensure consistent scientific notation parsing. If the device is in dBm mode,
+`D?` returns decimal format which would cause incorrect value interpretation.
 
 ### Test Results
 ```bash
@@ -270,8 +276,16 @@ W0532   # Set wavelength to 532nm
 
 **Range and Units Query:**
 ```bash
-R?      # Query range setting (returns 1-8)
-U?      # Query units setting (returns 0=W, 1=dBm, 2=dB)
+R?      # Query range setting (returns 0=auto, 1-8)
+U?      # Query units setting (returns 1=W, 2=dBm, 3=dB, 4=REL) - 1-indexed!
+```
+
+**Set Units (1-indexed):**
+```bash
+U1      # Set to Watts (scientific notation response)
+U2      # Set to dBm (decimal response)
+U3      # Set to dB (decimal response)
+U4      # Set to REL (decimal response)
 ```
 
 **Attenuator Control:**

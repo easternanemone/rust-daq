@@ -5,10 +5,18 @@
 //! Protocol Overview:
 //! - Format: Simple ASCII commands (NOT SCPI)
 //! - Baud: 9600, 8N1, no flow control
-//! - Terminator: LF (\n)
-//! - Commands: A0/A1 (attenuator), F1/F2/F3 (filter), Wxxxx (wavelength)
+//! - Terminator: LF only (\n) - NOT CRLF
+//! - Commands: A0/A1 (attenuator), F1/F2/F3 (filter), Wxxxx (wavelength), U1-U4 (units)
 //! - Queries: D? (power), W? (wavelength), R? (range), U? (units)
-//! - Response format: Scientific notation (e.g., "+.11E-9" for 0.11 nW)
+//!
+//! Unit Commands (1-indexed):
+//! - U1 = Watts (scientific notation, e.g., "+.11E-9")
+//! - U2 = dBm (decimal, e.g., "-15.24")
+//! - U3 = dB (relative, decimal)
+//! - U4 = REL (relative linear)
+//!
+//! IMPORTANT: This driver sets the device to Watts mode (U1) on initialization
+//! to ensure consistent scientific notation response format for parsing.
 //!
 //! # Usage
 //!
@@ -170,6 +178,14 @@ impl Newport1830CDriver {
 
         let driver = Self::build(Arc::new(Mutex::new(BufReader::new(Box::new(port)))));
 
+        // Set units to Watts (U1) to ensure consistent scientific notation response format.
+        // CRITICAL: If device is in dBm mode, D? returns decimal (e.g., "-15.24") instead
+        // of scientific notation, causing incorrect parsing.
+        driver.set_units_watts().await.context(
+            "Newport 1830-C: failed to set units to Watts mode (U1) during initialization",
+        )?;
+        tracing::info!("Newport 1830-C: set units to Watts mode (U1)");
+
         // Validate device by querying wavelength
         match driver.query_wavelength().await {
             Ok(wavelength) => {
@@ -263,6 +279,31 @@ impl Newport1830CDriver {
         self.send_config_command(&format!("F{}", filter)).await
     }
 
+    /// Set measurement units to Watts (U1)
+    ///
+    /// CRITICAL: This ensures D? returns scientific notation (e.g., "1.234E-06")
+    /// instead of decimal format used by dBm mode.
+    ///
+    /// Unit modes (1-indexed):
+    /// - U1 = Watts (scientific notation)
+    /// - U2 = dBm (decimal)
+    /// - U3 = dB (relative, decimal)
+    /// - U4 = REL (relative linear)
+    pub async fn set_units_watts(&self) -> Result<()> {
+        self.send_config_command("U1").await
+    }
+
+    /// Query current units setting
+    ///
+    /// Returns: 1=Watts, 2=dBm, 3=dB, 4=REL
+    pub async fn query_units(&self) -> Result<u8> {
+        let response = self.query("U?").await?;
+        response
+            .trim()
+            .parse::<u8>()
+            .with_context(|| format!("Failed to parse units response: '{}'", response))
+    }
+
     /// Query current wavelength setting
     pub async fn query_wavelength(&self) -> Result<f64> {
         let response = self.query("W?").await?;
@@ -287,18 +328,39 @@ impl Newport1830CDriver {
             .with_context(|| format!("Failed to parse wavelength response: '{}'", trimmed))
     }
 
-    /// Parse power measurement response (scientific notation)
+    /// Parse power measurement response (scientific notation in Watts mode)
+    ///
+    /// Expected format: Scientific notation like "1.234E-06", "+.75E-9", "5E-9"
+    ///
+    /// Error responses detected:
+    /// - "ERR" - General error
+    /// - "OVER" - Overrange (too bright)
+    /// - "UNDER" - Underrange (too dim)
+    /// - "SAT" - Saturated detector
     fn parse_power_response(&self, response: &str) -> Result<f64> {
         let trimmed = response.trim();
         if trimmed.is_empty() {
             return Err(anyhow!("Empty power response"));
         }
-        if trimmed.contains("ERR") || trimmed.contains("OVER") || trimmed.contains("UNDER") {
-            return Err(anyhow!("Meter error response: {}", trimmed));
+
+        // Check for all known error responses
+        let upper = trimmed.to_uppercase();
+        if upper.contains("ERR") {
+            return Err(anyhow!("Meter error: {}", trimmed));
         }
+        if upper.contains("OVER") {
+            return Err(anyhow!("Meter overrange (signal too bright): {}", trimmed));
+        }
+        if upper.contains("UNDER") {
+            return Err(anyhow!("Meter underrange (signal too dim): {}", trimmed));
+        }
+        if upper.contains("SAT") {
+            return Err(anyhow!("Meter saturated (detector overloaded): {}", trimmed));
+        }
+
         trimmed
             .parse::<f64>()
-            .with_context(|| format!("Failed to parse power response: '{}'", trimmed))
+            .with_context(|| format!("Failed to parse power response: '{}'. Ensure device is in Watts mode (U1).", trimmed))
     }
 
     /// Send query and read response
