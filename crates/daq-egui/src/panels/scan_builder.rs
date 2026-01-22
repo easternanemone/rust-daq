@@ -7,11 +7,15 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use eframe::egui;
+use egui_plot::{Legend, Line, Plot, PlotPoints, Points};
+use futures::StreamExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::client::DaqClient;
 use crate::widgets::{offline_notice, OfflineContext};
+use daq_proto::daq::Document;
 
 /// Scan mode selection (1D vs 2D)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,14 +25,45 @@ pub enum ScanMode {
     TwoDimensional,
 }
 
+/// Execution state for the scan
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionState {
+    #[default]
+    Idle,
+    Running,
+    Aborting,
+}
+
+/// Plot style selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlotStyle {
+    #[default]
+    LineWithMarkers,
+    ScatterOnly,
+}
+
 /// Pending async action
 enum PendingAction {
     RefreshDevices,
+    StartScan {
+        plan_type: String,
+        parameters: HashMap<String, String>,
+        device_mapping: HashMap<String, String>,
+    },
+    AbortScan,
 }
 
 /// Result of an async action
 enum ActionResult {
     DevicesLoaded(Result<Vec<daq_proto::daq::DeviceInfo>, String>),
+    ScanStarted {
+        run_uid: String,
+        error: Option<String>,
+    },
+    ScanAborted {
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 /// Scan preview calculation result
@@ -81,6 +116,25 @@ pub struct ScanBuilderPanel {
     action_tx: mpsc::Sender<ActionResult>,
     action_rx: mpsc::Receiver<ActionResult>,
     action_in_flight: usize,
+
+    // Execution state
+    execution_state: ExecutionState,
+    current_run_uid: Option<String>,
+    start_time: Option<Instant>,
+
+    // Progress tracking
+    total_points: u32,
+    current_point: u32,
+
+    // Document streaming
+    document_rx: Option<mpsc::Receiver<Result<Document, String>>>,
+    subscription_task: Option<JoinHandle<()>>,
+
+    // Live plot data: detector_id -> Vec<(actuator_position, detector_value)>
+    plot_data: HashMap<String, Vec<(f64, f64)>>,
+    // Plot display options
+    show_plot: bool,
+    plot_style: PlotStyle,
 }
 
 impl Default for ScanBuilderPanel {
@@ -111,14 +165,31 @@ impl Default for ScanBuilderPanel {
             action_tx,
             action_rx,
             action_in_flight: 0,
+            // Execution state
+            execution_state: ExecutionState::default(),
+            current_run_uid: None,
+            start_time: None,
+            // Progress tracking
+            total_points: 0,
+            current_point: 0,
+            // Document streaming
+            document_rx: None,
+            subscription_task: None,
+            // Live plot
+            plot_data: HashMap::new(),
+            show_plot: true,
+            plot_style: PlotStyle::default(),
         }
     }
 }
 
 impl ScanBuilderPanel {
     /// Poll for completed async operations (non-blocking)
-    fn poll_async_results(&mut self, ctx: &egui::Context) {
+    /// Returns Some(run_uid) if a scan was started and needs document subscription
+    fn poll_async_results(&mut self, ctx: &egui::Context) -> Option<String> {
         let mut updated = false;
+        let mut needs_subscription: Option<String> = None;
+
         loop {
             match self.action_rx.try_recv() {
                 Ok(result) => {
@@ -135,6 +206,33 @@ impl ScanBuilderPanel {
                                 self.error = Some(e);
                             }
                         },
+                        ActionResult::ScanStarted { run_uid, error } => {
+                            if let Some(err) = error {
+                                self.error = Some(err);
+                                self.execution_state = ExecutionState::Idle;
+                            } else {
+                                self.execution_state = ExecutionState::Running;
+                                self.current_run_uid = Some(run_uid.clone());
+                                self.start_time = Some(Instant::now());
+                                self.current_point = 0;
+                                self.total_points = self.points_1d.parse().unwrap_or(0);
+                                self.plot_data.clear();
+                                self.status = Some(format!("Run started: {}", run_uid));
+                                self.error = None;
+
+                                // Signal that we need to start document subscription
+                                needs_subscription = Some(run_uid);
+                            }
+                        }
+                        ActionResult::ScanAborted { success, error } => {
+                            if success {
+                                self.status = Some("Scan aborted".to_string());
+                                self.execution_complete(false);
+                            } else {
+                                self.error = error;
+                                self.execution_state = ExecutionState::Idle;
+                            }
+                        }
                     }
                     updated = true;
                 }
@@ -146,11 +244,158 @@ impl ScanBuilderPanel {
         if self.action_in_flight > 0 || updated {
             ctx.request_repaint();
         }
+
+        needs_subscription
+    }
+
+    /// Poll documents from the subscription stream
+    fn poll_documents(&mut self, ctx: &egui::Context) {
+        // Collect documents first to avoid borrow issues
+        let documents: Vec<_> = {
+            let Some(rx) = &mut self.document_rx else {
+                return;
+            };
+
+            let mut docs = Vec::new();
+            while let Ok(result) = rx.try_recv() {
+                docs.push(result);
+            }
+            docs
+        };
+
+        if documents.is_empty() {
+            return;
+        }
+
+        // Process collected documents
+        for result in documents {
+            match result {
+                Ok(doc) => self.handle_document(doc),
+                Err(err) => {
+                    self.error = Some(err);
+                    self.execution_complete(false);
+                    return;
+                }
+            }
+        }
+
+        // Request repaint if we're running
+        if self.execution_state == ExecutionState::Running {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Handle a received document
+    fn handle_document(&mut self, doc: Document) {
+        use daq_proto::daq::document::Payload;
+
+        match doc.payload {
+            Some(Payload::Start(start)) => {
+                self.status = Some(format!("Run started: {}", start.run_uid));
+            }
+            Some(Payload::Event(event)) => {
+                self.current_point = event.seq_num;
+                self.process_event_for_plot(&event);
+            }
+            Some(Payload::Stop(stop)) => {
+                let success = stop.exit_status == "success";
+                self.execution_complete(success);
+            }
+            _ => {}
+        }
+    }
+
+    /// Process an event document for plot data
+    fn process_event_for_plot(&mut self, event: &daq_proto::daq::EventDocument) {
+        // Extract actuator position from event.data
+        // The positions may be in the data map with the actuator device_id as key
+        // Or we may need to use seq_num as fallback
+        let actuator_pos = self
+            .selected_actuator
+            .as_ref()
+            .and_then(|id| event.data.get(id))
+            .copied()
+            .unwrap_or(event.seq_num as f64);
+
+        // Extract detector values from event.data
+        for detector_id in &self.selected_detectors {
+            if let Some(&value) = event.data.get(detector_id) {
+                self.plot_data
+                    .entry(detector_id.clone())
+                    .or_default()
+                    .push((actuator_pos, value));
+            }
+        }
+    }
+
+    /// Mark execution as complete
+    fn execution_complete(&mut self, success: bool) {
+        self.execution_state = ExecutionState::Idle;
+        if let Some(handle) = self.subscription_task.take() {
+            handle.abort();
+        }
+        self.document_rx = None;
+
+        if success {
+            self.status = Some(format!(
+                "Scan complete: {} points in {:.1}s",
+                self.current_point,
+                self.start_time
+                    .map(|t| t.elapsed().as_secs_f64())
+                    .unwrap_or(0.0)
+            ));
+        }
+    }
+
+    /// Start document subscription for the current run
+    fn start_document_subscription(
+        &mut self,
+        client: &mut DaqClient,
+        runtime: &Runtime,
+        run_uid: &str,
+    ) {
+        let (tx, rx) = mpsc::channel(100);
+        self.document_rx = Some(rx);
+
+        let mut client = client.clone();
+        let run_uid = Some(run_uid.to_string());
+
+        self.subscription_task = Some(runtime.spawn(async move {
+            match client.stream_documents(run_uid, vec![]).await {
+                Ok(mut stream) => {
+                    while let Some(result) = stream.next().await {
+                        match result {
+                            Ok(doc) => {
+                                if tx.send(Ok(doc)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(status) => {
+                                let _ = tx.send(Err(format!("gRPC Error: {}", status))).await;
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("Failed to subscribe: {}", e))).await;
+                }
+            }
+        }));
     }
 
     /// Render the Scan Builder panel
-    pub fn ui(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: &Runtime) {
-        self.poll_async_results(ui.ctx());
+    pub fn ui(&mut self, ui: &mut egui::Ui, mut client: Option<&mut DaqClient>, runtime: &Runtime) {
+        // Poll for documents (must do this first to avoid borrow issues)
+        self.poll_documents(ui.ctx());
+
+        // Poll for action results, check if we need to start subscription
+        if let Some(run_uid) = self.poll_async_results(ui.ctx()) {
+            if let Some(ref mut client) = client {
+                self.start_document_subscription(client, runtime, &run_uid);
+            }
+        }
+
         self.pending_action = None;
 
         ui.heading("Scan Builder");
@@ -164,7 +409,11 @@ impl ScanBuilderPanel {
 
         // Toolbar: Refresh + last refresh time
         ui.horizontal(|ui| {
-            if ui.button("Refresh Devices").clicked() {
+            let refresh_enabled = self.execution_state == ExecutionState::Idle;
+            if ui
+                .add_enabled(refresh_enabled, egui::Button::new("Refresh Devices"))
+                .clicked()
+            {
                 self.pending_action = Some(PendingAction::RefreshDevices);
             }
 
@@ -184,25 +433,31 @@ impl ScanBuilderPanel {
 
         ui.add_space(8.0);
 
-        // Scan mode toggle
+        // Scan mode toggle (disabled during execution)
         ui.horizontal(|ui| {
             ui.label("Scan Type:");
-            ui.selectable_value(&mut self.scan_mode, ScanMode::OneDimensional, "1D Line Scan");
-            ui.selectable_value(&mut self.scan_mode, ScanMode::TwoDimensional, "2D Grid Scan");
+            let enabled = self.execution_state == ExecutionState::Idle;
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.selectable_value(&mut self.scan_mode, ScanMode::OneDimensional, "1D Line Scan");
+                ui.selectable_value(&mut self.scan_mode, ScanMode::TwoDimensional, "2D Grid Scan");
+            });
         });
 
         ui.add_space(8.0);
         ui.separator();
 
-        // Device selection sections
-        self.render_actuator_section(ui);
-        ui.add_space(8.0);
-        self.render_detector_section(ui);
-        ui.add_space(8.0);
-        ui.separator();
+        // Device selection sections (disabled during execution)
+        let enabled = self.execution_state == ExecutionState::Idle;
+        ui.add_enabled_ui(enabled, |ui| {
+            self.render_actuator_section(ui);
+            ui.add_space(8.0);
+            self.render_detector_section(ui);
+            ui.add_space(8.0);
+            ui.separator();
 
-        // Parameter input section
-        self.render_parameters_section(ui);
+            // Parameter input section
+            self.render_parameters_section(ui);
+        });
 
         ui.add_space(8.0);
         ui.separator();
@@ -210,10 +465,181 @@ impl ScanBuilderPanel {
         // Scan preview
         self.render_scan_preview(ui);
 
+        ui.add_space(8.0);
+
+        // Progress bar (when running)
+        self.render_progress_bar(ui);
+
+        ui.add_space(8.0);
+
+        // Live plot (for 1D scans)
+        if self.scan_mode == ScanMode::OneDimensional {
+            ui.separator();
+            ui.checkbox(&mut self.show_plot, "Show Live Plot");
+
+            if self.show_plot
+                && (!self.plot_data.is_empty() || self.execution_state == ExecutionState::Running)
+            {
+                self.render_live_plot(ui);
+            } else if self.show_plot {
+                ui.label("Plot will appear when scan starts...");
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+
+        // Control buttons
+        self.render_control_buttons(ui);
+
         // Execute pending action
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
         }
+    }
+
+    /// Render progress bar with ETA
+    fn render_progress_bar(&mut self, ui: &mut egui::Ui) {
+        if self.execution_state == ExecutionState::Running && self.total_points > 0 {
+            let progress = self.current_point as f32 / self.total_points as f32;
+
+            // Calculate ETA
+            let elapsed = self.start_time.map(|t| t.elapsed()).unwrap_or_default();
+            let eta = if self.current_point > 0 {
+                let rate = elapsed.as_secs_f64() / self.current_point as f64;
+                let remaining = (self.total_points - self.current_point) as f64 * rate;
+                format!(", ETA: {}", format_duration(remaining))
+            } else {
+                String::new()
+            };
+
+            let progress_bar = egui::ProgressBar::new(progress).text(format!(
+                "{}/{} ({:.1}%){}",
+                self.current_point,
+                self.total_points,
+                progress * 100.0,
+                eta
+            ));
+            ui.add(progress_bar);
+        }
+    }
+
+    /// Render live 1D plot
+    fn render_live_plot(&mut self, ui: &mut egui::Ui) {
+        // Plot style toggle
+        ui.horizontal(|ui| {
+            ui.label("Plot:");
+            ui.selectable_value(&mut self.plot_style, PlotStyle::LineWithMarkers, "Line");
+            ui.selectable_value(&mut self.plot_style, PlotStyle::ScatterOnly, "Scatter");
+        });
+
+        let actuator_name = self.selected_actuator.as_deref().unwrap_or("Position");
+
+        Plot::new("scan_live_plot")
+            .height(200.0)
+            .show_axes(true)
+            .show_grid(true)
+            .x_axis_label(actuator_name)
+            .y_axis_label("Signal")
+            .legend(Legend::default())
+            .show(ui, |plot_ui| {
+                // Preset colors for multiple detectors
+                let colors = [
+                    egui::Color32::from_rgb(255, 100, 100),
+                    egui::Color32::from_rgb(100, 200, 100),
+                    egui::Color32::from_rgb(100, 150, 255),
+                    egui::Color32::from_rgb(255, 200, 100),
+                ];
+
+                for (idx, (detector_id, points)) in self.plot_data.iter().enumerate() {
+                    let color = colors[idx % colors.len()];
+                    // Convert points to Vec for reuse
+                    let point_vec: Vec<[f64; 2]> = points.iter().map(|(x, y)| [*x, *y]).collect();
+
+                    match self.plot_style {
+                        PlotStyle::LineWithMarkers => {
+                            // Create PlotPoints via collect for line
+                            let line_points: PlotPoints = point_vec.iter().copied().collect();
+                            plot_ui.line(
+                                Line::new(detector_id.clone(), line_points)
+                                    .color(color)
+                                    .width(2.0),
+                            );
+                            // Create PlotPoints again for markers
+                            let marker_points: PlotPoints = point_vec.iter().copied().collect();
+                            plot_ui.points(
+                                Points::new(format!("{} pts", detector_id), marker_points)
+                                    .color(color)
+                                    .radius(3.0),
+                            );
+                        }
+                        PlotStyle::ScatterOnly => {
+                            let scatter_points: PlotPoints = point_vec.iter().copied().collect();
+                            plot_ui.points(
+                                Points::new(detector_id.clone(), scatter_points)
+                                    .color(color)
+                                    .radius(4.0),
+                            );
+                        }
+                    }
+                }
+            });
+    }
+
+    /// Render control buttons (Start/Abort)
+    fn render_control_buttons(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            match self.execution_state {
+                ExecutionState::Idle => {
+                    // Validate form before enabling Start
+                    self.validate_form();
+                    let can_start = self.validation_errors.is_empty()
+                        && self.selected_actuator.is_some()
+                        && !self.selected_detectors.is_empty();
+
+                    if ui
+                        .add_enabled(can_start, egui::Button::new("Start Scan"))
+                        .clicked()
+                    {
+                        // Build plan parameters
+                        let mut parameters = HashMap::new();
+                        parameters.insert("start_position".to_string(), self.start_1d.clone());
+                        parameters.insert("stop_position".to_string(), self.stop_1d.clone());
+                        parameters.insert("num_points".to_string(), self.points_1d.clone());
+
+                        let mut device_mapping = HashMap::new();
+                        if let Some(actuator) = &self.selected_actuator {
+                            device_mapping.insert("motor".to_string(), actuator.clone());
+                        }
+                        if let Some(detector) = self.selected_detectors.first() {
+                            device_mapping.insert("detector".to_string(), detector.clone());
+                        }
+
+                        self.pending_action = Some(PendingAction::StartScan {
+                            plan_type: "line_scan".to_string(),
+                            parameters,
+                            device_mapping,
+                        });
+                    }
+
+                    if !can_start {
+                        ui.colored_label(
+                            egui::Color32::GRAY,
+                            "Complete form to enable Start",
+                        );
+                    }
+                }
+                ExecutionState::Running => {
+                    if ui.button("Abort").clicked() {
+                        self.pending_action = Some(PendingAction::AbortScan);
+                        self.execution_state = ExecutionState::Aborting;
+                    }
+                }
+                ExecutionState::Aborting => {
+                    ui.add_enabled(false, egui::Button::new("Aborting..."));
+                }
+            }
+        });
     }
 
     /// Render the actuator (movable devices) selection section
@@ -693,6 +1119,12 @@ impl ScanBuilderPanel {
     ) {
         match action {
             PendingAction::RefreshDevices => self.refresh_devices(client, runtime),
+            PendingAction::StartScan {
+                plan_type,
+                parameters,
+                device_mapping,
+            } => self.start_scan(client, runtime, plan_type, parameters, device_mapping),
+            PendingAction::AbortScan => self.abort_scan(client, runtime),
         }
     }
 
@@ -713,6 +1145,131 @@ impl ScanBuilderPanel {
         runtime.spawn(async move {
             let result = client.list_devices().await.map_err(|e| e.to_string());
             let _ = tx.send(ActionResult::DevicesLoaded(result)).await;
+        });
+    }
+
+    /// Start a scan
+    fn start_scan(
+        &mut self,
+        client: Option<&mut DaqClient>,
+        runtime: &Runtime,
+        plan_type: String,
+        parameters: HashMap<String, String>,
+        device_mapping: HashMap<String, String>,
+    ) {
+        self.error = None;
+        self.status = Some("Starting scan...".to_string());
+
+        let Some(client) = client else {
+            self.error = Some("Not connected to daemon".to_string());
+            return;
+        };
+
+        let mut client = client.clone();
+        let tx = self.action_tx.clone();
+        self.action_in_flight = self.action_in_flight.saturating_add(1);
+
+        runtime.spawn(async move {
+            // Queue the plan
+            match client
+                .queue_plan(&plan_type, parameters, device_mapping, HashMap::new())
+                .await
+            {
+                Ok(queue_response) => {
+                    if !queue_response.success {
+                        let _ = tx
+                            .send(ActionResult::ScanStarted {
+                                run_uid: String::new(),
+                                error: Some(queue_response.error_message),
+                            })
+                            .await;
+                        return;
+                    }
+
+                    let run_uid = queue_response.run_uid;
+
+                    // Start the engine
+                    match client.start_engine().await {
+                        Ok(start_response) => {
+                            if start_response.success {
+                                let _ = tx
+                                    .send(ActionResult::ScanStarted {
+                                        run_uid,
+                                        error: None,
+                                    })
+                                    .await;
+                            } else {
+                                let _ = tx
+                                    .send(ActionResult::ScanStarted {
+                                        run_uid: String::new(),
+                                        error: Some(start_response.error_message),
+                                    })
+                                    .await;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(ActionResult::ScanStarted {
+                                    run_uid: String::new(),
+                                    error: Some(e.to_string()),
+                                })
+                                .await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ActionResult::ScanStarted {
+                            run_uid: String::new(),
+                            error: Some(e.to_string()),
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
+    /// Abort the current scan
+    fn abort_scan(&mut self, client: Option<&mut DaqClient>, runtime: &Runtime) {
+        let Some(client) = client else {
+            self.error = Some("Not connected to daemon".to_string());
+            self.execution_state = ExecutionState::Idle;
+            return;
+        };
+
+        // Abort document subscription
+        if let Some(handle) = self.subscription_task.take() {
+            handle.abort();
+        }
+        self.document_rx = None;
+
+        let mut client = client.clone();
+        let tx = self.action_tx.clone();
+        self.action_in_flight = self.action_in_flight.saturating_add(1);
+
+        runtime.spawn(async move {
+            match client.abort_plan(None).await {
+                Ok(response) => {
+                    let _ = tx
+                        .send(ActionResult::ScanAborted {
+                            success: response.success,
+                            error: if response.success {
+                                None
+                            } else {
+                                Some(response.error_message)
+                            },
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ActionResult::ScanAborted {
+                            success: false,
+                            error: Some(e.to_string()),
+                        })
+                        .await;
+                }
+            }
         });
     }
 }

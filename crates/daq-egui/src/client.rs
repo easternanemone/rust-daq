@@ -90,6 +90,11 @@ use daq_proto::daq::{
     QueuePlanRequest,
     QueuePlanResponse,
     ReadValueRequest,
+    // RunEngine control types
+    AbortPlanRequest,
+    AbortPlanResponse,
+    StartEngineRequest,
+    StartEngineResponse,
     ResumeScanRequest,
     ScanConfig,
     SetEmissionRequest,
@@ -821,6 +826,29 @@ impl DaqClient {
         let response = self
             .run_engine
             .stream_documents(StreamDocumentsRequest { run_uid, doc_types })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Start the RunEngine to execute queued plans
+    pub async fn start_engine(&mut self) -> Result<StartEngineResponse> {
+        let response = self
+            .run_engine
+            .start_engine(StartEngineRequest {})
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Abort the current running plan
+    ///
+    /// # Arguments
+    /// * `run_uid` - Optional run UID to abort. If empty, aborts the current plan.
+    pub async fn abort_plan(&mut self, run_uid: Option<&str>) -> Result<AbortPlanResponse> {
+        let response = self
+            .run_engine
+            .abort_plan(AbortPlanRequest {
+                run_uid: run_uid.unwrap_or("").to_string(),
+            })
             .await?;
         Ok(response.into_inner())
     }
