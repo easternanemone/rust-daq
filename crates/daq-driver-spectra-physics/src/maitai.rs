@@ -344,6 +344,22 @@ impl MaiTaiDriver {
         self.send_command(cmd).await
     }
 
+    /// Query current emission state
+    pub async fn emission(&self) -> Result<bool> {
+        let response = self.query("ON?").await?;
+        let trimmed = response.trim().to_uppercase();
+
+        // MaiTai typically responds with "ON" or "OFF", or "1" or "0"
+        match trimmed.as_str() {
+            "ON" | "1" => Ok(true),
+            "OFF" | "0" => Ok(false),
+            _ => Err(anyhow!(
+                "Unexpected emission state '{}' (expected ON/OFF or 1/0)",
+                trimmed
+            )),
+        }
+    }
+
     /// Query current wavelength setting
     pub async fn query_wavelength(&self) -> Result<f64> {
         let response = self.query("WAVELENGTH?").await?;
@@ -492,6 +508,11 @@ impl EmissionControl for MaiTaiDriver {
     #[instrument(skip(self), err)]
     async fn disable_emission(&self) -> Result<()> {
         self.set_emission(false).await
+    }
+
+    #[instrument(skip(self), err)]
+    async fn is_emission_enabled(&self) -> Result<bool> {
+        self.emission().await
     }
 }
 

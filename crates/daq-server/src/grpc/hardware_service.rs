@@ -85,6 +85,7 @@ use daq_core::parameter::Parameter;
 use daq_hardware::registry::{Capability, DeviceRegistry};
 use daq_proto::downsample::{downsample_2x2, downsample_4x4};
 use serde_json;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::future::Future;
@@ -246,7 +247,10 @@ impl StreamLimiter {
     ///
     /// Returns `Ok(())` if the client is under the limit, or `Err(Status)` if exceeded.
     pub fn try_acquire(&self, client_ip: IpAddr) -> Result<(), Status> {
-        let mut streams = self.active_streams.lock().unwrap();
+        let mut streams = self.active_streams.lock().map_err(|_| {
+            tracing::error!("StreamLimiter mutex poisoned in try_acquire");
+            Status::internal("Stream limiter internal error")
+        })?;
         let count = streams.entry(client_ip).or_insert(0);
 
         if *count >= MAX_STREAMS_PER_CLIENT {
@@ -273,8 +277,17 @@ impl StreamLimiter {
 
     /// Release a stream slot for the given client IP.
     pub fn release(&self, client_ip: IpAddr) {
-        let mut streams = self.active_streams.lock().unwrap();
-        if let Some(count) = streams.get_mut(&client_ip) {
+        let mut streams = match self.active_streams.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::error!("StreamLimiter mutex poisoned in release, recovering");
+                poisoned.into_inner()
+            }
+        };
+
+        // Use Entry API for single-lookup access (avoids double borrow)
+        if let Entry::Occupied(mut entry) = streams.entry(client_ip) {
+            let count = entry.get_mut();
             *count = count.saturating_sub(1);
             tracing::debug!(
                 client_ip = %client_ip,
@@ -282,7 +295,7 @@ impl StreamLimiter {
                 "Released stream slot"
             );
             if *count == 0 {
-                streams.remove(&client_ip);
+                entry.remove();
             }
         }
     }

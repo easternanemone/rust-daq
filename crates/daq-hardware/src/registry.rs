@@ -238,22 +238,20 @@ fn validate_serial_port(_port: &str, _device_name: &str) -> Result<(), DaqError>
 ///
 /// ELL14 addresses must be hex digits 0-F
 fn validate_ell14_address(address: &str) -> Result<(), DaqError> {
-    if address.len() != 1 {
-        return Err(DaqError::Configuration(format!(
-            "Invalid ELL14 address '{}': must be a single hex digit (0-F)",
-            address
-        )));
-    }
-
-    let addr_char = address.chars().next().unwrap();
-    if !addr_char.is_ascii_hexdigit() {
-        return Err(DaqError::Configuration(format!(
+    // Use tuple pattern matching to validate exactly one hex digit
+    // This avoids unwrap() and handles all cases in a single match
+    let mut chars = address.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_hexdigit() => Ok(()),
+        (Some(_), None) => Err(DaqError::Configuration(format!(
             "Invalid ELL14 address '{}': must be a hex digit (0-9, A-F)",
             address
-        )));
+        ))),
+        _ => Err(DaqError::Configuration(format!(
+            "Invalid ELL14 address '{}': must be a single hex digit (0-F)",
+            address
+        ))),
     }
-
-    Ok(())
 }
 
 // =============================================================================
