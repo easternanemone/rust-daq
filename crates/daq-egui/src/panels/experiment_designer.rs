@@ -1,10 +1,13 @@
 //! Experiment Designer panel with node graph editor.
 
-use egui_snarl::ui::SnarlStyle;
-use egui_snarl::Snarl;
+use egui_snarl::ui::{get_selected_nodes, SnarlStyle};
+use egui_snarl::{NodeId, Snarl};
+use undo::Record;
 
+use crate::graph::commands::{AddNodeData, GraphEdit, ModifyNodeData};
 use crate::graph::{ExperimentNode, ExperimentViewer};
 use crate::widgets::node_palette::{NodePalette, NodeType};
+use crate::widgets::PropertyInspector;
 
 /// Panel for visual experiment design using a node graph editor.
 pub struct ExperimentDesignerPanel {
@@ -17,6 +20,10 @@ pub struct ExperimentDesignerPanel {
     context_menu_pos: Option<egui::Pos2>,
     /// Counter for generating unique node positions to avoid overlap
     node_count: usize,
+    /// Undo/redo history
+    history: Record<GraphEdit>,
+    /// Cache of selected node ID (updated from egui-snarl state)
+    selected_node: Option<NodeId>,
 }
 
 impl Default for ExperimentDesignerPanel {
@@ -28,6 +35,8 @@ impl Default for ExperimentDesignerPanel {
             dragging_node: None,
             context_menu_pos: None,
             node_count: 0,
+            history: Record::new(),
+            selected_node: None,
         }
     }
 }
@@ -38,9 +47,46 @@ impl ExperimentDesignerPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        // Top toolbar
+        // Handle keyboard shortcuts FIRST (before any UI that might consume keys)
+        self.handle_keyboard(ui);
+
+        // Update selected node from egui-snarl state
+        self.update_selected_node(ui);
+
+        // Top toolbar with undo/redo buttons
         ui.horizontal(|ui| {
             ui.label("Experiment Designer");
+            ui.separator();
+
+            // Undo button
+            let can_undo = self.history.can_undo();
+            if ui
+                .add_enabled(can_undo, egui::Button::new("Undo"))
+                .on_hover_text("Ctrl+Z")
+                .clicked()
+            {
+                self.undo();
+            }
+
+            // Redo button
+            let can_redo = self.history.can_redo();
+            if ui
+                .add_enabled(can_redo, egui::Button::new("Redo"))
+                .on_hover_text("Ctrl+Y or Ctrl+Shift+Z")
+                .clicked()
+            {
+                self.redo();
+            }
+
+            ui.separator();
+
+            // Show undo/redo stack info
+            ui.label(format!(
+                "History: {}/{}",
+                self.history.head(),
+                self.history.len()
+            ));
+
             ui.separator();
 
             // Show drag hint if dragging
@@ -51,7 +97,7 @@ impl ExperimentDesignerPanel {
 
         ui.separator();
 
-        // Split into palette (left) and canvas (right)
+        // Three-panel layout: Palette | Canvas | Inspector
         egui::SidePanel::left("node_palette_panel")
             .resizable(true)
             .default_width(180.0)
@@ -62,6 +108,15 @@ impl ExperimentDesignerPanel {
                 if let Some(node_type) = NodePalette::show(ui) {
                     self.dragging_node = Some(node_type);
                 }
+            });
+
+        egui::SidePanel::right("property_inspector_panel")
+            .resizable(true)
+            .default_width(200.0)
+            .min_width(150.0)
+            .max_width(400.0)
+            .show_inside(ui, |ui| {
+                self.show_property_inspector(ui);
             });
 
         // Main canvas area
@@ -78,6 +133,85 @@ impl ExperimentDesignerPanel {
                 self.snarl.show(&mut self.viewer, &self.style, id, ui);
             });
         });
+    }
+
+    fn show_property_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Properties");
+        ui.separator();
+
+        if let Some(node_id) = self.selected_node {
+            if let Some(node) = self.snarl.get_node(node_id) {
+                // Clone the node before passing to inspector
+                let node_clone = node.clone();
+
+                // Show inspector and check for modifications
+                if let Some(modified_node) = PropertyInspector::show(ui, &node_clone) {
+                    // Create undo-tracked modification
+                    self.history.edit(
+                        &mut self.snarl,
+                        GraphEdit::ModifyNode(ModifyNodeData {
+                            node_id,
+                            old_data: node_clone,
+                            new_data: modified_node,
+                        }),
+                    );
+                }
+            } else {
+                // Node was deleted, clear selection
+                self.selected_node = None;
+                PropertyInspector::show_empty(ui);
+            }
+        } else {
+            PropertyInspector::show_empty(ui);
+        }
+    }
+
+    fn handle_keyboard(&mut self, ui: &mut egui::Ui) {
+        // Undo: Ctrl+Z (Cmd+Z on Mac)
+        let undo_pressed = ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z));
+        let shift_held = ui.input(|i| i.modifiers.shift);
+
+        if undo_pressed {
+            if shift_held {
+                // Ctrl+Shift+Z = Redo
+                self.redo();
+            } else {
+                // Ctrl+Z = Undo
+                self.undo();
+            }
+        }
+
+        // Redo: Ctrl+Y
+        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Y)) {
+            self.redo();
+        }
+
+        // Delete: Delete or Backspace to remove selected node
+        if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            if let Some(node_id) = self.selected_node.take() {
+                // For now, just remove directly (could use RemoveNode command for undo)
+                // We do direct removal because RemoveNode would need the node position
+                // which we'd need to look up, making it more complex
+                self.snarl.remove_node(node_id);
+            }
+        }
+    }
+
+    fn update_selected_node(&mut self, ui: &egui::Ui) {
+        // Get selected nodes from egui-snarl's internal state
+        let snarl_id = egui::Id::new("experiment_graph");
+        let selected = get_selected_nodes(snarl_id, ui.ctx());
+
+        // Update our cached selection (take first selected node if any)
+        self.selected_node = selected.first().copied();
+    }
+
+    fn undo(&mut self) {
+        self.history.undo(&mut self.snarl);
+    }
+
+    fn redo(&mut self) {
+        self.history.redo(&mut self.snarl);
     }
 
     fn handle_context_menu(&mut self, ui: &mut egui::Ui) {
@@ -111,10 +245,17 @@ impl ExperimentDesignerPanel {
 
                         for node_type in NodeType::all() {
                             if ui.button(node_type.name()).clicked() {
-                                // Add node at reasonable position
+                                // Add node at reasonable position with undo tracking
                                 let node_pos = self.next_node_position();
                                 let node = node_type.create_node();
-                                self.snarl.insert_node(node_pos, node);
+                                self.history.edit(
+                                    &mut self.snarl,
+                                    GraphEdit::AddNode(AddNodeData {
+                                        node,
+                                        position: node_pos,
+                                        node_id: None,
+                                    }),
+                                );
                                 close_menu = true;
                             }
                         }
@@ -161,13 +302,17 @@ impl ExperimentDesignerPanel {
             if !ui.input(|i| i.pointer.any_down()) {
                 if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
                     if response.rect.contains(pos) {
-                        // Create node at drop position
-                        // Note: We use a simple grid-based position since exact
-                        // screen-to-graph conversion is complex. The user can
-                        // reposition the node after dropping.
+                        // Create node at drop position with undo tracking
                         let node_pos = self.next_node_position();
                         let node = node_type.create_node();
-                        self.snarl.insert_node(node_pos, node);
+                        self.history.edit(
+                            &mut self.snarl,
+                            GraphEdit::AddNode(AddNodeData {
+                                node,
+                                position: node_pos,
+                                node_id: None,
+                            }),
+                        );
                     }
                 }
                 self.dragging_node = None;

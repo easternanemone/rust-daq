@@ -8,8 +8,98 @@ use super::ExperimentNode;
 /// The target type for all graph edits.
 pub type GraphTarget = Snarl<ExperimentNode>;
 
-/// Add a node to the graph.
-pub struct AddNode {
+/// Unified edit command for all graph operations.
+///
+/// This enum wraps all edit command types so they can be stored
+/// in a single `undo::Record<GraphEdit>`.
+#[derive(Clone)]
+pub enum GraphEdit {
+    AddNode(AddNodeData),
+    RemoveNode(RemoveNodeData),
+    ModifyNode(ModifyNodeData),
+    ConnectNodes(ConnectNodesData),
+    DisconnectNodes(DisconnectNodesData),
+}
+
+impl Edit for GraphEdit {
+    type Target = GraphTarget;
+    type Output = ();
+
+    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
+        match self {
+            GraphEdit::AddNode(data) => {
+                let id = target.insert_node(data.position, data.node.clone());
+                data.node_id = Some(id);
+            }
+            GraphEdit::RemoveNode(data) => {
+                if let Some(node_info) = target.get_node_info(data.node_id) {
+                    data.node = Some(node_info.value.clone());
+                    data.position = Some(node_info.pos);
+                }
+                target.remove_node(data.node_id);
+            }
+            GraphEdit::ModifyNode(data) => {
+                if let Some(node) = target.get_node_mut(data.node_id) {
+                    *node = data.new_data.clone();
+                }
+            }
+            GraphEdit::ConnectNodes(data) => {
+                target.connect(data.from, data.to);
+            }
+            GraphEdit::DisconnectNodes(data) => {
+                target.disconnect(data.from, data.to);
+            }
+        }
+    }
+
+    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
+        match self {
+            GraphEdit::AddNode(data) => {
+                if let Some(id) = data.node_id {
+                    target.remove_node(id);
+                }
+            }
+            GraphEdit::RemoveNode(data) => {
+                if let (Some(node), Some(pos)) = (data.node.take(), data.position) {
+                    target.insert_node(pos, node);
+                }
+            }
+            GraphEdit::ModifyNode(data) => {
+                if let Some(node) = target.get_node_mut(data.node_id) {
+                    *node = data.old_data.clone();
+                }
+            }
+            GraphEdit::ConnectNodes(data) => {
+                target.disconnect(data.from, data.to);
+            }
+            GraphEdit::DisconnectNodes(data) => {
+                target.connect(data.from, data.to);
+            }
+        }
+    }
+
+    fn merge(&mut self, other: Self) -> Merged<Self>
+    where
+        Self: Sized,
+    {
+        // Only merge consecutive modifications to the same node
+        match (self, &other) {
+            (GraphEdit::ModifyNode(this), GraphEdit::ModifyNode(other_data)) => {
+                if this.node_id == other_data.node_id {
+                    this.new_data = other_data.new_data.clone();
+                    Merged::Yes
+                } else {
+                    Merged::No(other)
+                }
+            }
+            _ => Merged::No(other),
+        }
+    }
+}
+
+/// Data for AddNode command.
+#[derive(Clone)]
+pub struct AddNodeData {
     /// The node to add.
     pub node: ExperimentNode,
     /// Position for the new node.
@@ -18,25 +108,9 @@ pub struct AddNode {
     pub node_id: Option<NodeId>,
 }
 
-impl Edit for AddNode {
-    type Target = GraphTarget;
-    type Output = ();
-
-    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
-        // Insert node and store ID for undo
-        let id = target.insert_node(self.position, self.node.clone());
-        self.node_id = Some(id);
-    }
-
-    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
-        if let Some(id) = self.node_id {
-            target.remove_node(id);
-        }
-    }
-}
-
-/// Remove a node from the graph.
-pub struct RemoveNode {
+/// Data for RemoveNode command.
+#[derive(Clone)]
+pub struct RemoveNodeData {
     /// ID of the node to remove.
     pub node_id: NodeId,
     /// Stored for undo - the node data.
@@ -45,30 +119,9 @@ pub struct RemoveNode {
     pub position: Option<egui::Pos2>,
 }
 
-impl Edit for RemoveNode {
-    type Target = GraphTarget;
-    type Output = ();
-
-    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
-        // Store node data and position for undo
-        if let Some(node_info) = target.get_node_info(self.node_id) {
-            self.node = Some(node_info.value.clone());
-            self.position = Some(node_info.pos);
-        }
-        target.remove_node(self.node_id);
-    }
-
-    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
-        if let (Some(node), Some(pos)) = (self.node.take(), self.position) {
-            // Re-insert the node at its original position
-            // Note: node ID may change after re-insert
-            target.insert_node(pos, node);
-        }
-    }
-}
-
-/// Modify a node's properties.
-pub struct ModifyNode {
+/// Data for ModifyNode command.
+#[derive(Clone)]
+pub struct ModifyNodeData {
     /// ID of the node to modify.
     pub node_id: NodeId,
     /// The old node data (before modification).
@@ -77,74 +130,20 @@ pub struct ModifyNode {
     pub new_data: ExperimentNode,
 }
 
-impl Edit for ModifyNode {
-    type Target = GraphTarget;
-    type Output = ();
-
-    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
-        if let Some(node) = target.get_node_mut(self.node_id) {
-            *node = self.new_data.clone();
-        }
-    }
-
-    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
-        if let Some(node) = target.get_node_mut(self.node_id) {
-            *node = self.old_data.clone();
-        }
-    }
-
-    fn merge(&mut self, other: Self) -> Merged<Self>
-    where
-        Self: Sized,
-    {
-        // Merge consecutive modifications to the same node
-        if self.node_id == other.node_id {
-            self.new_data = other.new_data;
-            Merged::Yes
-        } else {
-            Merged::No(other)
-        }
-    }
-}
-
-/// Connect two nodes via their pins.
-pub struct ConnectNodes {
+/// Data for ConnectNodes command.
+#[derive(Clone, Copy)]
+pub struct ConnectNodesData {
     /// Output pin to connect from.
     pub from: OutPinId,
     /// Input pin to connect to.
     pub to: InPinId,
 }
 
-impl Edit for ConnectNodes {
-    type Target = GraphTarget;
-    type Output = ();
-
-    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
-        target.connect(self.from, self.to);
-    }
-
-    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
-        target.disconnect(self.from, self.to);
-    }
-}
-
-/// Disconnect two nodes.
-pub struct DisconnectNodes {
+/// Data for DisconnectNodes command.
+#[derive(Clone, Copy)]
+pub struct DisconnectNodesData {
     /// Output pin to disconnect from.
     pub from: OutPinId,
     /// Input pin to disconnect to.
     pub to: InPinId,
-}
-
-impl Edit for DisconnectNodes {
-    type Target = GraphTarget;
-    type Output = ();
-
-    fn edit(&mut self, target: &mut Self::Target) -> Self::Output {
-        target.disconnect(self.from, self.to);
-    }
-
-    fn undo(&mut self, target: &mut Self::Target) -> Self::Output {
-        target.connect(self.from, self.to);
-    }
 }
