@@ -79,6 +79,7 @@ which = "6"  # Find daemon binary in PATH
 # Local PVCAM driver (only needed if running daemon locally, not for gRPC streaming)
 daq-core = { path = "../daq-core", optional = true }
 daq-driver-pvcam = { path = "../daq-driver-pvcam", optional = true }
+rfd = "0.17.2"
 
 [features]
 default = ["standalone"]
