@@ -91,14 +91,21 @@ impl ExperimentDesignerPanel {
         // Poll for async results
         self.poll_execution_actions();
 
+        // Clone client for use in multiple places (DaqClient is Clone)
+        let client_clone = client.map(|c| c.clone());
+
+        // Poll engine status when execution is active (every 500ms)
+        if self.execution_state.is_active()
+            && self.execution_state.last_update.elapsed() > std::time::Duration::from_millis(500)
+        {
+            self.poll_engine_status(client_clone.as_ref(), runtime);
+        }
+
         // Handle keyboard shortcuts FIRST (before any UI that might consume keys)
         self.handle_keyboard(ui);
 
         // Update selected node from egui-snarl state
         self.update_selected_node(ui);
-
-        // Clone client for use in multiple places (DaqClient is Clone)
-        let client_clone = client.map(|c| c.clone());
 
         // Top toolbar with file operations and undo/redo buttons
         ui.horizontal(|ui| {
@@ -664,11 +671,21 @@ impl ExperimentDesignerPanel {
         let is_running = self.execution_state.is_running();
         let is_paused = self.execution_state.is_paused();
         let is_idle = !self.execution_state.is_active();
+        let is_empty = self.snarl.node_ids().count() == 0;
 
-        // Run button - enabled when idle and no validation errors
-        let can_run = is_idle && !has_errors && self.snarl.node_ids().count() > 0;
+        // Run button - enabled when idle, no validation errors, and graph is not empty
+        let can_run = is_idle && !has_errors && !is_empty;
+        let run_hover_text = if is_empty {
+            "Add nodes to graph first"
+        } else if has_errors {
+            "Fix validation errors first"
+        } else if !is_idle {
+            "Execution already in progress"
+        } else {
+            "Execute the experiment"
+        };
         let run_clicked = ui.add_enabled(can_run, egui::Button::new("▶ Run"))
-            .on_hover_text("Execute the experiment")
+            .on_hover_text(run_hover_text)
             .clicked();
 
         // Pause button - enabled when running
@@ -725,6 +742,10 @@ impl ExperimentDesignerPanel {
     }
 
     fn run_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+        // Clear previous errors
+        self.last_error = None;
+
+        // Check connection
         let Some(_client) = client else {
             self.last_error = Some("Not connected to daemon".to_string());
             return;
@@ -733,6 +754,22 @@ impl ExperimentDesignerPanel {
             self.last_error = Some("No runtime available".to_string());
             return;
         };
+
+        // Check for empty graph
+        if self.snarl.node_ids().count() == 0 {
+            self.last_error = Some("Graph is empty - add nodes first".to_string());
+            return;
+        }
+
+        // Check for validation errors (including cycles)
+        self.validate_graph();
+        if self.viewer.error_count() > 0 {
+            self.last_error = Some(format!(
+                "{} validation error(s) - fix before running",
+                self.viewer.error_count()
+            ));
+            return;
+        }
 
         // Translate graph to plan
         let plan = match GraphPlan::from_snarl(&self.snarl) {
@@ -743,18 +780,26 @@ impl ExperimentDesignerPanel {
             }
         };
 
+        // Check plan has events to execute
         let total_events = plan.num_points() as u32;
-        self.last_error = None;
+        if total_events == 0 {
+            self.last_error = Some("Graph produces no events - add Scan or Acquire nodes".to_string());
+            return;
+        }
 
-        // Queue and start via gRPC
-        // Note: For now, we use queue_plan with graph_plan type
-        // The server would need to accept GraphPlan or we serialize differently
-        // Simplified: just set state to running for UI feedback
+        // Start execution
         self.execution_state.start_execution("pending".to_string(), total_events);
+        self.set_status(format!("Starting experiment with {} events", total_events));
 
-        // TODO: Actually queue plan via gRPC when GraphPlan serialization is implemented
-        // For now, show that execution would start
-        self.set_status("Experiment queued (translation demo)");
+        // TODO: Queue plan via gRPC
+        // For full implementation, need to either:
+        // 1. Serialize GraphPlan and send via QueuePlan with plan_type="graph_plan"
+        // 2. Or convert to an existing plan type the server understands
+        //
+        // For now, the UI shows execution state for demo purposes.
+        // Full server integration would require:
+        // - Server accepting GraphPlan or serialized commands
+        // - Or translating to LineScan/GridScan based on graph content
     }
 
     fn pause_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
@@ -821,6 +866,33 @@ impl ExperimentDesignerPanel {
                 }
             }
         }
+    }
+
+    /// Poll engine status to keep execution state in sync with daemon
+    fn poll_engine_status(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+        let Some(client) = client else { return; };
+        let Some(runtime) = runtime else { return; };
+
+        let tx = self.action_tx.clone();
+        let mut client = client.clone();
+
+        runtime.spawn(async move {
+            match client.get_engine_status().await {
+                Ok(status) => {
+                    let _ = tx.send(ExecutionAction::StatusUpdate {
+                        state: status.state,
+                        current_event: status.current_event_number,
+                        total_events: status.total_events_expected,
+                    }).await;
+                }
+                Err(_) => {
+                    // Ignore polling errors - transient network issues shouldn't disrupt UI
+                }
+            }
+        });
+
+        // Mark that we've initiated a poll (update timestamp to avoid rapid polling)
+        self.execution_state.last_update = std::time::Instant::now();
     }
 
     // ========== Runtime Parameter Editing ==========
