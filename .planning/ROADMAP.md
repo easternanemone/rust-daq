@@ -35,11 +35,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User can start experiment and see live plot updating as data is acquired
   4. User can abort running experiment immediately, with data saved up to abort point
   5. Data auto-saves to HDF5 or CSV during acquisition without user intervention
-**Plans**: TBD
+**Plans**: 3 plans in 3 waves
 
 Plans:
-- [ ] 01-01: TBD during plan-phase
-- [ ] 01-02: TBD during plan-phase
+- [ ] 01-01-PLAN.md — Device selection and form layout (ScanBuilderPanel foundation)
+- [ ] 01-02-PLAN.md — Execution and live 1D plotting (Start/Abort, document streaming)
+- [ ] 01-03-PLAN.md — 2D grid scan and completion summary (2D visualization, polish)
 
 ### Phase 2: Node Graph Editor Core
 **Goal**: Scientists can visually build experiments by dragging nodes and connecting wires, with validation and undo
@@ -184,7 +185,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Form-Based Scan Builder | 0/TBD | Not started | - |
+| 1. Form-Based Scan Builder | 0/3 | Ready for execution | - |
 | 2. Node Graph Editor Core | 0/TBD | Not started | - |
 | 3. Plan Translation and Execution | 0/TBD | Not started | - |
 | 4. Sequences and Control Flow | 0/TBD | Not started | - |
