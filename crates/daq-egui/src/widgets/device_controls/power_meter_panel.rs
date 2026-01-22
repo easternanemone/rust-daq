@@ -1,9 +1,42 @@
 //! Newport 1830-C Power Meter control panel.
 //!
-//! Provides:
-//! - Real-time power reading gauge
-//! - Wavelength calibration input
-//! - Units display
+//! This module provides a GUI panel for controlling and monitoring Newport 1830-C
+//! optical power meters via gRPC communication with the DAQ daemon.
+//!
+//! # Features
+//!
+//! - **Real-time power reading gauge**: Displays power measurements with automatic
+//!   unit scaling (W, mW, µW) based on signal level
+//! - **Wavelength calibration**: Input field to set the calibration wavelength (nm)
+//!   for accurate power measurements at different laser wavelengths
+//! - **Auto-refresh**: Configurable automatic polling (default: 500ms interval)
+//! - **Unit normalization**: Automatically converts readings from any unit (W, mW, µW, nW)
+//!   to milliwatts for consistent internal representation
+//!
+//! # Unit Handling
+//!
+//! The Newport 1830-C returns power readings in Watts. The gRPC server includes the
+//! measurement units in the response. This panel normalizes all readings to milliwatts
+//! internally via [`PowerMeterControlPanel::normalize_power_to_mw`], then dynamically
+//! scales the display based on signal magnitude:
+//!
+//! | Power Level | Display Unit |
+//! |-------------|--------------|
+//! | ≥ 1000 mW   | W            |
+//! | ≥ 1 mW      | mW           |
+//! | < 1 mW      | µW           |
+//!
+//! # Example Flow
+//!
+//! ```text
+//! Newport 1830-C → "5E-9" (5 nW in Watts)
+//!                ↓
+//! gRPC Server   → ReadValueResponse { value: 5e-9, units: "W" }
+//!                ↓
+//! GUI Panel     → normalize_power_to_mw(5e-9, "W") = 5e-6 mW
+//!                ↓
+//! Display       → "5.0000 µW" (scaled for readability)
+//! ```
 
 use egui::Ui;
 use tokio::runtime::Runtime;
@@ -69,6 +102,40 @@ impl PowerMeterControlPanel {
     /// Auto-refresh interval
     const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
+    /// Normalize a power reading to milliwatts (mW).
+    ///
+    /// The gRPC server returns power values along with their unit string from
+    /// the device's configured `measurement_units` metadata. This function
+    /// converts any supported unit to milliwatts for consistent internal storage.
+    ///
+    /// # Supported Units
+    ///
+    /// | Input Unit | Conversion Factor |
+    /// |------------|-------------------|
+    /// | W, w       | × 1000            |
+    /// | mW, mw     | × 1 (no change)   |
+    /// | uW, uw, µW | ÷ 1000            |
+    /// | nW, nw     | ÷ 1,000,000       |
+    /// | "" (empty) | × 1000 (assume W) |
+    /// | other      | × 1 (passthrough) |
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The raw power reading from the device
+    /// * `units` - The unit string from `ReadValueResponse.units`
+    ///
+    /// # Returns
+    ///
+    /// The power value normalized to milliwatts.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Newport 1830-C returns Watts
+    /// let mw = normalize_power_to_mw(5e-9, "W"); // 5 nW → 5e-6 mW
+    /// let mw = normalize_power_to_mw(1.5e-3, "W"); // 1.5 mW → 1.5 mW
+    /// let mw = normalize_power_to_mw(0.5, "mW"); // Already mW → 0.5 mW
+    /// ```
     fn normalize_power_to_mw(value: f64, units: &str) -> f64 {
         match units.trim() {
             "W" | "w" => value * 1000.0,
@@ -224,7 +291,10 @@ impl DeviceControlWidget for PowerMeterControlPanel {
             tracing::debug!("[PowerMeter] Auto-refresh read for device={}", device_id);
             self.read_power(client.as_deref_mut(), runtime, &device_id);
         } else if should_refresh && client.is_none() {
-            tracing::warn!("[PowerMeter] Auto-refresh skipped: no client for device={}", device_id);
+            tracing::warn!(
+                "[PowerMeter] Auto-refresh skipped: no client for device={}",
+                device_id
+            );
         }
 
         // Header
@@ -329,5 +399,169 @@ impl DeviceControlWidget for PowerMeterControlPanel {
 
     fn device_type(&self) -> &'static str {
         "Power Meter"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test unit normalization from Watts to milliwatts.
+    ///
+    /// The Newport 1830-C returns readings in Watts, which must be
+    /// converted to milliwatts for the GUI's internal representation.
+    #[test]
+    fn test_normalize_watts_to_mw() {
+        // Typical Newport 1830-C readings (scientific notation in Watts)
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(5e-9, "W"),
+            5e-6,
+            "5 nW should become 5e-6 mW"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1.5e-3, "W"),
+            1.5,
+            "1.5 mW in Watts should become 1.5 mW"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(0.001, "W"),
+            1.0,
+            "1 mW in Watts should become 1.0 mW"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1.0, "W"),
+            1000.0,
+            "1 W should become 1000 mW"
+        );
+    }
+
+    /// Test case-insensitive Watts handling.
+    #[test]
+    fn test_normalize_watts_case_insensitive() {
+        let value = 0.005; // 5 mW in Watts
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(value, "W"),
+            5.0
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(value, "w"),
+            5.0
+        );
+    }
+
+    /// Test that milliwatts pass through unchanged.
+    #[test]
+    fn test_normalize_milliwatts_passthrough() {
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1.5, "mW"),
+            1.5,
+            "mW should pass through unchanged"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(0.001, "mw"),
+            0.001,
+            "lowercase mw should also pass through"
+        );
+    }
+
+    /// Test microwatt normalization.
+    #[test]
+    fn test_normalize_microwatts() {
+        // 1000 µW = 1 mW
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1000.0, "uW"),
+            1.0
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1000.0, "µW"),
+            1.0
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(500.0, "uw"),
+            0.5
+        );
+    }
+
+    /// Test nanowatt normalization.
+    #[test]
+    fn test_normalize_nanowatts() {
+        // 1,000,000 nW = 1 mW
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1_000_000.0, "nW"),
+            1.0
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(5000.0, "nw"),
+            0.005
+        );
+    }
+
+    /// Test empty units default to Watts (for backwards compatibility).
+    #[test]
+    fn test_normalize_empty_units_assumes_watts() {
+        // Empty string should be treated as Watts (default for Newport)
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(0.001, ""),
+            1.0,
+            "Empty units should assume Watts"
+        );
+    }
+
+    /// Test unknown units pass through unchanged (safety fallback).
+    #[test]
+    fn test_normalize_unknown_units_passthrough() {
+        // Unknown units should pass through to avoid data corruption
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(42.0, "dBm"),
+            42.0,
+            "Unknown units should pass through unchanged"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(100.0, "arbitrary"),
+            100.0
+        );
+    }
+
+    /// Test whitespace trimming in unit strings.
+    #[test]
+    fn test_normalize_trims_whitespace() {
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(0.001, "  W  "),
+            1.0,
+            "Should trim whitespace from unit string"
+        );
+        assert_eq!(
+            PowerMeterControlPanel::normalize_power_to_mw(1.0, "\tmW\n"),
+            1.0
+        );
+    }
+
+    /// Test the complete data flow from typical Newport readings.
+    ///
+    /// Newport 1830-C returns scientific notation like "5E-9" which
+    /// represents 5 nanowatts. After parsing to f64 (5e-9) and
+    /// normalizing with units="W", this should become 5e-6 mW.
+    #[test]
+    fn test_newport_typical_readings() {
+        // These are typical Newport 1830-C readings parsed from strings
+        let test_cases = [
+            // (parsed_value, expected_mw, description)
+            (5e-9_f64, 5e-6_f64, "5 nW → 5e-6 mW"),
+            (1.234e-6, 1.234e-3, "1.234 µW → 1.234e-3 mW"),
+            (0.75e-9, 0.75e-6, "0.75 nW → 0.75e-6 mW"),
+            (1e-3, 1.0, "1 mW → 1 mW"),
+            (2.5e-3, 2.5, "2.5 mW → 2.5 mW"),
+        ];
+
+        for (input, expected, desc) in test_cases {
+            let result = PowerMeterControlPanel::normalize_power_to_mw(input, "W");
+            assert!(
+                (result - expected).abs() < 1e-15,
+                "Failed for {}: got {}, expected {}",
+                desc,
+                result,
+                expected
+            );
+        }
     }
 }

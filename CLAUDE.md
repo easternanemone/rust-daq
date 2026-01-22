@@ -437,6 +437,33 @@ allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 **Security Note:** For production, consider `bind_address = "127.0.0.1"` (loopback only) and enabling `auth_enabled`.
 
+## ReadValue API and Unit Handling
+
+The `ReadValue` RPC returns scalar measurements from `Readable` devices (power meters, sensors).
+
+```protobuf
+message ReadValueResponse {
+  bool success = 1;
+  string error_message = 2;
+  double value = 3;
+  string units = 4;        // From device metadata (e.g., "W", "mW")
+  uint64 timestamp_ns = 5;
+}
+```
+
+**Critical:** The `units` field comes from `DeviceMetadata.measurement_units` in the registry.
+Clients MUST use this field to correctly interpret values:
+
+| Device | Returns | Units | GUI Normalization |
+|--------|---------|-------|-------------------|
+| Newport 1830-C | Watts | "W" | × 1000 → mW |
+| Mock Power Meter | Watts | "W" | × 1000 → mW |
+
+**GUI Unit Normalization:** The `PowerMeterControlPanel` normalizes all readings to milliwatts
+internally, then auto-scales the display based on magnitude (W/mW/µW).
+
+See `daq-egui/src/widgets/device_controls/power_meter_panel.rs::normalize_power_to_mw()`.
+
 ## Streaming Quality Modes
 
 The gRPC frame streaming supports three quality modes to optimize bandwidth:

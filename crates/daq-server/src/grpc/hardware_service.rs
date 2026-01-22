@@ -87,8 +87,8 @@ use daq_proto::downsample::{downsample_2x2, downsample_4x4};
 use serde_json;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
 use std::future::Future;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1334,7 +1334,11 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<SetEmissionRequest>,
     ) -> Result<Response<SetEmissionResponse>, Status> {
         let req = request.into_inner();
-        log::info!(">>> set_emission RPC called: device={}, enabled={}", req.device_id, req.enabled);
+        log::info!(
+            ">>> set_emission RPC called: device={}, enabled={}",
+            req.device_id,
+            req.enabled
+        );
 
         let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
@@ -1372,10 +1376,16 @@ impl HardwareService for HardwareServiceImpl {
         log::info!(">>> get_emission RPC called: device={}", req.device_id);
 
         let emission_ctrl = self.registry.get_emission_control(&req.device_id);
-        log::info!(">>> get_emission: got emission_ctrl={:?}", emission_ctrl.is_some());
+        log::info!(
+            ">>> get_emission: got emission_ctrl={:?}",
+            emission_ctrl.is_some()
+        );
 
         let emission_ctrl = emission_ctrl.ok_or_else(|| {
-            log::error!(">>> get_emission: NO EMISSION CONTROL for device {}", req.device_id);
+            log::error!(
+                ">>> get_emission: NO EMISSION CONTROL for device {}",
+                req.device_id
+            );
             Status::not_found(format!(
                 "Device '{}' not found or has no emission control",
                 req.device_id
@@ -2769,6 +2779,75 @@ mod tests {
 
         assert!(resp.success);
         assert!(resp.value > 0.0);
+    }
+
+    /// Test that ReadValueResponse includes the measurement units from device metadata.
+    ///
+    /// This is critical for the GUI to correctly normalize power readings.
+    /// The Newport 1830-C returns Watts, which the GUI must convert to milliwatts
+    /// for display. Without the units field, readings appear ~1000× too small.
+    #[tokio::test]
+    async fn test_read_value_includes_units() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(registry));
+
+        let request = Request::new(ReadValueRequest {
+            device_id: "mock_power_meter".to_string(),
+        });
+        let response = service.read_value(request).await.unwrap();
+        let resp = response.into_inner();
+
+        assert!(resp.success);
+        // MockPowerMeter is registered with measurement_units: "W"
+        assert_eq!(
+            resp.units, "W",
+            "ReadValueResponse must include measurement units from device metadata"
+        );
+    }
+
+    /// Test that ReadValueResponse includes a timestamp.
+    #[tokio::test]
+    async fn test_read_value_includes_timestamp() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(registry));
+
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        let request = Request::new(ReadValueRequest {
+            device_id: "mock_power_meter".to_string(),
+        });
+        let response = service.read_value(request).await.unwrap();
+        let resp = response.into_inner();
+
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+
+        assert!(resp.success);
+        assert!(
+            resp.timestamp_ns >= before && resp.timestamp_ns <= after,
+            "timestamp_ns should be within the request timeframe"
+        );
+    }
+
+    /// Test read_value with a non-readable device returns an error.
+    #[tokio::test]
+    async fn test_read_value_wrong_capability() {
+        let registry = create_mock_registry().await.unwrap();
+        let service = HardwareServiceImpl::new(Arc::new(registry));
+
+        // mock_stage is Movable, not Readable
+        let request = Request::new(ReadValueRequest {
+            device_id: "mock_stage".to_string(),
+        });
+        let result = service.read_value(request).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     }
 
     #[tokio::test]

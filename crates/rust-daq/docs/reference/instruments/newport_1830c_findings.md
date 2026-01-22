@@ -188,6 +188,65 @@ Based on `/dev/serial/by-id/` and hardware testing:
 - [x] Create operator guide with Newport command reference (done 2025-11-26)
 - [x] Add wavelength get/set commands (done 2025-11-26)
 - [x] Add range/units query commands (done 2025-11-26)
+- [x] Fix GUI unit normalization bug (done 2026-01-22)
+
+## GUI Unit Handling (2026-01-22)
+
+### Problem Solved
+
+The GUI power meter panel was showing readings that reset to zero or displayed
+incorrect values. This was caused by a units mismatch:
+
+- **Newport 1830-C returns**: Watts (e.g., `5E-9` = 5 nanowatts)
+- **gRPC ReadValueResponse**: Includes `value` and `units` fields
+- **GUI (before fix)**: Stored raw value as milliwatts without conversion
+
+For a 5 nW signal (5×10⁻⁹ W), the GUI displayed `0.0000 mW` because it treated
+the raw Watts value as if it were already in milliwatts.
+
+### Solution
+
+The GUI now normalizes all readings to milliwatts using the `units` field from
+the gRPC response. See `power_meter_panel.rs::normalize_power_to_mw()`.
+
+**Data flow:**
+```
+Newport → "5E-9" (Watts)
+        ↓
+Driver  → f64: 5e-9
+        ↓
+gRPC    → ReadValueResponse { value: 5e-9, units: "W" }
+        ↓
+GUI     → normalize_power_to_mw(5e-9, "W") = 5e-6 mW
+        ↓
+Display → "5.0000 µW" (auto-scaled)
+```
+
+### Unit Conversion Table
+
+| Input Units | Conversion to mW |
+|-------------|------------------|
+| W           | × 1000           |
+| mW          | × 1 (no change)  |
+| µW, uW      | ÷ 1000           |
+| nW          | ÷ 1,000,000      |
+| "" (empty)  | × 1000 (assume W)|
+
+### Display Auto-Scaling
+
+The gauge display automatically scales based on signal magnitude:
+
+| Power Level | Display Unit |
+|-------------|--------------|
+| ≥ 1000 mW   | W            |
+| ≥ 1 mW      | mW           |
+| < 1 mW      | µW           |
+
+### Device Metadata Registration
+
+The Newport 1830-C is registered with `measurement_units: "W"` in the device
+registry (`daq-hardware/src/registry.rs`). This metadata is returned by the
+gRPC server in `ReadValueResponse.units`.
 
 ## Operator Notes
 
