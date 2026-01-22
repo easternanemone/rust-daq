@@ -1,0 +1,74 @@
+# Example configuration for NI PCI-MIO-16XE-10 DAQ card on maitai
+# The card provides:
+# - 16 analog input channels (16-bit, 100 kS/s)
+# - 2 analog output channels
+# - Digital I/O
+# - Counters/timers
+#
+# This config uses the Comedi driver framework.
+
+# =============================================================================
+# Analog Input Channel for Power Monitoring
+# =============================================================================
+
+[[devices]]
+id = "photodiode"
+type = "comedi_analog_input"
+enabled = true
+
+[devices.config]
+device = "/dev/comedi0"      # Comedi device path
+channel = 0                   # AI channel (0-15)
+range_index = 0               # Voltage range (0 = default ±10V)
+units = "V"                   # Measurement units
+# mock = false                # Set true for testing without hardware
+
+# Additional channels can be configured similarly:
+
+[[devices]]
+id = "reference_photodiode"
+type = "comedi_analog_input"
+enabled = true
+
+[devices.config]
+device = "/dev/comedi0"
+channel = 1
+range_index = 0
+units = "V"
+
+# =============================================================================
+# Analog Output Channel for Feedback Control
+# =============================================================================
+
+[[devices]]
+id = "feedback_output"
+type = "comedi_analog_output"
+enabled = true
+
+[devices.config]
+device = "/dev/comedi0"
+channel = 0                   # AO channel (0-1)
+range_index = 0               # Voltage range
+units = "V"
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Hardware Information (from /proc/comedi on maitai):
+#   Board: pci-mio-16xe-10
+#   Driver: ni_pcimio
+#   14 subdevices
+#
+# Subdevice mapping (typical for NI E-series):
+#   Subdevice 0: AI (Analog Input) - 16 channels, 16-bit
+#   Subdevice 1: AO (Analog Output) - 2 channels
+#   Subdevice 2: DIO (Digital I/O) - 8 channels
+#   Subdevice 3-13: Counters, calibration, etc.
+#
+# Build with Comedi support:
+#   cargo build --features comedi           # Mock mode (no hardware)
+#   cargo build --features comedi_hardware  # Real hardware (requires comedilib)
+#
+# Test on maitai:
+#   ssh maitai "cd ~/rust-daq && cargo test -p daq-driver-comedi --features hardware"

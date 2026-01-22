@@ -2176,6 +2176,21 @@ pub async fn register_all_factories(
         registry.register_factory(Box::new(MaiTaiFactory));
     }
 
+    // Register Red Pitaya factories
+    #[cfg(feature = "red_pitaya")]
+    {
+        use daq_driver_red_pitaya::RedPitayaPidFactory;
+        registry.register_factory(Box::new(RedPitayaPidFactory));
+    }
+
+    // Register Comedi factories (NI DAQ, etc.)
+    #[cfg(feature = "comedi")]
+    {
+        use daq_driver_comedi::{ComediAnalogInputFactory, ComediAnalogOutputFactory};
+        registry.register_factory(Box::new(ComediAnalogInputFactory));
+        registry.register_factory(Box::new(ComediAnalogOutputFactory));
+    }
+
     // Load and register config-driven factories from TOML files
     #[cfg(feature = "serial")]
     if let Some(dir) = config_dir {

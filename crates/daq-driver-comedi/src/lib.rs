@@ -139,6 +139,7 @@ pub fn link() {
 pub mod continuous;
 pub mod device;
 pub mod error;
+pub mod factory;
 pub mod hal;
 pub mod streaming;
 pub mod subsystem;
@@ -162,4 +163,10 @@ pub use subsystem::digital_io::{DigitalIO, DioDirection, DioPort};
 pub use subsystem::Range;
 pub use timing::{
     ClockPolarity, ClockSource, TimingCapabilities, TimingConfig, TimingConfigBuilder,
+};
+
+// Factory exports for registry integration
+pub use factory::{
+    ComediAnalogInputConfig, ComediAnalogInputDriver, ComediAnalogInputFactory,
+    ComediAnalogOutputConfig, ComediAnalogOutputDriver, ComediAnalogOutputFactory,
 };

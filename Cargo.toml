@@ -15,6 +15,7 @@ members = [
     "crates/daq-driver-thorlabs",
     "crates/daq-driver-newport",
     "crates/daq-driver-spectra-physics",
+    "crates/daq-driver-red-pitaya",
     "crates/comedi-sys",
     "crates/daq-proto",
     "crates/daq-hardware",

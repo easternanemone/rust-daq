@@ -2633,11 +2633,14 @@ dependencies = [
  "bitflags 2.10.0",
  "comedi-sys",
  "daq-core",
+ "futures",
  "libc",
  "parking_lot 0.12.5",
+ "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
  "tracing",
 ]
 
@@ -2692,6 +2695,20 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "daq-driver-red-pitaya"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "daq-core",
+ "futures",
+ "serde",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]
@@ -2802,6 +2819,7 @@ dependencies = [
  "daq-driver-mock",
  "daq-driver-newport",
  "daq-driver-pvcam",
+ "daq-driver-red-pitaya",
  "daq-driver-spectra-physics",
  "daq-driver-thorlabs",
  "daq-pool",
