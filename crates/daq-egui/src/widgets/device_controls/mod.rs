@@ -37,5 +37,6 @@ pub trait DeviceControlWidget {
     );
 
     /// Return the device type this widget handles
+    #[allow(unused)]
     fn device_type(&self) -> &'static str;
 }

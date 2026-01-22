@@ -6,7 +6,8 @@
 mod dispatch;
 mod types;
 
-pub use dispatch::{determine_panel_type, PanelType};
+// Note: dispatch module contains PanelType and determine_panel_type for future panel routing
+// Currently the panel selection logic is inline in render_device_control_panel
 pub use types::{DeviceCategory, DeviceGroup, ParameterInfo, PopOutRequest};
 
 use eframe::egui;
@@ -49,7 +50,7 @@ enum ActionResult {
         result: Result<DeviceState, String>,
     },
     TestConnection {
-        device_id: String,
+        _device_id: String,
         device_name: String,
         result: Result<bool, String>,
     },
@@ -59,7 +60,7 @@ enum ActionResult {
         result: Result<Vec<ParameterInfo>, String>,
     },
     SetParameter {
-        device_id: String,
+        _device_id: String,
         param_name: String,
         result: Result<String, String>,
     },
@@ -849,7 +850,7 @@ impl InstrumentManagerPanel {
             };
             let _ = tx
                 .send(ActionResult::TestConnection {
-                    device_id,
+                    _device_id: device_id,
                     device_name,
                     result,
                 })
@@ -961,7 +962,7 @@ impl InstrumentManagerPanel {
             };
             let _ = tx
                 .send(ActionResult::SetParameter {
-                    device_id,
+                    _device_id: device_id,
                     param_name,
                     result,
                 })
@@ -1698,7 +1699,7 @@ impl InstrumentManagerPanel {
                 .await;
             let _ = tx
                 .send(ActionResult::SetParameter {
-                    device_id,
+                    _device_id: device_id,
                     param_name: "acquisition.exposure_ms".to_string(),
                     result: result.map(|r| r.actual_value).map_err(|e| e.to_string()),
                 })

@@ -1,14 +1,12 @@
-use anyhow::Result;
-use std::ffi::{CStr, CString};
-
 #[cfg(not(feature = "pvcam_sdk"))]
 fn main() {
     println!("This example requires the 'pvcam_sdk' feature.");
 }
 
 #[cfg(feature = "pvcam_sdk")]
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     use pvcam_sys::*;
+    use std::ffi::CStr;
 
     unsafe {
         println!("Initializing PVCAM...");
@@ -79,6 +77,7 @@ fn main() -> Result<()> {
 #[cfg(feature = "pvcam_sdk")]
 unsafe fn get_error() -> String {
     use pvcam_sys::*;
+    use std::ffi::CStr;
     let code = pl_error_code();
     let mut msg_buf = vec![0i8; 256];
     pl_error_message(code, msg_buf.as_mut_ptr());

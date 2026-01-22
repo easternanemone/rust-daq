@@ -2,6 +2,11 @@
 //!
 //! This module provides a centralized function to determine which control panel
 //! type should be used for a given device based on its capabilities.
+//!
+//! Note: Currently unused - panel selection is inline in `render_device_control_panel`.
+//! This module is retained for future refactoring to centralize panel dispatch logic.
+
+#![allow(dead_code)]
 
 use daq_proto::daq::DeviceInfo;
 

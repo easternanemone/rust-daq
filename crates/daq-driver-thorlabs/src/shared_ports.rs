@@ -151,8 +151,8 @@ mod tests {
     #[test]
     fn test_port_registry_initializes() {
         // Just verify we can access the registry without panicking
-        let count = port_count();
-        assert!(count >= 0);
+        // port_count() returns usize, so it's always >= 0
+        let _count = port_count();
     }
 
     #[test]

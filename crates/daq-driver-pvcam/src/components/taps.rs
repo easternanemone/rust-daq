@@ -852,7 +852,7 @@ mod tests {
     fn test_tap_registry_apply() {
         let registry = TapRegistry::new();
         let tap = MetricsTap::new();
-        let tap_ref = &tap as *const _;
+        let _tap_ref = &tap as *const _;
 
         registry.register(Box::new(tap));
 

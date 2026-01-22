@@ -344,20 +344,20 @@ impl MaiTaiDriver {
         self.send_command(cmd).await
     }
 
-    /// Query current emission state
+    /// Query current emission state via status byte
+    ///
+    /// The MaiTai uses *STB? to query the product status byte.
+    /// Bit 0 indicates laser on (1) or off (0).
     pub async fn emission(&self) -> Result<bool> {
-        let response = self.query("ON?").await?;
-        let trimmed = response.trim().to_uppercase();
+        let response = self.query("*STB?").await?;
+        let status: i32 = response
+            .trim()
+            .parse()
+            .context(format!("Failed to parse status byte from '{}'", response))?;
 
-        // MaiTai typically responds with "ON" or "OFF", or "1" or "0"
-        match trimmed.as_str() {
-            "ON" | "1" => Ok(true),
-            "OFF" | "0" => Ok(false),
-            _ => Err(anyhow!(
-                "Unexpected emission state '{}' (expected ON/OFF or 1/0)",
-                trimmed
-            )),
-        }
+        // Bit 0 indicates laser on state
+        let is_on = (status & 1) != 0;
+        Ok(is_on)
     }
 
     /// Query current wavelength setting
