@@ -2776,6 +2776,7 @@ dependencies = [
  "egui 0.33.3",
  "egui-notify",
  "egui-phosphor",
+ "egui-snarl",
  "egui_dock",
  "egui_extras 0.33.3",
  "egui_plot 0.34.0",
@@ -2785,12 +2786,14 @@ dependencies = [
  "once_cell",
  "prost 0.12.6",
  "rerun",
+ "rfd 0.17.2",
  "serde",
  "serde_json",
  "tokio",
  "tonic 0.10.2",
  "tracing",
  "tracing-subscriber",
+ "undo",
  "url",
  "which 6.0.3",
 ]
@@ -3987,6 +3990,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3b2838620355debaeb7fa3cc331a1d8ab77e6387d40e65686fa468c229dbf63"
 dependencies = [
  "egui 0.33.3",
+]
+
+[[package]]
+name = "egui-scale"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7964ad2697e2b2df7157e5a0104c812c3773172c2a7b7dea95b57d9b5fd285f"
+dependencies = [
+ "egui 0.33.3",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6358986338c35fe268c0647b410725babd5de772010e8e739e88cb11f5665da"
+dependencies = [
+ "egui 0.33.3",
+ "egui-scale",
+ "serde",
+ "slab",
+ "smallvec",
 ]
 
 [[package]]
@@ -10049,7 +10074,7 @@ dependencies = [
  "puffin",
  "puffin_http",
  "re_log",
- "rfd",
+ "rfd 0.15.4",
  "wayland-sys",
 ]
 
@@ -10555,7 +10580,7 @@ dependencies = [
  "re_viewer_context",
  "re_viewport",
  "re_viewport_blueprint",
- "rfd",
+ "rfd 0.15.4",
  "ron 0.11.0",
  "serde",
  "serde-wasm-bindgen",
@@ -10626,7 +10651,7 @@ dependencies = [
  "re_ui",
  "re_uri",
  "re_video",
- "rfd",
+ "rfd 0.15.4",
  "serde",
  "slotmap",
  "smallvec",
@@ -10980,6 +11005,33 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rfd"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.3",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "pollster",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11788,6 +11840,9 @@ name = "slab"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"
@@ -13045,6 +13100,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1b88fcfe09e89d3866a5c11019378088af2d24c3fbd4f0543f96b479ec90697"
 dependencies = [
  "version_check",
+]
+
+[[package]]
+name = "undo"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1dfbb202cb07dd2a685c765aa040db18d8a0dbe7079cf57c275833521f67653"
+dependencies = [
+ "serde",
+ "slab",
 ]
 
 [[package]]

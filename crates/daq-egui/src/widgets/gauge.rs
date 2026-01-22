@@ -130,7 +130,9 @@ impl Widget for Gauge<'_> {
                 }
             }
 
-            let value_text = if self.value.abs() < 10.0 {
+            // Format with appropriate precision based on magnitude
+            // Show 1 decimal for values < 100 to avoid misleading rounding (e.g., 28.5 → "29")
+            let value_text = if self.value.abs() < 100.0 {
                 format!("{:.1}", self.value)
             } else {
                 format!("{:.0}", self.value)
