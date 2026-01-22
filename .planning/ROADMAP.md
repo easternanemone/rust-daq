@@ -13,7 +13,7 @@ Build a visual experiment designer for rust-daq that transforms how scientists c
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Form-Based Scan Builder** - Validate core execution loop with simple forms
-- [ ] **Phase 2: Node Graph Editor Core** - Visual editing foundation with undo/validation
+- [x] **Phase 2: Node Graph Editor Core** - Visual editing foundation with undo/validation
 - [ ] **Phase 3: Plan Translation and Execution** - Connect visual graph to RunEngine
 - [ ] **Phase 4: Sequences and Control Flow** - Sequence composition with loops
 - [ ] **Phase 5: Live Visualization** - Real-time plotting during acquisition
@@ -55,10 +55,10 @@ Plans:
 **Plans**: 4 plans in 3 waves
 
 Plans:
-- [ ] 02-01-PLAN.md — Graph module foundation (egui-snarl integration, ExperimentNode, basic canvas)
-- [ ] 02-02-PLAN.md — Node palette and wire connections (drag-drop creation, validation)
-- [ ] 02-03-PLAN.md — Property inspector and undo/redo (node editing, command pattern)
-- [ ] 02-04-PLAN.md — Serialization and polish (JSON save/load, visual error display)
+- [x] 02-01-PLAN.md — Graph module foundation (egui-snarl integration, ExperimentNode, basic canvas)
+- [x] 02-02-PLAN.md — Node palette and wire connections (drag-drop creation, validation)
+- [x] 02-03-PLAN.md — Property inspector and undo/redo (node editing, command pattern)
+- [x] 02-04-PLAN.md — Serialization and polish (JSON save/load, visual error display)
 
 ### Phase 3: Plan Translation and Execution
 **Goal**: Experiments designed visually translate to executable Plans and run via RunEngine
@@ -189,7 +189,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Form-Based Scan Builder | 3/3 | Complete | 2026-01-22 |
-| 2. Node Graph Editor Core | 0/4 | Ready for execution | - |
+| 2. Node Graph Editor Core | 4/4 | Complete | 2026-01-22 |
 | 3. Plan Translation and Execution | 0/TBD | Not started | - |
 | 4. Sequences and Control Flow | 0/TBD | Not started | - |
 | 5. Live Visualization | 0/TBD | Not started | - |
