@@ -304,6 +304,7 @@ pub enum Capability {
 pub enum DriverType {
     /// Newport 1830-C Optical Power Meter
     #[cfg(feature = "serial")]
+    #[serde(rename = "newport1830_c")]
     Newport1830C {
         /// Serial port path (e.g., "/dev/ttyS0")
         port: String,
