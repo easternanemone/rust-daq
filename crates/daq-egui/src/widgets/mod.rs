@@ -6,9 +6,11 @@
 pub mod device_controls;
 pub mod gauge;
 pub mod histogram;
+pub mod node_palette;
 pub mod offline_notice;
 pub mod parameter_editor;
 pub mod pp_editor;
+pub mod property_inspector;
 pub mod roi_selector;
 pub mod smart_stream_editor;
 pub mod status_bar;
@@ -21,7 +23,9 @@ pub use device_controls::{
 };
 pub use gauge::*;
 pub use histogram::*;
+pub use node_palette::{NodePalette, NodeType};
 pub use offline_notice::*;
+pub use property_inspector::PropertyInspector;
 pub use parameter_editor::*;
 pub use pp_editor::*;
 pub use roi_selector::*;
