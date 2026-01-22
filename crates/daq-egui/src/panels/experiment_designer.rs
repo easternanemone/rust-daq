@@ -92,7 +92,8 @@ impl ExperimentDesignerPanel {
         self.poll_execution_actions();
 
         // Clone client for use in multiple places (DaqClient is Clone)
-        let client_clone = client.map(|c| c.clone());
+        // We clone first to preserve client for later use
+        let client_clone: Option<DaqClient> = client.as_ref().map(|c| (*c).clone());
 
         // Poll engine status when execution is active (every 500ms)
         if self.execution_state.is_active()
