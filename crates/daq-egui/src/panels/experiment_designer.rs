@@ -15,7 +15,7 @@ use crate::graph::{
     GraphFile, GraphMetadata, GraphPlan, GRAPH_FILE_EXTENSION,
 };
 use crate::widgets::node_palette::{NodePalette, NodeType};
-use crate::widgets::PropertyInspector;
+use crate::widgets::{EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor};
 use daq_experiment::Plan;
 
 /// Actions from async execution operations
@@ -54,6 +54,8 @@ pub struct ExperimentDesignerPanel {
     action_rx: mpsc::Receiver<ExecutionAction>,
     /// Last error message
     last_error: Option<String>,
+    /// Parameters available for editing while paused
+    editable_params: Vec<EditableParameter>,
 }
 
 impl Default for ExperimentDesignerPanel {
@@ -75,6 +77,7 @@ impl Default for ExperimentDesignerPanel {
             action_tx,
             action_rx,
             last_error: None,
+            editable_params: Vec::new(),
         }
     }
 }
@@ -93,6 +96,9 @@ impl ExperimentDesignerPanel {
 
         // Update selected node from egui-snarl state
         self.update_selected_node(ui);
+
+        // Clone client for use in multiple places (DaqClient is Clone)
+        let client_clone = client.map(|c| c.clone());
 
         // Top toolbar with file operations and undo/redo buttons
         ui.horizontal(|ui| {
@@ -127,11 +133,6 @@ impl ExperimentDesignerPanel {
             {
                 self.save_file_dialog();
             }
-
-            ui.separator();
-
-            // Execution controls
-            self.show_execution_toolbar(ui, client, runtime);
 
             ui.separator();
 
@@ -184,6 +185,11 @@ impl ExperimentDesignerPanel {
             }
         });
 
+        // Execution controls (separate row for more space)
+        ui.horizontal(|ui| {
+            self.show_execution_toolbar(ui, client_clone.as_ref(), runtime);
+        });
+
         ui.separator();
 
         // Run validation each frame (cheap check)
@@ -208,13 +214,16 @@ impl ExperimentDesignerPanel {
                 }
             });
 
+        // Clone again for right panel
+        let client_for_panel = client_clone.clone();
+
         egui::SidePanel::right("property_inspector_panel")
             .resizable(true)
             .default_width(200.0)
             .min_width(150.0)
             .max_width(400.0)
             .show_inside(ui, |ui| {
-                self.show_property_inspector(ui);
+                self.show_property_inspector(ui, client_for_panel.as_ref(), runtime);
             });
 
         // Main canvas area
@@ -244,7 +253,7 @@ impl ExperimentDesignerPanel {
         });
     }
 
-    fn show_property_inspector(&mut self, ui: &mut egui::Ui) {
+    fn show_property_inspector(&mut self, ui: &mut egui::Ui, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
         ui.heading("Properties");
         ui.separator();
 
@@ -281,6 +290,12 @@ impl ExperimentDesignerPanel {
             }
         } else {
             PropertyInspector::show_empty(ui);
+        }
+
+        // Show parameter editor when paused
+        if self.execution_state.is_paused() || self.execution_state.is_running() {
+            ui.add_space(8.0);
+            self.show_parameter_editor_panel(ui, client, runtime);
         }
     }
 
@@ -644,7 +659,7 @@ impl ExperimentDesignerPanel {
 
     // ========== Execution Controls ==========
 
-    fn show_execution_toolbar(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
+    fn show_execution_toolbar(&mut self, ui: &mut egui::Ui, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
         let has_errors = self.viewer.error_count() > 0;
         let is_running = self.execution_state.is_running();
         let is_paused = self.execution_state.is_paused();
@@ -709,12 +724,12 @@ impl ExperimentDesignerPanel {
         }
     }
 
-    fn run_experiment(&mut self, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
-        let Some(client) = client else {
+    fn run_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+        let Some(_client) = client else {
             self.last_error = Some("Not connected to daemon".to_string());
             return;
         };
-        let Some(runtime) = runtime else {
+        let Some(_runtime) = runtime else {
             self.last_error = Some("No runtime available".to_string());
             return;
         };
@@ -742,7 +757,7 @@ impl ExperimentDesignerPanel {
         self.set_status("Experiment queued (translation demo)");
     }
 
-    fn pause_experiment(&mut self, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
+    fn pause_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
         let Some(client) = client else { return; };
         let Some(runtime) = runtime else { return; };
 
@@ -757,7 +772,7 @@ impl ExperimentDesignerPanel {
         });
     }
 
-    fn resume_experiment(&mut self, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
+    fn resume_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
         let Some(client) = client else { return; };
         let Some(runtime) = runtime else { return; };
 
@@ -772,7 +787,7 @@ impl ExperimentDesignerPanel {
         });
     }
 
-    fn abort_experiment(&mut self, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
+    fn abort_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
         let Some(client) = client else { return; };
         let Some(runtime) = runtime else { return; };
 
@@ -806,5 +821,177 @@ impl ExperimentDesignerPanel {
                 }
             }
         }
+    }
+
+    // ========== Runtime Parameter Editing ==========
+
+    /// Collect editable parameters from graph nodes
+    fn collect_editable_parameters(&self) -> Vec<EditableParameter> {
+        let mut params = Vec::new();
+
+        for (_, node) in self.snarl.node_ids() {
+            match node {
+                ExperimentNode::Scan {
+                    actuator, start, ..
+                } => {
+                    if !actuator.is_empty() {
+                        params.push(EditableParameter::float(
+                            actuator,
+                            "position",
+                            &format!("{} Position", actuator),
+                            *start,
+                        ));
+                    }
+                }
+                ExperimentNode::Acquire {
+                    detector,
+                    duration_ms,
+                } => {
+                    if !detector.is_empty() {
+                        params.push(EditableParameter::float_ranged(
+                            detector,
+                            "exposure_ms",
+                            &format!("{} Exposure (ms)", detector),
+                            *duration_ms,
+                            1.0,
+                            10000.0,
+                        ));
+                    }
+                }
+                ExperimentNode::Move { device, position } => {
+                    if !device.is_empty() {
+                        params.push(EditableParameter::float(
+                            device,
+                            "position",
+                            &format!("{} Position", device),
+                            *position,
+                        ));
+                    }
+                }
+                ExperimentNode::Wait { duration_ms } => {
+                    params.push(EditableParameter::float_ranged(
+                        "",
+                        "wait_duration",
+                        "Wait Duration (ms)",
+                        *duration_ms,
+                        0.0,
+                        60000.0,
+                    ));
+                }
+                ExperimentNode::Loop { .. } => {
+                    // Loop iterations not typically editable at runtime
+                }
+            }
+        }
+
+        // Deduplicate by device_id + name
+        params.sort_by(|a, b| (&a.device_id, &a.name).cmp(&(&b.device_id, &b.name)));
+        params.dedup_by(|a, b| a.device_id == b.device_id && a.name == b.name);
+
+        params
+    }
+
+    /// Show parameter editor panel when execution is active
+    fn show_parameter_editor_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: Option<&DaqClient>,
+        runtime: Option<&Runtime>,
+    ) {
+        let is_paused = self.execution_state.is_paused();
+
+        ui.group(|ui| {
+            ui.heading("Runtime Parameters");
+            if !is_paused {
+                ui.label("(Pause execution to modify parameters)");
+            }
+            ui.separator();
+
+            // Populate parameters if we just entered paused state
+            if is_paused && self.editable_params.is_empty() {
+                self.editable_params = self.collect_editable_parameters();
+            }
+
+            // Clear when not active
+            if !self.execution_state.is_active() && !self.editable_params.is_empty() {
+                self.editable_params.clear();
+            }
+
+            // Show parameter editors
+            let results = RuntimeParameterEditor::show_group(
+                ui,
+                "Device Parameters",
+                &mut self.editable_params,
+                is_paused,
+            );
+
+            // Handle modifications
+            for result in results {
+                if let RuntimeParameterEditResult::Modified {
+                    device_id,
+                    param_name,
+                    new_value,
+                } = result
+                {
+                    self.send_parameter_update(&device_id, &param_name, &new_value, client, runtime);
+                }
+            }
+        });
+    }
+
+    /// Send parameter update to daemon via gRPC
+    fn send_parameter_update(
+        &mut self,
+        device_id: &str,
+        param_name: &str,
+        new_value: &str,
+        client: Option<&DaqClient>,
+        runtime: Option<&Runtime>,
+    ) {
+        if device_id.is_empty() {
+            // Local parameter (like wait duration) - just update status
+            self.set_status(format!("Updated {} to {}", param_name, new_value));
+            return;
+        }
+
+        let Some(client) = client else {
+            self.last_error = Some("Not connected".to_string());
+            return;
+        };
+        let Some(runtime) = runtime else {
+            return;
+        };
+
+        // Clone values for status message before moving into closure
+        let device_id_display = device_id.to_string();
+        let param_name_display = param_name.to_string();
+        let new_value_display = new_value.to_string();
+
+        let tx = self.action_tx.clone();
+        let mut client = client.clone();
+        let device_id = device_id.to_string();
+        let param_name = param_name.to_string();
+        let new_value = new_value.to_string();
+
+        runtime.spawn(async move {
+            match client.set_parameter(&device_id, &param_name, &new_value).await {
+                Ok(_) => {
+                    // Success - no action needed, value already updated in UI
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(ExecutionAction::Error(format!(
+                            "Failed to set {}: {}",
+                            param_name, e
+                        )))
+                        .await;
+                }
+            }
+        });
+
+        self.set_status(format!(
+            "Set {}.{} = {}",
+            device_id_display, param_name_display, new_value_display
+        ));
     }
 }
