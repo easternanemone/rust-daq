@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 ## Current Position
 
 Phase: 4 of 10 (Sequences and Control Flow) - IN PROGRESS
-Plan: 1 of 3 complete
+Plan: 2 of 3 complete
 Status: Executing Phase 4
-Last activity: 2026-01-22 - Completed 04-01-PLAN.md (Node Configuration Foundation)
+Last activity: 2026-01-22 - Completed 04-02-PLAN.md (Node Property Editors)
 
-Progress: [███░░░░░░░] 33%
+Progress: [███░░░░░░░] 35%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 6.8min
-- Total execution time: 1.5 hours
+- Total plans completed: 13
+- Average duration: 6.5min
+- Total execution time: 1.6 hours
 
 **By Phase:**
 
@@ -30,11 +30,11 @@ Progress: [███░░░░░░░] 33%
 | 01 | 3 | 17min | 5.7min | ✓ Complete |
 | 02 | 4 | 36min | 9.0min | ✓ Complete |
 | 03 | 4 | 28min | 7.0min | ✓ Complete |
-| 04 | 1 | 6min | 6.0min | In Progress |
+| 04 | 2 | 10min | 5.0min | In Progress |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (8min), 03-03 (5min), 03-04 (8min), 04-01 (6min)
-- Trend: Consistent fast execution (5-8min)
+- Last 5 plans: 03-03 (5min), 03-04 (8min), 04-01 (6min), 04-02 (4min)
+- Trend: Fast execution continuing (4-8min), 04-02 was fastest yet
 
 *Updated after each plan completion*
 
@@ -63,10 +63,13 @@ Recent decisions affecting current work:
 - Custom autocomplete widget instead of egui_autocomplete (version compatibility issues)
 - Optional exposure_ms field in AcquireConfig (None = use device default)
 - Safety limits on infinite loops via max_iterations (prevents truly unbounded execution)
+- Stateless DeviceSelector usage (created per-render) instead of storing as field
+- Empty device_ids parameter triggers fallback to text field (graceful degradation)
+- Condition/termination type change creates new default variant (prevents data loss until user confirms)
 
 ### Pending Todos
 
-None yet.
+- Device list async fetch from DaqClient in ExperimentDesignerPanel (TODO added in 04-02)
 
 ### Blockers/Concerns
 
@@ -84,6 +87,6 @@ See: .planning/phases/03-plan-translation-and-execution/03-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 04-01-PLAN.md (Node Configuration Foundation)
+Stopped at: Completed 04-02-PLAN.md (Node Property Editors)
 Resume file: None
-Next action: Execute 04-02-PLAN.md (Node Property Editors)
+Next action: Execute 04-03-PLAN.md (Action Buttons and Status Visualization)
