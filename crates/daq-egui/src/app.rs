@@ -15,9 +15,9 @@ use crate::icons;
 use crate::layout;
 use crate::panels::{
     ConnectionDiagnostics, ConnectionStatus as LogConnectionStatus, DevicesPanel,
-    DocumentViewerPanel, GettingStartedPanel, ImageViewerPanel, InstrumentManagerPanel,
-    LoggingPanel, ModulesPanel, PlanRunnerPanel, ScanBuilderPanel, ScansPanel, ScriptsPanel,
-    SignalPlotterPanel, StoragePanel,
+    DocumentViewerPanel, ExperimentDesignerPanel, GettingStartedPanel, ImageViewerPanel,
+    InstrumentManagerPanel, LoggingPanel, ModulesPanel, PlanRunnerPanel, ScanBuilderPanel,
+    ScansPanel, ScriptsPanel, SignalPlotterPanel, StoragePanel,
 };
 use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::theme::{self, ThemePreference};
@@ -73,6 +73,7 @@ pub struct DaqApp {
     modules_panel: ModulesPanel,
     plan_runner_panel: PlanRunnerPanel,
     scan_builder_panel: ScanBuilderPanel,
+    experiment_designer_panel: ExperimentDesignerPanel,
     document_viewer_panel: DocumentViewerPanel,
     instrument_manager_panel: InstrumentManagerPanel,
     signal_plotter_panel: SignalPlotterPanel,
@@ -210,6 +211,7 @@ pub enum Panel {
     Scripts,
     Scans,
     ScanBuilder,
+    ExperimentDesigner,
     Storage,
     Modules,
     PlanRunner,
@@ -405,6 +407,7 @@ impl DaqApp {
             modules_panel: ModulesPanel::default(),
             plan_runner_panel: PlanRunnerPanel::default(),
             scan_builder_panel: ScanBuilderPanel::default(),
+            experiment_designer_panel: ExperimentDesignerPanel::default(),
             document_viewer_panel: DocumentViewerPanel::default(),
             instrument_manager_panel: InstrumentManagerPanel::default(),
             signal_plotter_panel: SignalPlotterPanel::new(),
@@ -634,6 +637,11 @@ impl DaqApp {
                     }
                     if ui.button("Scan Builder").clicked() {
                         self.ui_actions.push(UiAction::FocusTab(Panel::ScanBuilder));
+                        ui.close();
+                    }
+                    if ui.button("Experiment Designer").clicked() {
+                        self.ui_actions
+                            .push(UiAction::FocusTab(Panel::ExperimentDesigner));
                         ui.close();
                     }
                     if ui.button("Storage").clicked() {
@@ -1193,6 +1201,7 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
             Panel::Scripts => format!("{} Scripts", icons::nav::SCRIPTS).into(),
             Panel::Scans => format!("{} Scans", icons::nav::SCANS).into(),
             Panel::ScanBuilder => "Scan Builder".into(),
+            Panel::ExperimentDesigner => "Experiment Designer".into(),
             Panel::Storage => format!("{} Storage", icons::nav::STORAGE).into(),
             Panel::Modules => format!("{} Modules", icons::nav::MODULES).into(),
             Panel::PlanRunner => format!("{} Plan Runner", icons::nav::PLAN_RUNNER).into(),
@@ -1251,6 +1260,9 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
                 self.app
                     .scan_builder_panel
                     .ui(ui, self.app.client.as_mut(), &self.app.runtime)
+            }
+            Panel::ExperimentDesigner => {
+                self.app.experiment_designer_panel.ui(ui)
             }
             Panel::Storage => {
                 self.app
@@ -1345,6 +1357,12 @@ impl<'a> DaqTabViewer<'a> {
             self.nav_button(ui, icons::nav::SCRIPTS, "Scripts", Panel::Scripts);
             self.nav_button(ui, icons::nav::SCANS, "Scans", Panel::Scans);
             self.nav_button(ui, icons::nav::SCANS, "Scan Builder", Panel::ScanBuilder);
+            self.nav_button(
+                ui,
+                icons::nav::SCANS,
+                "Experiment Designer",
+                Panel::ExperimentDesigner,
+            );
             self.nav_button(
                 ui,
                 icons::nav::PLAN_RUNNER,

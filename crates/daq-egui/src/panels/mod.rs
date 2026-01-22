@@ -3,6 +3,7 @@
 pub mod comedi;
 mod devices;
 mod document_viewer;
+mod experiment_designer;
 mod getting_started;
 mod image_viewer;
 mod instrument_manager;
@@ -24,6 +25,7 @@ mod storage;
 // };
 pub use devices::DevicesPanel;
 pub use document_viewer::DocumentViewerPanel;
+pub use experiment_designer::ExperimentDesignerPanel;
 pub use getting_started::GettingStartedPanel;
 pub use image_viewer::ImageViewerPanel;
 pub use instrument_manager::InstrumentManagerPanel;

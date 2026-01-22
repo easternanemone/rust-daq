@@ -21,6 +21,8 @@ mod client;
 mod connection;
 mod daemon_launcher;
 #[cfg(feature = "standalone")]
+mod graph;
+#[cfg(feature = "standalone")]
 mod gui_log_layer;
 #[cfg(feature = "standalone")]
 mod icons;
