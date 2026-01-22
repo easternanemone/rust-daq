@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 6: Data Management** - Auto-save, metadata, and run history
 - [ ] **Phase 7: Code Export and Provenance** - Rhai generation and versioning
 - [ ] **Phase 8: Advanced Scans** - Nested and adaptive scans
-- [ ] **Phase 9: Templates and Library** - Reusable experiment patterns
+- [ ] **Phase 9: Templates and Library** - Reusable experiment patterns (including subgraph grouping)
 - [ ] **Phase 10: Polish and Integration** - Final features and production readiness
 
 ## Phase Details
@@ -45,13 +45,13 @@ Plans:
 ### Phase 2: Node Graph Editor Core
 **Goal**: Scientists can visually build experiments by dragging nodes and connecting wires, with validation and undo
 **Depends on**: Phase 1
-**Requirements**: EDIT-01, EDIT-02, EDIT-03, EDIT-04, EDIT-05, LIB-01, LIB-02
+**Requirements**: EDIT-01, EDIT-02, EDIT-04, EDIT-05, LIB-01, LIB-02
 **Success Criteria** (what must be TRUE):
   1. User can drag node from palette onto canvas and connect nodes with wires
   2. User can configure node parameters via property inspector panel
   3. User can undo/redo edits with Ctrl+Z/Ctrl+Y, with full edit history
-  4. User can group related nodes into subgraph to collapse complex sections
-  5. Editor shows validation errors visually (red borders, error messages) when connections invalid
+  4. Editor shows validation errors visually (status bar, property inspector) when nodes invalid
+**Deferred to Phase 9**: EDIT-03 (subgraph grouping) - requires stable node graph foundation first
 **Plans**: 4 plans in 3 waves
 
 Plans:
@@ -150,14 +150,15 @@ Plans:
 - [ ] 08-02: TBD during plan-phase
 
 ### Phase 9: Templates and Library
-**Goal**: Reusable experiment patterns accelerate common tasks
+**Goal**: Reusable experiment patterns and subgraph grouping accelerate common tasks
 **Depends on**: Phase 2 (save/load), Phase 7 (versioning)
-**Requirements**: LIB-03, LIB-04, LIB-05
+**Requirements**: LIB-03, LIB-04, LIB-05, EDIT-03 (subgraph grouping - deferred from Phase 2)
 **Success Criteria** (what must be TRUE):
   1. User can access template library with common patterns (wavelength cal, beam alignment)
   2. User can create custom template from their experiment and add to library
   3. Templates have version history tracking changes over time
   4. Templates include metadata (author, description, parameter documentation)
+  5. User can group related nodes into collapsible subgraph to simplify complex experiments
 **Plans**: TBD
 
 Plans:
