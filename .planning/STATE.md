@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 
 ## Current Position
 
-Phase: 4 of 10 (Sequences and Control Flow) - IN PROGRESS
-Plan: 2 of 3 complete
-Status: Executing Phase 4
-Last activity: 2026-01-22 - Completed 04-02-PLAN.md (Node Property Editors)
+Phase: 4 of 10 (Sequences and Control Flow) - COMPLETE
+Plan: 3 of 3 complete
+Status: Phase 4 complete, ready for Phase 5
+Last activity: 2026-01-22 - Completed 04-03-PLAN.md (Loop Body Translation)
 
-Progress: [███░░░░░░░] 35%
+Progress: [███░░░░░░░] 37%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 6.5min
-- Total execution time: 1.6 hours
+- Total plans completed: 14
+- Average duration: 6.1min
+- Total execution time: 1.7 hours
 
 **By Phase:**
 
@@ -30,11 +30,11 @@ Progress: [███░░░░░░░] 35%
 | 01 | 3 | 17min | 5.7min | ✓ Complete |
 | 02 | 4 | 36min | 9.0min | ✓ Complete |
 | 03 | 4 | 28min | 7.0min | ✓ Complete |
-| 04 | 2 | 10min | 5.0min | In Progress |
+| 04 | 3 | 14min | 4.7min | ✓ Complete |
 
 **Recent Trend:**
-- Last 5 plans: 03-03 (5min), 03-04 (8min), 04-01 (6min), 04-02 (4min)
-- Trend: Fast execution continuing (4-8min), 04-02 was fastest yet
+- Last 5 plans: 03-04 (8min), 04-01 (6min), 04-02 (4min), 04-03 (4min)
+- Trend: Fast execution continuing (4-8min), Phase 4 avg 4.7min is fastest yet
 
 *Updated after each plan completion*
 
@@ -66,6 +66,11 @@ Recent decisions affecting current work:
 - Stateless DeviceSelector usage (created per-render) instead of storing as field
 - Empty device_ids parameter triggers fallback to text field (graceful degradation)
 - Condition/termination type change creates new default variant (prevents data loss until user confirms)
+- Loop body nodes detected via body output (pin 1) BFS traversal
+- Body nodes excluded from main topological traversal to prevent double-translation
+- Condition-based loops use max_iterations as safety fallback with warning
+- Relative moves in loop bodies generate warnings (position compounds each iteration)
+- Back-edges from loop body to ancestors detected as errors (prevent infinite recursion)
 
 ### Pending Todos
 
@@ -87,6 +92,6 @@ See: .planning/phases/03-plan-translation-and-execution/03-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 04-02-PLAN.md (Node Property Editors)
+Stopped at: Completed 04-03-PLAN.md (Loop Body Translation)
 Resume file: None
-Next action: Execute 04-03-PLAN.md (Action Buttons and Status Visualization)
+Next action: Phase 4 complete - ready for Phase 5 or user direction
