@@ -8,6 +8,8 @@ pub mod reconnect;
 #[cfg(feature = "standalone")]
 pub mod app;
 #[cfg(feature = "standalone")]
+pub mod graph;
+#[cfg(feature = "standalone")]
 pub mod icons;
 #[cfg(feature = "standalone")]
 pub mod layout;
