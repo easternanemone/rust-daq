@@ -7,14 +7,18 @@
 //! - Power display gauge
 
 use egui::Ui;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tracing;
 
 use crate::client::DaqClient;
 use crate::widgets::device_controls::DeviceControlWidget;
-use crate::widgets::{Gauge, Toggle};
+use crate::widgets::Gauge;
 use daq_proto::daq::DeviceInfo;
+
+/// Polling interval for state updates (1 second)
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// MaiTai laser state cached from the daemon
 #[derive(Debug, Clone, Default)]
@@ -63,6 +67,8 @@ pub struct MaiTaiControlPanel {
     device_id: Option<String>,
     /// Initial state fetch done
     initial_fetch_done: bool,
+    /// Last time we polled for state updates
+    last_poll_time: Instant,
 }
 
 impl Default for MaiTaiControlPanel {
@@ -80,6 +86,7 @@ impl Default for MaiTaiControlPanel {
             status: None,
             device_id: None,
             initial_fetch_done: false,
+            last_poll_time: Instant::now(),
         }
     }
 }
@@ -289,8 +296,6 @@ impl DeviceControlWidget for MaiTaiControlPanel {
         mut client: Option<&mut DaqClient>,
         runtime: &Runtime,
     ) {
-        tracing::info!("[GUI] MaiTaiControlPanel::ui called for device={}", device.id);
-
         // Poll for async results
         self.poll_results();
 
@@ -303,6 +308,18 @@ impl DeviceControlWidget for MaiTaiControlPanel {
             self.initial_fetch_done = true;
             self.fetch_state(client.as_deref_mut(), runtime, &device_id);
         }
+
+        // Periodic state polling (every POLL_INTERVAL)
+        if client.is_some()
+            && self.actions_in_flight == 0
+            && self.last_poll_time.elapsed() >= POLL_INTERVAL
+        {
+            self.last_poll_time = Instant::now();
+            self.fetch_state(client.as_deref_mut(), runtime, &device_id);
+        }
+
+        // Request continuous repaint for polling
+        ui.ctx().request_repaint_after(POLL_INTERVAL);
 
         // Header with device name
         ui.horizontal(|ui| {
