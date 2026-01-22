@@ -57,6 +57,170 @@ pub fn validate_connection(
     }
 }
 
+/// Find all nodes that can reach the given node (ancestors).
+fn find_ancestors(
+    node_id: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<ExperimentNode>,
+) -> std::collections::HashSet<egui_snarl::NodeId> {
+    use std::collections::{HashSet, VecDeque};
+
+    let mut ancestors = HashSet::new();
+    let mut to_visit = VecDeque::new();
+
+    // Find all nodes that have edges TO node_id
+    for (out_pin, in_pin) in snarl.wires() {
+        if in_pin.node == node_id {
+            to_visit.push_back(out_pin.node);
+        }
+    }
+
+    // BFS backward to find all ancestors
+    while let Some(ancestor) = to_visit.pop_front() {
+        if ancestors.insert(ancestor) {
+            // Add this ancestor's predecessors
+            for (out_pin, in_pin) in snarl.wires() {
+                if in_pin.node == ancestor {
+                    to_visit.push_back(out_pin.node);
+                }
+            }
+        }
+    }
+
+    ancestors
+}
+
+/// Find all nodes in a loop's body sub-graph (duplicated from translation.rs to avoid circular dep).
+fn find_loop_body_nodes(
+    loop_node_id: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<ExperimentNode>,
+) -> Vec<egui_snarl::NodeId> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    let mut body_nodes = HashSet::new();
+    let mut to_visit = VecDeque::new();
+
+    // Find all nodes reachable from loop's body output (pin 1)
+    for (out_pin, in_pin) in snarl.wires() {
+        if out_pin.node == loop_node_id && out_pin.output == 1 {
+            to_visit.push_back(in_pin.node);
+        }
+    }
+
+    // BFS to find all reachable nodes from body output
+    while let Some(node_id) = to_visit.pop_front() {
+        if body_nodes.insert(node_id) {
+            // Add this node's outputs to visit
+            for (out_pin, in_pin) in snarl.wires() {
+                if out_pin.node == node_id {
+                    to_visit.push_back(in_pin.node);
+                }
+            }
+        }
+    }
+
+    // Filter out nodes reachable from Next output (pin 0)
+    let mut next_nodes = HashSet::new();
+    let mut to_visit_next = VecDeque::new();
+    for (out_pin, in_pin) in snarl.wires() {
+        if out_pin.node == loop_node_id && out_pin.output == 0 {
+            to_visit_next.push_back(in_pin.node);
+        }
+    }
+    while let Some(node_id) = to_visit_next.pop_front() {
+        if next_nodes.insert(node_id) {
+            for (out_pin, in_pin) in snarl.wires() {
+                if out_pin.node == node_id {
+                    to_visit_next.push_back(in_pin.node);
+                }
+            }
+        }
+    }
+
+    // Body = reachable from body output but NOT from next output
+    body_nodes
+        .into_iter()
+        .filter(|n| !next_nodes.contains(n))
+        .collect()
+}
+
+/// Validate a single loop node's body structure.
+fn validate_loop_body(
+    loop_id: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<ExperimentNode>,
+) -> Option<String> {
+    // Find loop's ancestors (nodes that can reach loop_id)
+    let ancestors = find_ancestors(loop_id, snarl);
+
+    // Find body nodes
+    let body_nodes = find_loop_body_nodes(loop_id, snarl);
+
+    // Check for back-edges from body to ancestors or loop itself
+    for &body_node in &body_nodes {
+        for (out_pin, in_pin) in snarl.wires() {
+            if out_pin.node == body_node {
+                if in_pin.node == loop_id {
+                    return Some(format!(
+                        "Loop body node {:?} connects back to loop {:?} - would cause infinite recursion",
+                        body_node, loop_id
+                    ));
+                }
+                if ancestors.contains(&in_pin.node) {
+                    return Some(format!(
+                        "Loop body node {:?} connects back to ancestor {:?} - would cause infinite recursion",
+                        body_node, in_pin.node
+                    ));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Warn if a loop body contains relative moves (position compounds each iteration).
+fn warn_relative_moves_in_loop(
+    loop_id: egui_snarl::NodeId,
+    snarl: &egui_snarl::Snarl<ExperimentNode>,
+) -> Option<String> {
+    use super::nodes::MoveMode;
+
+    let body_nodes = find_loop_body_nodes(loop_id, snarl);
+    for body_node_id in body_nodes {
+        if let Some(ExperimentNode::Move(config)) = snarl.get_node(body_node_id) {
+            if config.mode == MoveMode::Relative {
+                return Some(format!(
+                    "Warning: Relative move in loop body (node {:?}) - position will compound each iteration",
+                    body_node_id
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Validate all loop bodies in the graph.
+pub fn validate_loop_bodies(
+    snarl: &egui_snarl::Snarl<ExperimentNode>,
+) -> Vec<(egui_snarl::NodeId, String)> {
+    let mut errors = Vec::new();
+
+    for (loop_id, loop_node) in snarl.node_ids() {
+        if matches!(loop_node, ExperimentNode::Loop(..)) {
+            // Check for back-edges
+            if let Some(error) = validate_loop_body(loop_id, snarl) {
+                errors.push((loop_id, error));
+            }
+
+            // Warn about relative moves
+            if let Some(warning) = warn_relative_moves_in_loop(loop_id, snarl) {
+                errors.push((loop_id, warning));
+            }
+        }
+    }
+
+    errors
+}
+
 /// Validate entire graph structure, including cycle detection.
 /// Returns None if valid, or Some(error_message) if invalid.
 pub fn validate_graph_structure<N>(snarl: &egui_snarl::Snarl<N>) -> Option<String>
@@ -130,6 +294,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::nodes::{AcquireConfig, LoopConfig, LoopTermination, MoveConfig, MoveMode};
 
     #[test]
     fn test_flow_to_flow_valid() {
@@ -158,5 +323,139 @@ mod tests {
         // Loop next output (index 0) to acquire input
         let result = validate_connection(&loop_node, 0, &acquire, 0);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_loop_backedge_detection() {
+        let mut snarl = egui_snarl::Snarl::new();
+
+        // Create a scan node (will be ancestor)
+        let scan = snarl.insert_node(
+            egui::pos2(0.0, 0.0),
+            ExperimentNode::Scan {
+                actuator: "stage".to_string(),
+                start: 0.0,
+                stop: 100.0,
+                points: 10,
+            },
+        );
+
+        // Create loop node
+        let loop_node = snarl.insert_node(
+            egui::pos2(100.0, 0.0),
+            ExperimentNode::Loop(LoopConfig {
+                termination: LoopTermination::Count { iterations: 5 },
+            }),
+        );
+
+        // Create acquire node in loop body
+        let acquire = snarl.insert_node(
+            egui::pos2(200.0, 0.0),
+            ExperimentNode::Acquire(AcquireConfig {
+                detector: "camera".to_string(),
+                exposure_ms: Some(100.0),
+                frame_count: 1,
+            }),
+        );
+
+        // Connect scan -> loop (scan is ancestor of loop)
+        snarl.connect(
+            egui_snarl::OutPinId { node: scan, output: 0 },
+            egui_snarl::InPinId { node: loop_node, input: 0 },
+        );
+
+        // Connect loop body -> acquire
+        snarl.connect(
+            egui_snarl::OutPinId { node: loop_node, output: 1 },
+            egui_snarl::InPinId { node: acquire, input: 0 },
+        );
+
+        // Invalid: connect acquire back to scan (back-edge to ancestor)
+        snarl.connect(
+            egui_snarl::OutPinId { node: acquire, output: 0 },
+            egui_snarl::InPinId { node: scan, input: 0 },
+        );
+
+        // Validate - should detect back-edge
+        let errors = validate_loop_bodies(&snarl);
+        assert!(!errors.is_empty(), "Should detect back-edge");
+        assert!(
+            errors[0].1.contains("ancestor"),
+            "Error should mention ancestor: {}",
+            errors[0].1
+        );
+    }
+
+    #[test]
+    fn test_relative_move_warning() {
+        let mut snarl = egui_snarl::Snarl::new();
+
+        // Create loop node
+        let loop_node = snarl.insert_node(
+            egui::pos2(0.0, 0.0),
+            ExperimentNode::Loop(LoopConfig {
+                termination: LoopTermination::Count { iterations: 5 },
+            }),
+        );
+
+        // Create relative move node in loop body
+        let move_node = snarl.insert_node(
+            egui::pos2(100.0, 0.0),
+            ExperimentNode::Move(MoveConfig {
+                device: "stage".to_string(),
+                position: 10.0,
+                mode: MoveMode::Relative, // Relative move
+                wait_settled: true,
+            }),
+        );
+
+        // Connect loop body -> move
+        snarl.connect(
+            egui_snarl::OutPinId { node: loop_node, output: 1 },
+            egui_snarl::InPinId { node: move_node, input: 0 },
+        );
+
+        // Validate - should warn about relative move
+        let warnings = validate_loop_bodies(&snarl);
+        assert!(!warnings.is_empty(), "Should warn about relative move");
+        assert!(
+            warnings[0].1.contains("Relative move"),
+            "Should mention relative move: {}",
+            warnings[0].1
+        );
+    }
+
+    #[test]
+    fn test_absolute_move_in_loop_ok() {
+        let mut snarl = egui_snarl::Snarl::new();
+
+        // Create loop node
+        let loop_node = snarl.insert_node(
+            egui::pos2(0.0, 0.0),
+            ExperimentNode::Loop(LoopConfig {
+                termination: LoopTermination::Count { iterations: 5 },
+            }),
+        );
+
+        // Create absolute move node in loop body
+        let move_node = snarl.insert_node(
+            egui::pos2(100.0, 0.0),
+            ExperimentNode::Move(MoveConfig {
+                device: "stage".to_string(),
+                position: 50.0,
+                mode: MoveMode::Absolute, // Absolute move is OK
+                wait_settled: true,
+            }),
+        );
+
+        // Connect loop body -> move
+        snarl.connect(
+            egui_snarl::OutPinId { node: loop_node, output: 1 },
+            egui_snarl::InPinId { node: move_node, input: 0 },
+        );
+
+        // Validate - should have no warnings
+        let warnings = validate_loop_bodies(&snarl);
+        assert!(warnings.is_empty(), "Absolute moves should not warn");
     }
 }
