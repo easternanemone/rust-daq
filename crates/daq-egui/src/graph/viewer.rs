@@ -1,18 +1,25 @@
 //! SnarlViewer implementation for ExperimentNode.
 
-use egui_snarl::ui::SnarlViewer;
+use egui_snarl::ui::{PinInfo, SnarlViewer};
 use egui_snarl::{InPin, OutPin, Snarl};
 
 use super::nodes::ExperimentNode;
+use super::validation::{output_pin_type, validate_connection, PinType};
 
 /// Viewer for rendering experiment nodes in the graph editor.
 pub struct ExperimentViewer {
-    // Will hold validation errors in later plans
+    /// Last validation error (shown as toast/status)
+    pub last_error: Option<String>,
 }
 
 impl ExperimentViewer {
     pub fn new() -> Self {
-        Self {}
+        Self { last_error: None }
+    }
+
+    /// Clears the last error if any.
+    pub fn clear_error(&mut self) {
+        self.last_error = None;
     }
 }
 
@@ -31,35 +38,70 @@ impl SnarlViewer<ExperimentNode> for ExperimentViewer {
         match node {
             ExperimentNode::Scan { .. } => 0, // Entry point, no inputs
             ExperimentNode::Loop { .. } => 1, // Has body input
-            _ => 1,                            // Sequential flow input
+            _ => 1,                           // Sequential flow input
         }
     }
 
     fn outputs(&mut self, node: &ExperimentNode) -> usize {
         match node {
             ExperimentNode::Loop { .. } => 2, // Next + loop body outputs
-            _ => 1,                            // Sequential flow output
+            _ => 1,                           // Sequential flow output
         }
     }
 
+    #[allow(refining_impl_trait)]
     fn show_input(
         &mut self,
         _pin: &InPin,
         ui: &mut egui::Ui,
         _snarl: &mut Snarl<ExperimentNode>,
-    ) -> egui_snarl::ui::PinInfo {
+    ) -> PinInfo {
         ui.label(">"); // Flow input indicator
-        egui_snarl::ui::PinInfo::default()
+        PinInfo::default()
     }
 
+    #[allow(refining_impl_trait)]
     fn show_output(
         &mut self,
-        _pin: &OutPin,
+        pin: &OutPin,
         ui: &mut egui::Ui,
-        _snarl: &mut Snarl<ExperimentNode>,
-    ) -> egui_snarl::ui::PinInfo {
-        ui.label(">"); // Flow output indicator
-        egui_snarl::ui::PinInfo::default()
+        snarl: &mut Snarl<ExperimentNode>,
+    ) -> PinInfo {
+        // Show appropriate label based on pin type
+        if let Some(node) = snarl.get_node(pin.id.node) {
+            let pin_type = output_pin_type(node, pin.id.output);
+            match pin_type {
+                PinType::Flow => ui.label(">"),
+                PinType::LoopBody => ui.label("L"), // Loop body indicator
+            };
+        } else {
+            ui.label(">"); // Default flow indicator
+        }
+        PinInfo::default()
+    }
+
+    fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<ExperimentNode>) {
+        // Get node data for validation
+        let from_node = snarl.get_node(from.id.node).cloned();
+        let to_node = snarl.get_node(to.id.node).cloned();
+
+        if let (Some(from_node), Some(to_node)) = (from_node, to_node) {
+            match validate_connection(&from_node, from.id.output, &to_node, to.id.input) {
+                Ok(()) => {
+                    // Valid connection, create it
+                    snarl.connect(from.id, to.id);
+                    self.last_error = None;
+                }
+                Err(msg) => {
+                    // Invalid, store error for display
+                    self.last_error = Some(msg);
+                }
+            }
+        }
+    }
+
+    fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<ExperimentNode>) {
+        snarl.disconnect(from.id, to.id);
     }
 
     // show_body will be expanded in Plan 02-03 for property editing
