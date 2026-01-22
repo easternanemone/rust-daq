@@ -1549,7 +1549,7 @@ impl DeviceRegistry {
             DriverType::MaiTai { port } => {
                 // Use new_async() to validate device identity on connection
                 let driver =
-                    Arc::new(crate::drivers::maitai::MaiTaiDriver::new_async(&port).await?);
+                    Arc::new(daq_driver_spectra_physics::MaiTaiDriver::new_async_default(&port).await?);
                 Ok(RegisteredDevice {
                     config,
                     movable: None,
