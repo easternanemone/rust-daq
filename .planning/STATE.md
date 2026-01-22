@@ -9,19 +9,19 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 
 ## Current Position
 
-Phase: 4 of 10 (Sequences and Control Flow) - PLANNED
-Plan: 0 of 3 planned
-Status: Ready for execution
-Last activity: 2026-01-22 - Planned Phase 4 (3 plans in 2 waves, verification passed)
+Phase: 4 of 10 (Sequences and Control Flow) - IN PROGRESS
+Plan: 1 of 3 complete
+Status: Executing Phase 4
+Last activity: 2026-01-22 - Completed 04-01-PLAN.md (Node Configuration Foundation)
 
-Progress: [███░░░░░░░] 30%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
-- Average duration: 7.0min
-- Total execution time: 1.4 hours
+- Total plans completed: 12
+- Average duration: 6.8min
+- Total execution time: 1.5 hours
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: [███░░░░░░░] 30%
 | 01 | 3 | 17min | 5.7min | ✓ Complete |
 | 02 | 4 | 36min | 9.0min | ✓ Complete |
 | 03 | 4 | 28min | 7.0min | ✓ Complete |
+| 04 | 1 | 6min | 6.0min | In Progress |
 
 **Recent Trend:**
-- Last 5 plans: 03-01 (7min), 03-02 (8min), 03-03 (5min), 03-04 (8min)
-- Trend: Consistent mid-range (5-8min)
+- Last 5 plans: 03-02 (8min), 03-03 (5min), 03-04 (8min), 04-01 (6min)
+- Trend: Consistent fast execution (5-8min)
 
 *Updated after each plan completion*
 
@@ -58,6 +59,10 @@ Recent decisions affecting current work:
 - ExecutionState cloned to viewer before render (cheap, avoids lifetime issues)
 - Visual highlighting infrastructure ready (pending egui-snarl API support)
 - Separate RuntimeParameterEditor from parameter_editor.rs (different use case: runtime vs device introspection)
+- Configuration structs for node variants (cleaner than inline fields, easier to extend)
+- Custom autocomplete widget instead of egui_autocomplete (version compatibility issues)
+- Optional exposure_ms field in AcquireConfig (None = use device default)
+- Safety limits on infinite loops via max_iterations (prevents truly unbounded execution)
 
 ### Pending Todos
 
@@ -79,6 +84,6 @@ See: .planning/phases/03-plan-translation-and-execution/03-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Phase 4 planned (3 plans in 2 waves)
+Stopped at: Completed 04-01-PLAN.md (Node Configuration Foundation)
 Resume file: None
-Next action: Execute Phase 4 (Sequences and Control Flow)
+Next action: Execute 04-02-PLAN.md (Node Property Editors)
