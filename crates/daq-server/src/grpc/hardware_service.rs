@@ -1333,6 +1333,7 @@ impl HardwareService for HardwareServiceImpl {
         request: Request<SetEmissionRequest>,
     ) -> Result<Response<SetEmissionResponse>, Status> {
         let req = request.into_inner();
+        log::info!(">>> set_emission RPC called: device={}, enabled={}", req.device_id, req.enabled);
 
         let emission_ctrl = self.registry.get_emission_control(&req.device_id);
 
@@ -1361,23 +1362,31 @@ impl HardwareService for HardwareServiceImpl {
         }
     }
 
+    #[instrument(skip(self, request), fields(method = "get_emission"))]
     async fn get_emission(
         &self,
         request: Request<GetEmissionRequest>,
     ) -> Result<Response<GetEmissionResponse>, Status> {
         let req = request.into_inner();
+        log::info!(">>> get_emission RPC called: device={}", req.device_id);
 
         let emission_ctrl = self.registry.get_emission_control(&req.device_id);
+        log::info!(">>> get_emission: got emission_ctrl={:?}", emission_ctrl.is_some());
 
         let emission_ctrl = emission_ctrl.ok_or_else(|| {
+            log::error!(">>> get_emission: NO EMISSION CONTROL for device {}", req.device_id);
             Status::not_found(format!(
                 "Device '{}' not found or has no emission control",
                 req.device_id
             ))
         })?;
 
+        log::info!(">>> get_emission: calling is_emission_enabled()...");
         match emission_ctrl.is_emission_enabled().await {
-            Ok(is_enabled) => Ok(Response::new(GetEmissionResponse { is_enabled })),
+            Ok(is_enabled) => {
+                log::info!(">>> get_emission: is_enabled={}", is_enabled);
+                Ok(Response::new(GetEmissionResponse { is_enabled }))
+            }
             Err(e) => Err(map_hardware_error_to_status(&format!(
                 "Failed to get emission state: {}",
                 e
