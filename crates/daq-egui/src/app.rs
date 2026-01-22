@@ -1395,15 +1395,18 @@ impl<'a> DaqTabViewer<'a> {
 
         // Render the appropriate panel widget based on which HashMap contains the panel
         // (panel type was determined at creation time using capability flags)
-        if let Some(panel) = self.app.docked_maitai_panels.get_mut(&panel_id) {
-            panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
-        } else if let Some(panel) = self.app.docked_power_meter_panels.get_mut(&panel_id) {
-            panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
-        } else if let Some(panel) = self.app.docked_rotator_panels.get_mut(&panel_id) {
-            panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
-        } else if let Some(panel) = self.app.docked_stage_panels.get_mut(&panel_id) {
-            panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
-        }
+        // Use push_id to avoid widget ID collisions with instrument manager panels
+        ui.push_id(("docked", panel_id), |ui| {
+            if let Some(panel) = self.app.docked_maitai_panels.get_mut(&panel_id) {
+                panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
+            } else if let Some(panel) = self.app.docked_power_meter_panels.get_mut(&panel_id) {
+                panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
+            } else if let Some(panel) = self.app.docked_rotator_panels.get_mut(&panel_id) {
+                panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
+            } else if let Some(panel) = self.app.docked_stage_panels.get_mut(&panel_id) {
+                panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
+            }
+        });
     }
 }
 

@@ -1348,7 +1348,10 @@ impl InstrumentManagerPanel {
                 .maitai_panels
                 .entry(device_id.clone())
                 .or_insert_with(MaiTaiControlPanel::default);
-            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            // Use push_id to avoid widget ID collisions with docked panels
+            ui.push_id(("instr_mgr", &device_id), |ui| {
+                panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            });
             return;
         }
 
@@ -1361,7 +1364,10 @@ impl InstrumentManagerPanel {
                 .power_meter_panels
                 .entry(device_id.clone())
                 .or_insert_with(PowerMeterControlPanel::default);
-            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            // Use push_id to avoid widget ID collisions with docked panels
+            ui.push_id(("instr_mgr", &device_id), |ui| {
+                panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            });
             return;
         }
 
@@ -1371,7 +1377,10 @@ impl InstrumentManagerPanel {
                 .rotator_panels
                 .entry(device_id.clone())
                 .or_insert_with(RotatorControlPanel::default);
-            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            // Use push_id to avoid widget ID collisions with docked panels
+            ui.push_id(("instr_mgr", &device_id), |ui| {
+                panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            });
             return;
         }
 
@@ -1381,7 +1390,10 @@ impl InstrumentManagerPanel {
                 .stage_panels
                 .entry(device_id.clone())
                 .or_insert_with(StageControlPanel::default);
-            panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            // Use push_id to avoid widget ID collisions with docked panels
+            ui.push_id(("instr_mgr", &device_id), |ui| {
+                panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            });
             return;
         }
 
