@@ -24,7 +24,7 @@ struct MeterState {
 
 /// Async action results
 enum ActionResult {
-    ReadPower(Result<f64, String>),
+    ReadPower(Result<(f64, String), String>),
     GetWavelength(Result<f64, String>),
     SetWavelength(Result<f64, String>),
 }
@@ -69,14 +69,26 @@ impl PowerMeterControlPanel {
     /// Auto-refresh interval
     const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
+    fn normalize_power_to_mw(value: f64, units: &str) -> f64 {
+        match units.trim() {
+            "W" | "w" => value * 1000.0,
+            "mW" | "mw" => value,
+            "uW" | "uw" | "µW" => value / 1000.0,
+            "nW" | "nw" => value / 1_000_000.0,
+            "" => value * 1000.0,
+            _ => value,
+        }
+    }
+
     fn poll_results(&mut self) {
         while let Ok(result) = self.action_rx.try_recv() {
             self.actions_in_flight = self.actions_in_flight.saturating_sub(1);
 
             match result {
                 ActionResult::ReadPower(result) => match result {
-                    Ok(power) => {
-                        self.state.power_mw = Some(power);
+                    Ok((power, units)) => {
+                        let power_mw = Self::normalize_power_to_mw(power, &units);
+                        self.state.power_mw = Some(power_mw);
                         self.state.loading = false;
                         self.error = None; // Clear any previous error on success
                     }
@@ -120,7 +132,7 @@ impl PowerMeterControlPanel {
             let result = client
                 .read_value(&device_id)
                 .await
-                .map(|r| r.value)
+                .map(|r| (r.value, r.units))
                 .map_err(|e| e.to_string());
             let _ = tx.send(ActionResult::ReadPower(result)).await;
         });
