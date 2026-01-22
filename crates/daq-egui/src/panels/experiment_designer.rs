@@ -219,6 +219,13 @@ impl ExperimentDesignerPanel {
 
         // Main canvas area
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            // Sync execution state to viewer for node highlighting
+            if self.execution_state.is_active() {
+                self.viewer.execution_state = Some(self.execution_state.clone());
+            } else {
+                self.viewer.execution_state = None;
+            }
+
             // Handle context menu for adding nodes
             self.handle_context_menu(ui);
 
@@ -229,6 +236,10 @@ impl ExperimentDesignerPanel {
             egui::Frame::canvas(ui.style()).show(ui, |ui| {
                 let id = egui::Id::new("experiment_graph");
                 self.snarl.show(&mut self.viewer, &self.style, id, ui);
+
+                // TODO: Add visual node highlighting when egui-snarl supports custom header colors
+                // For now, execution state is tracked but not visually shown on nodes
+                // Alternative: Could add status icons/badges to node titles
             });
         });
     }

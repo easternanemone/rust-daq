@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use egui_snarl::ui::{PinInfo, SnarlViewer};
 use egui_snarl::{InPin, NodeId, OutPin, Snarl};
 
+use super::execution_state::{ExecutionState, NodeExecutionState};
 use super::nodes::ExperimentNode;
 use super::validation::{output_pin_type, validate_connection, PinType};
 
@@ -15,6 +16,8 @@ pub struct ExperimentViewer {
     pub last_error: Option<String>,
     /// Per-node validation errors
     pub node_errors: HashMap<NodeId, String>,
+    /// Execution state for visual highlighting
+    pub execution_state: Option<ExecutionState>,
 }
 
 impl ExperimentViewer {
@@ -22,6 +25,7 @@ impl ExperimentViewer {
         Self {
             last_error: None,
             node_errors: HashMap::new(),
+            execution_state: None,
         }
     }
 
@@ -56,11 +60,38 @@ impl ExperimentViewer {
     pub fn has_errors(&self) -> bool {
         !self.node_errors.is_empty()
     }
+
+    /// Get the header color for a node based on validation and execution state.
+    fn header_color(&self, node_id: NodeId) -> egui::Color32 {
+        // Check for validation errors first (highest priority)
+        if self.node_errors.contains_key(&node_id) {
+            return egui::Color32::from_rgb(200, 80, 80); // Red for errors
+        }
+
+        // Check execution state
+        if let Some(exec_state) = &self.execution_state {
+            match exec_state.node_state(node_id) {
+                NodeExecutionState::Running => {
+                    return egui::Color32::from_rgb(100, 200, 100); // Green for running
+                }
+                NodeExecutionState::Completed => {
+                    return egui::Color32::from_rgb(100, 150, 200); // Blue for completed
+                }
+                _ => {}
+            }
+        }
+
+        // Default color
+        egui::Color32::from_rgb(60, 60, 60)
+    }
 }
 
 
 impl SnarlViewer<ExperimentNode> for ExperimentViewer {
     fn title(&mut self, node: &ExperimentNode) -> String {
+        // Note: We don't have access to NodeId in this method, so visual
+        // highlighting needs to be done differently (e.g., in show_header if available,
+        // or via painter overlays). For now, just return the node name.
         node.node_name().to_string()
     }
 
