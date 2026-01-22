@@ -37,7 +37,7 @@ use futures::future::BoxFuture;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio_serial::SerialPortBuilderExt;
@@ -304,6 +304,34 @@ impl Newport1830CDriver {
     /// Send query and read response
     async fn query(&self, command: &str) -> Result<String> {
         let mut port = self.port.lock().await;
+
+        // Flush any stale data in both BufReader's buffer and underlying stream
+        // First, consume any data in BufReader's internal buffer
+        {
+            let buf = port.buffer();
+            if !buf.is_empty() {
+                tracing::debug!("Newport 1830-C: clearing {} bytes from BufReader buffer", buf.len());
+                let len = buf.len();
+                port.consume(len);
+            }
+        }
+
+        // Then flush any pending data from the underlying stream
+        let mut discard_buf = [0u8; 256];
+        loop {
+            match tokio::time::timeout(
+                Duration::from_millis(10),
+                port.get_mut().read(&mut discard_buf),
+            )
+            .await
+            {
+                Ok(Ok(0)) | Err(_) => break, // No data or timeout - buffer is clear
+                Ok(Ok(n)) => {
+                    tracing::debug!("Newport 1830-C: flushed {} stale bytes from stream", n);
+                }
+                Ok(Err(_)) => break,
+            }
+        }
 
         let cmd = format!("{}\n", command);
         tracing::debug!("Newport 1830-C: sending command {:?}", cmd);
