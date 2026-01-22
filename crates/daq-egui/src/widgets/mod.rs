@@ -4,6 +4,7 @@
 //! that can be shared across different panels.
 
 pub mod device_controls;
+pub mod device_selector;
 pub mod gauge;
 pub mod histogram;
 pub mod node_palette;
@@ -22,6 +23,7 @@ pub use device_controls::{
     DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel, RotatorControlPanel,
     StageControlPanel,
 };
+pub use device_selector::DeviceSelector;
 pub use gauge::*;
 pub use histogram::*;
 pub use node_palette::{NodePalette, NodeType};
