@@ -73,6 +73,16 @@ struct ScanPreview {
     valid: bool,
 }
 
+/// Completion summary displayed after scan finishes
+#[derive(Debug, Clone)]
+struct CompletionSummary {
+    run_uid: String,
+    exit_status: String,
+    total_points: u32,
+    duration_secs: f64,
+    saved_path: Option<String>,
+}
+
 /// Scan Builder panel state
 pub struct ScanBuilderPanel {
     // Device cache (refreshed from daemon)
@@ -132,9 +142,15 @@ pub struct ScanBuilderPanel {
 
     // Live plot data: detector_id -> Vec<(actuator_position, detector_value)>
     plot_data: HashMap<String, Vec<(f64, f64)>>,
+    // 2D plot data: Vec<(x_pos, y_pos, value)>
+    plot_data_2d: Vec<(f64, f64, f64)>,
     // Plot display options
     show_plot: bool,
     plot_style: PlotStyle,
+
+    // Completion summary
+    show_completion_summary: bool,
+    completion_summary: Option<CompletionSummary>,
 }
 
 impl Default for ScanBuilderPanel {
@@ -177,8 +193,12 @@ impl Default for ScanBuilderPanel {
             subscription_task: None,
             // Live plot
             plot_data: HashMap::new(),
+            plot_data_2d: Vec::new(),
             show_plot: true,
             plot_style: PlotStyle::default(),
+            // Completion summary
+            show_completion_summary: false,
+            completion_summary: None,
         }
     }
 }
@@ -215,8 +235,17 @@ impl ScanBuilderPanel {
                                 self.current_run_uid = Some(run_uid.clone());
                                 self.start_time = Some(Instant::now());
                                 self.current_point = 0;
-                                self.total_points = self.points_1d.parse().unwrap_or(0);
+                                // Calculate total_points based on scan mode
+                                self.total_points = match self.scan_mode {
+                                    ScanMode::OneDimensional => self.points_1d.parse().unwrap_or(0),
+                                    ScanMode::TwoDimensional => {
+                                        let x_pts: u32 = self.x_points.parse().unwrap_or(0);
+                                        let y_pts: u32 = self.y_points.parse().unwrap_or(0);
+                                        x_pts * y_pts
+                                    }
+                                };
                                 self.plot_data.clear();
+                                self.plot_data_2d.clear();
                                 self.status = Some(format!("Run started: {}", run_uid));
                                 self.error = None;
 
@@ -295,9 +324,29 @@ impl ScanBuilderPanel {
             }
             Some(Payload::Event(event)) => {
                 self.current_point = event.seq_num;
-                self.process_event_for_plot(&event);
+                // Process event for plot based on scan mode
+                match self.scan_mode {
+                    ScanMode::OneDimensional => self.process_event_for_plot(&event),
+                    ScanMode::TwoDimensional => self.process_event_for_plot_2d(&event),
+                }
             }
             Some(Payload::Stop(stop)) => {
+                // Capture completion data
+                let duration = self
+                    .start_time
+                    .map(|t| t.elapsed().as_secs_f64())
+                    .unwrap_or(0.0);
+
+                self.completion_summary = Some(CompletionSummary {
+                    run_uid: stop.run_uid.clone(),
+                    exit_status: stop.exit_status.clone(),
+                    total_points: stop.num_events,
+                    duration_secs: duration,
+                    // DocumentWriter saves to data/{run_uid}.h5 or .csv
+                    saved_path: Some(format!("data/{}.h5", stop.run_uid)),
+                });
+                self.show_completion_summary = true;
+
                 let success = stop.exit_status == "success";
                 self.execution_complete(success);
             }
@@ -305,7 +354,7 @@ impl ScanBuilderPanel {
         }
     }
 
-    /// Process an event document for plot data
+    /// Process an event document for 1D plot data
     fn process_event_for_plot(&mut self, event: &daq_proto::daq::EventDocument) {
         // Extract actuator position from event.data
         // The positions may be in the data map with the actuator device_id as key
@@ -326,6 +375,35 @@ impl ScanBuilderPanel {
                     .push((actuator_pos, value));
             }
         }
+    }
+
+    /// Process an event document for 2D plot data
+    fn process_event_for_plot_2d(&mut self, event: &daq_proto::daq::EventDocument) {
+        // Extract X position
+        let x_pos = self
+            .selected_actuator_x
+            .as_ref()
+            .and_then(|id| event.data.get(id))
+            .copied()
+            .unwrap_or(0.0);
+
+        // Extract Y position
+        let y_pos = self
+            .selected_actuator_y
+            .as_ref()
+            .and_then(|id| event.data.get(id))
+            .copied()
+            .unwrap_or(0.0);
+
+        // Extract detector value (use first detector)
+        let value = self
+            .selected_detectors
+            .first()
+            .and_then(|id| event.data.get(id))
+            .copied()
+            .unwrap_or(0.0);
+
+        self.plot_data_2d.push((x_pos, y_pos, value));
     }
 
     /// Mark execution as complete
@@ -472,17 +550,30 @@ impl ScanBuilderPanel {
 
         ui.add_space(8.0);
 
-        // Live plot (for 1D scans)
-        if self.scan_mode == ScanMode::OneDimensional {
-            ui.separator();
-            ui.checkbox(&mut self.show_plot, "Show Live Plot");
+        // Live plot section
+        ui.separator();
+        ui.checkbox(&mut self.show_plot, "Show Live Plot");
 
-            if self.show_plot
-                && (!self.plot_data.is_empty() || self.execution_state == ExecutionState::Running)
-            {
-                self.render_live_plot(ui);
-            } else if self.show_plot {
-                ui.label("Plot will appear when scan starts...");
+        if self.show_plot {
+            match self.scan_mode {
+                ScanMode::OneDimensional => {
+                    if !self.plot_data.is_empty()
+                        || self.execution_state == ExecutionState::Running
+                    {
+                        self.render_live_plot(ui);
+                    } else {
+                        ui.label("Plot will appear when scan starts...");
+                    }
+                }
+                ScanMode::TwoDimensional => {
+                    if !self.plot_data_2d.is_empty()
+                        || self.execution_state == ExecutionState::Running
+                    {
+                        self.render_2d_plot(ui);
+                    } else {
+                        ui.label("2D plot will appear when scan starts...");
+                    }
+                }
             }
         }
 
@@ -495,6 +586,11 @@ impl ScanBuilderPanel {
         // Execute pending action
         if let Some(action) = self.pending_action.take() {
             self.execute_action(action, client, runtime);
+        }
+
+        // Render completion summary if shown
+        if self.show_completion_summary {
+            self.render_completion_summary(ui.ctx());
         }
     }
 
@@ -586,6 +682,149 @@ impl ScanBuilderPanel {
             });
     }
 
+    /// Render 2D scatter plot with color-coded values
+    fn render_2d_plot(&self, ui: &mut egui::Ui) {
+        if self.plot_data_2d.is_empty() {
+            ui.label("Waiting for 2D scan data...");
+            return;
+        }
+
+        // Calculate value range for color mapping
+        let (min_val, max_val) = self
+            .plot_data_2d
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (_, _, v)| {
+                (min.min(*v), max.max(*v))
+            });
+
+        let x_label = self.selected_actuator_x.as_deref().unwrap_or("X");
+        let y_label = self.selected_actuator_y.as_deref().unwrap_or("Y");
+
+        Plot::new("scan_2d_plot")
+            .height(300.0)
+            .data_aspect(1.0) // Square aspect for grid
+            .show_axes(true)
+            .show_grid(true)
+            .x_axis_label(x_label)
+            .y_axis_label(y_label)
+            .show(ui, |plot_ui| {
+                // Color each point based on value (blue -> red gradient)
+                for (idx, &(x, y, value)) in self.plot_data_2d.iter().enumerate() {
+                    let normalized = if max_val > min_val {
+                        ((value - min_val) / (max_val - min_val)).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+
+                    // Blue (cold) to Red (hot) gradient
+                    let r = (normalized * 255.0) as u8;
+                    let b = ((1.0 - normalized) * 255.0) as u8;
+                    let color = egui::Color32::from_rgb(r, 50, b);
+
+                    // Each point needs a unique name for proper rendering
+                    let point_name = format!("pt_{}", idx);
+                    let points: PlotPoints = vec![[x, y]].into_iter().collect();
+                    plot_ui.points(
+                        Points::new(point_name, points)
+                            .color(color)
+                            .radius(5.0),
+                    );
+                }
+            });
+
+        // Color scale legend
+        ui.horizontal(|ui| {
+            ui.label(format!("Value: {:.2}", min_val));
+            // Draw gradient bar
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(100.0, 15.0), egui::Sense::hover());
+            let painter = ui.painter_at(rect);
+            for i in 0..100 {
+                let t = i as f32 / 100.0;
+                let r = (t * 255.0) as u8;
+                let b = ((1.0 - t) * 255.0) as u8;
+                let color = egui::Color32::from_rgb(r, 50, b);
+                let x = rect.min.x + t * rect.width();
+                painter.line_segment(
+                    [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                    egui::Stroke::new(1.0, color),
+                );
+            }
+            ui.label(format!("{:.2}", max_val));
+        });
+    }
+
+    /// Render completion summary window
+    fn render_completion_summary(&mut self, ctx: &egui::Context) {
+        let Some(summary) = &self.completion_summary else {
+            return;
+        };
+
+        let mut close_summary = false;
+
+        egui::Window::new("Scan Complete")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                // Status icon and heading
+                let (icon, color) = if summary.exit_status == "success" {
+                    ("OK", egui::Color32::GREEN)
+                } else if summary.exit_status == "abort" {
+                    ("Stopped", egui::Color32::YELLOW)
+                } else {
+                    ("Error", egui::Color32::RED)
+                };
+
+                ui.horizontal(|ui| {
+                    ui.colored_label(color, icon);
+                    ui.heading(format!("Scan {}", summary.exit_status));
+                });
+
+                ui.separator();
+
+                // Summary details in grid
+                egui::Grid::new("completion_grid")
+                    .num_columns(2)
+                    .spacing([20.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Run ID:");
+                        ui.monospace(&summary.run_uid);
+                        ui.end_row();
+
+                        ui.label("Duration:");
+                        ui.label(format_duration(summary.duration_secs));
+                        ui.end_row();
+
+                        ui.label("Total Points:");
+                        ui.label(summary.total_points.to_string());
+                        ui.end_row();
+
+                        if let Some(path) = &summary.saved_path {
+                            ui.label("Saved to:");
+                            ui.monospace(path);
+                            ui.end_row();
+                        }
+                    });
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui.button("Close").clicked() {
+                        close_summary = true;
+                    }
+
+                    // Copy run_uid to clipboard
+                    if ui.button("Copy Run ID").clicked() {
+                        ui.ctx().copy_text(summary.run_uid.clone());
+                    }
+                });
+            });
+
+        if close_summary {
+            self.show_completion_summary = false;
+        }
+    }
+
     /// Render control buttons (Start/Abort)
     fn render_control_buttons(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -593,30 +832,70 @@ impl ScanBuilderPanel {
                 ExecutionState::Idle => {
                     // Validate form before enabling Start
                     self.validate_form();
-                    let can_start = self.validation_errors.is_empty()
-                        && self.selected_actuator.is_some()
-                        && !self.selected_detectors.is_empty();
+                    let can_start = match self.scan_mode {
+                        ScanMode::OneDimensional => {
+                            self.validation_errors.is_empty()
+                                && self.selected_actuator.is_some()
+                                && !self.selected_detectors.is_empty()
+                        }
+                        ScanMode::TwoDimensional => {
+                            self.validation_errors.is_empty()
+                                && self.selected_actuator_x.is_some()
+                                && self.selected_actuator_y.is_some()
+                                && !self.selected_detectors.is_empty()
+                        }
+                    };
 
                     if ui
                         .add_enabled(can_start, egui::Button::new("Start Scan"))
                         .clicked()
                     {
-                        // Build plan parameters
-                        let mut parameters = HashMap::new();
-                        parameters.insert("start_position".to_string(), self.start_1d.clone());
-                        parameters.insert("stop_position".to_string(), self.stop_1d.clone());
-                        parameters.insert("num_points".to_string(), self.points_1d.clone());
+                        // Build plan parameters based on scan mode
+                        let (plan_type, parameters, device_mapping) = match self.scan_mode {
+                            ScanMode::OneDimensional => {
+                                let mut params = HashMap::new();
+                                params.insert("start_position".to_string(), self.start_1d.clone());
+                                params.insert("stop_position".to_string(), self.stop_1d.clone());
+                                params.insert("num_points".to_string(), self.points_1d.clone());
 
-                        let mut device_mapping = HashMap::new();
-                        if let Some(actuator) = &self.selected_actuator {
-                            device_mapping.insert("motor".to_string(), actuator.clone());
-                        }
-                        if let Some(detector) = self.selected_detectors.first() {
-                            device_mapping.insert("detector".to_string(), detector.clone());
-                        }
+                                let mut devices = HashMap::new();
+                                if let Some(actuator) = &self.selected_actuator {
+                                    devices.insert("motor".to_string(), actuator.clone());
+                                }
+                                if let Some(detector) = self.selected_detectors.first() {
+                                    devices.insert("detector".to_string(), detector.clone());
+                                }
+
+                                ("line_scan".to_string(), params, devices)
+                            }
+                            ScanMode::TwoDimensional => {
+                                let mut params = HashMap::new();
+                                // X axis (fast/inner)
+                                params.insert("x_start".to_string(), self.x_start.clone());
+                                params.insert("x_stop".to_string(), self.x_stop.clone());
+                                params.insert("x_points".to_string(), self.x_points.clone());
+                                // Y axis (slow/outer)
+                                params.insert("y_start".to_string(), self.y_start.clone());
+                                params.insert("y_stop".to_string(), self.y_stop.clone());
+                                params.insert("y_points".to_string(), self.y_points.clone());
+
+                                let mut devices = HashMap::new();
+                                if let Some(actuator_x) = &self.selected_actuator_x {
+                                    devices.insert("x_motor".to_string(), actuator_x.clone());
+                                }
+                                if let Some(actuator_y) = &self.selected_actuator_y {
+                                    devices.insert("y_motor".to_string(), actuator_y.clone());
+                                }
+                                if let Some(detector) = self.selected_detectors.first() {
+                                    devices.insert("detector".to_string(), detector.clone());
+                                }
+
+                                ("grid_scan".to_string(), params, devices)
+                            }
+                        };
 
                         self.pending_action = Some(PendingAction::StartScan {
-                            plan_type: "line_scan".to_string(),
+                            plan_type,
                             parameters,
                             device_mapping,
                         });
