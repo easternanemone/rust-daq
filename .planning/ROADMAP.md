@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Form-Based Scan Builder** - Validate core execution loop with simple forms
 - [x] **Phase 2: Node Graph Editor Core** - Visual editing foundation with undo/validation
-- [ ] **Phase 3: Plan Translation and Execution** - Connect visual graph to RunEngine
+- [x] **Phase 3: Plan Translation and Execution** - Connect visual graph to RunEngine
 - [ ] **Phase 4: Sequences and Control Flow** - Sequence composition with loops
 - [ ] **Phase 5: Live Visualization** - Real-time plotting during acquisition
 - [ ] **Phase 6: Data Management** - Auto-save, metadata, and run history
@@ -86,11 +86,12 @@ Plans:
   2. User can add wait/delay node with configurable duration for settling time
   3. User can add acquire node to trigger detector data capture
   4. User can create loop node to repeat sequence N times or until condition met
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 04-01: TBD during plan-phase
-- [ ] 04-02: TBD during plan-phase
+- [ ] 04-01-PLAN.md — Enhanced node types and device selector widget
+- [ ] 04-02-PLAN.md — Property inspector panels for Move, Wait, Acquire, Loop nodes
+- [ ] 04-03-PLAN.md — Loop body translation and validation
 
 ### Phase 5: Live Visualization
 **Goal**: Scientists see real-time plots and images updating during acquisition
@@ -193,7 +194,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Form-Based Scan Builder | 3/3 | Complete | 2026-01-22 |
 | 2. Node Graph Editor Core | 4/4 | Complete | 2026-01-22 |
 | 3. Plan Translation and Execution | 4/4 | Complete (human approved) | 2026-01-22 |
-| 4. Sequences and Control Flow | 0/TBD | Not started | - |
+| 4. Sequences and Control Flow | 0/3 | Planned | - |
 | 5. Live Visualization | 0/TBD | Not started | - |
 | 6. Data Management | 0/TBD | Not started | - |
 | 7. Code Export and Provenance | 0/TBD | Not started | - |
