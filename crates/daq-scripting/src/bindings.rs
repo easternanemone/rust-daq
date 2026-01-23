@@ -387,18 +387,15 @@ pub fn register_hardware(engine: &mut Engine) {
     engine.register_fn(
         "position",
         move |stage: &mut StageHandle| -> Result<f64, Box<EvalAltResult>> {
-            eprintln!("  [DEBUG] position() called, querying device...");
             let driver = stage.driver.clone();
-            let result = run_blocking("Stage position", async move {
+            run_blocking("Stage position", async move {
                 use tokio::time::{timeout, Duration};
                 match timeout(Duration::from_secs(3), driver.position()).await {
                     Ok(Ok(pos)) => Ok(pos),
                     Ok(Err(e)) => Err(anyhow::anyhow!("position query failed: {}", e)),
                     Err(_) => Err(anyhow::anyhow!("position query timed out (device not responding)")),
                 }
-            });
-            eprintln!("  [DEBUG] position() returned: {:?}", result.as_ref().map(|v| *v));
-            result
+            })
         },
     );
 
@@ -741,9 +738,7 @@ fn register_hardware_factories(engine: &mut Engine) {
                 use daq_driver_thorlabs::shared_ports::get_or_open_port_115200;
                 use tokio::time::{timeout, Duration};
 
-                eprintln!("  [DEBUG] Opening port {}...", port);
                 let shared_port = get_or_open_port_115200(&port).await?;
-                eprintln!("  [DEBUG] Port opened, attempting calibration for address {}...", address);
 
                 // Try calibrated driver with 3s timeout
                 let driver: Ell14Driver = match timeout(
@@ -753,25 +748,27 @@ fn register_hardware_factories(engine: &mut Engine) {
                 .await
                 {
                     Ok(Ok(driver)) => {
-                        eprintln!("  [DEBUG] ELL14 calibrated successfully");
+                        tracing::info!(address = %address, "ELL14 calibrated successfully");
                         driver
                     }
                     Ok(Err(e)) => {
-                        eprintln!("  [DEBUG] ELL14 calibration failed: {}, using defaults", e);
+                        tracing::warn!(
+                            address = %address,
+                            error = %e,
+                            "ELL14 calibration failed, using default calibration"
+                        );
                         Ell14Driver::with_shared_port(shared_port, &address)
                     }
                     Err(_) => {
-                        eprintln!("  [DEBUG] ELL14 calibration timed out, using defaults");
-                        let d = Ell14Driver::with_shared_port(shared_port, &address);
-                        eprintln!("  [DEBUG] Uncalibrated driver created");
-                        d
+                        tracing::warn!(
+                            address = %address,
+                            "ELL14 calibration timed out (device may not be responding), using default calibration"
+                        );
+                        Ell14Driver::with_shared_port(shared_port, &address)
                     }
                 };
-                eprintln!("  [DEBUG] Returning driver from async block");
                 Ok::<_, anyhow::Error>(driver)
             })?;
-
-            eprintln!("  [DEBUG] run_blocking completed, creating StageHandle");
             Ok(StageHandle {
                 driver: Arc::new(driver),
                 data_tx: None,
