@@ -212,6 +212,16 @@ impl ExperimentDesignerPanel {
 
         ui.separator();
 
+        // Live visualization (shown during execution)
+        if let Some(ref mut panel) = self.visualization_panel {
+            egui::CollapsingHeader::new("Live Visualization")
+                .default_open(true)
+                .show(ui, |ui| {
+                    panel.show(ui);
+                });
+            ui.separator();
+        }
+
         // Run validation each frame (cheap check)
         self.validate_graph();
 
