@@ -871,6 +871,15 @@ fn register_hardware_factories(engine: &mut Engine) {
         },
     );
 
+    // power_meter.set_attenuator(enabled) - Enable or disable the attenuator
+    engine.register_fn(
+        "set_attenuator",
+        |pm: &mut Newport1830CHandle, enabled: bool| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("Newport 1830-C set_attenuator", pm.driver.set_attenuator(enabled))?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
     // =========================================================================
     // MaiTai Laser Shutter Factory
     // =========================================================================

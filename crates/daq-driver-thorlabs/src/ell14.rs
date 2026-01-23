@@ -290,7 +290,15 @@ impl Ell14Driver {
                             }
                             tokio::time::sleep(Duration::from_millis(2)).await;
                         }
-                        Ok(Err(_)) | Err(_) => break,
+                        // Timeout means silence - count it towards the 3-consecutive check
+                        Err(_) => {
+                            zero_byte_count += 1;
+                            if zero_byte_count >= 3 {
+                                break;
+                            }
+                        }
+                        // Real IO error - abort drain
+                        Ok(Err(_)) => break,
                     }
                 }
                 if total_discarded > 0 {
@@ -397,7 +405,15 @@ impl Ell14Driver {
                             }
                             tokio::time::sleep(Duration::from_millis(2)).await;
                         }
-                        Ok(Err(_)) | Err(_) => break,
+                        // Timeout means silence - count it towards the 3-consecutive check
+                        Err(_) => {
+                            zero_byte_count += 1;
+                            if zero_byte_count >= 3 {
+                                break;
+                            }
+                        }
+                        // Real IO error - abort drain
+                        Ok(Err(_)) => break,
                     }
                 }
 
@@ -429,7 +445,7 @@ impl Ell14Driver {
                                     // Extract and parse position
                                     if let Some(hex) = after_prefix.get(3..11) {
                                         if let Ok(pulses) = u32::from_str_radix(hex, 16) {
-                                            return Ok(pulses as f64 / ppd);
+                                            return Ok((pulses as i32) as f64 / ppd);
                                         }
                                     }
                                     break;
@@ -455,7 +471,7 @@ impl Ell14Driver {
                     let hex_str = &resp[idx + 2..].trim();
                     if let Some(hex) = hex_str.get(..8) {
                         if let Ok(pulses) = u32::from_str_radix(hex, 16) {
-                            return Ok(pulses as f64 / ppd);
+                            return Ok((pulses as i32) as f64 / ppd);
                         }
                     }
                 }
@@ -503,7 +519,15 @@ impl Ell14Driver {
                         }
                         tokio::time::sleep(Duration::from_millis(2)).await;
                     }
-                    Ok(Err(_)) | Err(_) => break,
+                    // Timeout means silence - count it towards the 3-consecutive check
+                    Err(_) => {
+                        zero_byte_count += 1;
+                        if zero_byte_count >= 3 {
+                            break;
+                        }
+                    }
+                    // Real IO error - abort drain
+                    Ok(Err(_)) => break,
                 }
             }
             if total_discarded > 0 {
@@ -877,7 +901,7 @@ impl Movable for Ell14Driver {
             let hex_str = &resp[idx + 2..].trim();
             if let Some(hex) = hex_str.get(..8) {
                 if let Ok(pulses) = u32::from_str_radix(hex, 16) {
-                    return Ok(pulses as f64 / self.pulses_per_degree);
+                    return Ok((pulses as i32) as f64 / self.pulses_per_degree);
                 }
             }
         }
@@ -930,7 +954,7 @@ impl Movable for Ell14Driver {
                 }
             }
 
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(25)).await;  // Reduced from 50ms for faster response
         }
     }
 }

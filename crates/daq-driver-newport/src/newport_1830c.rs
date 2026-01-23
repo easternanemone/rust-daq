@@ -484,19 +484,53 @@ impl Newport1830CDriver {
         }
 
         // Then flush any pending data from the underlying stream
+        // Aggressively drain the buffer until we see 0 bytes multiple times
+        // This is critical for slow 9600 baud connections where data may arrive in gaps
         let mut discard_buf = [0u8; 256];
-        loop {
+        let clear_deadline = tokio::time::Instant::now() + Duration::from_millis(50);
+        let mut total_discarded = 0usize;
+        let mut zero_byte_count = 0u32;
+
+        while tokio::time::Instant::now() < clear_deadline {
             match tokio::time::timeout(
-                Duration::from_millis(10),
+                Duration::from_millis(5),
                 port.get_mut().read(&mut discard_buf),
             )
             .await
             {
-                Ok(Ok(0)) | Err(_) => break, // No data or timeout - buffer is clear
+                Ok(Ok(0)) => {
+                    zero_byte_count += 1;
+                    // Require 3 consecutive zero-byte reads to confirm buffer is empty
+                    if zero_byte_count >= 3 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
                 Ok(Ok(n)) => {
+                    total_discarded += n;
+                    zero_byte_count = 0;
                     tracing::debug!("Newport 1830-C: flushed {} stale bytes from stream", n);
                 }
-                Ok(Err(_)) => break,
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    zero_byte_count += 1;
+                    if zero_byte_count >= 3 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                // Timeout means no data for 5ms - this is silence, count it!
+                Err(_) => {
+                    zero_byte_count += 1;
+                    if zero_byte_count >= 3 {
+                        break;
+                    }
+                    // No sleep needed, timeout already consumed 5ms
+                }
+                // Real IO error - abort drain
+                Ok(Err(e)) => {
+                    tracing::warn!("Newport 1830-C: IO error during drain: {}", e);
+                    break;
+                }
             }
         }
 

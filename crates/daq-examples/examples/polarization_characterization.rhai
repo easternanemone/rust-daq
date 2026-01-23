@@ -22,7 +22,7 @@ let END_ANGLE = 360.0;
 let STEP_SIZE = 5.0;
 let NUM_STEPS = ((END_ANGLE - START_ANGLE) / STEP_SIZE).to_int() + 1;  // 73 steps (0 to 360 inclusive)
 let SAMPLES_PER_POINT = 3;
-let SETTLE_TIME = 0.5;
+let SETTLE_TIME = 0.1;  // Reduced from 0.5s - wait_settled already confirms motor stopped
 
 print("=====================================================");
 print("  POLARIZATION ELEMENT CHARACTERIZATION");
@@ -49,19 +49,23 @@ let rotator_8 = create_elliptec(ELLIPTEC_PORT, "8");
 print("  [OK] All devices initialized");
 print("");
 
-// Step 2: Zero power meter with shutter closed
-print("[2/7] Zeroing power meter (shutter must be closed)...");
+// Step 2: Configure and zero power meter with shutter closed
+print("[2/7] Configuring and zeroing power meter (shutter must be closed)...");
 laser.close();
 sleep(0.5);
 if laser.is_open() {
     print("  WARNING: Shutter still open, waiting...");
     sleep(1.0);
 }
-power_meter.zero();
+// Configure attenuator - ENABLED (attenuator is installed)
+power_meter.set_attenuator(true);
+print("  Attenuator: ON (installed on power meter)");
+// Zero with attenuator since we're using it
+power_meter.zero_with_attenuator();
 sleep(0.5);
 let zero_check = power_meter.read();
 print("  Zero check reading: " + zero_check + " W");
-print("  [OK] Power meter zeroed");
+print("  [OK] Power meter configured and zeroed");
 print("");
 
 // Step 3: Home all rotators
@@ -180,8 +184,17 @@ print("  SAFETY: Using with_shutter_open() - shutter will close on any error");
 print("");
 
 let all_results = with_shutter_open(laser, || {
+    // Wait for laser power to stabilize after shutter opens
+    print("  Shutter open, waiting for laser to stabilize...");
+    sleep(1.0);
+
+    // Discard first reading (may contain stale buffer data)
+    power_meter.read();
+    sleep(0.1);
+
+    // Now take the real initial reading
     let initial_power = power_meter.read();
-    print("  Shutter open, initial power: " + initial_power + " W");
+    print("  Initial power (stabilized): " + initial_power + " W");
     print("");
 
     // -----------------------------------------------------------------
@@ -203,7 +216,7 @@ let all_results = with_shutter_open(laser, || {
         let sum = 0.0;
         for s in 0..SAMPLES_PER_POINT {
             sum += power_meter.read();
-            sleep(0.05);
+            sleep(0.02);  // Reduced from 50ms for faster acquisition
         }
         let power = sum / SAMPLES_PER_POINT;
         results_2.push([angle, power]);
@@ -234,7 +247,7 @@ let all_results = with_shutter_open(laser, || {
         let sum = 0.0;
         for s in 0..SAMPLES_PER_POINT {
             sum += power_meter.read();
-            sleep(0.05);
+            sleep(0.02);  // Reduced from 50ms for faster acquisition
         }
         let power = sum / SAMPLES_PER_POINT;
         results_3.push([angle, power]);
@@ -265,7 +278,7 @@ let all_results = with_shutter_open(laser, || {
         let sum = 0.0;
         for s in 0..SAMPLES_PER_POINT {
             sum += power_meter.read();
-            sleep(0.05);
+            sleep(0.02);  // Reduced from 50ms for faster acquisition
         }
         let power = sum / SAMPLES_PER_POINT;
         results_8.push([angle, power]);
