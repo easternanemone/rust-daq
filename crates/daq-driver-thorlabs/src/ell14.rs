@@ -324,9 +324,12 @@ impl Ell14Driver {
                     if tokio::time::Instant::now() > deadline {
                         break;
                     }
-                    match guard.read(&mut buf).await {
-                        Ok(0) => break,
-                        Ok(n) => {
+                    // Use timeout to prevent indefinite blocking on serial read
+                    match tokio::time::timeout(Duration::from_millis(50), guard.read(&mut buf))
+                        .await
+                    {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => {
                             response.extend_from_slice(&buf[..n]);
                             // Scan for PO response anywhere in buffer (handles leading garbage)
                             let resp_str = String::from_utf8_lossy(&response);
@@ -340,15 +343,20 @@ impl Ell14Driver {
                                 }
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             tokio::time::sleep(Duration::from_millis(10)).await;
                             continue;
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                        Ok(Err(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
                             tokio::time::sleep(Duration::from_millis(10)).await;
                             continue;
                         }
-                        Err(_) => break,
+                        Ok(Err(_)) => break,
+                        Err(_elapsed) => {
+                            // tokio::time::timeout elapsed - no data available within 50ms
+                            // Continue loop and re-check deadline
+                            continue;
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
@@ -431,9 +439,12 @@ impl Ell14Driver {
                     if tokio::time::Instant::now() > deadline {
                         break;
                     }
-                    match guard.read(&mut buf).await {
-                        Ok(0) => break,
-                        Ok(n) => {
+                    // Use timeout to prevent indefinite blocking on serial read
+                    match tokio::time::timeout(Duration::from_millis(50), guard.read(&mut buf))
+                        .await
+                    {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => {
                             response.extend_from_slice(&buf[..n]);
                             let resp_str = String::from_utf8_lossy(&response);
                             if let Some(start_idx) = resp_str.find(&expected_prefix) {
@@ -452,15 +463,19 @@ impl Ell14Driver {
                                 }
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             tokio::time::sleep(Duration::from_millis(10)).await;
                             continue;
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                        Ok(Err(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
                             tokio::time::sleep(Duration::from_millis(10)).await;
                             continue;
                         }
-                        Err(_) => break,
+                        Ok(Err(_)) => break,
+                        Err(_elapsed) => {
+                            // tokio::time::timeout elapsed - continue and re-check deadline
+                            continue;
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
@@ -550,9 +565,10 @@ impl Ell14Driver {
                 if tokio::time::Instant::now() > deadline {
                     break;
                 }
-                match guard.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
+                // Use timeout to prevent indefinite blocking on serial read
+                match tokio::time::timeout(Duration::from_millis(50), guard.read(&mut buf)).await {
+                    Ok(Ok(0)) => break,
+                    Ok(Ok(n)) => {
                         response.extend_from_slice(&buf[..n]);
                         // Scan for IN response anywhere in buffer (handles leading garbage)
                         let resp_str = String::from_utf8_lossy(&response);
@@ -566,15 +582,19 @@ impl Ell14Driver {
                             }
                         }
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    Ok(Err(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
-                    Err(_) => break,
+                    Ok(Err(_)) => break,
+                    Err(_elapsed) => {
+                        // tokio::time::timeout elapsed - continue and re-check deadline
+                        continue;
+                    }
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
@@ -787,10 +807,10 @@ impl Ell14Driver {
                 break;
             }
 
-            // Try to read available data
-            match guard.read(&mut buf).await {
-                Ok(0) => break, // EOF
-                Ok(n) => {
+            // Try to read available data with timeout to prevent indefinite blocking
+            match tokio::time::timeout(Duration::from_millis(50), guard.read(&mut buf)).await {
+                Ok(Ok(0)) => break, // EOF
+                Ok(Ok(n)) => {
                     response.extend_from_slice(&buf[..n]);
 
                     // Scan for valid frame: look for address prefix ANYWHERE in buffer
@@ -817,17 +837,22 @@ impl Ell14Driver {
                         response.drain(0..256);
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // No data yet, wait a bit and retry
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // Wait a bit and retry until deadline
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 }
-                Err(e) => return Err(e.into()),
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_elapsed) => {
+                    // tokio::time::timeout elapsed - no data available within 50ms
+                    // Continue loop and re-check deadline
+                    continue;
+                }
             }
 
             // Small delay before next read attempt to avoid spinning
