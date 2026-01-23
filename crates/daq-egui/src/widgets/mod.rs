@@ -8,6 +8,7 @@ pub mod device_controls;
 pub mod device_selector;
 pub mod gauge;
 pub mod histogram;
+pub mod metadata_editor;
 pub mod node_palette;
 pub mod offline_notice;
 pub mod parameter_editor;
@@ -28,6 +29,7 @@ pub use device_controls::{
 pub use device_selector::DeviceSelector;
 pub use gauge::*;
 pub use histogram::*;
+pub use metadata_editor::MetadataEditor;
 pub use node_palette::{NodePalette, NodeType};
 pub use offline_notice::*;
 pub use property_inspector::PropertyInspector;
