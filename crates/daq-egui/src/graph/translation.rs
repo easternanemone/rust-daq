@@ -140,7 +140,7 @@ impl Plan for GraphPlan {
 }
 
 /// Build adjacency list from snarl wires
-fn build_adjacency(snarl: &Snarl<ExperimentNode>) -> Result<(HashMap<NodeId, Vec<NodeId>>, Vec<NodeId>), TranslationError> {
+pub fn build_adjacency(snarl: &Snarl<ExperimentNode>) -> Result<(HashMap<NodeId, Vec<NodeId>>, Vec<NodeId>), TranslationError> {
     let mut adjacency: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
     let mut has_input: HashSet<NodeId> = HashSet::new();
 
@@ -168,7 +168,7 @@ fn build_adjacency(snarl: &Snarl<ExperimentNode>) -> Result<(HashMap<NodeId, Vec
 }
 
 /// Topological sort with cycle detection using Kahn's algorithm
-fn topological_sort(
+pub fn topological_sort(
     adjacency: &HashMap<NodeId, Vec<NodeId>>,
     roots: &[NodeId],
     total_nodes: usize,
