@@ -1,6 +1,7 @@
 //! UI panels for the DAQ control application.
 
 pub mod comedi;
+mod code_preview;
 mod devices;
 mod document_viewer;
 mod experiment_designer;
@@ -17,6 +18,7 @@ mod scans;
 mod scripts;
 mod run_comparison;
 mod run_history;
+mod script_editor;
 mod signal_plotter;
 mod signal_plotter_stream;
 mod storage;
@@ -27,6 +29,7 @@ mod storage;
 //     AnalogInputPanel, AnalogOutputPanel, ComediPanel, CounterPanel, DigitalIOPanel,
 //     OscilloscopePanel,
 // };
+pub use code_preview::CodePreviewPanel;
 pub use devices::DevicesPanel;
 pub use document_viewer::DocumentViewerPanel;
 pub use experiment_designer::ExperimentDesignerPanel;
@@ -45,6 +48,7 @@ pub use run_comparison::RunComparisonPanel;
 pub use run_history::RunHistoryPanel;
 pub use scan_builder::ScanBuilderPanel;
 pub use scans::ScansPanel;
+pub use script_editor::ScriptEditorPanel;
 pub use scripts::ScriptsPanel;
 pub use signal_plotter::SignalPlotterPanel;
 pub use storage::StoragePanel;
