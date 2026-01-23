@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 ## Current Position
 
 Phase: 6 of 10 (Data Management) - IN PROGRESS
-Plan: 1 of 4 complete
+Plan: 3 of 4 complete
 Status: In progress
-Last activity: 2026-01-23 - Completed 06-01-PLAN.md (Metadata Capture UI)
+Last activity: 2026-01-23 - Completed 06-03-PLAN.md (Run Annotation)
 
-Progress: [█████░░░░░] 50%
+Progress: [█████░░░░░] 52%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 18
-- Average duration: 5.3min
-- Total execution time: 1.6 hours
+- Total plans completed: 20
+- Average duration: 5.6min
+- Total execution time: 1.9 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [█████░░░░░] 50%
 | 03 | 4 | 28min | 7.0min | ✓ Complete |
 | 04 | 3 | 14min | 4.7min | ✓ Complete |
 | 05 | 5 | 14min | 2.8min | ✓ Complete |
-| 06 | 1 | 11min | 11.0min | In progress |
+| 06 | 3 | 25min | 8.3min | In progress |
 
 **Recent Trend:**
-- Last 5 plans: 05-02 (3min), 05-03 (4min), 05-04 (4min), 05-05 (2min), 06-01 (11min)
-- Trend: Phase 6 starting at 11min/plan (widget creation + integration across 2 panels)
+- Last 5 plans: 05-04 (4min), 05-05 (2min), 06-01 (11min), 06-02 (7min), 06-03 (7min)
+- Trend: Phase 6 averaging 8.3min/plan (storage + UI integration)
 
 *Updated after each plan completion*
 
@@ -91,6 +91,9 @@ Recent decisions affecting current work:
 - All metadata fields optional to avoid workflow friction
 - Auto-enrichment pattern: UI adds system provenance before queueing
 - Tags serialized as JSON array for future structured filtering
+- HDF5 attributes for post-acquisition metadata (user_notes, tags, annotated_at_ns)
+- spawn_blocking pattern for HDF5 file I/O in async GUI context
+- Auto-load annotations on run selection in detail view
 
 ### Pending Todos
 
@@ -126,6 +129,6 @@ See: .planning/phases/05-live-visualization/05-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Completed 06-01-PLAN.md (Metadata Capture UI)
+Stopped at: Completed 06-03-PLAN.md (Run Annotation)
 Resume file: None
-Next action: Continue Phase 6 (06-02: Run History Browser)
+Next action: Continue Phase 6 (06-04: Run Comparison Viewer)
