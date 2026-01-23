@@ -726,7 +726,7 @@ fn register_hardware_factories(engine: &mut Engine) {
     // =========================================================================
 
     // create_elliptec(port, address) - Create ELL14 rotator driver
-    // Note: ELL14 uses 115200 baud (not 9600), so we use get_or_open_port_115200
+    // Note: ELL14 uses 9600 baud (factory default). Use by-id path for stable port resolution.
     // If calibration times out (device not responding), falls back to uncalibrated mode
     engine.register_fn(
         "create_elliptec",
@@ -735,10 +735,10 @@ fn register_hardware_factories(engine: &mut Engine) {
             let address = address.to_string();
 
             let driver = run_blocking("ELL14 create", async move {
-                use daq_driver_thorlabs::shared_ports::get_or_open_port_115200;
+                use daq_driver_thorlabs::shared_ports::get_or_open_port;
                 use tokio::time::{timeout, Duration};
 
-                let shared_port = get_or_open_port_115200(&port).await?;
+                let shared_port = get_or_open_port(&port).await?;
 
                 // Try calibrated driver with 3s timeout
                 let driver: Ell14Driver = match timeout(
