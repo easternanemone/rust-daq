@@ -10,17 +10,17 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 ## Current Position
 
 Phase: 6 of 10 (Data Management) - IN PROGRESS
-Plan: 2 of 4 complete
+Plan: 1 of 4 complete
 Status: In progress
-Last activity: 2026-01-23 - Completed 06-02-PLAN.md (Run History Browser)
+Last activity: 2026-01-23 - Completed 06-01-PLAN.md (Metadata Capture UI)
 
-Progress: [█████░░░░░] 53%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
-- Average duration: 5.1min
+- Total plans completed: 18
+- Average duration: 5.3min
 - Total execution time: 1.6 hours
 
 **By Phase:**
@@ -32,11 +32,11 @@ Progress: [█████░░░░░] 53%
 | 03 | 4 | 28min | 7.0min | ✓ Complete |
 | 04 | 3 | 14min | 4.7min | ✓ Complete |
 | 05 | 5 | 14min | 2.8min | ✓ Complete |
-| 06 | 2 | 13min | 6.5min | In progress |
+| 06 | 1 | 11min | 11.0min | In progress |
 
 **Recent Trend:**
-- Last 5 plans: 05-02 (3min), 05-03 (4min), 05-04 (4min), 05-05 (2min), 06-01 (6min), 06-02 (7min)
-- Trend: Phase 6 averaging 6.5min/plan (return to normal velocity after exceptional Phase 5)
+- Last 5 plans: 05-02 (3min), 05-03 (4min), 05-04 (4min), 05-05 (2min), 06-01 (11min)
+- Trend: Phase 6 starting at 11min/plan (widget creation + integration across 2 panels)
 
 *Updated after each plan completion*
 
@@ -87,8 +87,10 @@ Recent decisions affecting current work:
 - Camera streams use Preview quality (30 FPS) for live visualization bandwidth optimization
 - Document stream subscribes to all documents, filters Event payloads client-side
 - Stream tasks aborted on stop_visualization() for proper cleanup
-- Text search for run history (simple substring match, sufficient for Phase 6 scope)
-- Single selection in run history table (multi-selection deferred to comparison feature)
+- Comma-separated tags field instead of structured selector (simplicity for MVP)
+- All metadata fields optional to avoid workflow friction
+- Auto-enrichment pattern: UI adds system provenance before queueing
+- Tags serialized as JSON array for future structured filtering
 
 ### Pending Todos
 
@@ -98,7 +100,9 @@ Recent decisions affecting current work:
 
 - Pre-existing test failure in graph::serialization::tests::test_version_check (not introduced by 03-01)
 - egui-snarl lacks custom header color API (visual node highlighting infrastructure ready but not applied)
-- GraphPlan not queued to server yet (run_experiment TODO on line 855) - Phase 5 complete but awaits server integration
+- GraphPlan not queued to server yet (run_experiment TODO on line 878) - Phase 5 complete but awaits server integration
+- ExperimentDesignerPanel metadata prepared but not sent (TODO at line 878)
+- AcquisitionSummary proto missing plan_type field - needed for run history filtering
 
 ### Phase 3 Verification Notes
 
@@ -122,6 +126,6 @@ See: .planning/phases/05-live-visualization/05-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Completed 06-02-PLAN.md (Run History Browser)
+Stopped at: Completed 06-01-PLAN.md (Metadata Capture UI)
 Resume file: None
-Next action: Continue Phase 6 (06-03: Export Formats)
+Next action: Continue Phase 6 (06-02: Run History Browser)
