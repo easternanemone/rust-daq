@@ -1,7 +1,7 @@
 //! UI panels for the DAQ control application.
 
-pub mod comedi;
 mod code_preview;
+pub mod comedi;
 mod devices;
 mod document_viewer;
 mod experiment_designer;
@@ -13,12 +13,12 @@ mod logging;
 mod modules;
 mod multi_detector_grid;
 mod plan_runner;
-mod scan_builder;
-mod scans;
-mod scripts;
 mod run_comparison;
 mod run_history;
+mod scan_builder;
+mod scans;
 mod script_editor;
+mod scripts;
 mod signal_plotter;
 mod signal_plotter_stream;
 mod storage;

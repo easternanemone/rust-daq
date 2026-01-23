@@ -19,7 +19,9 @@ pub use nodes::ExperimentNode;
 pub use serialization::{
     load_graph, save_graph, GraphFile, GraphMetadata, GRAPH_FILE_EXTENSION, GRAPH_FILE_FILTER,
 };
-pub use translation::{build_adjacency, detect_cycles, topological_sort, GraphPlan, TranslationError};
+pub use translation::{
+    build_adjacency, detect_cycles, topological_sort, GraphPlan, TranslationError,
+};
 pub use validation::{
     input_pin_type, output_pin_type, validate_connection, validate_graph_structure, PinType,
 };

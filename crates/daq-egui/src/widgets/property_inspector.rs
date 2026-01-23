@@ -18,7 +18,11 @@ impl PropertyInspector {
     /// - `ui` - The egui UI context
     /// - `node` - The node to inspect/edit
     /// - `device_ids` - List of available device IDs for autocomplete (empty for fallback to text field)
-    pub fn show(ui: &mut Ui, node: &ExperimentNode, device_ids: &[String]) -> Option<ExperimentNode> {
+    pub fn show(
+        ui: &mut Ui,
+        node: &ExperimentNode,
+        device_ids: &[String],
+    ) -> Option<ExperimentNode> {
         let mut modified = node.clone();
         let mut changed = false;
 
@@ -33,7 +37,8 @@ impl PropertyInspector {
                     stop,
                     points,
                 } => {
-                    changed |= Self::show_scan_inspector(ui, actuator, start, stop, points, device_ids);
+                    changed |=
+                        Self::show_scan_inspector(ui, actuator, start, stop, points, device_ids);
                 }
                 ExperimentNode::Acquire(config) => {
                     changed |= Self::show_acquire_inspector(ui, config, device_ids);
@@ -85,8 +90,12 @@ impl PropertyInspector {
         ui.horizontal(|ui| {
             ui.label("Mode:");
             use crate::graph::nodes::MoveMode;
-            changed |= ui.radio_value(&mut config.mode, MoveMode::Absolute, "Absolute").changed();
-            changed |= ui.radio_value(&mut config.mode, MoveMode::Relative, "Relative").changed();
+            changed |= ui
+                .radio_value(&mut config.mode, MoveMode::Absolute, "Absolute")
+                .changed();
+            changed |= ui
+                .radio_value(&mut config.mode, MoveMode::Relative, "Relative")
+                .changed();
         });
 
         // Position field with label that changes based on mode
@@ -96,11 +105,15 @@ impl PropertyInspector {
                 crate::graph::nodes::MoveMode::Relative => "Distance:",
             };
             ui.label(label);
-            changed |= ui.add(egui::DragValue::new(&mut config.position).speed(0.1)).changed();
+            changed |= ui
+                .add(egui::DragValue::new(&mut config.position).speed(0.1))
+                .changed();
         });
 
         // Wait for settle checkbox
-        changed |= ui.checkbox(&mut config.wait_settled, "Wait for motion to settle").changed();
+        changed |= ui
+            .checkbox(&mut config.wait_settled, "Wait for motion to settle")
+            .changed();
 
         changed
     }
@@ -226,7 +239,9 @@ impl PropertyInspector {
             // If type changed, create new default variant
             if new_type != current_type {
                 *condition = match new_type {
-                    0 => WaitCondition::Duration { milliseconds: 1000.0 },
+                    0 => WaitCondition::Duration {
+                        milliseconds: 1000.0,
+                    },
                     1 => WaitCondition::Threshold {
                         device_id: String::new(),
                         operator: ThresholdOp::GreaterThan,
@@ -284,13 +299,31 @@ impl PropertyInspector {
                         })
                         .show_ui(ui, |ui| {
                             let before = operator.clone();
-                            if ui.selectable_label(matches!(operator, ThresholdOp::LessThan), "Less Than").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::LessThan),
+                                    "Less Than",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::LessThan;
                             }
-                            if ui.selectable_label(matches!(operator, ThresholdOp::GreaterThan), "Greater Than").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::GreaterThan),
+                                    "Greater Than",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::GreaterThan;
                             }
-                            if ui.selectable_label(matches!(operator, ThresholdOp::EqualWithin { .. }), "Equal Within").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::EqualWithin { .. }),
+                                    "Equal Within",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::EqualWithin { tolerance: 0.01 };
                             }
                             if *operator != before {
@@ -382,7 +415,9 @@ impl PropertyInspector {
                         value: 0.0,
                         max_iterations: 10000,
                     },
-                    2 => LoopTermination::Infinite { max_iterations: 10000 },
+                    2 => LoopTermination::Infinite {
+                        max_iterations: 10000,
+                    },
                     _ => unreachable!(),
                 };
                 changed = true;
@@ -436,13 +471,31 @@ impl PropertyInspector {
                         })
                         .show_ui(ui, |ui| {
                             let before = operator.clone();
-                            if ui.selectable_label(matches!(operator, ThresholdOp::LessThan), "Less Than").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::LessThan),
+                                    "Less Than",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::LessThan;
                             }
-                            if ui.selectable_label(matches!(operator, ThresholdOp::GreaterThan), "Greater Than").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::GreaterThan),
+                                    "Greater Than",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::GreaterThan;
                             }
-                            if ui.selectable_label(matches!(operator, ThresholdOp::EqualWithin { .. }), "Equal Within").clicked() {
+                            if ui
+                                .selectable_label(
+                                    matches!(operator, ThresholdOp::EqualWithin { .. }),
+                                    "Equal Within",
+                                )
+                                .clicked()
+                            {
                                 *operator = ThresholdOp::EqualWithin { tolerance: 0.01 };
                             }
                             if *operator != before {
@@ -471,10 +524,7 @@ impl PropertyInspector {
                 });
             }
             LoopTermination::Infinite { max_iterations } => {
-                ui.colored_label(
-                    ui.visuals().warn_fg_color,
-                    "⚠ Requires manual abort"
-                );
+                ui.colored_label(ui.visuals().warn_fg_color, "⚠ Requires manual abort");
 
                 // Max iterations (safety limit)
                 ui.horizontal(|ui| {

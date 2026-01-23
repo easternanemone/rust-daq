@@ -212,11 +212,7 @@ impl RunComparisonPanel {
                     color_idx += 1;
 
                     // Convert (f64, f64) tuples to [f64; 2] arrays for egui_plot
-                    let points: Vec<[f64; 2]> = data
-                        .points
-                        .iter()
-                        .map(|&(x, y)| [x, y])
-                        .collect();
+                    let points: Vec<[f64; 2]> = data.points.iter().map(|&(x, y)| [x, y]).collect();
                     let plot_points = PlotPoints::new(points);
                     let line = Line::new(&data.run_name, plot_points).color(color);
 

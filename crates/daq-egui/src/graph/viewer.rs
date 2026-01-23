@@ -252,7 +252,9 @@ impl ExperimentViewer {
         match (condition_type, &*condition) {
             (0, WaitCondition::Duration { .. }) => {}
             (0, _) => {
-                *condition = WaitCondition::Duration { milliseconds: 1000.0 };
+                *condition = WaitCondition::Duration {
+                    milliseconds: 1000.0,
+                };
             }
             (1, WaitCondition::Threshold { .. }) => {}
             (1, _) => {
@@ -372,7 +374,9 @@ impl ExperimentViewer {
             }
             (2, LoopTermination::Infinite { .. }) => {}
             (2, _) => {
-                config.termination = LoopTermination::Infinite { max_iterations: 1000 };
+                config.termination = LoopTermination::Infinite {
+                    max_iterations: 1000,
+                };
             }
             _ => {}
         }
@@ -559,10 +563,16 @@ impl SnarlViewer<ExperimentNode> for ExperimentViewer {
             return default.fill(egui::Color32::from_rgb(120, 40, 40));
         }
 
-        // Green tint for currently executing node
+        // Execution state coloring
         if let Some(ref state) = self.execution_state {
-            if state.active_node == Some(node) {
-                return default.fill(egui::Color32::from_rgb(40, 100, 40));
+            match state.node_state(node) {
+                NodeExecutionState::Running => {
+                    return default.fill(egui::Color32::from_rgb(40, 100, 40)); // Dark green
+                }
+                NodeExecutionState::Completed => {
+                    return default.fill(egui::Color32::from_rgb(40, 60, 80)); // Dark blue
+                }
+                NodeExecutionState::Pending | NodeExecutionState::Skipped => {}
             }
         }
 

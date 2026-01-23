@@ -57,6 +57,9 @@ use daq_proto::daq::{
     run_engine_service_client::RunEngineServiceClient,
     scan_service_client::ScanServiceClient,
     storage_service_client::StorageServiceClient,
+    // RunEngine control types
+    AbortPlanRequest,
+    AbortPlanResponse,
     AssignDeviceRequest,
     CreateModuleRequest,
     // Scan types
@@ -65,9 +68,11 @@ use daq_proto::daq::{
     DaemonInfoRequest,
     DeviceCommandRequest,
     DeviceStateRequest,
+    EngineStatus,
     FrameData,
     // Laser control types (bd-pwjo)
     GetEmissionRequest,
+    GetEngineStatusRequest,
     GetParameterRequest,
     GetRecordingStatusRequest,
     GetShutterRequest,
@@ -86,27 +91,22 @@ use daq_proto::daq::{
     ListScriptsRequest,
     MoveRequest,
     ObservableValue,
+    PauseEngineRequest,
+    PauseEngineResponse,
     PauseScanRequest,
     QueuePlanRequest,
     QueuePlanResponse,
     ReadValueRequest,
-    // RunEngine control types
-    AbortPlanRequest,
-    AbortPlanResponse,
-    EngineStatus,
-    GetEngineStatusRequest,
-    PauseEngineRequest,
-    PauseEngineResponse,
     ResumeEngineRequest,
     ResumeEngineResponse,
-    StartEngineRequest,
-    StartEngineResponse,
     ResumeScanRequest,
     ScanConfig,
     SetEmissionRequest,
     SetParameterRequest,
     SetShutterRequest,
     SetWavelengthRequest,
+    StartEngineRequest,
+    StartEngineResponse,
     StartModuleRequest,
     StartRecordingRequest,
     // Script execution types (Phase 6: bd-uu9t)
@@ -838,10 +838,7 @@ impl DaqClient {
 
     /// Start the RunEngine to execute queued plans
     pub async fn start_engine(&mut self) -> Result<StartEngineResponse> {
-        let response = self
-            .run_engine
-            .start_engine(StartEngineRequest {})
-            .await?;
+        let response = self.run_engine.start_engine(StartEngineRequest {}).await?;
         Ok(response.into_inner())
     }
 

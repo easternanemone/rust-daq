@@ -28,9 +28,7 @@ impl ScriptEditorPanel {
             file_path: None, // New script, not saved yet
             theme: ColorTheme::GRUVBOX_DARK,
             dirty: true, // Start as dirty since it's unsaved
-            status: source_graph.map(|p| {
-                format!("Ejected from {}", p.display())
-            }),
+            status: source_graph.map(|p| format!("Ejected from {}", p.display())),
         }
     }
 
@@ -49,7 +47,11 @@ impl ScriptEditorPanel {
                 self.save_as();
             }
 
-            if ui.button("Run").on_hover_text("Execute this script").clicked() {
+            if ui
+                .button("Run")
+                .on_hover_text("Execute this script")
+                .clicked()
+            {
                 // TODO: Connect to scripting engine execution
                 self.status = Some("Run not yet implemented".to_string());
             }
@@ -70,7 +72,11 @@ impl ScriptEditorPanel {
             // File info
             if let Some(path) = &self.file_path {
                 let dirty_marker = if self.dirty { "*" } else { "" };
-                ui.label(format!("{}{}", path.file_name().unwrap_or_default().to_string_lossy(), dirty_marker));
+                ui.label(format!(
+                    "{}{}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    dirty_marker
+                ));
             } else {
                 ui.label("Unsaved*");
             }

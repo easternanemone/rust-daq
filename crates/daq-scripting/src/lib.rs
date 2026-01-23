@@ -8,6 +8,7 @@ pub mod engine;
 pub mod plan_bindings;
 pub mod rhai_engine;
 pub mod script_runner;
+pub mod shutter_safety;
 pub mod traits;
 pub mod yield_bindings;
 pub mod yield_handle;
@@ -17,6 +18,9 @@ pub mod pyo3_engine;
 
 pub use bindings::{CameraHandle, ReadableHandle, ShutterHandle, SoftLimits, StageHandle};
 
+#[cfg(feature = "scripting_full")]
+pub use bindings::Ell14Handle;
+
 #[cfg(feature = "hdf5_scripting")]
 pub use bindings::Hdf5Handle;
 pub use comedi_bindings::{
@@ -25,6 +29,7 @@ pub use comedi_bindings::{
 };
 pub use rhai_engine::RhaiEngine;
 pub use script_runner::{ScriptPlanRunner, ScriptRunConfig, ScriptRunReport};
+pub use shutter_safety::{HeartbeatShutterGuard, ShutterRegistry, DEFAULT_HEARTBEAT_TIMEOUT};
 pub use traits::{ScriptEngine, ScriptError, ScriptValue};
 pub use yield_handle::{YieldChannelBuilder, YieldHandle, YieldResult, YieldedValue};
 

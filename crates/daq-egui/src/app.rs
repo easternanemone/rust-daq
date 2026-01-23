@@ -17,8 +17,7 @@ use crate::panels::{
     ConnectionDiagnostics, ConnectionStatus as LogConnectionStatus, DevicesPanel,
     DocumentViewerPanel, ExperimentDesignerPanel, GettingStartedPanel, ImageViewerPanel,
     InstrumentManagerPanel, LoggingPanel, ModulesPanel, PlanRunnerPanel, RunComparisonPanel,
-    RunHistoryPanel, ScanBuilderPanel, ScansPanel, ScriptsPanel, SignalPlotterPanel,
-    StoragePanel,
+    RunHistoryPanel, ScanBuilderPanel, ScansPanel, ScriptsPanel, SignalPlotterPanel, StoragePanel,
 };
 use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::theme::{self, ThemePreference};
@@ -1272,11 +1271,11 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
                     .scan_builder_panel
                     .ui(ui, self.app.client.as_mut(), &self.app.runtime)
             }
-            Panel::ExperimentDesigner => {
-                self.app
-                    .experiment_designer_panel
-                    .ui(ui, self.app.client.as_mut(), Some(&self.app.runtime))
-            }
+            Panel::ExperimentDesigner => self.app.experiment_designer_panel.ui(
+                ui,
+                self.app.client.as_mut(),
+                Some(&self.app.runtime),
+            ),
             Panel::Storage => {
                 self.app
                     .storage_panel

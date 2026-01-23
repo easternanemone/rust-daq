@@ -123,20 +123,18 @@ impl MultiDetectorGrid {
                 for row_idx in 0..rows {
                     strip.strip(|builder| {
                         // Inner strip: horizontal columns
-                        builder
-                            .size(Size::remainder())
-                            .horizontal(|mut strip| {
-                                for col_idx in 0..cols {
-                                    strip.cell(|ui| {
-                                        let panel_idx = row_idx * cols + col_idx;
-                                        if panel_idx < self.panels.len() {
-                                            self.render_panel(ui, panel_idx);
-                                        } else {
-                                            self.render_empty_cell(ui);
-                                        }
-                                    });
-                                }
-                            });
+                        builder.size(Size::remainder()).horizontal(|mut strip| {
+                            for col_idx in 0..cols {
+                                strip.cell(|ui| {
+                                    let panel_idx = row_idx * cols + col_idx;
+                                    if panel_idx < self.panels.len() {
+                                        self.render_panel(ui, panel_idx);
+                                    } else {
+                                        self.render_empty_cell(ui);
+                                    }
+                                });
+                            }
+                        });
                     });
                 }
             });

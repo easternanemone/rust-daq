@@ -32,11 +32,13 @@ pub use histogram::*;
 pub use metadata_editor::MetadataEditor;
 pub use node_palette::{NodePalette, NodeType};
 pub use offline_notice::*;
-pub use property_inspector::PropertyInspector;
 pub use parameter_editor::*;
-pub use runtime_parameter_editor::{EditableParameter, ParameterType, RuntimeParameterEditResult, RuntimeParameterEditor};
 pub use pp_editor::*;
+pub use property_inspector::PropertyInspector;
 pub use roi_selector::*;
+pub use runtime_parameter_editor::{
+    EditableParameter, ParameterType, RuntimeParameterEditResult, RuntimeParameterEditor,
+};
 pub use smart_stream_editor::*;
 pub use status_bar::*;
 #[allow(unused_imports)]

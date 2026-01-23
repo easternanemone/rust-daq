@@ -134,6 +134,25 @@ After connecting GUI to daemon:
 - Each device should have its control panel available
 - Camera should stream real images (not synthetic gradients)
 
+### Rhai Scripted Experiments Build
+
+For scripted experiments (polarization characterization, etc.) on maitai:
+
+```bash
+# Build with full scripting support (HDF5 + all hardware drivers)
+cargo build --release -p daq-scripting --features scripting_full --bin run_polarization
+
+# Run the experiment
+./target/release/run_polarization
+```
+
+**Feature flags (simplified):**
+- `scripting_full` - **RECOMMENDED**: All hardware drivers + HDF5 storage
+- `polarization`, `hardware_factories` - Aliases for `scripting_full` (backwards compat)
+- `hdf5_scripting` - HDF5 only (no hardware drivers)
+
+**HDF5 requirement:** Requires system HDF5 library (`libhdf5-dev` on Debian/Ubuntu).
+
 ## Architecture Overview
 
 **Design Philosophy:** Headless-first + scriptable control + remote GUI
@@ -432,13 +451,19 @@ ssh maitai@100.117.5.12 'cd ~/rust-daq && source config/hosts/maitai.env && \
 
 ### Hardware Inventory (maitai)
 
-| Device | Port/Path | Driver | Feature Flag |
-|--------|-----------|--------|--------------|
-| NI PCI-MIO-16XE-10 | `/dev/comedi0` | `ComediAnalogInput/OutputDriver` | `comedi` |
-| Newport 1830-C Power Meter | `/dev/ttyS0` | `Newport1830CDriver` | `newport_power_meter` |
-| MaiTai Laser | `/dev/ttyUSB5` | `MaiTaiDriver` | `spectra_physics` |
-| ELL14 Rotators (addr 2,3,8) | `/dev/ttyUSB1` | `Ell14Driver` | `thorlabs` |
-| ESP300 Motion Controller | `/dev/ttyUSB0` | `Esp300Driver` | `newport` |
+> **⚠️ CRITICAL: Use `/dev/serial/by-id/` paths - NOT `/dev/ttyUSB*`!**
+> USB device numbers change on reboot. The by-id paths are stable and MUST be used.
+> These configurations were VERIFIED WORKING on 2026-01-23.
+
+| Device | Stable Port (by-id) | Baud | Protocol | Feature Flag |
+|--------|---------------------|------|----------|--------------|
+| MaiTai Laser | `/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0` | 115200 | 8N1, LF terminator, no flow control | `spectra_physics` |
+| ELL14 Rotators (addr 2,3,8) | `/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0` | 9600 | RS-485 multidrop, hex encoding | `thorlabs` |
+| Newport 1830-C Power Meter | `/dev/ttyS0` | 9600 | Built-in RS-232 (always stable), simple ASCII | `newport_power_meter` |
+| NI PCI-MIO-16XE-10 | `/dev/comedi0` | N/A | Comedi driver | `comedi` |
+| ESP300 Motion Controller | `/dev/ttyUSB0` *(needs by-id)* | 19200 | Multi-axis (1-3) | `newport` |
+
+**DO NOT CHANGE THESE PATHS** without verifying with actual hardware tests.
 
 ### Serial Driver Capabilities
 
@@ -457,6 +482,30 @@ use daq_hardware::drivers::ell14::Ell14Bus;
 let bus = Ell14Bus::open("/dev/ttyUSB1").await?;
 let rotator = bus.device("2").await?;  // Gets calibrated device
 rotator.move_abs(45.0).await?;
+```
+
+**Velocity Control:**
+
+The ELL14 supports velocity control (0-100%) for speed vs precision tradeoff. When using
+`with_shared_port_calibrated()`, velocity is automatically set to maximum (100%) for fastest scans.
+
+```rust
+// Velocity is set to max during calibrated init
+let driver = Ell14Driver::with_shared_port_calibrated(port, "2").await?;
+
+// Manual velocity control
+driver.set_velocity(50).await?;  // 50% speed
+let vel = driver.get_velocity().await?;  // Query from hardware
+let cached = driver.cached_velocity().await;  // Fast read from cache
+```
+
+In Rhai scripts, use the `Ell14Handle` returned by `create_elliptec()`:
+
+```rhai
+let rotator = create_elliptec("/dev/serial/by-id/...", "2");
+let vel = rotator.velocity();  // Cached velocity (non-blocking)
+rotator.set_velocity(100);     // Set to max speed
+rotator.refresh_settings();    // Update cache from hardware
 ```
 
 ### PVCAM Setup

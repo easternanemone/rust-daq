@@ -491,8 +491,7 @@ impl ExperimentManifest {
 
         // Capture git provenance from build-time env vars
         let git_commit = option_env!("VERGEN_GIT_SHA").map(String::from);
-        let git_dirty = option_env!("VERGEN_GIT_DIRTY")
-            .and_then(|s| s.parse::<bool>().ok());
+        let git_dirty = option_env!("VERGEN_GIT_DIRTY").and_then(|s| s.parse::<bool>().ok());
 
         Self {
             timestamp_ns: now_ns(),
@@ -671,12 +670,8 @@ mod tests {
 
     #[test]
     fn test_manifest_git_provenance() {
-        let manifest = ExperimentManifest::new(
-            "test-run",
-            "test_plan",
-            "Test Plan",
-            HashMap::new(),
-        );
+        let manifest =
+            ExperimentManifest::new("test-run", "test_plan", "Test Plan", HashMap::new());
 
         // Git info should be captured (when built in git repo)
         // Note: May be None in some CI environments
@@ -697,13 +692,9 @@ mod tests {
         let mut temp = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp, "test content").unwrap();
 
-        let manifest = ExperimentManifest::new(
-            "test-run",
-            "test_plan",
-            "Test Plan",
-            HashMap::new(),
-        )
-        .with_graph_provenance(temp.path());
+        let manifest =
+            ExperimentManifest::new("test-run", "test_plan", "Test Plan", HashMap::new())
+                .with_graph_provenance(temp.path());
 
         assert!(manifest.graph_file.is_some());
         assert!(manifest.graph_hash.is_some());
@@ -716,15 +707,15 @@ mod tests {
         // Verify hash is consistent
         let hash1 = manifest.graph_hash.clone().unwrap();
 
-        let manifest2 = ExperimentManifest::new(
-            "test-run-2",
-            "test_plan",
-            "Test Plan",
-            HashMap::new(),
-        )
-        .with_graph_provenance(temp.path());
+        let manifest2 =
+            ExperimentManifest::new("test-run-2", "test_plan", "Test Plan", HashMap::new())
+                .with_graph_provenance(temp.path());
 
-        assert_eq!(hash1, manifest2.graph_hash.unwrap(), "Hash should be deterministic");
+        assert_eq!(
+            hash1,
+            manifest2.graph_hash.unwrap(),
+            "Hash should be deterministic"
+        );
     }
 
     #[test]
@@ -734,14 +725,9 @@ mod tests {
         let mut temp = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp, "graph data").unwrap();
 
-        let manifest = ExperimentManifest::new(
-            "run-789",
-            "grid_scan",
-            "Test Grid",
-            HashMap::new(),
-        )
-        .with_graph_provenance(temp.path())
-        .add_metadata("custom", "value");
+        let manifest = ExperimentManifest::new("run-789", "grid_scan", "Test Grid", HashMap::new())
+            .with_graph_provenance(temp.path())
+            .add_metadata("custom", "value");
 
         let json = manifest.to_json().unwrap();
         let parsed: ExperimentManifest = serde_json::from_str(&json).unwrap();
@@ -750,10 +736,7 @@ mod tests {
         assert_eq!(parsed.git_dirty, manifest.git_dirty);
         assert_eq!(parsed.graph_hash, manifest.graph_hash);
         assert_eq!(parsed.graph_file, manifest.graph_file);
-        assert_eq!(
-            parsed.metadata.get("custom"),
-            Some(&"value".to_string())
-        );
+        assert_eq!(parsed.metadata.get("custom"), Some(&"value".to_string()));
     }
 
     #[test]

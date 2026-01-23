@@ -11,23 +11,32 @@ use undo::Record;
 use crate::client::DaqClient;
 use crate::graph::commands::{AddNodeData, GraphEdit, ModifyNodeData};
 use crate::graph::{
-    load_graph, save_graph, graph_to_rhai_script, EngineStateLocal, ExecutionState, ExperimentNode, ExperimentViewer,
-    GraphFile, GraphMetadata, GraphPlan, GRAPH_FILE_EXTENSION,
+    graph_to_rhai_script, load_graph, save_graph, EngineStateLocal, ExecutionState, ExperimentNode,
+    ExperimentViewer, GraphFile, GraphMetadata, GraphPlan, GRAPH_FILE_EXTENSION,
 };
 use crate::panels::{
-    data_channel, frame_channel, DataUpdateSender, FrameUpdate, FrameUpdateSender, DataUpdate, LiveVisualizationPanel,
-    CodePreviewPanel,
+    data_channel, frame_channel, CodePreviewPanel, DataUpdate, DataUpdateSender, FrameUpdate,
+    FrameUpdateSender, LiveVisualizationPanel,
 };
 use crate::widgets::node_palette::{NodePalette, NodeType};
-use crate::widgets::{EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor};
+use crate::widgets::{
+    EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor,
+};
 use daq_experiment::Plan;
 use daq_proto::daq::StreamQuality;
 use futures::StreamExt;
 
 /// Actions from async execution operations
 enum ExecutionAction {
-    Started { run_uid: String, total_events: u32 },
-    StatusUpdate { state: i32, current_event: Option<u32>, total_events: Option<u32> },
+    Started {
+        run_uid: String,
+        total_events: u32,
+    },
+    StatusUpdate {
+        state: i32,
+        current_event: Option<u32>,
+        total_events: Option<u32>,
+    },
     Completed,
     Error(String),
 }
@@ -103,7 +112,10 @@ fn create_node_style() -> SnarlStyle {
         bg_pattern: Some(BackgroundPattern::NoPattern),
 
         // Better selection visibility (note: API typo is intentional)
-        select_stoke: Some(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255))),
+        select_stoke: Some(egui::Stroke::new(
+            2.0,
+            egui::Color32::from_rgb(100, 150, 255),
+        )),
 
         ..Default::default()
     }
@@ -150,7 +162,12 @@ impl ExperimentDesignerPanel {
         Self::default()
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, client: Option<&mut DaqClient>, runtime: Option<&Runtime>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: Option<&mut DaqClient>,
+        runtime: Option<&Runtime>,
+    ) {
         // If ejected, show script editor instead
         if self.script_editor.is_some() {
             // Track if user wants to return to graph mode
@@ -158,7 +175,8 @@ impl ExperimentDesignerPanel {
 
             // Add "New Graph" button (creates new graph, loses script changes)
             ui.horizontal(|ui| {
-                if ui.button("New Graph")
+                if ui
+                    .button("New Graph")
                     .on_hover_text("Start a new visual graph (script changes will be lost)")
                     .clicked()
                 {
@@ -219,7 +237,11 @@ impl ExperimentDesignerPanel {
             ui.separator();
 
             // File operations
-            if ui.button("New").on_hover_text("Start a new graph").clicked() {
+            if ui
+                .button("New")
+                .on_hover_text("Start a new graph")
+                .clicked()
+            {
                 self.new_graph();
             }
 
@@ -250,8 +272,13 @@ impl ExperimentDesignerPanel {
             ui.separator();
 
             // Code preview toggle
-            let code_label = if self.code_preview.is_visible() { "Hide Code" } else { "Show Code" };
-            if ui.button(code_label)
+            let code_label = if self.code_preview.is_visible() {
+                "Hide Code"
+            } else {
+                "Show Code"
+            };
+            if ui
+                .button(code_label)
                 .on_hover_text("Toggle generated Rhai code preview (CODE-01)")
                 .clicked()
             {
@@ -283,7 +310,8 @@ impl ExperimentDesignerPanel {
             ui.separator();
 
             // Export Rhai button
-            if ui.button("Export Rhai...")
+            if ui
+                .button("Export Rhai...")
                 .on_hover_text("Export as standalone Rhai script file (CODE-02)")
                 .clicked()
             {
@@ -291,8 +319,11 @@ impl ExperimentDesignerPanel {
             }
 
             // Eject to Script button
-            if ui.button("Eject to Script")
-                .on_hover_text("Convert to editable script (one-way, cannot return to graph) (CODE-03)")
+            if ui
+                .button("Eject to Script")
+                .on_hover_text(
+                    "Convert to editable script (one-way, cannot return to graph) (CODE-03)",
+                )
                 .clicked()
             {
                 self.show_eject_confirmation = true;
@@ -382,10 +413,9 @@ impl ExperimentDesignerPanel {
         self.validate_graph();
 
         // Bottom status bar with validation status
-        egui::TopBottomPanel::bottom("validation_status_bar")
-            .show_inside(ui, |ui| {
-                self.show_validation_status_bar(ui);
-            });
+        egui::TopBottomPanel::bottom("validation_status_bar").show_inside(ui, |ui| {
+            self.show_validation_status_bar(ui);
+        });
 
         // Two-panel layout: Palette | Canvas (properties now inline in nodes)
         egui::SidePanel::left("node_palette_panel")
@@ -417,9 +447,7 @@ impl ExperimentDesignerPanel {
 
             // Define SnarlWidget
             let snarl_id = egui::Id::new("experiment_graph");
-            let widget = SnarlWidget::new()
-                .id(snarl_id)
-                .style(self.style.clone());
+            let widget = SnarlWidget::new().id(snarl_id).style(self.style.clone());
 
             // 1. Render Graph FIRST (so it's the background/base layer)
             widget.show(&mut self.snarl, &mut self.viewer, ui);
@@ -447,7 +475,12 @@ impl ExperimentDesignerPanel {
         });
     }
 
-    fn show_property_inspector(&mut self, ui: &mut egui::Ui, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+    fn show_property_inspector(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: Option<&DaqClient>,
+        runtime: Option<&Runtime>,
+    ) {
         ui.heading("Properties");
         ui.separator();
 
@@ -528,8 +561,8 @@ impl ExperimentDesignerPanel {
 
         // Delete: Delete or Backspace to remove selected node
         // Only process if no text widget has focus (otherwise user is editing text)
-        let text_edit_has_focus = ui.ctx().memory(|mem| mem.focused().is_some())
-            && ui.ctx().wants_keyboard_input();
+        let text_edit_has_focus =
+            ui.ctx().memory(|mem| mem.focused().is_some()) && ui.ctx().wants_keyboard_input();
         if !text_edit_has_focus
             && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
         {
@@ -770,14 +803,16 @@ impl ExperimentDesignerPanel {
     /// Open file dialog to export graph as Rhai script.
     fn export_rhai_dialog(&mut self) {
         // Generate code first
-        let source_name = self.current_file
+        let source_name = self
+            .current_file
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string());
         let code = graph_to_rhai_script(&self.snarl, source_name.as_deref());
 
         // Suggest filename based on current graph file
-        let suggested_name = self.current_file
+        let suggested_name = self
+            .current_file
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|s| format!("{}.rhai", s.to_string_lossy()))
@@ -802,7 +837,8 @@ impl ExperimentDesignerPanel {
 
     /// Eject to script editor mode (one-way conversion).
     fn eject_to_script(&mut self) {
-        let source_name = self.current_file
+        let source_name = self
+            .current_file
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string());
@@ -837,10 +873,7 @@ impl ExperimentDesignerPanel {
                     }
                 }
             } else {
-                ui.colored_label(
-                    egui::Color32::from_rgb(100, 200, 100),
-                    "Graph valid",
-                );
+                ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Graph valid");
             }
         });
     }
@@ -850,8 +883,7 @@ impl ExperimentDesignerPanel {
         self.viewer.clear_all_errors();
 
         // Check for cycles first (graph-level validation)
-        if let Some(cycle_error) = crate::graph::validation::validate_graph_structure(&self.snarl)
-        {
+        if let Some(cycle_error) = crate::graph::validation::validate_graph_structure(&self.snarl) {
             // Set error on first node as a way to show the error
             if let Some((first_id, _)) = self.snarl.node_ids().next() {
                 self.viewer.set_node_error(first_id, cycle_error);
@@ -863,9 +895,7 @@ impl ExperimentDesignerPanel {
         let errors: Vec<_> = self
             .snarl
             .node_ids()
-            .filter_map(|(node_id, node)| {
-                self.validate_node(node).map(|error| (node_id, error))
-            })
+            .filter_map(|(node_id, node)| self.validate_node(node).map(|error| (node_id, error)))
             .collect();
 
         // Apply errors after iteration
@@ -946,7 +976,12 @@ impl ExperimentDesignerPanel {
 
     // ========== Execution Controls ==========
 
-    fn show_execution_toolbar(&mut self, ui: &mut egui::Ui, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+    fn show_execution_toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        client: Option<&DaqClient>,
+        runtime: Option<&Runtime>,
+    ) {
         let has_errors = self.viewer.error_count() > 0;
         let is_running = self.execution_state.is_running();
         let is_paused = self.execution_state.is_paused();
@@ -964,22 +999,26 @@ impl ExperimentDesignerPanel {
         } else {
             "Execute the experiment"
         };
-        let run_clicked = ui.add_enabled(can_run, egui::Button::new("▶ Run"))
+        let run_clicked = ui
+            .add_enabled(can_run, egui::Button::new("▶ Run"))
             .on_hover_text(run_hover_text)
             .clicked();
 
         // Pause button - enabled when running
-        let pause_clicked = ui.add_enabled(is_running, egui::Button::new("⏸ Pause"))
+        let pause_clicked = ui
+            .add_enabled(is_running, egui::Button::new("⏸ Pause"))
             .on_hover_text("Pause at next checkpoint")
             .clicked();
 
         // Resume button - enabled when paused
-        let resume_clicked = ui.add_enabled(is_paused, egui::Button::new("▶ Resume"))
+        let resume_clicked = ui
+            .add_enabled(is_paused, egui::Button::new("▶ Resume"))
             .on_hover_text("Resume execution")
             .clicked();
 
         // Abort button - enabled when running or paused
-        let abort_clicked = ui.add_enabled(is_running || is_paused, egui::Button::new("⏹ Abort"))
+        let abort_clicked = ui
+            .add_enabled(is_running || is_paused, egui::Button::new("⏹ Abort"))
             .on_hover_text("Abort execution")
             .clicked();
 
@@ -1002,7 +1041,10 @@ impl ExperimentDesignerPanel {
 
             let status_text = match self.execution_state.engine_state {
                 EngineStateLocal::Running => {
-                    format!("Running: {}/{}", self.execution_state.current_event, self.execution_state.total_events)
+                    format!(
+                        "Running: {}/{}",
+                        self.execution_state.current_event, self.execution_state.total_events
+                    )
                 }
                 EngineStateLocal::Paused => "Paused".to_string(),
                 _ => String::new(),
@@ -1063,12 +1105,14 @@ impl ExperimentDesignerPanel {
         // Check plan has events to execute
         let total_events = plan.num_points() as u32;
         if total_events == 0 {
-            self.last_error = Some("Graph produces no events - add Scan or Acquire nodes".to_string());
+            self.last_error =
+                Some("Graph produces no events - add Scan or Acquire nodes".to_string());
             return;
         }
 
         // Start execution
-        self.execution_state.start_execution("pending".to_string(), total_events);
+        self.execution_state
+            .start_execution("pending".to_string(), total_events);
         self.set_status(format!("Starting experiment with {} events", total_events));
 
         // Start visualization (client and runtime already validated as Some above)
@@ -1079,13 +1123,17 @@ impl ExperimentDesignerPanel {
         // TODO(06-01): Queue plan via gRPC with metadata
         // Extract metadata from editor + add graph provenance
         let mut _metadata = self.metadata_editor.to_metadata_map();
-        _metadata.insert("graph_node_count".to_string(), self.snarl.node_ids().count().to_string());
+        _metadata.insert(
+            "graph_node_count".to_string(),
+            self.snarl.node_ids().count().to_string(),
+        );
         _metadata.insert(
             "graph_file".to_string(),
-            self.current_file.as_ref()
+            self.current_file
+                .as_ref()
                 .and_then(|p| p.file_name().and_then(|n| n.to_str()))
                 .unwrap_or("unsaved")
-                .to_string()
+                .to_string(),
         );
 
         // For full implementation, need to either:
@@ -1099,38 +1147,70 @@ impl ExperimentDesignerPanel {
     }
 
     fn pause_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
-        let Some(client) = client else { return; };
-        let Some(runtime) = runtime else { return; };
+        let Some(client) = client else {
+            return;
+        };
+        let Some(runtime) = runtime else {
+            return;
+        };
 
         let tx = self.action_tx.clone();
         let mut client = client.clone();
 
         runtime.spawn(async move {
             match client.pause_engine(true).await {
-                Ok(_) => { let _ = tx.send(ExecutionAction::StatusUpdate { state: 2, current_event: None, total_events: None }).await; }
-                Err(e) => { let _ = tx.send(ExecutionAction::Error(e.to_string())).await; }
+                Ok(_) => {
+                    let _ = tx
+                        .send(ExecutionAction::StatusUpdate {
+                            state: 2,
+                            current_event: None,
+                            total_events: None,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ExecutionAction::Error(e.to_string())).await;
+                }
             }
         });
     }
 
     fn resume_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
-        let Some(client) = client else { return; };
-        let Some(runtime) = runtime else { return; };
+        let Some(client) = client else {
+            return;
+        };
+        let Some(runtime) = runtime else {
+            return;
+        };
 
         let tx = self.action_tx.clone();
         let mut client = client.clone();
 
         runtime.spawn(async move {
             match client.resume_engine().await {
-                Ok(_) => { let _ = tx.send(ExecutionAction::StatusUpdate { state: 1, current_event: None, total_events: None }).await; }
-                Err(e) => { let _ = tx.send(ExecutionAction::Error(e.to_string())).await; }
+                Ok(_) => {
+                    let _ = tx
+                        .send(ExecutionAction::StatusUpdate {
+                            state: 1,
+                            current_event: None,
+                            total_events: None,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ExecutionAction::Error(e.to_string())).await;
+                }
             }
         });
     }
 
     fn abort_experiment(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
-        let Some(client) = client else { return; };
-        let Some(runtime) = runtime else { return; };
+        let Some(client) = client else {
+            return;
+        };
+        let Some(runtime) = runtime else {
+            return;
+        };
 
         // Stop visualization immediately
         self.stop_visualization();
@@ -1140,8 +1220,12 @@ impl ExperimentDesignerPanel {
 
         runtime.spawn(async move {
             match client.abort_plan(None).await {
-                Ok(_) => { let _ = tx.send(ExecutionAction::Completed).await; }
-                Err(e) => { let _ = tx.send(ExecutionAction::Error(e.to_string())).await; }
+                Ok(_) => {
+                    let _ = tx.send(ExecutionAction::Completed).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(ExecutionAction::Error(e.to_string())).await;
+                }
             }
         });
     }
@@ -1149,11 +1233,19 @@ impl ExperimentDesignerPanel {
     fn poll_execution_actions(&mut self) {
         while let Ok(action) = self.action_rx.try_recv() {
             match action {
-                ExecutionAction::Started { run_uid, total_events } => {
+                ExecutionAction::Started {
+                    run_uid,
+                    total_events,
+                } => {
                     self.execution_state.start_execution(run_uid, total_events);
                 }
-                ExecutionAction::StatusUpdate { state, current_event, total_events } => {
-                    self.execution_state.update_from_status(state, current_event, total_events);
+                ExecutionAction::StatusUpdate {
+                    state,
+                    current_event,
+                    total_events,
+                } => {
+                    self.execution_state
+                        .update_from_status(state, current_event, total_events);
                 }
                 ExecutionAction::Completed => {
                     self.stop_visualization();
@@ -1171,8 +1263,12 @@ impl ExperimentDesignerPanel {
 
     /// Poll engine status to keep execution state in sync with daemon
     fn poll_engine_status(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
-        let Some(client) = client else { return; };
-        let Some(runtime) = runtime else { return; };
+        let Some(client) = client else {
+            return;
+        };
+        let Some(runtime) = runtime else {
+            return;
+        };
 
         let tx = self.action_tx.clone();
         let mut client = client.clone();
@@ -1180,11 +1276,13 @@ impl ExperimentDesignerPanel {
         runtime.spawn(async move {
             match client.get_engine_status().await {
                 Ok(status) => {
-                    let _ = tx.send(ExecutionAction::StatusUpdate {
-                        state: status.state,
-                        current_event: status.current_event_number,
-                        total_events: status.total_events_expected,
-                    }).await;
+                    let _ = tx
+                        .send(ExecutionAction::StatusUpdate {
+                            state: status.state,
+                            current_event: status.current_event_number,
+                            total_events: status.total_events_expected,
+                        })
+                        .await;
                 }
                 Err(_) => {
                     // Ignore polling errors - transient network issues shouldn't disrupt UI
@@ -1204,7 +1302,9 @@ impl ExperimentDesignerPanel {
             self.last_device_fetch = Some(std::time::Instant::now());
             return;
         };
-        let Some(runtime) = runtime else { return; };
+        let Some(runtime) = runtime else {
+            return;
+        };
 
         // Spawn async task to fetch devices
         let mut client = client.clone();
@@ -1381,7 +1481,10 @@ impl ExperimentDesignerPanel {
         let new_value = new_value.to_string();
 
         runtime.spawn(async move {
-            match client.set_parameter(&device_id, &param_name, &new_value).await {
+            match client
+                .set_parameter(&device_id, &param_name, &new_value)
+                .await
+            {
                 Ok(_) => {
                     // Success - no action needed, value already updated in UI
                 }
@@ -1471,7 +1574,7 @@ impl ExperimentDesignerPanel {
         // Spawn camera streaming tasks BEFORE storing senders
         // Use LOCAL frame_tx, not self.frame_tx
         for (camera_id, _) in cameras {
-            let tx = frame_tx.clone();  // Clone LOCAL variable
+            let tx = frame_tx.clone(); // Clone LOCAL variable
             let mut client = client.clone();
 
             let handle = runtime.spawn(async move {
@@ -1510,7 +1613,7 @@ impl ExperimentDesignerPanel {
 
         // Spawn document stream for plots (still using LOCAL data_tx)
         if !plots.is_empty() {
-            let tx = data_tx.clone();  // Clone LOCAL variable
+            let tx = data_tx.clone(); // Clone LOCAL variable
             let mut client = client.clone();
             let plot_ids: Vec<String> = plots.iter().map(|(id, _, _)| id.clone()).collect();
 

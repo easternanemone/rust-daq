@@ -220,8 +220,12 @@ mod tests {
     #[test]
     fn test_custom_fields() {
         let mut editor = MetadataEditor::new();
-        editor.custom_fields.push(("temperature".to_string(), "20C".to_string()));
-        editor.custom_fields.push(("humidity".to_string(), "45%".to_string()));
+        editor
+            .custom_fields
+            .push(("temperature".to_string(), "20C".to_string()));
+        editor
+            .custom_fields
+            .push(("humidity".to_string(), "45%".to_string()));
 
         let map = editor.to_metadata_map();
         assert_eq!(map.get("temperature"), Some(&"20C".to_string()));
@@ -231,8 +235,12 @@ mod tests {
     #[test]
     fn test_empty_key_filtering() {
         let mut editor = MetadataEditor::new();
-        editor.custom_fields.push(("valid_key".to_string(), "value".to_string()));
-        editor.custom_fields.push((String::new(), "ignored".to_string()));
+        editor
+            .custom_fields
+            .push(("valid_key".to_string(), "value".to_string()));
+        editor
+            .custom_fields
+            .push((String::new(), "ignored".to_string()));
 
         let map = editor.to_metadata_map();
         assert_eq!(map.get("valid_key"), Some(&"value".to_string()));
