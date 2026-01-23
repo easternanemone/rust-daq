@@ -717,16 +717,36 @@ pub fn register_hardware(engine: &mut Engine) {
     // =========================================================================
 
     // with_shutter_open(shutter, callback) - Execute callback with shutter open
-    // GUARANTEES shutter closure even on error (Rust's Drop semantics)
+    //
+    // SAFETY LIMITATIONS (bd-ykrq):
+    // This function uses Rust's control flow to guarantee shutter closure on:
+    // - Normal completion
+    // - Script errors (exceptions, panics caught by Rhai)
+    // - Early returns
+    //
+    // However, it CANNOT protect against:
+    // - SIGKILL (kill -9, OOM killer) - Cannot be intercepted
+    // - Power failure - No software can help
+    // - Process hangs (infinite loops, deadlocks)
+    // - Hardware crashes
+    //
+    // For production laser labs, ALWAYS use hardware interlocks in addition
+    // to software safety mechanisms. See ShutterRegistry for enhanced protection.
     engine.register_fn(
         "with_shutter_open",
         move |context: NativeCallContext,
               shutter: ShutterHandle,
               callback: FnPtr|
               -> Result<Dynamic, Box<EvalAltResult>> {
+            use crate::shutter_safety::ShutterRegistry;
+
+            // Register with global registry for emergency shutdown
+            let guard_id = ShutterRegistry::register(&shutter.driver);
+            tracing::debug!(guard_id, "with_shutter_open: Registered with ShutterRegistry");
+
             // Open shutter
             run_blocking("Shutter open", shutter.driver.open_shutter())?;
-            tracing::info!("with_shutter_open: Shutter opened");
+            tracing::info!(guard_id, "with_shutter_open: Shutter opened");
 
             // Execute callback, capturing result or error
             let result = callback.call_within_context(&context, ());
@@ -734,9 +754,12 @@ pub fn register_hardware(engine: &mut Engine) {
             // ALWAYS close shutter - even on error
             let close_result = run_blocking("Shutter close", shutter.driver.close_shutter());
 
+            // Unregister from emergency registry
+            ShutterRegistry::unregister(guard_id);
+
             match close_result {
-                Ok(()) => tracing::info!("with_shutter_open: Shutter closed successfully"),
-                Err(ref e) => tracing::error!("with_shutter_open: Failed to close shutter: {}", e),
+                Ok(()) => tracing::info!(guard_id, "with_shutter_open: Shutter closed successfully"),
+                Err(ref e) => tracing::error!(guard_id, error = %e, "with_shutter_open: Failed to close shutter"),
             }
 
             // Handle results - prioritize callback error if both fail
@@ -1475,5 +1498,58 @@ mod tests {
         // Should sleep for ~100ms (allow some tolerance)
         assert!(elapsed.as_millis() >= 95);
         assert!(elapsed.as_millis() <= 150);
+    }
+
+    // =========================================================================
+    // SoftLimits Tests
+    // =========================================================================
+
+    #[test]
+    fn test_soft_limits_new() {
+        let limits = SoftLimits::new(0.0, 360.0);
+        assert_eq!(limits.min, Some(0.0));
+        assert_eq!(limits.max, Some(360.0));
+    }
+
+    #[test]
+    fn test_soft_limits_unlimited() {
+        let limits = SoftLimits::unlimited();
+        assert_eq!(limits.min, None);
+        assert_eq!(limits.max, None);
+        // Unlimited should accept any value
+        assert!(limits.validate(f64::NEG_INFINITY).is_ok());
+        assert!(limits.validate(f64::INFINITY).is_ok());
+        assert!(limits.validate(0.0).is_ok());
+    }
+
+    #[test]
+    fn test_soft_limits_clone() {
+        let limits = SoftLimits::new(-10.0, 10.0);
+        let cloned = limits.clone();
+        assert_eq!(cloned.min, Some(-10.0));
+        assert_eq!(cloned.max, Some(10.0));
+    }
+
+    #[test]
+    fn test_soft_limits_validate() {
+        let limits = SoftLimits::new(0.0, 100.0);
+        // Within bounds
+        assert!(limits.validate(50.0).is_ok());
+        assert!(limits.validate(0.0).is_ok());
+        assert!(limits.validate(100.0).is_ok());
+        // Out of bounds
+        assert!(limits.validate(-1.0).is_err());
+        assert!(limits.validate(101.0).is_err());
+    }
+
+    #[test]
+    fn test_soft_limits_rotator_range() {
+        // Standard rotator range: 0-360 degrees
+        let limits = SoftLimits::new(0.0, 360.0);
+        assert!(limits.validate(0.0).is_ok());
+        assert!(limits.validate(45.0).is_ok());
+        assert!(limits.validate(360.0).is_ok());
+        assert!(limits.validate(361.0).is_err());
+        assert!(limits.validate(-1.0).is_err());
     }
 }

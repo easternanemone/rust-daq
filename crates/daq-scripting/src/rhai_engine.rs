@@ -282,7 +282,13 @@ impl RhaiEngine {
         // Safety: Limit operations to prevent infinite loops
         engine.on_progress(move |count| {
             if count > max_operations {
-                Some(format!("Safety limit exceeded: maximum {} operations", max_operations).into())
+                Some(
+                    format!(
+                        "Safety limit exceeded: maximum {} operations",
+                        max_operations
+                    )
+                    .into(),
+                )
             } else {
                 None
             }

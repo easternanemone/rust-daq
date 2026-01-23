@@ -8,6 +8,7 @@ pub mod engine;
 pub mod plan_bindings;
 pub mod rhai_engine;
 pub mod script_runner;
+pub mod shutter_safety;
 pub mod traits;
 pub mod yield_bindings;
 pub mod yield_handle;
@@ -28,6 +29,7 @@ pub use comedi_bindings::{
 };
 pub use rhai_engine::RhaiEngine;
 pub use script_runner::{ScriptPlanRunner, ScriptRunConfig, ScriptRunReport};
+pub use shutter_safety::{HeartbeatShutterGuard, ShutterRegistry, DEFAULT_HEARTBEAT_TIMEOUT};
 pub use traits::{ScriptEngine, ScriptError, ScriptValue};
 pub use yield_handle::{YieldChannelBuilder, YieldHandle, YieldResult, YieldedValue};
 
