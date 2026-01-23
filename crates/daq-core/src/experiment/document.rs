@@ -431,6 +431,23 @@ pub struct ExperimentManifest {
     pub system_info: HashMap<String, String>,
     /// User-provided metadata from StartDoc
     pub metadata: HashMap<String, String>,
+
+    // === Provenance fields (bd-07-02) ===
+    /// Git commit hash at build time (if available)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+
+    /// Whether working directory had uncommitted changes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_dirty: Option<bool>,
+
+    /// Hash of .expgraph file (SHA256, if from saved graph)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_hash: Option<String>,
+
+    /// Path to source .expgraph file (if from saved graph)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_file: Option<String>,
 }
 
 impl ExperimentManifest {
@@ -462,6 +479,11 @@ impl ExperimentManifest {
             }
         }
 
+        // Capture git provenance from build-time env vars
+        let git_commit = option_env!("VERGEN_GIT_SHA").map(String::from);
+        let git_dirty = option_env!("VERGEN_GIT_DIRTY")
+            .and_then(|s| s.parse::<bool>().ok());
+
         Self {
             timestamp_ns: now_ns(),
             run_uid: run_uid.to_string(),
@@ -470,6 +492,10 @@ impl ExperimentManifest {
             parameters,
             system_info,
             metadata: HashMap::new(),
+            git_commit,
+            git_dirty,
+            graph_hash: None,
+            graph_file: None,
         }
     }
 
@@ -488,6 +514,28 @@ impl ExperimentManifest {
     /// Add system information
     pub fn add_system_info(mut self, key: &str, value: &str) -> Self {
         self.system_info.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    /// Add graph file provenance (call when executing from saved .expgraph)
+    ///
+    /// This captures the graph file path and computes a SHA256 hash of the
+    /// file contents for reproducibility tracking.
+    ///
+    /// # Arguments
+    ///
+    /// * `graph_path` - Path to the .expgraph file
+    pub fn with_graph_provenance(mut self, graph_path: &std::path::Path) -> Self {
+        self.graph_file = Some(graph_path.display().to_string());
+
+        // Compute SHA256 hash of graph file
+        if let Ok(contents) = std::fs::read(graph_path) {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&contents);
+            self.graph_hash = Some(format!("{:x}", hasher.finalize()));
+        }
+
         self
     }
 
