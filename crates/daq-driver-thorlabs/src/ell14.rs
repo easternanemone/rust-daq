@@ -367,6 +367,10 @@ impl Ell14Driver {
     }
 
     /// Send a command and read response.
+    ///
+    /// ELL14 responses are terminated with CR LF. At 9600 baud, a typical 17-byte
+    /// response takes ~18ms to transmit. We use multiple short reads to collect
+    /// the complete response.
     #[instrument(skip(self))]
     async fn transaction(&self, cmd: &str) -> Result<String> {
         let full_cmd = format!("{}{}", self.address, cmd);
@@ -375,11 +379,44 @@ impl Ell14Driver {
         guard.write_all(full_cmd.as_bytes()).await?;
         guard.flush().await?;
 
+        // Collect response with multiple reads until we see CR/LF or timeout
+        let mut response = Vec::with_capacity(64);
         let mut buf = [0u8; 64];
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let n = guard.read(&mut buf).await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
 
-        Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+        loop {
+            // Wait a bit for data to arrive
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            // Check timeout
+            if tokio::time::Instant::now() > deadline {
+                break;
+            }
+
+            // Try to read available data
+            match guard.read(&mut buf).await {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    response.extend_from_slice(&buf[..n]);
+                    // Check for response terminator (CR or LF)
+                    if response.contains(&b'\r') || response.contains(&b'\n') {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // No data yet, continue waiting
+                    continue;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    break;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        let resp = String::from_utf8_lossy(&response).to_string();
+        tracing::debug!(cmd = %full_cmd, response = %resp, "ELL14 transaction");
+        Ok(resp)
     }
 
     /// Home the device to mechanical zero.
