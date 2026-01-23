@@ -438,6 +438,7 @@ impl ExperimentDesignerPanel {
                             new_data: modified_node,
                         }),
                     );
+                    self.graph_version = self.graph_version.wrapping_add(1);
                 }
             } else {
                 // Node was deleted, clear selection
@@ -492,6 +493,7 @@ impl ExperimentDesignerPanel {
                 // We do direct removal because RemoveNode would need the node position
                 // which we'd need to look up, making it more complex
                 self.snarl.remove_node(node_id);
+                self.graph_version = self.graph_version.wrapping_add(1);
             }
         }
     }
@@ -507,10 +509,12 @@ impl ExperimentDesignerPanel {
 
     fn undo(&mut self) {
         self.history.undo(&mut self.snarl);
+        self.graph_version = self.graph_version.wrapping_add(1);
     }
 
     fn redo(&mut self) {
         self.history.redo(&mut self.snarl);
+        self.graph_version = self.graph_version.wrapping_add(1);
     }
 
     fn handle_context_menu(&mut self, ui: &mut egui::Ui) {
@@ -555,6 +559,7 @@ impl ExperimentDesignerPanel {
                                         node_id: None,
                                     }),
                                 );
+                                self.graph_version = self.graph_version.wrapping_add(1);
                                 close_menu = true;
                             }
                         }
@@ -612,6 +617,7 @@ impl ExperimentDesignerPanel {
                                 node_id: None,
                             }),
                         );
+                        self.graph_version = self.graph_version.wrapping_add(1);
                     }
                 }
                 self.dragging_node = None;
@@ -637,6 +643,7 @@ impl ExperimentDesignerPanel {
         self.metadata = GraphMetadata::default();
         self.selected_node = None;
         self.node_count = 0;
+        self.graph_version = self.graph_version.wrapping_add(1);
         self.set_status("New graph created");
     }
 
@@ -662,6 +669,7 @@ impl ExperimentDesignerPanel {
                 self.selected_node = None;
                 // Reset node count based on loaded graph
                 self.node_count = self.snarl.node_ids().count();
+                self.graph_version = self.graph_version.wrapping_add(1);
                 self.set_status(format!("Loaded: {}", path.display()));
             }
             Err(e) => {
