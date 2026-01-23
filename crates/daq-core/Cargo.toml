@@ -3,6 +3,7 @@ name = "daq-core"
 version = "0.1.0"
 edition = "2021"
 description = "Core types and traits for rust-daq"
+build = "build.rs"
 
 [dependencies]
 bytes = "1.11"
@@ -21,6 +22,7 @@ schemars = { version = "0.8", optional = true } # If needed for schema generatio
 config = { version = "0.14.0", features = ["toml"] }
 arrow = { version = "57", optional = true, features = ["ipc"] }
 daq-pool = { path = "../daq-pool" }
+sha2 = "0.10"  # For graph file hashing
 
 # Serial port support (optional, for driver crates)
 tokio-serial = { version = "5.4", optional = true }
@@ -34,6 +36,9 @@ tokio = { version = "1", default-features = false, features = ["sync", "macros"]
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1.10", features = ["js"] }
 wasm-timer = "0.2"
+
+[build-dependencies]
+anyhow = "1.0"
 
 [features]
 storage_arrow = ["dep:arrow"]
