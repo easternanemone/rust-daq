@@ -15,11 +15,14 @@ use crate::graph::{
     GraphFile, GraphMetadata, GraphPlan, GRAPH_FILE_EXTENSION,
 };
 use crate::panels::{
-    data_channel, frame_channel, DataUpdateSender, FrameUpdateSender, LiveVisualizationPanel,
+    data_channel, frame_channel, DataUpdateSender, FrameUpdate, FrameUpdateSender, DataUpdate, LiveVisualizationPanel,
 };
 use crate::widgets::node_palette::{NodePalette, NodeType};
 use crate::widgets::{EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor};
 use daq_experiment::Plan;
+use daq_proto::daq::StreamQuality;
+use futures::StreamExt;
+use std::sync::mpsc::TrySendError;
 
 /// Actions from async execution operations
 enum ExecutionAction {
@@ -65,6 +68,10 @@ pub struct ExperimentDesignerPanel {
     frame_tx: Option<FrameUpdateSender>,
     /// Data update sender (for plot data)
     data_tx: Option<DataUpdateSender>,
+    /// Camera streaming tasks (for cleanup)
+    camera_stream_tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Document stream task (for cleanup)
+    document_stream_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Default for ExperimentDesignerPanel {
@@ -90,6 +97,8 @@ impl Default for ExperimentDesignerPanel {
             visualization_panel: None,
             frame_tx: None,
             data_tx: None,
+            camera_stream_tasks: Vec::new(),
+            document_stream_task: None,
         }
     }
 }
@@ -849,8 +858,10 @@ impl ExperimentDesignerPanel {
         self.execution_state.start_execution("pending".to_string(), total_events);
         self.set_status(format!("Starting experiment with {} events", total_events));
 
-        // Start visualization
-        self.start_visualization();
+        // Start visualization (client and runtime already validated as Some above)
+        let client = client.unwrap();
+        let runtime = runtime.unwrap();
+        self.start_visualization(client, runtime);
 
         // TODO: Queue plan via gRPC
         // For full implementation, need to either:
@@ -1177,7 +1188,7 @@ impl ExperimentDesignerPanel {
     }
 
     /// Start visualization when experiment execution begins.
-    fn start_visualization(&mut self) {
+    fn start_visualization(&mut self, client: &DaqClient, runtime: &Runtime) {
         // Extract detectors from graph
         let (cameras, plots) = self.extract_detectors();
 
@@ -1186,18 +1197,112 @@ impl ExperimentDesignerPanel {
             return;
         }
 
-        // Create channels
+        // Clear any previous stream tasks (cleanup for repeated calls)
+        for handle in self.camera_stream_tasks.drain(..) {
+            handle.abort();
+        }
+        if let Some(handle) = self.document_stream_task.take() {
+            handle.abort();
+        }
+
+        // Create channels (LOCAL variables)
         let (frame_tx, frame_rx) = frame_channel();
         let (data_tx, data_rx) = data_channel();
 
         // Create and configure panel
         let mut panel = LiveVisualizationPanel::new();
-        panel.configure_detectors(cameras, plots);
+        panel.configure_detectors(cameras.clone(), plots.clone());
         panel.set_frame_receiver(frame_rx);
         panel.set_data_receiver(data_rx);
         panel.start();
 
-        // Store panel and senders
+        // Spawn camera streaming tasks BEFORE storing senders
+        // Use LOCAL frame_tx, not self.frame_tx
+        for (camera_id, _) in cameras {
+            let tx = frame_tx.clone();  // Clone LOCAL variable
+            let mut client = client.clone();
+
+            let handle = runtime.spawn(async move {
+                // Start stream (30 FPS preview quality for live viz)
+                match client.stream_frames(&camera_id, 30, StreamQuality::Preview).await {
+                    Ok(mut stream) => {
+                        while let Some(result) = stream.next().await {
+                            match result {
+                                Ok(frame_data) => {
+                                    let update = FrameUpdate {
+                                        device_id: camera_id.clone(),
+                                        width: frame_data.width,
+                                        height: frame_data.height,
+                                        data: frame_data.data,
+                                        frame_number: frame_data.frame_number,
+                                        timestamp_ns: frame_data.timestamp_ns,
+                                    };
+                                    if tx.try_send(update).is_err() {
+                                        // Channel full or closed - continue trying
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(device = %camera_id, error = %e, "Camera stream error");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(device = %camera_id, error = %e, "Failed to start camera stream");
+                    }
+                }
+            });
+            self.camera_stream_tasks.push(handle);
+        }
+
+        // Spawn document stream for plots (still using LOCAL data_tx)
+        if !plots.is_empty() {
+            let tx = data_tx.clone();  // Clone LOCAL variable
+            let mut client = client.clone();
+            let plot_ids: Vec<String> = plots.iter().map(|(id, _, _)| id.clone()).collect();
+
+            let handle = runtime.spawn(async move {
+                // Subscribe to all documents (filter events client-side)
+                match client.stream_documents(None, vec![]).await {
+                    Ok(mut stream) => {
+                        while let Some(result) = stream.next().await {
+                            match result {
+                                Ok(doc) => {
+                                    use daq_proto::daq::document::Payload;
+                                    if let Some(Payload::Event(event)) = doc.payload {
+                                        // Extract values for configured plot devices
+                                        let timestamp_secs = event.time_ns as f64 / 1_000_000_000.0;
+                                        for plot_id in &plot_ids {
+                                            if let Some(&value) = event.data.get(plot_id) {
+                                                let update = DataUpdate {
+                                                    device_id: plot_id.clone(),
+                                                    value,
+                                                    timestamp_secs,
+                                                };
+                                                if tx.try_send(update).is_err() {
+                                                    // Channel full or closed
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Document stream error");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to start document stream");
+                    }
+                }
+            });
+            self.document_stream_task = Some(handle);
+        }
+
+        // THEN store panel and senders for later cleanup
         self.visualization_panel = Some(panel);
         self.frame_tx = Some(frame_tx);
         self.data_tx = Some(data_tx);
@@ -1205,6 +1310,14 @@ impl ExperimentDesignerPanel {
 
     /// Stop visualization when experiment completes.
     fn stop_visualization(&mut self) {
+        // Abort all streaming tasks
+        for handle in self.camera_stream_tasks.drain(..) {
+            handle.abort();
+        }
+        if let Some(handle) = self.document_stream_task.take() {
+            handle.abort();
+        }
+
         if let Some(panel) = &mut self.visualization_panel {
             panel.stop();
         }
