@@ -3,6 +3,7 @@
 //! This module contains parameter editors and other UI components
 //! that can be shared across different panels.
 
+pub mod auto_scale_plot;
 pub mod device_controls;
 pub mod device_selector;
 pub mod gauge;
@@ -19,6 +20,7 @@ pub mod status_bar;
 pub mod toast;
 pub mod toggle;
 
+pub use auto_scale_plot::{AutoScalePlot, AxisLockState};
 pub use device_controls::{
     DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel, RotatorControlPanel,
     StageControlPanel,
