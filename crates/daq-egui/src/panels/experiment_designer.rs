@@ -14,7 +14,9 @@ use crate::graph::{
     load_graph, save_graph, EngineStateLocal, ExecutionState, ExperimentNode, ExperimentViewer,
     GraphFile, GraphMetadata, GraphPlan, GRAPH_FILE_EXTENSION,
 };
-use crate::panels::LiveVisualizationPanel;
+use crate::panels::{
+    data_channel, frame_channel, DataUpdateSender, FrameUpdateSender, LiveVisualizationPanel,
+};
 use crate::widgets::node_palette::{NodePalette, NodeType};
 use crate::widgets::{EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor};
 use daq_experiment::Plan;
@@ -837,6 +839,9 @@ impl ExperimentDesignerPanel {
         self.execution_state.start_execution("pending".to_string(), total_events);
         self.set_status(format!("Starting experiment with {} events", total_events));
 
+        // Start visualization
+        self.start_visualization();
+
         // TODO: Queue plan via gRPC
         // For full implementation, need to either:
         // 1. Serialize GraphPlan and send via QueuePlan with plan_type="graph_plan"
@@ -882,6 +887,9 @@ impl ExperimentDesignerPanel {
         let Some(client) = client else { return; };
         let Some(runtime) = runtime else { return; };
 
+        // Stop visualization immediately
+        self.stop_visualization();
+
         let tx = self.action_tx.clone();
         let mut client = client.clone();
 
@@ -903,10 +911,12 @@ impl ExperimentDesignerPanel {
                     self.execution_state.update_from_status(state, current_event, total_events);
                 }
                 ExecutionAction::Completed => {
+                    self.stop_visualization();
                     self.execution_state.reset();
                     self.set_status("Execution completed");
                 }
                 ExecutionAction::Error(e) => {
+                    self.stop_visualization();
                     self.last_error = Some(e);
                     self.execution_state.reset();
                 }

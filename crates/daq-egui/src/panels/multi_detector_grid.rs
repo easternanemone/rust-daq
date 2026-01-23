@@ -100,6 +100,11 @@ impl MultiDetectorGrid {
         self.panels.len()
     }
 
+    /// Get a reference to the panels.
+    pub fn panels(&self) -> &[DetectorPanel] {
+        &self.panels
+    }
+
     /// Show the grid layout using egui.
     pub fn show(&mut self, ui: &mut Ui) {
         if self.panels.is_empty() {
