@@ -10,11 +10,17 @@ use crate::widgets::{offline_notice, OfflineContext};
 /// Pending action for run history panel
 enum PendingAction {
     Refresh,
+    SaveAnnotation { file_path: String },
+    LoadAnnotation { file_path: String },
 }
 
 /// Result from an async action
 enum ActionResult {
     Refresh(Result<Vec<daq_proto::daq::AcquisitionSummary>, String>),
+    #[cfg(feature = "storage_hdf5")]
+    SaveAnnotation(Result<(), String>),
+    #[cfg(feature = "storage_hdf5")]
+    LoadAnnotation(Result<Option<daq_storage::RunAnnotation>, String>),
 }
 
 /// Run history panel state
@@ -39,6 +45,12 @@ pub struct RunHistoryPanel {
     action_rx: mpsc::Receiver<ActionResult>,
     /// Number of in-flight async actions
     action_in_flight: usize,
+    /// Annotation notes text
+    annotation_notes: String,
+    /// Annotation tags (comma-separated)
+    annotation_tags: String,
+    /// Annotation status message
+    annotation_status: Option<String>,
 }
 
 impl Default for RunHistoryPanel {
@@ -55,6 +67,9 @@ impl Default for RunHistoryPanel {
             action_tx,
             action_rx,
             action_in_flight: 0,
+            annotation_notes: String::new(),
+            annotation_tags: String::new(),
+            annotation_status: None,
         }
     }
 }
@@ -76,6 +91,30 @@ impl RunHistoryPanel {
                                 self.error = None;
                             }
                             Err(e) => self.error = Some(e),
+                        },
+                        #[cfg(feature = "storage_hdf5")]
+                        ActionResult::SaveAnnotation(result) => match result {
+                            Ok(()) => {
+                                self.annotation_status = Some("Annotations saved ✓".to_string())
+                            }
+                            Err(e) => self.annotation_status = Some(format!("Error: {}", e)),
+                        },
+                        #[cfg(feature = "storage_hdf5")]
+                        ActionResult::LoadAnnotation(result) => match result {
+                            Ok(Some(annotation)) => {
+                                self.annotation_notes = annotation.notes;
+                                self.annotation_tags = annotation.tags.join(", ");
+                                self.annotation_status = None;
+                            }
+                            Ok(None) => {
+                                // No existing annotations
+                                self.annotation_notes.clear();
+                                self.annotation_tags.clear();
+                                self.annotation_status = None;
+                            }
+                            Err(e) => {
+                                self.annotation_status = Some(format!("Load error: {}", e));
+                            }
                         },
                     }
                     updated = true;
@@ -281,6 +320,55 @@ impl RunHistoryPanel {
                 // TODO: Display run metadata when AcquisitionSummary includes metadata field
                 // This will be populated from HDF5 attributes in future enhancement
 
+                ui.separator();
+                ui.heading("Annotations");
+
+                // Trigger load if annotations are empty (indicates new selection or not loaded)
+                #[cfg(feature = "storage_hdf5")]
+                if self.annotation_notes.is_empty() && self.annotation_tags.is_empty() {
+                    // Check if we need to load annotations for this selection
+                    // Only trigger if not already loading
+                    if self
+                        .pending_action
+                        .as_ref()
+                        .map_or(true, |a| !matches!(a, PendingAction::LoadAnnotation { .. }))
+                    {
+                        self.pending_action = Some(PendingAction::LoadAnnotation {
+                            file_path: acq.file_path.clone(),
+                        });
+                    }
+                }
+
+                ui.label("Notes:");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.annotation_notes)
+                        .desired_width(f32::INFINITY)
+                );
+
+                ui.horizontal(|ui| {
+                    ui.label("Tags (comma-separated):");
+                    ui.text_edit_singleline(&mut self.annotation_tags);
+                });
+
+                #[cfg(feature = "storage_hdf5")]
+                if ui.button("💾 Save Annotations").clicked() {
+                    self.pending_action = Some(PendingAction::SaveAnnotation {
+                        file_path: acq.file_path.clone(),
+                    });
+                }
+
+                #[cfg(not(feature = "storage_hdf5"))]
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "Annotation feature requires storage_hdf5 feature flag",
+                );
+
+                if let Some(status) = &self.annotation_status {
+                    ui.label(status);
+                }
+
+                ui.separator();
+
                 ui.horizontal(|ui| {
                     if ui.button("Copy Run UID").clicked() {
                         ui.ctx().copy_text(acq.acquisition_id.clone());
@@ -299,6 +387,14 @@ impl RunHistoryPanel {
         if let Some(action) = self.pending_action.take() {
             match action {
                 PendingAction::Refresh => self.refresh(client, runtime),
+                PendingAction::SaveAnnotation { file_path: _ } => {
+                    // TODO: Implement annotation saving when storage_hdf5 feature is complete
+                    self.annotation_status = Some("Annotation saving not yet implemented".to_string());
+                }
+                PendingAction::LoadAnnotation { file_path: _ } => {
+                    // TODO: Implement annotation loading when storage_hdf5 feature is complete
+                    self.annotation_status = Some("Annotation loading not yet implemented".to_string());
+                }
             }
         }
     }

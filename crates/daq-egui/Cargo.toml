@@ -82,6 +82,10 @@ daq-core = { path = "../daq-core", optional = true }
 daq-driver-pvcam = { path = "../daq-driver-pvcam", optional = true }
 rfd = "0.17.2"
 
+# HDF5 storage for run comparison and annotation (optional)
+daq-storage = { path = "../daq-storage", optional = true }
+hdf5 = { package = "hdf5-metno", version = "0.11.0", optional = true }
+
 [features]
 default = ["standalone"]
 # Note: dark-light temporarily removed due to ashpd/zbus version conflict (2025-01-17)
@@ -95,6 +99,9 @@ rerun_viewer = ["dep:rerun", "dep:mimalloc", "dep:bytemuck", "dep:egui_dock", "d
 pvcam = ["dep:daq-core", "dep:daq-driver-pvcam"]
 pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]
 pvcam_hardware = ["pvcam_sdk"]
+
+# HDF5 storage support for run comparison and annotation
+storage_hdf5 = ["dep:hdf5", "dep:daq-storage", "daq-storage/storage_hdf5"]
 
 [dev-dependencies]
 tempfile = "3"
