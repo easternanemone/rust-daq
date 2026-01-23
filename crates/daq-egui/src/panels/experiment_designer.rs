@@ -82,6 +82,10 @@ pub struct ExperimentDesignerPanel {
     code_preview: CodePreviewPanel,
     /// Graph version counter (incremented on each edit)
     graph_version: u64,
+    /// Cached device IDs for dropdown selectors
+    cached_device_ids: Vec<String>,
+    /// Last time device list was fetched
+    last_device_fetch: Option<std::time::Instant>,
 }
 
 impl Default for ExperimentDesignerPanel {
@@ -114,6 +118,8 @@ impl Default for ExperimentDesignerPanel {
             script_editor: None,
             code_preview: CodePreviewPanel::new(),
             graph_version: 0,
+            cached_device_ids: Vec::new(),
+            last_device_fetch: None,
         }
     }
 }
@@ -166,6 +172,15 @@ impl ExperimentDesignerPanel {
             && self.execution_state.last_update.elapsed() > std::time::Duration::from_millis(500)
         {
             self.poll_engine_status(client_clone.as_ref(), runtime);
+        }
+
+        // Fetch device list periodically (every 10s) for dropdown selectors
+        let should_fetch_devices = self
+            .last_device_fetch
+            .map(|t| t.elapsed() > std::time::Duration::from_secs(10))
+            .unwrap_or(true);
+        if should_fetch_devices {
+            self.update_device_list(client_clone.as_ref(), runtime);
         }
 
         // Handle keyboard shortcuts FIRST (before any UI that might consume keys)
@@ -351,7 +366,7 @@ impl ExperimentDesignerPanel {
                 self.show_validation_status_bar(ui);
             });
 
-        // Three-panel layout: Palette | Canvas | Inspector
+        // Two-panel layout: Palette | Canvas (properties now inline in nodes)
         egui::SidePanel::left("node_palette_panel")
             .resizable(true)
             .default_width(180.0)
@@ -364,18 +379,6 @@ impl ExperimentDesignerPanel {
                 }
             });
 
-        // Clone again for right panel
-        let client_for_panel = client_clone.clone();
-
-        egui::SidePanel::right("property_inspector_panel")
-            .resizable(true)
-            .default_width(200.0)
-            .min_width(150.0)
-            .max_width(400.0)
-            .show_inside(ui, |ui| {
-                self.show_property_inspector(ui, client_for_panel.as_ref(), runtime);
-            });
-
         // Main canvas area
         egui::CentralPanel::default().show_inside(ui, |ui| {
             // Sync execution state to viewer for node highlighting
@@ -384,6 +387,9 @@ impl ExperimentDesignerPanel {
             } else {
                 self.viewer.execution_state = None;
             }
+
+            // Sync device list to viewer for dropdown selectors
+            self.viewer.device_ids = self.cached_device_ids.clone();
 
             // Capture canvas rect BEFORE widget consumes space (for drop detection)
             let canvas_rect = ui.available_rect_before_wrap();
@@ -1167,6 +1173,34 @@ impl ExperimentDesignerPanel {
 
         // Mark that we've initiated a poll (update timestamp to avoid rapid polling)
         self.execution_state.last_update = std::time::Instant::now();
+    }
+
+    /// Update the cached device list from daemon
+    fn update_device_list(&mut self, client: Option<&DaqClient>, runtime: Option<&Runtime>) {
+        let Some(client) = client else {
+            // No client, clear device list
+            self.cached_device_ids.clear();
+            self.last_device_fetch = Some(std::time::Instant::now());
+            return;
+        };
+        let Some(runtime) = runtime else { return; };
+
+        // Spawn async task to fetch devices
+        let mut client = client.clone();
+
+        // Use a channel to get results back (simple approach for egui)
+        // For now, just do a blocking fetch since it's infrequent
+        let devices_result = runtime.block_on(async move { client.list_devices().await });
+
+        match devices_result {
+            Ok(devices) => {
+                self.cached_device_ids = devices.into_iter().map(|d| d.id).collect();
+            }
+            Err(_) => {
+                // Keep existing list on error
+            }
+        }
+        self.last_device_fetch = Some(std::time::Instant::now());
     }
 
     // ========== Runtime Parameter Editing ==========
