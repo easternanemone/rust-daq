@@ -4,174 +4,104 @@
 // by analyzing the power response vs rotation angle.
 //
 // Theory:
-// - Linear Polarizer: cos^2(theta) -> 2 peaks per 360 degrees
-// - Half-Wave Plate: cos^2(2*theta) -> 4 peaks per 360 degrees
+// - Linear Polarizer: cos^2(theta) -> 2 peaks per 360 degrees (180° period)
+// - Half-Wave Plate: cos^2(2*theta) -> 4 peaks per 360 degrees (90° period)
 // - Quarter-Wave Plate: Complex elliptical pattern -> 2 peaks, phase shifted
 //
+// Safety: Uses with_shutter_open() to GUARANTEE shutter closure on exit/error
+//
 // User confirmed: Linear polarizer is directly in front of power meter
+
+// Configuration
+let ELLIPTEC_PORT = "/dev/ttyUSB1";
+let NEWPORT_PORT = "/dev/ttyS0";
+let MAITAI_PORT = "/dev/ttyUSB5";
+
+let START_ANGLE = 0.0;
+let END_ANGLE = 360.0;
+let STEP_SIZE = 5.0;
+let NUM_STEPS = ((END_ANGLE - START_ANGLE) / STEP_SIZE).to_int() + 1;  // 73 steps (0 to 360 inclusive)
+let SAMPLES_PER_POINT = 3;
+let SETTLE_TIME = 0.5;
 
 print("=====================================================");
 print("  POLARIZATION ELEMENT CHARACTERIZATION");
 print("  Time: " + timestamp());
 print("=====================================================");
 print("");
-print("This experiment will scan each rotator independently");
-print("to identify which element is which based on the");
-print("angular frequency of the power response.");
+print("This experiment scans each rotator independently to");
+print("identify HWP, QWP, or Linear Polarizer by analyzing");
+print("the angular frequency of the power response.");
+print("");
+print("Configuration:");
+print("  Step size: " + STEP_SIZE + " degrees");
+print("  Total steps per rotator: " + NUM_STEPS);
+print("  Samples per point: " + SAMPLES_PER_POINT);
 print("");
 
-// Configuration
-let ELLIPTEC_PORT = "/dev/ttyUSB0";
-let NEWPORT_PORT = "/dev/ttyS0";
-
-// All three Elliptec addresses to characterize
-let ADDRESSES = ["2", "3", "8"];
-let ROTATOR_NAMES = ["rotator_2", "rotator_3", "rotator_8"];
-
-// Step 1: Initialize power meter
-print("[1/4] Initializing Newport 1830-C power meter...");
+// Step 1: Initialize hardware
+print("[1/7] Initializing hardware...");
 let power_meter = create_newport_1830c(NEWPORT_PORT);
-let initial_power = power_meter.read();
-print("  Initial power reading: " + initial_power + " W");
-print("  [OK] Power meter initialized");
-print("");
-
-// Step 2: Initialize all rotators
-print("[2/4] Initializing all Elliptec rotators...");
+let laser = create_maitai(MAITAI_PORT);
 let rotator_2 = create_elliptec(ELLIPTEC_PORT, "2");
 let rotator_3 = create_elliptec(ELLIPTEC_PORT, "3");
 let rotator_8 = create_elliptec(ELLIPTEC_PORT, "8");
+print("  [OK] All devices initialized");
+print("");
 
-print("  Homing all rotators...");
+// Step 2: Zero power meter with shutter closed
+print("[2/7] Zeroing power meter (shutter must be closed)...");
+laser.close();
+sleep(0.5);
+if laser.is_open() {
+    print("  WARNING: Shutter still open, waiting...");
+    sleep(1.0);
+}
+power_meter.zero();
+sleep(0.5);
+let zero_check = power_meter.read();
+print("  Zero check reading: " + zero_check + " W");
+print("  [OK] Power meter zeroed");
+print("");
+
+// Step 3: Home all rotators
+print("[3/7] Homing all rotators...");
 rotator_2.home();
 sleep(1.5);
 rotator_3.home();
 sleep(1.5);
 rotator_8.home();
 sleep(1.5);
-
-print("  Positions: R2=" + rotator_2.position() + " deg, R3=" + rotator_3.position() + " deg, R8=" + rotator_8.position() + " deg");
-print("  [OK] All rotators initialized and homed");
+print("  Positions: R2=" + rotator_2.position() + " deg");
+print("             R3=" + rotator_3.position() + " deg");
+print("             R8=" + rotator_8.position() + " deg");
+print("  [OK] All rotators homed at 0 degrees");
 print("");
 
-// Step 3: Characterization scans (no laser - using ambient light or pre-existing beam)
-print("[3/4] Running characterization scans...");
-print("  NOTE: Using existing beam condition");
-print("  (Laser control bypassed for initial characterization)");
+// Step 4: Prepare HDF5 file for data storage
+let output_file = "polarization_characterization_" + timestamp() + ".h5";
+print("[4/7] Creating HDF5 output file: " + output_file);
+let hdf5 = create_hdf5(output_file);
+hdf5.write_attr("experiment", "polarization_element_characterization");
+hdf5.write_attr("timestamp", timestamp_iso());
+hdf5.write_attr_f64("step_size_deg", STEP_SIZE);
+hdf5.write_attr_i64("samples_per_point", SAMPLES_PER_POINT);
+hdf5.write_attr_f64("settle_time_s", SETTLE_TIME);
+hdf5.create_group("rotator_2");
+hdf5.create_group("rotator_3");
+hdf5.create_group("rotator_8");
+print("  [OK] HDF5 file created");
 print("");
-
-// Scan parameters
-let STEP_SIZE = 15.0;  // degrees
-let NUM_STEPS = 24;    // 0 to 360 degrees
-let SETTLE_TIME = 0.5; // seconds after each move
-let NUM_SAMPLES = 3;   // readings to average
-
-// Results storage
-let all_results = [];
-
-// Function to scan a single rotator
-fn scan_rotator(rotator, rotator_name, power_meter, angles, settle_time, num_samples) {
-    let results = [];
-    print("  Scanning " + rotator_name + "...");
-
-    for angle in angles {
-        rotator.move_abs(angle);
-        sleep(settle_time);
-
-        // Average multiple readings
-        let sum = 0.0;
-        for i in 0..num_samples {
-            sum += power_meter.read();
-            sleep(0.05);
-        }
-        let avg_power = sum / num_samples;
-        results.push([angle, avg_power]);
-    }
-
-    results
-}
 
 // Generate angle list
 let angles = [];
-for i in 0..NUM_STEPS + 1 {
+for i in 0..NUM_STEPS {
     angles.push(i * STEP_SIZE);
 }
 
-// Scan rotator 2 (fix others at 0)
-print("  --- Scanning Rotator 2 (R3=0, R8=0) ---");
-rotator_3.move_abs(0.0);
-rotator_8.move_abs(0.0);
-sleep(1.0);
-
-let results_2 = [];
-for angle in angles {
-    rotator_2.move_abs(angle);
-    sleep(SETTLE_TIME);
-    let sum = 0.0;
-    for i in 0..NUM_SAMPLES {
-        sum += power_meter.read();
-        sleep(0.05);
-    }
-    let avg = sum / NUM_SAMPLES;
-    results_2.push([angle, avg]);
-    print("    R2=" + angle + " deg: " + avg + " W");
-}
-all_results.push(["rotator_2", results_2]);
-
-// Return rotator 2 to 0, scan rotator 3
-print("");
-print("  --- Scanning Rotator 3 (R2=0, R8=0) ---");
-rotator_2.move_abs(0.0);
-rotator_8.move_abs(0.0);
-sleep(1.0);
-
-let results_3 = [];
-for angle in angles {
-    rotator_3.move_abs(angle);
-    sleep(SETTLE_TIME);
-    let sum = 0.0;
-    for i in 0..NUM_SAMPLES {
-        sum += power_meter.read();
-        sleep(0.05);
-    }
-    let avg = sum / NUM_SAMPLES;
-    results_3.push([angle, avg]);
-    print("    R3=" + angle + " deg: " + avg + " W");
-}
-all_results.push(["rotator_3", results_3]);
-
-// Return rotator 3 to 0, scan rotator 8
-print("");
-print("  --- Scanning Rotator 8 (R2=0, R3=0) ---");
-rotator_2.move_abs(0.0);
-rotator_3.move_abs(0.0);
-sleep(1.0);
-
-let results_8 = [];
-for angle in angles {
-    rotator_8.move_abs(angle);
-    sleep(SETTLE_TIME);
-    let sum = 0.0;
-    for i in 0..NUM_SAMPLES {
-        sum += power_meter.read();
-        sleep(0.05);
-    }
-    let avg = sum / NUM_SAMPLES;
-    results_8.push([angle, avg]);
-    print("    R8=" + angle + " deg: " + avg + " W");
-}
-all_results.push(["rotator_8", results_8]);
-
-print("");
-print("  [OK] All characterization scans complete");
-print("");
-
-// Step 4: Analysis (simplified - look at variations)
-print("[4/4] Analyzing results...");
-print("");
-
-// Helper to find min/max and count peaks
-fn analyze_scan(results, name) {
+// Function to analyze scan results and identify element type
+fn analyze_element(results, name) {
+    // Find min/max power
     let min_power = 1e10;
     let max_power = -1e10;
     let min_angle = 0.0;
@@ -190,45 +120,249 @@ fn analyze_scan(results, name) {
         }
     }
 
-    let contrast = (max_power - min_power) / (max_power + min_power);
+    // Calculate contrast
+    let contrast = if max_power + min_power > 0.0 {
+        (max_power - min_power) / (max_power + min_power)
+    } else {
+        0.0
+    };
 
-    print("  " + name + ":");
+    // Count peaks using threshold crossing (rising edge)
+    let threshold = (max_power + min_power) / 2.0;
+    let peak_count = 0;
+    let was_below = true;  // Start assuming below threshold
+
+    for point in results {
+        let is_above = point[1] > threshold;
+        if is_above && was_below {
+            peak_count += 1;
+        }
+        was_below = !is_above;
+    }
+
+    // Identify element based on peaks and contrast
+    let element = if peak_count >= 4 {
+        "HWP (Half-Wave Plate)"
+    } else if peak_count == 2 && contrast > 0.7 {
+        "Linear Polarizer"
+    } else if peak_count == 2 {
+        "QWP (Quarter-Wave Plate)"
+    } else if peak_count == 1 {
+        "Possible QWP or misaligned element"
+    } else {
+        "Unknown (peaks=" + peak_count + ")"
+    };
+
+    print("");
+    print("  " + name + " Analysis:");
     print("    Min: " + min_power + " W at " + min_angle + " deg");
     print("    Max: " + max_power + " W at " + max_angle + " deg");
     print("    Contrast: " + (contrast * 100.0) + " %");
-    print("");
+    print("    Peaks detected: " + peak_count);
+    print("    --> Identified as: " + element);
 
-    [min_power, max_power, min_angle, max_angle, contrast]
+    // Return analysis results as map
+    #{
+        name: name,
+        element: element,
+        min_power: min_power,
+        max_power: max_power,
+        min_angle: min_angle,
+        max_angle: max_angle,
+        contrast: contrast,
+        peak_count: peak_count
+    }
 }
 
-let analysis_2 = analyze_scan(results_2, "Rotator 2");
-let analysis_3 = analyze_scan(results_3, "Rotator 3");
-let analysis_8 = analyze_scan(results_8, "Rotator 8");
-
-// Identification logic
-print("  Identification hints:");
-print("  - Highest contrast element closest to detector = Linear Polarizer");
-print("  - 4 peaks/360deg (45deg period) = Half-Wave Plate");
-print("  - 2 peaks/360deg (90deg period) = Linear Polarizer or QWP");
+// Step 5: Run characterization inside shutter safety wrapper
+print("[5/7] Opening shutter and running characterization...");
+print("  SAFETY: Using with_shutter_open() - shutter will close on any error");
 print("");
 
-// Return all rotators to home
-print("[CLEANUP] Homing all rotators...");
+let all_results = with_shutter_open(laser, || {
+    let initial_power = power_meter.read();
+    print("  Shutter open, initial power: " + initial_power + " W");
+    print("");
+
+    // -----------------------------------------------------------------
+    // Scan Rotator 2 (others at 0 degrees)
+    // -----------------------------------------------------------------
+    print("  --- Scanning Rotator 2 (R3=0, R8=0) ---");
+    rotator_3.move_abs(0.0);
+    rotator_8.move_abs(0.0);
+    sleep(0.5);
+
+    let results_2 = [];
+    for i in 0..NUM_STEPS {
+        let angle = i * STEP_SIZE;
+        rotator_2.move_abs(angle);
+        rotator_2.wait_settled();
+        sleep(SETTLE_TIME);
+
+        // Average multiple readings
+        let sum = 0.0;
+        for s in 0..SAMPLES_PER_POINT {
+            sum += power_meter.read();
+            sleep(0.05);
+        }
+        let power = sum / SAMPLES_PER_POINT;
+        results_2.push([angle, power]);
+
+        if i % 18 == 0 {  // Every 90 degrees
+            print("    R2=" + angle + " deg: " + power + " W");
+        }
+    }
+    rotator_2.move_abs(0.0);
+    sleep(0.5);
+
+    // -----------------------------------------------------------------
+    // Scan Rotator 3 (others at 0 degrees)
+    // -----------------------------------------------------------------
+    print("");
+    print("  --- Scanning Rotator 3 (R2=0, R8=0) ---");
+    rotator_2.move_abs(0.0);
+    rotator_8.move_abs(0.0);
+    sleep(0.5);
+
+    let results_3 = [];
+    for i in 0..NUM_STEPS {
+        let angle = i * STEP_SIZE;
+        rotator_3.move_abs(angle);
+        rotator_3.wait_settled();
+        sleep(SETTLE_TIME);
+
+        let sum = 0.0;
+        for s in 0..SAMPLES_PER_POINT {
+            sum += power_meter.read();
+            sleep(0.05);
+        }
+        let power = sum / SAMPLES_PER_POINT;
+        results_3.push([angle, power]);
+
+        if i % 18 == 0 {
+            print("    R3=" + angle + " deg: " + power + " W");
+        }
+    }
+    rotator_3.move_abs(0.0);
+    sleep(0.5);
+
+    // -----------------------------------------------------------------
+    // Scan Rotator 8 (others at 0 degrees)
+    // -----------------------------------------------------------------
+    print("");
+    print("  --- Scanning Rotator 8 (R2=0, R3=0) ---");
+    rotator_2.move_abs(0.0);
+    rotator_3.move_abs(0.0);
+    sleep(0.5);
+
+    let results_8 = [];
+    for i in 0..NUM_STEPS {
+        let angle = i * STEP_SIZE;
+        rotator_8.move_abs(angle);
+        rotator_8.wait_settled();
+        sleep(SETTLE_TIME);
+
+        let sum = 0.0;
+        for s in 0..SAMPLES_PER_POINT {
+            sum += power_meter.read();
+            sleep(0.05);
+        }
+        let power = sum / SAMPLES_PER_POINT;
+        results_8.push([angle, power]);
+
+        if i % 18 == 0 {
+            print("    R8=" + angle + " deg: " + power + " W");
+        }
+    }
+    rotator_8.move_abs(0.0);
+    sleep(0.5);
+
+    print("");
+    print("  [OK] All characterization scans complete");
+
+    // Return results from closure
+    [results_2, results_3, results_8]
+});
+
+// Shutter is now GUARANTEED closed by with_shutter_open()
+print("");
+print("  [OK] Shutter closed safely");
+print("");
+
+// Step 6: Home all rotators
+print("[6/7] Homing all rotators...");
 rotator_2.home();
 sleep(1.5);
 rotator_3.home();
 sleep(1.5);
 rotator_8.home();
 sleep(1.5);
-
+print("  [OK] All rotators homed");
 print("");
+
+// Step 7: Analyze and save results
+print("[7/7] Analyzing results and saving to HDF5...");
+
+let analysis_2 = analyze_element(all_results[0], "Rotator 2");
+let analysis_3 = analyze_element(all_results[1], "Rotator 3");
+let analysis_8 = analyze_element(all_results[2], "Rotator 8");
+
+// Save raw data to HDF5
+print("");
+print("  Saving data to HDF5...");
+hdf5.write_array_2d("rotator_2/data", all_results[0]);
+hdf5.write_array_2d("rotator_3/data", all_results[1]);
+hdf5.write_array_2d("rotator_8/data", all_results[2]);
+
+// Save analysis metadata
+hdf5.write_attr("rotator_2/element", analysis_2.element);
+hdf5.write_attr_f64("rotator_2/contrast", analysis_2.contrast);
+hdf5.write_attr_i64("rotator_2/peak_count", analysis_2.peak_count);
+hdf5.write_attr_f64("rotator_2/min_power_W", analysis_2.min_power);
+hdf5.write_attr_f64("rotator_2/max_power_W", analysis_2.max_power);
+
+hdf5.write_attr("rotator_3/element", analysis_3.element);
+hdf5.write_attr_f64("rotator_3/contrast", analysis_3.contrast);
+hdf5.write_attr_i64("rotator_3/peak_count", analysis_3.peak_count);
+hdf5.write_attr_f64("rotator_3/min_power_W", analysis_3.min_power);
+hdf5.write_attr_f64("rotator_3/max_power_W", analysis_3.max_power);
+
+hdf5.write_attr("rotator_8/element", analysis_8.element);
+hdf5.write_attr_f64("rotator_8/contrast", analysis_8.contrast);
+hdf5.write_attr_i64("rotator_8/peak_count", analysis_8.peak_count);
+hdf5.write_attr_f64("rotator_8/min_power_W", analysis_8.min_power);
+hdf5.write_attr_f64("rotator_8/max_power_W", analysis_8.max_power);
+
+hdf5.close();
+print("  [OK] Data saved to: " + output_file);
+print("");
+
+// Summary
 print("=====================================================");
-print("  CHARACTERIZATION COMPLETE");
-print("  Examine the data to identify:");
-print("  - Which rotator shows 4 peaks/360deg (HWP)");
-print("  - Which rotator shows highest contrast (Polarizer)");
-print("  - Which rotator shows intermediate behavior (QWP)");
+print("  ELEMENT IDENTIFICATION SUMMARY");
+print("=====================================================");
+print("");
+print("  Rotator 2: " + analysis_2.element);
+print("             Contrast=" + (analysis_2.contrast * 100.0) + "%, Peaks=" + analysis_2.peak_count);
+print("");
+print("  Rotator 3: " + analysis_3.element);
+print("             Contrast=" + (analysis_3.contrast * 100.0) + "%, Peaks=" + analysis_3.peak_count);
+print("");
+print("  Rotator 8: " + analysis_8.element);
+print("             Contrast=" + (analysis_8.contrast * 100.0) + "%, Peaks=" + analysis_8.peak_count);
+print("");
+print("  Output file: " + output_file);
+print("");
+print("  Identification guide:");
+print("  - 4 peaks (90 deg period): Half-Wave Plate (HWP)");
+print("  - 2 peaks + high contrast: Linear Polarizer");
+print("  - 2 peaks + lower contrast: Quarter-Wave Plate (QWP)");
 print("=====================================================");
 
-// Return all results for external analysis
-all_results
+// Return analysis for programmatic use
+#{
+    rotator_2: analysis_2,
+    rotator_3: analysis_3,
+    rotator_8: analysis_8,
+    output_file: output_file
+}

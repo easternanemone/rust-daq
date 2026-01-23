@@ -36,7 +36,7 @@
 //! ```
 
 use chrono::Utc;
-use rhai::{Dynamic, Engine, EvalAltResult, Position};
+use rhai::{Dynamic, Engine, EvalAltResult, FnPtr, NativeCallContext, Position};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::{Handle, RuntimeFlavor};
@@ -44,7 +44,7 @@ use tokio::sync::broadcast;
 use tokio::task::block_in_place;
 
 use daq_core::core::Measurement;
-use daq_hardware::capabilities::{Camera, Movable};
+use daq_hardware::capabilities::{Camera, Movable, Readable, ShutterControl};
 
 // Helper to execute async hardware calls from synchronous Rhai functions without
 // risking deadlock on a current-thread runtime. Returns a Rhai-compatible error
@@ -197,6 +197,82 @@ pub struct CameraHandle {
     pub driver: Arc<dyn Camera>,
     /// Optional data sender for broadcasting measurements to RingBuffer/gRPC clients
     pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
+}
+
+/// Handle to a readable device (power meters, sensors) for Rhai scripts
+///
+/// Wraps any device implementing `Readable` trait.
+/// Provides synchronous methods for scalar value acquisition.
+///
+/// # Script Example
+/// ```rhai
+/// let power = power_meter.read();
+/// print("Power: " + power + " W");
+///
+/// let avg = power_meter.read_averaged(10);
+/// print("Averaged power: " + avg + " W");
+/// ```
+#[derive(Clone)]
+pub struct ReadableHandle {
+    /// Hardware driver implementing the Readable trait.
+    pub driver: Arc<dyn Readable>,
+    /// Optional data sender for broadcasting measurements
+    pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
+}
+
+/// Newport 1830-C specific handle with zeroing capability
+///
+/// This handle extends ReadableHandle with Newport-specific methods like zero().
+#[cfg(feature = "hardware_factories")]
+#[derive(Clone)]
+pub struct Newport1830CHandle {
+    /// Newport 1830-C driver with direct access to all methods
+    pub driver: Arc<daq_driver_newport::Newport1830CDriver>,
+    /// Optional data sender for broadcasting measurements
+    pub data_tx: Option<Arc<broadcast::Sender<Measurement>>>,
+}
+
+/// Handle to a shutter device (laser shutters) for Rhai scripts
+///
+/// Wraps any device implementing `ShutterControl` trait.
+/// Provides synchronous methods for shutter control with safety guarantees.
+///
+/// # Script Example
+/// ```rhai
+/// laser.open();
+/// // ... do work with beam ...
+/// laser.close();
+///
+/// // Or use the safety wrapper:
+/// with_shutter_open(laser, || {
+///     // Beam is available here
+///     // Shutter closes automatically, even on error
+/// });
+/// ```
+#[derive(Clone)]
+pub struct ShutterHandle {
+    /// Hardware driver implementing the ShutterControl trait.
+    pub driver: Arc<dyn ShutterControl>,
+}
+
+/// Handle to an HDF5 file for data storage in Rhai scripts
+///
+/// Provides methods to write datasets and attributes to HDF5 files.
+///
+/// # Script Example
+/// ```rhai
+/// let hdf5 = create_hdf5("experiment_data.h5");
+/// hdf5.write_attr("experiment", "polarization_scan");
+/// hdf5.write_array("power_data", data_array);
+/// hdf5.close();
+/// ```
+#[cfg(feature = "hdf5_scripting")]
+#[derive(Clone)]
+pub struct Hdf5Handle {
+    /// HDF5 file handle protected by mutex
+    file: Arc<tokio::sync::Mutex<Option<hdf5::File>>>,
+    /// File path for reference
+    path: std::path::PathBuf,
 }
 
 // =============================================================================
@@ -482,6 +558,564 @@ pub fn register_hardware(engine: &mut Engine) {
             (None, None) => Dynamic::from(Vec::<Dynamic>::new()),
         }
     });
+
+    // =========================================================================
+    // Additional Stage Methods
+    // =========================================================================
+
+    // stage.home() - Home the stage to mechanical zero
+    engine.register_fn(
+        "home",
+        move |stage: &mut StageHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            // Move to position 0.0 as a generic home operation
+            // Note: For devices with true homing (like ELL14), use the specific driver
+            run_blocking("Stage home", stage.driver.move_abs(0.0))?;
+            run_blocking("Stage wait_settled", stage.driver.wait_settled())?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // =========================================================================
+    // Readable Methods - Power Meters and Sensors
+    // =========================================================================
+
+    engine.register_type_with_name::<ReadableHandle>("PowerMeter");
+
+    // power_meter.read() - Read current value
+    engine.register_fn(
+        "read",
+        move |readable: &mut ReadableHandle| -> Result<f64, Box<EvalAltResult>> {
+            run_blocking("Readable read", readable.driver.read())
+        },
+    );
+
+    // power_meter.read_averaged(samples) - Average multiple readings
+    engine.register_fn(
+        "read_averaged",
+        move |readable: &mut ReadableHandle, samples: i64| -> Result<f64, Box<EvalAltResult>> {
+            if samples < 1 {
+                return Err(Box::new(EvalAltResult::ErrorRuntime(
+                    "read_averaged: samples must be >= 1".into(),
+                    Position::NONE,
+                )));
+            }
+
+            let mut sum = 0.0;
+            for _ in 0..samples {
+                let val = run_blocking("Readable read", readable.driver.read())?;
+                sum += val;
+                // Small delay between samples
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(sum / samples as f64)
+        },
+    );
+
+    // =========================================================================
+    // Shutter Methods - Laser Shutter Control
+    // =========================================================================
+
+    engine.register_type_with_name::<ShutterHandle>("Shutter");
+
+    // shutter.open() - Open the shutter
+    engine.register_fn(
+        "open",
+        move |shutter: &mut ShutterHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("Shutter open", shutter.driver.open_shutter())?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // shutter.close() - Close the shutter
+    engine.register_fn(
+        "close",
+        move |shutter: &mut ShutterHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("Shutter close", shutter.driver.close_shutter())?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // shutter.is_open() - Query shutter state
+    engine.register_fn(
+        "is_open",
+        move |shutter: &mut ShutterHandle| -> Result<bool, Box<EvalAltResult>> {
+            run_blocking("Shutter is_open", shutter.driver.is_shutter_open())
+        },
+    );
+
+    // =========================================================================
+    // Global Utility Functions
+    // =========================================================================
+
+    // timestamp() - Get current ISO8601 timestamp (for filenames, logging)
+    engine.register_fn("timestamp", || -> String {
+        Utc::now().format("%Y%m%d_%H%M%S").to_string()
+    });
+
+    // timestamp_iso() - Get full ISO8601 timestamp with timezone
+    engine.register_fn("timestamp_iso", || -> String {
+        Utc::now().to_rfc3339()
+    });
+
+    // =========================================================================
+    // Shutter Safety Wrapper
+    // =========================================================================
+
+    // with_shutter_open(shutter, callback) - Execute callback with shutter open
+    // GUARANTEES shutter closure even on error (Rust's Drop semantics)
+    engine.register_fn(
+        "with_shutter_open",
+        move |context: NativeCallContext,
+              shutter: ShutterHandle,
+              callback: FnPtr|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            // Open shutter
+            run_blocking("Shutter open", shutter.driver.open_shutter())?;
+            tracing::info!("with_shutter_open: Shutter opened");
+
+            // Execute callback, capturing result or error
+            let result = callback.call_within_context(&context, ());
+
+            // ALWAYS close shutter - even on error
+            let close_result = run_blocking("Shutter close", shutter.driver.close_shutter());
+
+            match close_result {
+                Ok(()) => tracing::info!("with_shutter_open: Shutter closed successfully"),
+                Err(ref e) => tracing::error!("with_shutter_open: Failed to close shutter: {}", e),
+            }
+
+            // Handle results - prioritize callback error if both fail
+            match (result, close_result) {
+                (Ok(val), Ok(())) => Ok(val),
+                (Err(e), Ok(())) => Err(e), // Callback failed, shutter closed ok
+                (Ok(_), Err(e)) => Err(e),  // Callback ok, shutter close failed
+                (Err(e1), Err(_)) => Err(e1), // Both failed, report callback error
+            }
+        },
+    );
+
+    // Register hardware factory functions (feature-gated)
+    #[cfg(feature = "hardware_factories")]
+    register_hardware_factories(engine);
+
+    // Register HDF5 functions (feature-gated)
+    #[cfg(feature = "hdf5_scripting")]
+    register_hdf5_functions(engine);
+}
+
+// =============================================================================
+// Hardware Factory Functions (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "hardware_factories")]
+fn register_hardware_factories(engine: &mut Engine) {
+    use daq_driver_newport::Newport1830CDriver;
+    use daq_driver_spectra_physics::MaiTaiDriver;
+    use daq_driver_thorlabs::Ell14Driver;
+
+    // =========================================================================
+    // ELL14 Rotator Factory
+    // =========================================================================
+
+    // create_elliptec(port, address) - Create ELL14 rotator driver
+    engine.register_fn(
+        "create_elliptec",
+        |port: &str, address: &str| -> Result<StageHandle, Box<EvalAltResult>> {
+            let port = port.to_string();
+            let address = address.to_string();
+
+            let driver = run_blocking("ELL14 create", async move {
+                // Use the shared port infrastructure from daq-driver-thorlabs
+                use daq_driver_thorlabs::shared_ports::get_or_open_port;
+                let shared_port = get_or_open_port(&port).await?;
+                Ell14Driver::with_shared_port_calibrated(shared_port, &address).await
+            })?;
+
+            Ok(StageHandle {
+                driver: Arc::new(driver),
+                data_tx: None,
+                soft_limits: SoftLimits::new(0.0, 360.0), // Rotator: 0-360°
+            })
+        },
+    );
+
+    // =========================================================================
+    // Newport 1830-C Power Meter Factory
+    // =========================================================================
+
+    // Register Newport1830CHandle type
+    engine.register_type_with_name::<Newport1830CHandle>("Newport1830C");
+
+    // create_newport_1830c(port) - Create Newport 1830-C power meter driver
+    engine.register_fn(
+        "create_newport_1830c",
+        |port: &str| -> Result<Newport1830CHandle, Box<EvalAltResult>> {
+            let port = port.to_string();
+
+            let driver =
+                run_blocking("Newport 1830-C create", Newport1830CDriver::new_async(&port))?;
+
+            Ok(Newport1830CHandle {
+                driver: Arc::new(driver),
+                data_tx: None,
+            })
+        },
+    );
+
+    // power_meter.read() - Read power value
+    engine.register_fn(
+        "read",
+        |pm: &mut Newport1830CHandle| -> Result<f64, Box<EvalAltResult>> {
+            run_blocking("Newport 1830-C read", pm.driver.read())
+        },
+    );
+
+    // power_meter.read_averaged(samples) - Average multiple readings
+    engine.register_fn(
+        "read_averaged",
+        |pm: &mut Newport1830CHandle, samples: i64| -> Result<f64, Box<EvalAltResult>> {
+            if samples < 1 {
+                return Err(Box::new(EvalAltResult::ErrorRuntime(
+                    "read_averaged: samples must be >= 1".into(),
+                    Position::NONE,
+                )));
+            }
+
+            let mut sum = 0.0;
+            for _ in 0..samples {
+                let val = run_blocking("Newport 1830-C read", pm.driver.read())?;
+                sum += val;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(sum / samples as f64)
+        },
+    );
+
+    // power_meter.zero() - Zero the power meter (no attenuator)
+    engine.register_fn(
+        "zero",
+        |pm: &mut Newport1830CHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("Newport 1830-C zero", pm.driver.zero(false))?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // power_meter.zero_with_attenuator() - Zero the power meter with attenuator
+    engine.register_fn(
+        "zero_with_attenuator",
+        |pm: &mut Newport1830CHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("Newport 1830-C zero", pm.driver.zero(true))?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // =========================================================================
+    // MaiTai Laser Shutter Factory
+    // =========================================================================
+
+    // create_maitai(port) - Create MaiTai laser driver with default baud (115200)
+    engine.register_fn(
+        "create_maitai",
+        |port: &str| -> Result<ShutterHandle, Box<EvalAltResult>> {
+            let port = port.to_string();
+
+            // Default baud rate for USB-to-USB connection is 115200
+            let driver = run_blocking("MaiTai create", MaiTaiDriver::new_async_default(&port))?;
+
+            Ok(ShutterHandle {
+                driver: Arc::new(driver),
+            })
+        },
+    );
+
+    // create_maitai_with_baud(port, baud_rate) - Create MaiTai with custom baud rate
+    engine.register_fn(
+        "create_maitai_with_baud",
+        |port: &str, baud_rate: i64| -> Result<ShutterHandle, Box<EvalAltResult>> {
+            let port = port.to_string();
+            let baud = baud_rate as u32;
+
+            let driver = run_blocking("MaiTai create", MaiTaiDriver::new_async(&port, baud))?;
+
+            Ok(ShutterHandle {
+                driver: Arc::new(driver),
+            })
+        },
+    );
+}
+
+// =============================================================================
+// HDF5 Functions (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "hdf5_scripting")]
+fn register_hdf5_functions(engine: &mut Engine) {
+    engine.register_type_with_name::<Hdf5Handle>("Hdf5File");
+
+    // create_hdf5(path) - Create new HDF5 file for writing
+    engine.register_fn(
+        "create_hdf5",
+        |path: &str| -> Result<Hdf5Handle, Box<EvalAltResult>> {
+            let file = hdf5::File::create(path).map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Failed to create HDF5 file '{}': {}", path, e).into(),
+                    Position::NONE,
+                ))
+            })?;
+
+            Ok(Hdf5Handle {
+                file: Arc::new(tokio::sync::Mutex::new(Some(file))),
+                path: std::path::PathBuf::from(path),
+            })
+        },
+    );
+
+    // hdf5.path() - Get file path
+    engine.register_fn("path", |hdf5: &mut Hdf5Handle| -> String {
+        hdf5.path.display().to_string()
+    });
+
+    // hdf5.write_attr(name, value) - Write string attribute
+    engine.register_fn(
+        "write_attr",
+        |hdf5: &mut Hdf5Handle, name: &str, value: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            let name = name.to_string();
+            let value = value.to_string();
+            run_blocking("HDF5 write_attr", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+                // Parse string to VarLenUnicode (following hdf5_writer.rs pattern)
+                let vlu: hdf5::types::VarLenUnicode = value.parse()
+                    .map_err(|_| anyhow::anyhow!("Failed to parse string as VarLenUnicode"))?;
+                file.new_attr::<hdf5::types::VarLenUnicode>()
+                    .shape(())
+                    .create(name.as_str())
+                    .map_err(|e| anyhow::anyhow!("Failed to create attr '{}': {}", name, e))?
+                    .write_scalar(&vlu)
+                    .map_err(|e| anyhow::anyhow!("Failed to write attr '{}': {}", name, e))?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.write_attr_f64(name, value) - Write float attribute
+    engine.register_fn(
+        "write_attr_f64",
+        |hdf5: &mut Hdf5Handle, name: &str, value: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("HDF5 write_attr_f64", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+                file.new_attr::<f64>()
+                    .shape(())
+                    .create(name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create attr '{}': {}", name, e))?
+                    .write_scalar(&value)
+                    .map_err(|e| anyhow::anyhow!("Failed to write attr '{}': {}", name, e))?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.write_attr_i64(name, value) - Write integer attribute
+    engine.register_fn(
+        "write_attr_i64",
+        |hdf5: &mut Hdf5Handle, name: &str, value: i64| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("HDF5 write_attr_i64", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+                file.new_attr::<i64>()
+                    .shape(())
+                    .create(name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create attr '{}': {}", name, e))?
+                    .write_scalar(&value)
+                    .map_err(|e| anyhow::anyhow!("Failed to write attr '{}': {}", name, e))?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.write_array_1d(name, data) - Write 1D f64 array as dataset
+    engine.register_fn(
+        "write_array_1d",
+        |hdf5: &mut Hdf5Handle,
+         name: &str,
+         data: rhai::Array|
+         -> Result<Dynamic, Box<EvalAltResult>> {
+            // Convert Rhai array to Vec<f64>
+            let values: Vec<f64> = data
+                .iter()
+                .map(|v| {
+                    v.as_float()
+                        .or_else(|_| v.as_int().map(|i| i as f64))
+                        .map_err(|_| {
+                            Box::new(EvalAltResult::ErrorRuntime(
+                                format!("Array element is not a number: {:?}", v).into(),
+                                Position::NONE,
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<f64>, _>>()?;
+
+            run_blocking("HDF5 write_array_1d", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+
+                // Create dataset
+                let dataset = file
+                    .new_dataset::<f64>()
+                    .shape([values.len()])
+                    .create(name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create dataset '{}': {}", name, e))?;
+
+                dataset
+                    .write(&values)
+                    .map_err(|e| anyhow::anyhow!("Failed to write dataset '{}': {}", name, e))?;
+
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.write_array_2d(name, data) - Write 2D array (array of [angle, power] pairs)
+    engine.register_fn(
+        "write_array_2d",
+        |hdf5: &mut Hdf5Handle,
+         name: &str,
+         data: rhai::Array|
+         -> Result<Dynamic, Box<EvalAltResult>> {
+            // Convert Rhai array of arrays to flat Vec<f64> + dimensions
+            let mut values: Vec<f64> = Vec::new();
+            let mut ncols = 0usize;
+
+            for (i, row) in data.iter().enumerate() {
+                let row_arr = row.clone().into_array().map_err(|_| {
+                    Box::new(EvalAltResult::ErrorRuntime(
+                        format!("Row {} is not an array", i).into(),
+                        Position::NONE,
+                    ))
+                })?;
+
+                if i == 0 {
+                    ncols = row_arr.len();
+                } else if row_arr.len() != ncols {
+                    return Err(Box::new(EvalAltResult::ErrorRuntime(
+                        format!(
+                            "Row {} has {} columns, expected {}",
+                            i,
+                            row_arr.len(),
+                            ncols
+                        )
+                        .into(),
+                        Position::NONE,
+                    )));
+                }
+
+                for v in row_arr {
+                    let val = v
+                        .as_float()
+                        .or_else(|_| v.as_int().map(|i| i as f64))
+                        .map_err(|_| {
+                            Box::new(EvalAltResult::ErrorRuntime(
+                                format!("Array element is not a number: {:?}", v).into(),
+                                Position::NONE,
+                            ))
+                        })?;
+                    values.push(val);
+                }
+            }
+
+            let nrows = data.len();
+
+            run_blocking("HDF5 write_array_2d", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+
+                // Create or get group for nested paths
+                let (group, dataset_name) = if name.contains('/') {
+                    let parts: Vec<&str> = name.rsplitn(2, '/').collect();
+                    let ds_name = parts[0];
+                    let group_path = parts[1];
+
+                    // Create nested groups
+                    let group = file
+                        .create_group(group_path)
+                        .or_else(|_| file.group(group_path))
+                        .map_err(|e| anyhow::anyhow!("Failed to create group '{}': {}", group_path, e))?;
+
+                    (Some(group), ds_name)
+                } else {
+                    (None, name)
+                };
+
+                // Create dataset with 2D shape
+                let builder = match &group {
+                    Some(g) => g.new_dataset::<f64>(),
+                    None => file.new_dataset::<f64>(),
+                };
+
+                let dataset = builder
+                    .shape([nrows, ncols])
+                    .create(dataset_name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create dataset '{}': {}", name, e))?;
+
+                // Write as raw slice - hdf5 handles the 2D shape internally
+                dataset
+                    .write_raw(&values)
+                    .map_err(|e| anyhow::anyhow!("Failed to write dataset '{}': {}", name, e))?;
+
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.create_group(name) - Create a group
+    engine.register_fn(
+        "create_group",
+        |hdf5: &mut Hdf5Handle, name: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("HDF5 create_group", async {
+                let guard = hdf5.file.lock().await;
+                let file = guard.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("HDF5 file already closed")
+                })?;
+                file.create_group(name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create group '{}': {}", name, e))?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // hdf5.close() - Close the file
+    engine.register_fn(
+        "close",
+        |hdf5: &mut Hdf5Handle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("HDF5 close", async {
+                let mut guard = hdf5.file.lock().await;
+                if let Some(file) = guard.take() {
+                    file.flush()
+                        .map_err(|e| anyhow::anyhow!("Failed to flush HDF5 file: {}", e))?;
+                    // File is closed on drop
+                }
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(Dynamic::UNIT)
+        },
+    );
 }
 
 // =============================================================================

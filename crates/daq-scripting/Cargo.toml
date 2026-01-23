@@ -17,6 +17,25 @@ pyo3 = { version = "0.24", features = ["auto-initialize"], optional = true }
 tracing = "0.1"
 anyhow = "1.0"
 
+# Optional hardware driver dependencies for factory functions
+daq-driver-thorlabs = { path = "../daq-driver-thorlabs", optional = true }
+daq-driver-newport = { path = "../daq-driver-newport", optional = true }
+daq-driver-spectra-physics = { path = "../daq-driver-spectra-physics", optional = true }
+
+# Optional HDF5 support for data storage (use hdf5-metno to match daq-egui/daq-storage)
+hdf5 = { package = "hdf5-metno", version = "0.11.0", optional = true }
+ndarray = { version = "0.15", optional = true }
+
 [features]
 default = []
 python = ["dep:pyo3"]
+# Hardware factory functions for Rhai scripts (ELL14, Newport 1830-C, MaiTai)
+hardware_factories = [
+    "dep:daq-driver-thorlabs",
+    "dep:daq-driver-newport",
+    "dep:daq-driver-spectra-physics",
+]
+# HDF5 data storage from Rhai scripts
+hdf5_scripting = ["dep:hdf5"]
+# Combined feature for full polarization characterization support
+polarization = ["hardware_factories", "hdf5_scripting"]

@@ -301,6 +301,32 @@ impl Newport1830CDriver {
         self.send_config_command("U1").await
     }
 
+    /// Zero the power meter
+    ///
+    /// This sets the current optical power level as the zero reference.
+    /// IMPORTANT: Ensure the detector is blocked (shutter closed) before zeroing.
+    ///
+    /// # Arguments
+    /// * `use_attenuator` - If true, zeros with attenuator (Z1); if false, without (Z0)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Block beam first
+    /// laser.close_shutter().await?;
+    /// sleep(Duration::from_millis(500)).await;
+    ///
+    /// // Zero without attenuator
+    /// power_meter.zero(false).await?;
+    /// ```
+    pub async fn zero(&self, use_attenuator: bool) -> Result<()> {
+        let cmd = if use_attenuator { "Z1" } else { "Z0" };
+        self.send_config_command(cmd).await?;
+        // Zero operation takes some time to complete
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        tracing::info!("Newport 1830-C: zeroed (attenuator={})", use_attenuator);
+        Ok(())
+    }
+
     /// Query current units setting
     ///
     /// Returns: 1=Watts, 2=dBm, 3=dB, 4=REL

@@ -15,7 +15,10 @@ pub mod yield_handle;
 #[cfg(feature = "python")]
 pub mod pyo3_engine;
 
-pub use bindings::{CameraHandle, SoftLimits, StageHandle};
+pub use bindings::{CameraHandle, ReadableHandle, ShutterHandle, SoftLimits, StageHandle};
+
+#[cfg(feature = "hdf5_scripting")]
+pub use bindings::Hdf5Handle;
 pub use comedi_bindings::{
     register_comedi_hardware, AnalogInput, AnalogInputHandle, AnalogOutput, AnalogOutputHandle,
     Counter, CounterHandle, DigitalIO, DigitalIOHandle,

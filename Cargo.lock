@@ -2781,6 +2781,7 @@ dependencies = [
  "egui-notify",
  "egui-phosphor",
  "egui-snarl",
+ "egui_code_editor",
  "egui_dock",
  "egui_extras 0.33.3",
  "egui_plot 0.34.0",
@@ -2910,8 +2911,13 @@ dependencies = [
  "chrono",
  "daq-core",
  "daq-driver-mock",
+ "daq-driver-newport",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
  "daq-experiment",
  "daq-hardware",
+ "hdf5-metno",
+ "ndarray 0.15.6",
  "pyo3",
  "rhai",
  "thiserror 1.0.69",
@@ -4112,6 +4118,15 @@ dependencies = [
  "egui 0.33.3",
  "hello_egui_utils",
  "simple-easing",
+]
+
+[[package]]
+name = "egui_code_editor"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a1b847b0ff5a3bac4e8604eca605808970bbcdaba76b3101db1051e4206dc6"
+dependencies = [
+ "egui 0.33.3",
 ]
 
 [[package]]
@@ -6954,6 +6969,19 @@ name = "natord"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "308d96db8debc727c3fd9744aac51751243420e46edf401010908da7f8d5e57c"
+
+[[package]]
+name = "ndarray"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "rawpointer",
+]
 
 [[package]]
 name = "ndarray"
