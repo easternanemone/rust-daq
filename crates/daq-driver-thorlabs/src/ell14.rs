@@ -495,15 +495,23 @@ impl Ell14Driver {
         // Clear any pending data in the receive buffer (leftover from other devices)
         // Use a very short timeout to avoid blocking if no data is pending
         let mut discard = [0u8; 64];
-        let clear_deadline = tokio::time::Instant::now() + Duration::from_millis(10);
+        let clear_deadline = tokio::time::Instant::now() + Duration::from_millis(5);
+        let mut total_discarded = 0usize;
         while tokio::time::Instant::now() < clear_deadline {
-            match tokio::time::timeout(Duration::from_millis(5), guard.read(&mut discard)).await {
+            match tokio::time::timeout(Duration::from_millis(2), guard.read(&mut discard)).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
-                    tracing::trace!(discarded = n, "Cleared pending data before ELL14 command");
+                    total_discarded += n;
                 }
                 Ok(Err(_)) | Err(_) => break,
             }
+        }
+        if total_discarded > 0 {
+            tracing::trace!(
+                discarded = total_discarded,
+                cmd = %full_cmd,
+                "Cleared pending data before ELL14 command"
+            );
         }
 
         // Send command
@@ -515,12 +523,17 @@ impl Ell14Driver {
         let mut buf = [0u8; 64];
         let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
 
-        loop {
-            // Wait a bit for data to arrive
-            tokio::time::sleep(Duration::from_millis(30)).await;
+        // First wait: give device time to start responding (10ms at 9600 baud ~= 9.6 bytes)
+        tokio::time::sleep(Duration::from_millis(15)).await;
 
+        loop {
             // Check timeout
             if tokio::time::Instant::now() > deadline {
+                tracing::trace!(
+                    cmd = %full_cmd,
+                    response = %String::from_utf8_lossy(&response),
+                    "ELL14 transaction timed out waiting for response"
+                );
                 break;
             }
 
@@ -538,14 +551,20 @@ impl Ell14Driver {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // No data yet, continue waiting
+                    // No data yet, wait a bit and retry
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    break;
+                    // Wait a bit and retry until deadline
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
                 }
                 Err(e) => return Err(e.into()),
             }
+
+            // Small delay before next read attempt to avoid spinning
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
         let resp = String::from_utf8_lossy(&response).to_string();
