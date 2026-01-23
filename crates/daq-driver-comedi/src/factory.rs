@@ -506,7 +506,10 @@ impl ComediAnalogOutputDriver {
         params.register(output.clone());
 
         let driver = if mock {
-            info!("Creating mock Comedi analog output driver (channel={})", channel);
+            info!(
+                "Creating mock Comedi analog output driver (channel={})",
+                channel
+            );
             Self {
                 device: None,
                 analog_output: None,
@@ -569,7 +572,10 @@ impl ComediAnalogOutputDriver {
             .context("Task join error")?
             .context("Failed to write voltage")?;
 
-        debug!("Wrote voltage: channel={}, value={:.4}V", self.channel, voltage);
+        debug!(
+            "Wrote voltage: channel={}, value={:.4}V",
+            self.channel, voltage
+        );
         Ok(())
     }
 
@@ -708,9 +714,13 @@ impl DriverFactory for ComediAnalogOutputFactory {
                 .try_into()
                 .context("Invalid Comedi analog output config")?;
 
-            let driver =
-                ComediAnalogOutputDriver::new_async(&cfg.device, cfg.channel, cfg.range_index, cfg.mock)
-                    .await?;
+            let driver = ComediAnalogOutputDriver::new_async(
+                &cfg.device,
+                cfg.channel,
+                cfg.range_index,
+                cfg.mock,
+            )
+            .await?;
 
             Ok(DeviceComponents {
                 parameterized: Some(driver),

@@ -3,6 +3,35 @@
 //! Protocol: RS-485 multidrop bus, 9600 baud, ASCII encoded
 //! Reference: ELLx modules protocol manual Issue 10
 //!
+//! # Features
+//!
+//! - **Velocity Control**: Set motor velocity (0-100%) for speed vs precision tradeoff
+//! - **Cached Settings**: Non-blocking access to device settings via [`Ell14CachedSettings`]
+//! - **RS-485 Multidrop**: Multiple devices share a single serial port via address (0-F)
+//! - **Auto-calibration**: Queries pulses-per-degree from device firmware on init
+//!
+//! # Velocity Control
+//!
+//! The ELL14 supports velocity control from 0-100%. Higher velocities enable faster
+//! scans at the cost of positioning precision. When using [`Ell14Driver::with_shared_port_calibrated`],
+//! velocity is automatically set to maximum (100%) for fastest operation.
+//!
+//! ```rust,ignore
+//! // Velocity is set to max during calibrated init
+//! let driver = Ell14Driver::with_shared_port_calibrated(port, "2").await?;
+//!
+//! // Manual velocity control
+//! driver.set_velocity(50).await?;  // 50% speed
+//! let vel = driver.get_velocity().await?;  // Query from hardware
+//! let cached = driver.cached_velocity().await;  // Fast read from cache
+//! ```
+//!
+//! # Cached Settings
+//!
+//! The driver maintains a cache of device settings ([`Ell14CachedSettings`]) that can be
+//! read without blocking on serial I/O. Call [`Ell14Driver::refresh_cached_settings`]
+//! to update the cache from hardware.
+//!
 //! # Usage
 //!
 //! ```rust,ignore
@@ -1185,5 +1214,79 @@ mod tests {
             address = "2"
         });
         assert!(factory.validate(&invalid_config).is_err());
+    }
+
+    // =========================================================================
+    // Cached Settings Tests
+    // =========================================================================
+
+    #[test]
+    fn test_cached_settings_default() {
+        let settings = Ell14CachedSettings::default();
+        assert_eq!(settings.velocity_percent, 0);
+        assert_eq!(settings.backward_velocity_percent, 0);
+        assert!(settings.last_position_deg.is_none());
+        assert_eq!(settings.last_updated_ms, 0);
+    }
+
+    #[test]
+    fn test_cached_settings_clone() {
+        let settings = Ell14CachedSettings {
+            velocity_percent: 100,
+            backward_velocity_percent: 80,
+            last_position_deg: Some(45.0),
+            last_updated_ms: 1234567890,
+        };
+        let cloned = settings.clone();
+        assert_eq!(cloned.velocity_percent, 100);
+        assert_eq!(cloned.backward_velocity_percent, 80);
+        assert_eq!(cloned.last_position_deg, Some(45.0));
+        assert_eq!(cloned.last_updated_ms, 1234567890);
+    }
+
+    // =========================================================================
+    // Velocity Command Format Tests
+    // =========================================================================
+
+    #[test]
+    fn test_velocity_command_format() {
+        // Velocity commands use 2 hex digits (0-100 as 00-64)
+        assert_eq!(format!("sv{:02X}", 0u8), "sv00");
+        assert_eq!(format!("sv{:02X}", 50u8), "sv32");
+        assert_eq!(format!("sv{:02X}", 100u8), "sv64");
+    }
+
+    #[test]
+    fn test_velocity_response_parsing() {
+        // Response format: {addr}GV{2 hex digits}
+        let response = "2GV64"; // Address 2, velocity 100%
+        if let Some(idx) = response.find("GV") {
+            let hex_str = &response[idx + 2..].trim();
+            if let Some(hex) = hex_str.get(..2) {
+                let percent = u8::from_str_radix(hex, 16).unwrap();
+                assert_eq!(percent, 100);
+            }
+        }
+
+        let response = "2GV32"; // Address 2, velocity 50%
+        if let Some(idx) = response.find("GV") {
+            let hex_str = &response[idx + 2..].trim();
+            if let Some(hex) = hex_str.get(..2) {
+                let percent = u8::from_str_radix(hex, 16).unwrap();
+                assert_eq!(percent, 50);
+            }
+        }
+    }
+
+    #[test]
+    fn test_velocity_clamping() {
+        // Velocity should be clamped to 0-100
+        let percent: u8 = 150;
+        let clamped = percent.min(100);
+        assert_eq!(clamped, 100);
+
+        let percent: u8 = 50;
+        let clamped = percent.min(100);
+        assert_eq!(clamped, 50);
     }
 }

@@ -51,11 +51,11 @@ impl NodeType {
     /// Returns the identifying color for this node type.
     pub fn color(&self) -> Color32 {
         match self {
-            Self::Scan => Color32::from_rgb(100, 149, 237),    // Cornflower blue
+            Self::Scan => Color32::from_rgb(100, 149, 237), // Cornflower blue
             Self::Acquire => Color32::from_rgb(144, 238, 144), // Light green
-            Self::Move => Color32::from_rgb(255, 182, 108),    // Light orange
-            Self::Wait => Color32::from_rgb(192, 192, 192),    // Silver
-            Self::Loop => Color32::from_rgb(221, 160, 221),    // Plum
+            Self::Move => Color32::from_rgb(255, 182, 108), // Light orange
+            Self::Wait => Color32::from_rgb(192, 192, 192), // Silver
+            Self::Loop => Color32::from_rgb(221, 160, 221), // Plum
         }
     }
 

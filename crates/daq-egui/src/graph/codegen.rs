@@ -5,8 +5,8 @@
 //! Generated scripts are read-only artifacts for learning and debugging.
 
 use super::nodes::{
-    AcquireConfig, ExperimentNode, LoopConfig, LoopTermination, MoveConfig, MoveMode,
-    ThresholdOp, WaitCondition,
+    AcquireConfig, ExperimentNode, LoopConfig, LoopTermination, MoveConfig, MoveMode, ThresholdOp,
+    WaitCondition,
 };
 use super::translation::{build_adjacency, topological_sort};
 use egui_snarl::{NodeId, Snarl};
@@ -16,19 +16,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 ///
 /// Returns a well-formatted, commented Rhai script string.
 /// If the graph contains cycles, returns an error comment instead of failing.
-pub fn graph_to_rhai_script(
-    snarl: &Snarl<ExperimentNode>,
-    filename: Option<&str>,
-) -> String {
+pub fn graph_to_rhai_script(snarl: &Snarl<ExperimentNode>, filename: Option<&str>) -> String {
     let mut script = String::new();
 
     // Generate header comment
     let timestamp = chrono::Utc::now().to_rfc3339();
     script.push_str("// Generated Rhai script from visual experiment graph\n");
-    script.push_str(&format!(
-        "// Source: {}\n",
-        filename.unwrap_or("unsaved")
-    ));
+    script.push_str(&format!("// Source: {}\n", filename.unwrap_or("unsaved")));
     script.push_str(&format!("// Generated: {}\n", timestamp));
     script.push_str("// DO NOT EDIT - regenerate from visual editor to make changes\n\n");
 
@@ -42,13 +36,18 @@ pub fn graph_to_rhai_script(
     let (adjacency, roots) = match build_adjacency(snarl) {
         Ok(result) => result,
         Err(e) => {
-            script.push_str(&format!("// ERROR: Failed to build graph structure: {}\n", e));
+            script.push_str(&format!(
+                "// ERROR: Failed to build graph structure: {}\n",
+                e
+            ));
             return script;
         }
     };
 
     if roots.is_empty() {
-        script.push_str("// ERROR: Graph has no root nodes - all nodes have inputs (possible cycle)\n");
+        script.push_str(
+            "// ERROR: Graph has no root nodes - all nodes have inputs (possible cycle)\n",
+        );
         return script;
     }
 
@@ -77,7 +76,11 @@ pub fn graph_to_rhai_script(
         }
 
         if let Some(node) = snarl.get_node(*node_id) {
-            script.push_str(&format!("// === Node {}: {} ===\n", index + 1, node.node_name()));
+            script.push_str(&format!(
+                "// === Node {}: {} ===\n",
+                index + 1,
+                node.node_name()
+            ));
             script.push_str(&node_to_rhai(node, *node_id, snarl, &loop_body_set, 0));
             script.push_str("\n");
         }
@@ -122,7 +125,10 @@ fn scan_to_rhai(actuator: &str, start: f64, stop: f64, points: u32, indent: usiz
     let mut code = String::new();
 
     if actuator.is_empty() {
-        code.push_str(&format!("{}// WARNING: Scan node has no actuator specified\n", ind));
+        code.push_str(&format!(
+            "{}// WARNING: Scan node has no actuator specified\n",
+            ind
+        ));
         return code;
     }
 
@@ -174,13 +180,22 @@ fn move_to_rhai(config: &MoveConfig, indent: usize) -> String {
     let mut code = String::new();
 
     if config.device.is_empty() {
-        code.push_str(&format!("{}// WARNING: Move node has no device specified\n", ind));
+        code.push_str(&format!(
+            "{}// WARNING: Move node has no device specified\n",
+            ind
+        ));
         return code;
     }
 
     let action = match config.mode {
-        MoveMode::Absolute => format!("Move {} to absolute position {}", config.device, config.position),
-        MoveMode::Relative => format!("Move {} by relative distance {}", config.device, config.position),
+        MoveMode::Absolute => format!(
+            "Move {} to absolute position {}",
+            config.device, config.position
+        ),
+        MoveMode::Relative => format!(
+            "Move {} by relative distance {}",
+            config.device, config.position
+        ),
     };
     code.push_str(&format!("{}// {}\n", ind, action));
 
@@ -221,9 +236,7 @@ fn wait_to_rhai(condition: &WaitCondition, indent: usize) -> String {
             let op_str = match operator {
                 ThresholdOp::LessThan => "<",
                 ThresholdOp::GreaterThan => ">",
-                ThresholdOp::EqualWithin { tolerance } => {
-                    &format!("== (±{})", tolerance)
-                }
+                ThresholdOp::EqualWithin { tolerance } => &format!("== (±{})", tolerance),
             };
             code.push_str(&format!(
                 "{}// TODO: Wait until {} {} {} (timeout: {}ms)\n",
@@ -327,9 +340,7 @@ fn loop_to_rhai(
             let op_str = match operator {
                 ThresholdOp::LessThan => "<",
                 ThresholdOp::GreaterThan => ">",
-                ThresholdOp::EqualWithin { tolerance } => {
-                    &format!("== (±{})", tolerance)
-                }
+                ThresholdOp::EqualWithin { tolerance } => &format!("== (±{})", tolerance),
             };
             code.push_str(&format!(
                 "{}// TODO: Loop until {} {} {} (max {} iterations)\n",
@@ -622,9 +633,15 @@ mod tests {
             }),
         );
 
-        let code = loop_to_rhai(&LoopConfig {
-            termination: LoopTermination::Count { iterations: 3 },
-        }, loop_node, &snarl, &HashSet::new(), 0);
+        let code = loop_to_rhai(
+            &LoopConfig {
+                termination: LoopTermination::Count { iterations: 3 },
+            },
+            loop_node,
+            &snarl,
+            &HashSet::new(),
+            0,
+        );
 
         assert!(code.contains("// Loop 3 times"));
         assert!(code.contains("for i in 0..3"));

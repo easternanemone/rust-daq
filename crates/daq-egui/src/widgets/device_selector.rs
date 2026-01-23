@@ -44,7 +44,8 @@ impl DeviceSelector {
 
         // Show dropdown with matching candidates
         if response.has_focus() && !self.text.is_empty() {
-            let matches: Vec<_> = self.candidates
+            let matches: Vec<_> = self
+                .candidates
                 .iter()
                 .filter(|c| c.to_lowercase().contains(&self.text.to_lowercase()))
                 .take(10)
@@ -57,20 +58,19 @@ impl DeviceSelector {
                     .fixed_pos(popup_pos)
                     .order(egui::Order::Foreground)
                     .show(ui.ctx(), |ui| {
-                        egui::Frame::popup(ui.style())
-                            .show(ui, |ui| {
-                                ui.set_min_width(response.rect.width());
-                                egui::ScrollArea::vertical()
-                                    .max_height(200.0)
-                                    .show(ui, |ui| {
-                                        for candidate in matches {
-                                            if ui.selectable_label(false, &candidate).clicked() {
-                                                self.text = candidate;
-                                                response.request_focus();
-                                            }
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.set_min_width(response.rect.width());
+                            egui::ScrollArea::vertical()
+                                .max_height(200.0)
+                                .show(ui, |ui| {
+                                    for candidate in matches {
+                                        if ui.selectable_label(false, &candidate).clicked() {
+                                            self.text = candidate;
+                                            response.request_focus();
                                         }
-                                    });
-                            });
+                                    }
+                                });
+                        });
                     });
             }
         }

@@ -242,7 +242,9 @@ where
     }
 
     for (out_pin, in_pin) in snarl.wires() {
-        adjacency.get_mut(&out_pin.node).map(|v| v.push(in_pin.node));
+        adjacency
+            .get_mut(&out_pin.node)
+            .map(|v| v.push(in_pin.node));
         has_input.insert(in_pin.node);
     }
 
@@ -360,20 +362,38 @@ mod tests {
 
         // Connect scan -> loop (scan is ancestor of loop)
         snarl.connect(
-            egui_snarl::OutPinId { node: scan, output: 0 },
-            egui_snarl::InPinId { node: loop_node, input: 0 },
+            egui_snarl::OutPinId {
+                node: scan,
+                output: 0,
+            },
+            egui_snarl::InPinId {
+                node: loop_node,
+                input: 0,
+            },
         );
 
         // Connect loop body -> acquire
         snarl.connect(
-            egui_snarl::OutPinId { node: loop_node, output: 1 },
-            egui_snarl::InPinId { node: acquire, input: 0 },
+            egui_snarl::OutPinId {
+                node: loop_node,
+                output: 1,
+            },
+            egui_snarl::InPinId {
+                node: acquire,
+                input: 0,
+            },
         );
 
         // Invalid: connect acquire back to scan (back-edge to ancestor)
         snarl.connect(
-            egui_snarl::OutPinId { node: acquire, output: 0 },
-            egui_snarl::InPinId { node: scan, input: 0 },
+            egui_snarl::OutPinId {
+                node: acquire,
+                output: 0,
+            },
+            egui_snarl::InPinId {
+                node: scan,
+                input: 0,
+            },
         );
 
         // Validate - should detect back-edge
@@ -411,8 +431,14 @@ mod tests {
 
         // Connect loop body -> move
         snarl.connect(
-            egui_snarl::OutPinId { node: loop_node, output: 1 },
-            egui_snarl::InPinId { node: move_node, input: 0 },
+            egui_snarl::OutPinId {
+                node: loop_node,
+                output: 1,
+            },
+            egui_snarl::InPinId {
+                node: move_node,
+                input: 0,
+            },
         );
 
         // Validate - should warn about relative move
@@ -450,8 +476,14 @@ mod tests {
 
         // Connect loop body -> move
         snarl.connect(
-            egui_snarl::OutPinId { node: loop_node, output: 1 },
-            egui_snarl::InPinId { node: move_node, input: 0 },
+            egui_snarl::OutPinId {
+                node: loop_node,
+                output: 1,
+            },
+            egui_snarl::InPinId {
+                node: move_node,
+                input: 0,
+            },
         );
 
         // Validate - should have no warnings

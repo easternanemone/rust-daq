@@ -14,10 +14,7 @@ fn main() {
     }
 
     // Check if working directory is dirty
-    if let Ok(output) = Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-    {
+    if let Ok(output) = Command::new("git").args(["status", "--porcelain"]).output() {
         if output.status.success() {
             let is_dirty = !output.stdout.is_empty();
             println!("cargo:rustc-env=VERGEN_GIT_DIRTY={}", is_dirty);

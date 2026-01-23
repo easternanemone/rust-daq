@@ -123,11 +123,7 @@ impl FpsTracker {
 
         let now = Instant::now();
         let cutoff = now - std::time::Duration::from_secs_f64(FPS_WINDOW);
-        let recent_frames: Vec<_> = self
-            .frame_times
-            .iter()
-            .filter(|&&t| t >= cutoff)
-            .collect();
+        let recent_frames: Vec<_> = self.frame_times.iter().filter(|&&t| t >= cutoff).collect();
 
         if recent_frames.len() < 2 {
             return 0.0;
@@ -295,8 +291,7 @@ impl LiveVisualizationPanel {
         for (device_id, title) in cameras {
             self.cameras
                 .insert(device_id.clone(), CameraState::new(device_id.clone()));
-            self.grid
-                .add_panel(DetectorPanel::camera(device_id, title));
+            self.grid.add_panel(DetectorPanel::camera(device_id, title));
         }
 
         // Add plot panels
@@ -395,8 +390,7 @@ impl LiveVisualizationPanel {
             let total_cameras = self.cameras.len();
             let total_plots = self.plots.len();
             let avg_camera_fps = if total_cameras > 0 {
-                self.cameras.values().map(|c| c.current_fps()).sum::<f64>()
-                    / total_cameras as f64
+                self.cameras.values().map(|c| c.current_fps()).sum::<f64>() / total_cameras as f64
             } else {
                 0.0
             };
@@ -407,7 +401,10 @@ impl LiveVisualizationPanel {
             };
 
             if total_cameras > 0 {
-                ui.label(format!("Cameras: {} @ {:.1} FPS", total_cameras, avg_camera_fps));
+                ui.label(format!(
+                    "Cameras: {} @ {:.1} FPS",
+                    total_cameras, avg_camera_fps
+                ));
             }
             if total_plots > 0 {
                 ui.label(format!("Plots: {} @ {:.1} Hz", total_plots, avg_plot_fps));
@@ -431,7 +428,8 @@ impl LiveVisualizationPanel {
             return;
         }
 
-        let (cols, rows) = crate::panels::multi_detector_grid::calculate_grid_dimensions(panels.len());
+        let (cols, rows) =
+            crate::panels::multi_detector_grid::calculate_grid_dimensions(panels.len());
 
         // Render grid using StripBuilder
         use egui_extras::{Size, StripBuilder};
@@ -441,18 +439,16 @@ impl LiveVisualizationPanel {
             .vertical(|mut strip| {
                 for row_idx in 0..rows {
                     strip.strip(|builder| {
-                        builder
-                            .size(Size::remainder())
-                            .horizontal(|mut strip| {
-                                for col_idx in 0..cols {
-                                    strip.cell(|ui| {
-                                        let panel_idx = row_idx * cols + col_idx;
-                                        if panel_idx < panels.len() {
-                                            self.render_panel_content(ui, &panels[panel_idx]);
-                                        }
-                                    });
-                                }
-                            });
+                        builder.size(Size::remainder()).horizontal(|mut strip| {
+                            for col_idx in 0..cols {
+                                strip.cell(|ui| {
+                                    let panel_idx = row_idx * cols + col_idx;
+                                    if panel_idx < panels.len() {
+                                        self.render_panel_content(ui, &panels[panel_idx]);
+                                    }
+                                });
+                            }
+                        });
                     });
                 }
             });
@@ -535,14 +531,12 @@ impl LiveVisualizationPanel {
             // Render plot with controls
             let points: Vec<[f64; 2]> = plot_state.data.iter().copied().collect();
             let label_owned = label.to_string();
-            plot_state.plot.show_with_controls(
-                ui,
-                format!("plot_{}", device_id),
-                |plot_ui| {
+            plot_state
+                .plot
+                .show_with_controls(ui, format!("plot_{}", device_id), |plot_ui| {
                     let line = Line::new(label_owned.clone(), PlotPoints::from(points.clone()));
                     plot_ui.line(line);
-                },
-            );
+                });
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label("Plot not configured");

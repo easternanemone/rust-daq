@@ -73,7 +73,9 @@ pub enum WaitCondition {
 
 impl Default for WaitCondition {
     fn default() -> Self {
-        Self::Duration { milliseconds: 1000.0 }
+        Self::Duration {
+            milliseconds: 1000.0,
+        }
     }
 }
 
@@ -83,7 +85,9 @@ pub enum ThresholdOp {
     #[default]
     LessThan,
     GreaterThan,
-    EqualWithin { tolerance: f64 },
+    EqualWithin {
+        tolerance: f64,
+    },
 }
 
 /// Configuration for Acquire node.
@@ -91,7 +95,7 @@ pub enum ThresholdOp {
 pub struct AcquireConfig {
     pub detector: String,
     pub exposure_ms: Option<f64>, // None = use device default
-    pub frame_count: u32,          // 1 for single, >1 for burst
+    pub frame_count: u32,         // 1 for single, >1 for burst
 }
 
 impl Default for AcquireConfig {

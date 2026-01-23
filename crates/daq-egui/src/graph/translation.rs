@@ -1,9 +1,9 @@
 //! Translation from visual node graph to executable Plan.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use egui_snarl::{NodeId, Snarl};
-use daq_experiment::plans::{Plan, PlanCommand};
 use super::nodes::ExperimentNode;
+use daq_experiment::plans::{Plan, PlanCommand};
+use egui_snarl::{NodeId, Snarl};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Errors that can occur during graph translation
 #[derive(Debug, Clone)]
@@ -140,7 +140,9 @@ impl Plan for GraphPlan {
 }
 
 /// Build adjacency list from snarl wires
-pub fn build_adjacency(snarl: &Snarl<ExperimentNode>) -> Result<(HashMap<NodeId, Vec<NodeId>>, Vec<NodeId>), TranslationError> {
+pub fn build_adjacency(
+    snarl: &Snarl<ExperimentNode>,
+) -> Result<(HashMap<NodeId, Vec<NodeId>>, Vec<NodeId>), TranslationError> {
     let mut adjacency: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
     let mut has_input: HashSet<NodeId> = HashSet::new();
 
@@ -216,17 +218,20 @@ fn translate_node_with_snarl(
     node_id: NodeId,
     snarl: &Snarl<ExperimentNode>,
 ) -> (Vec<PlanCommand>, Vec<String>, Vec<String>, usize) {
-    let mut commands = vec![
-        PlanCommand::Checkpoint {
-            label: format!("node_{:?}_start", node_id),
-        },
-    ];
+    let mut commands = vec![PlanCommand::Checkpoint {
+        label: format!("node_{:?}_start", node_id),
+    }];
     let mut movers = Vec::new();
     let mut detectors = Vec::new();
     let mut events = 0;
 
     match node {
-        ExperimentNode::Scan { actuator, start, stop, points } => {
+        ExperimentNode::Scan {
+            actuator,
+            start,
+            stop,
+            points,
+        } => {
             if *points > 0 && !actuator.is_empty() {
                 movers.push(actuator.clone());
                 let step = if *points > 1 {
@@ -308,14 +313,18 @@ fn translate_node_with_snarl(
                 }
                 WaitCondition::Threshold { timeout_ms, .. } => {
                     // TODO: Implement threshold-based waits
-                    tracing::warn!("Threshold-based waits not yet implemented, using timeout fallback");
+                    tracing::warn!(
+                        "Threshold-based waits not yet implemented, using timeout fallback"
+                    );
                     commands.push(PlanCommand::Wait {
                         seconds: *timeout_ms / 1000.0,
                     });
                 }
                 WaitCondition::Stability { timeout_ms, .. } => {
                     // TODO: Implement stability-based waits
-                    tracing::warn!("Stability-based waits not yet implemented, using timeout fallback");
+                    tracing::warn!(
+                        "Stability-based waits not yet implemented, using timeout fallback"
+                    );
                     commands.push(PlanCommand::Wait {
                         seconds: *timeout_ms / 1000.0,
                     });
@@ -335,14 +344,16 @@ fn translate_node_with_snarl(
                     tracing::warn!(
                         "Condition-based loop at {:?} using max_iterations={} as safety limit. \
                         True condition evaluation requires RunEngine runtime support.",
-                        node_id, max_iterations
+                        node_id,
+                        max_iterations
                     );
                     *max_iterations
                 }
                 LoopTermination::Infinite { max_iterations } => {
                     tracing::warn!(
                         "Infinite loop at {:?} using max_iterations={} as safety limit",
-                        node_id, max_iterations
+                        node_id,
+                        max_iterations
                     );
                     *max_iterations
                 }
@@ -439,7 +450,9 @@ fn find_loop_body_nodes(loop_node_id: NodeId, snarl: &Snarl<ExperimentNode>) -> 
     }
     for (out_pin, in_pin) in snarl.wires() {
         if pure_body.contains(&out_pin.node) && pure_body.contains(&in_pin.node) {
-            body_adjacency.get_mut(&out_pin.node).map(|v| v.push(in_pin.node));
+            body_adjacency
+                .get_mut(&out_pin.node)
+                .map(|v| v.push(in_pin.node));
         }
     }
 
@@ -559,14 +572,26 @@ mod tests {
 
         // Connect loop body output (pin 1) to acquire1
         snarl.connect(
-            egui_snarl::OutPinId { node: loop_node, output: 1 },
-            egui_snarl::InPinId { node: acquire1, input: 0 },
+            egui_snarl::OutPinId {
+                node: loop_node,
+                output: 1,
+            },
+            egui_snarl::InPinId {
+                node: acquire1,
+                input: 0,
+            },
         );
 
         // Connect acquire1 to acquire2
         snarl.connect(
-            egui_snarl::OutPinId { node: acquire1, output: 0 },
-            egui_snarl::InPinId { node: acquire2, input: 0 },
+            egui_snarl::OutPinId {
+                node: acquire1,
+                output: 0,
+            },
+            egui_snarl::InPinId {
+                node: acquire2,
+                input: 0,
+            },
         );
 
         // Find body nodes
@@ -602,8 +627,14 @@ mod tests {
 
         // Connect loop body to acquire
         snarl.connect(
-            egui_snarl::OutPinId { node: loop_node, output: 1 },
-            egui_snarl::InPinId { node: acquire, input: 0 },
+            egui_snarl::OutPinId {
+                node: loop_node,
+                output: 1,
+            },
+            egui_snarl::InPinId {
+                node: acquire,
+                input: 0,
+            },
         );
 
         // Translate to plan
@@ -623,7 +654,11 @@ mod tests {
         assert_eq!(iteration_ends, 3, "Expected 3 loop iterations");
 
         // Should have 3 Trigger+Read pairs (one per iteration)
-        let trigger_count = plan.commands.iter().filter(|cmd| matches!(cmd, PlanCommand::Trigger { .. })).count();
+        let trigger_count = plan
+            .commands
+            .iter()
+            .filter(|cmd| matches!(cmd, PlanCommand::Trigger { .. }))
+            .count();
         assert_eq!(trigger_count, 3, "Expected 3 triggers (one per iteration)");
 
         // Should have 3 events (one per iteration)

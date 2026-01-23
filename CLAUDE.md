@@ -418,6 +418,30 @@ let rotator = bus.device("2").await?;  // Gets calibrated device
 rotator.move_abs(45.0).await?;
 ```
 
+**Velocity Control:**
+
+The ELL14 supports velocity control (0-100%) for speed vs precision tradeoff. When using
+`with_shared_port_calibrated()`, velocity is automatically set to maximum (100%) for fastest scans.
+
+```rust
+// Velocity is set to max during calibrated init
+let driver = Ell14Driver::with_shared_port_calibrated(port, "2").await?;
+
+// Manual velocity control
+driver.set_velocity(50).await?;  // 50% speed
+let vel = driver.get_velocity().await?;  // Query from hardware
+let cached = driver.cached_velocity().await;  // Fast read from cache
+```
+
+In Rhai scripts, use the `Ell14Handle` returned by `create_elliptec()`:
+
+```rhai
+let rotator = create_elliptec("/dev/serial/by-id/...", "2");
+let vel = rotator.velocity();  // Cached velocity (non-blocking)
+rotator.set_velocity(100);     // Set to max speed
+rotator.refresh_settings();    // Update cache from hardware
+```
+
 ### PVCAM Setup
 
 ```bash

@@ -1,8 +1,8 @@
 //! Code preview panel for displaying generated Rhai scripts.
 
+use crate::graph::{graph_to_rhai_script, ExperimentNode};
 use egui_code_editor::{CodeEditor, ColorTheme, Syntax};
 use egui_snarl::Snarl;
-use crate::graph::{graph_to_rhai_script, ExperimentNode};
 
 /// Panel for displaying generated Rhai code from the experiment graph.
 pub struct CodePreviewPanel {
@@ -68,7 +68,11 @@ impl CodePreviewPanel {
                 ui.heading("Generated Rhai Code");
 
                 ui.horizontal(|ui| {
-                    if ui.button("Copy").on_hover_text("Copy to clipboard").clicked() {
+                    if ui
+                        .button("Copy")
+                        .on_hover_text("Copy to clipboard")
+                        .clicked()
+                    {
                         ui.ctx().copy_text(self.code.clone());
                     }
 
@@ -76,9 +80,21 @@ impl CodePreviewPanel {
                     egui::ComboBox::from_label("Theme")
                         .selected_text(self.theme_name())
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.theme, ColorTheme::GRUVBOX_DARK, "Gruvbox Dark");
-                            ui.selectable_value(&mut self.theme, ColorTheme::GRUVBOX_LIGHT, "Gruvbox Light");
-                            ui.selectable_value(&mut self.theme, ColorTheme::GITHUB_DARK, "GitHub Dark");
+                            ui.selectable_value(
+                                &mut self.theme,
+                                ColorTheme::GRUVBOX_DARK,
+                                "Gruvbox Dark",
+                            );
+                            ui.selectable_value(
+                                &mut self.theme,
+                                ColorTheme::GRUVBOX_LIGHT,
+                                "Gruvbox Light",
+                            );
+                            ui.selectable_value(
+                                &mut self.theme,
+                                ColorTheme::GITHUB_DARK,
+                                "GitHub Dark",
+                            );
                         });
                 });
 

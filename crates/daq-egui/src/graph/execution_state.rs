@@ -1,8 +1,8 @@
 //! Execution state tracking for visual feedback in the graph editor.
 
+use egui_snarl::NodeId;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
-use egui_snarl::NodeId;
 
 /// State of a single node during execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +81,12 @@ impl ExecutionState {
     }
 
     /// Update from engine status
-    pub fn update_from_status(&mut self, state: i32, current_event: Option<u32>, total_events: Option<u32>) {
+    pub fn update_from_status(
+        &mut self,
+        state: i32,
+        current_event: Option<u32>,
+        total_events: Option<u32>,
+    ) {
         // Map proto EngineState enum values
         self.engine_state = match state {
             0 => EngineStateLocal::Idle,
@@ -110,7 +115,10 @@ impl ExecutionState {
                 let id_str = &rest[..end_idx];
                 // NodeId is printed as "NodeId(X)" in Debug format
                 // Try to extract the number
-                if let Some(num_str) = id_str.strip_prefix("NodeId(").and_then(|s| s.strip_suffix(")")) {
+                if let Some(num_str) = id_str
+                    .strip_prefix("NodeId(")
+                    .and_then(|s| s.strip_suffix(")"))
+                {
                     if let Ok(idx) = num_str.parse::<usize>() {
                         let node_id = NodeId(idx);
                         if label.ends_with("_start") {
@@ -164,7 +172,10 @@ impl ExecutionState {
 
     /// Check if execution is active (running or paused)
     pub fn is_active(&self) -> bool {
-        matches!(self.engine_state, EngineStateLocal::Running | EngineStateLocal::Paused)
+        matches!(
+            self.engine_state,
+            EngineStateLocal::Running | EngineStateLocal::Paused
+        )
     }
 
     /// Check if running

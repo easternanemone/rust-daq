@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::client::DaqClient;
-use crate::widgets::{offline_notice, OfflineContext, MetadataEditor};
+use crate::widgets::{offline_notice, MetadataEditor, OfflineContext};
 use daq_proto::daq::Document;
 
 /// Scan mode selection (1D vs 2D)
@@ -94,9 +94,9 @@ pub struct ScanBuilderPanel {
     scan_mode: ScanMode,
 
     // Device selection
-    selected_actuator: Option<String>,    // 1D mode
-    selected_actuator_x: Option<String>,  // 2D mode (fast axis)
-    selected_actuator_y: Option<String>,  // 2D mode (slow axis)
+    selected_actuator: Option<String>,   // 1D mode
+    selected_actuator_x: Option<String>, // 2D mode (fast axis)
+    selected_actuator_y: Option<String>, // 2D mode (slow axis)
     selected_detectors: Vec<String>,
 
     // 1D scan parameters (string fields for form input)
@@ -225,7 +225,8 @@ impl ScanBuilderPanel {
                             Ok(devices) => {
                                 self.devices = devices;
                                 self.last_device_refresh = Some(Instant::now());
-                                self.status = Some(format!("Loaded {} devices", self.devices.len()));
+                                self.status =
+                                    Some(format!("Loaded {} devices", self.devices.len()));
                                 self.error = None;
                             }
                             Err(e) => {
@@ -522,8 +523,16 @@ impl ScanBuilderPanel {
             ui.label("Scan Type:");
             let enabled = self.execution_state == ExecutionState::Idle;
             ui.add_enabled_ui(enabled, |ui| {
-                ui.selectable_value(&mut self.scan_mode, ScanMode::OneDimensional, "1D Line Scan");
-                ui.selectable_value(&mut self.scan_mode, ScanMode::TwoDimensional, "2D Grid Scan");
+                ui.selectable_value(
+                    &mut self.scan_mode,
+                    ScanMode::OneDimensional,
+                    "1D Line Scan",
+                );
+                ui.selectable_value(
+                    &mut self.scan_mode,
+                    ScanMode::TwoDimensional,
+                    "2D Grid Scan",
+                );
             });
         });
 
@@ -563,8 +572,7 @@ impl ScanBuilderPanel {
         if self.show_plot {
             match self.scan_mode {
                 ScanMode::OneDimensional => {
-                    if !self.plot_data.is_empty()
-                        || self.execution_state == ExecutionState::Running
+                    if !self.plot_data.is_empty() || self.execution_state == ExecutionState::Running
                     {
                         self.render_live_plot(ui);
                     } else {
@@ -696,12 +704,10 @@ impl ScanBuilderPanel {
         }
 
         // Calculate value range for color mapping
-        let (min_val, max_val) = self
-            .plot_data_2d
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (_, _, v)| {
-                (min.min(*v), max.max(*v))
-            });
+        let (min_val, max_val) = self.plot_data_2d.iter().fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(min, max), (_, _, v)| (min.min(*v), max.max(*v)),
+        );
 
         let x_label = self.selected_actuator_x.as_deref().unwrap_or("X");
         let y_label = self.selected_actuator_y.as_deref().unwrap_or("Y");
@@ -730,11 +736,7 @@ impl ScanBuilderPanel {
                     // Each point needs a unique name for proper rendering
                     let point_name = format!("pt_{}", idx);
                     let points: PlotPoints = vec![[x, y]].into_iter().collect();
-                    plot_ui.points(
-                        Points::new(point_name, points)
-                            .color(color)
-                            .radius(5.0),
-                    );
+                    plot_ui.points(Points::new(point_name, points).color(color).radius(5.0));
                 }
             });
 
@@ -936,10 +938,7 @@ impl ScanBuilderPanel {
                     }
 
                     if !can_start {
-                        ui.colored_label(
-                            egui::Color32::GRAY,
-                            "Complete form to enable Start",
-                        );
+                        ui.colored_label(egui::Color32::GRAY, "Complete form to enable Start");
                     }
                 }
                 ExecutionState::Running => {
@@ -957,17 +956,16 @@ impl ScanBuilderPanel {
 
     /// Render the actuator (movable devices) selection section
     fn render_actuator_section(&mut self, ui: &mut egui::Ui) {
-        let actuators: Vec<_> = self
-            .devices
-            .iter()
-            .filter(|d| d.is_movable)
-            .collect();
+        let actuators: Vec<_> = self.devices.iter().filter(|d| d.is_movable).collect();
 
         ui.group(|ui| {
             ui.heading("Actuators");
 
             if actuators.is_empty() {
-                ui.colored_label(egui::Color32::GRAY, "No movable devices found. Click 'Refresh Devices' to load.");
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "No movable devices found. Click 'Refresh Devices' to load.",
+                );
                 return;
             }
 
@@ -988,10 +986,13 @@ impl ScanBuilderPanel {
                             .show_ui(ui, |ui| {
                                 for device in &actuators {
                                     let label = format!("{} ({})", device.name, device.id);
-                                    if ui.selectable_label(
-                                        self.selected_actuator.as_ref() == Some(&device.id),
-                                        &label,
-                                    ).clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            self.selected_actuator.as_ref() == Some(&device.id),
+                                            &label,
+                                        )
+                                        .clicked()
+                                    {
                                         self.selected_actuator = Some(device.id.clone());
                                     }
                                 }
@@ -1019,10 +1020,13 @@ impl ScanBuilderPanel {
                             .show_ui(ui, |ui| {
                                 for device in &actuators {
                                     let label = format!("{} ({})", device.name, device.id);
-                                    if ui.selectable_label(
-                                        self.selected_actuator_x.as_ref() == Some(&device.id),
-                                        &label,
-                                    ).clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            self.selected_actuator_x.as_ref() == Some(&device.id),
+                                            &label,
+                                        )
+                                        .clicked()
+                                    {
                                         self.selected_actuator_x = Some(device.id.clone());
                                     }
                                 }
@@ -1043,10 +1047,13 @@ impl ScanBuilderPanel {
                             .show_ui(ui, |ui| {
                                 for device in &actuators {
                                     let label = format!("{} ({})", device.name, device.id);
-                                    if ui.selectable_label(
-                                        self.selected_actuator_y.as_ref() == Some(&device.id),
-                                        &label,
-                                    ).clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            self.selected_actuator_y.as_ref() == Some(&device.id),
+                                            &label,
+                                        )
+                                        .clicked()
+                                    {
                                         self.selected_actuator_y = Some(device.id.clone());
                                     }
                                 }
@@ -1077,7 +1084,10 @@ impl ScanBuilderPanel {
             ui.heading("Detectors");
 
             if detectors.is_empty() {
-                ui.colored_label(egui::Color32::GRAY, "No readable devices found. Click 'Refresh Devices' to load.");
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "No readable devices found. Click 'Refresh Devices' to load.",
+                );
                 return;
             }
 
@@ -1129,7 +1139,12 @@ impl ScanBuilderPanel {
             ui.horizontal(|ui| {
                 ui.label("Dwell Time:");
                 let has_error = self.validation_errors.contains_key("dwell_time");
-                let changed = Self::render_text_field(ui, &mut self.dwell_time_ms, has_error, self.validation_errors.get("dwell_time"));
+                let changed = Self::render_text_field(
+                    ui,
+                    &mut self.dwell_time_ms,
+                    has_error,
+                    self.validation_errors.get("dwell_time"),
+                );
                 if changed {
                     self.validate_form();
                 }
@@ -1145,7 +1160,12 @@ impl ScanBuilderPanel {
         ui.horizontal(|ui| {
             ui.label("Start:");
             let has_error = self.validation_errors.contains_key("start_1d");
-            if Self::render_text_field(ui, &mut self.start_1d, has_error, self.validation_errors.get("start_1d")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.start_1d,
+                has_error,
+                self.validation_errors.get("start_1d"),
+            ) {
                 changed = true;
             }
         });
@@ -1153,7 +1173,12 @@ impl ScanBuilderPanel {
         ui.horizontal(|ui| {
             ui.label("Stop:");
             let has_error = self.validation_errors.contains_key("stop_1d");
-            if Self::render_text_field(ui, &mut self.stop_1d, has_error, self.validation_errors.get("stop_1d")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.stop_1d,
+                has_error,
+                self.validation_errors.get("stop_1d"),
+            ) {
                 changed = true;
             }
         });
@@ -1161,7 +1186,12 @@ impl ScanBuilderPanel {
         ui.horizontal(|ui| {
             ui.label("Points:");
             let has_error = self.validation_errors.contains_key("points_1d");
-            if Self::render_text_field(ui, &mut self.points_1d, has_error, self.validation_errors.get("points_1d")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.points_1d,
+                has_error,
+                self.validation_errors.get("points_1d"),
+            ) {
                 changed = true;
             }
         });
@@ -1179,17 +1209,32 @@ impl ScanBuilderPanel {
         ui.horizontal(|ui| {
             ui.label("  Start:");
             let has_error = self.validation_errors.contains_key("x_start");
-            if Self::render_text_field(ui, &mut self.x_start, has_error, self.validation_errors.get("x_start")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.x_start,
+                has_error,
+                self.validation_errors.get("x_start"),
+            ) {
                 changed = true;
             }
             ui.label("Stop:");
             let has_error = self.validation_errors.contains_key("x_stop");
-            if Self::render_text_field(ui, &mut self.x_stop, has_error, self.validation_errors.get("x_stop")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.x_stop,
+                has_error,
+                self.validation_errors.get("x_stop"),
+            ) {
                 changed = true;
             }
             ui.label("Points:");
             let has_error = self.validation_errors.contains_key("x_points");
-            if Self::render_text_field(ui, &mut self.x_points, has_error, self.validation_errors.get("x_points")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.x_points,
+                has_error,
+                self.validation_errors.get("x_points"),
+            ) {
                 changed = true;
             }
         });
@@ -1200,17 +1245,32 @@ impl ScanBuilderPanel {
         ui.horizontal(|ui| {
             ui.label("  Start:");
             let has_error = self.validation_errors.contains_key("y_start");
-            if Self::render_text_field(ui, &mut self.y_start, has_error, self.validation_errors.get("y_start")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.y_start,
+                has_error,
+                self.validation_errors.get("y_start"),
+            ) {
                 changed = true;
             }
             ui.label("Stop:");
             let has_error = self.validation_errors.contains_key("y_stop");
-            if Self::render_text_field(ui, &mut self.y_stop, has_error, self.validation_errors.get("y_stop")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.y_stop,
+                has_error,
+                self.validation_errors.get("y_stop"),
+            ) {
                 changed = true;
             }
             ui.label("Points:");
             let has_error = self.validation_errors.contains_key("y_points");
-            if Self::render_text_field(ui, &mut self.y_points, has_error, self.validation_errors.get("y_points")) {
+            if Self::render_text_field(
+                ui,
+                &mut self.y_points,
+                has_error,
+                self.validation_errors.get("y_points"),
+            ) {
                 changed = true;
             }
         });
@@ -1222,7 +1282,12 @@ impl ScanBuilderPanel {
 
     /// Render a single text field with optional error styling
     /// Returns true if the text was modified
-    fn render_text_field(ui: &mut egui::Ui, text: &mut String, has_error: bool, error_msg: Option<&String>) -> bool {
+    fn render_text_field(
+        ui: &mut egui::Ui,
+        text: &mut String,
+        has_error: bool,
+        error_msg: Option<&String>,
+    ) -> bool {
         // Apply red stroke if validation error
         let mut frame = egui::Frame::NONE;
         if has_error {
@@ -1252,20 +1317,24 @@ impl ScanBuilderPanel {
         match self.scan_mode {
             ScanMode::OneDimensional => {
                 if self.selected_actuator.is_none() {
-                    self.validation_errors.insert("actuator", "Select an actuator".to_string());
+                    self.validation_errors
+                        .insert("actuator", "Select an actuator".to_string());
                 }
             }
             ScanMode::TwoDimensional => {
                 if self.selected_actuator_x.is_none() {
-                    self.validation_errors.insert("actuator_x", "Select X axis actuator".to_string());
+                    self.validation_errors
+                        .insert("actuator_x", "Select X axis actuator".to_string());
                 }
                 if self.selected_actuator_y.is_none() {
-                    self.validation_errors.insert("actuator_y", "Select Y axis actuator".to_string());
+                    self.validation_errors
+                        .insert("actuator_y", "Select Y axis actuator".to_string());
                 }
                 // Check for same actuator on both axes
                 if let (Some(x), Some(y)) = (&self.selected_actuator_x, &self.selected_actuator_y) {
                     if x == y {
-                        self.validation_errors.insert("actuator_y", "X and Y axes must be different".to_string());
+                        self.validation_errors
+                            .insert("actuator_y", "X and Y axes must be different".to_string());
                     }
                 }
             }
@@ -1273,7 +1342,8 @@ impl ScanBuilderPanel {
 
         // Validate detector selection
         if self.selected_detectors.is_empty() {
-            self.validation_errors.insert("detectors", "Select at least one detector".to_string());
+            self.validation_errors
+                .insert("detectors", "Select at least one detector".to_string());
         }
 
         // Validate numeric fields based on mode
@@ -1284,9 +1354,12 @@ impl ScanBuilderPanel {
                 self.validate_points_field("points_1d", &self.points_1d.clone());
 
                 // Check start != stop
-                if let (Ok(start), Ok(stop)) = (self.start_1d.parse::<f64>(), self.stop_1d.parse::<f64>()) {
+                if let (Ok(start), Ok(stop)) =
+                    (self.start_1d.parse::<f64>(), self.stop_1d.parse::<f64>())
+                {
                     if (start - stop).abs() < f64::EPSILON {
-                        self.validation_errors.insert("stop_1d", "Stop must differ from Start".to_string());
+                        self.validation_errors
+                            .insert("stop_1d", "Stop must differ from Start".to_string());
                     }
                 }
             }
@@ -1299,14 +1372,20 @@ impl ScanBuilderPanel {
                 self.validate_points_field("y_points", &self.y_points.clone());
 
                 // Check start != stop for both axes
-                if let (Ok(start), Ok(stop)) = (self.x_start.parse::<f64>(), self.x_stop.parse::<f64>()) {
+                if let (Ok(start), Ok(stop)) =
+                    (self.x_start.parse::<f64>(), self.x_stop.parse::<f64>())
+                {
                     if (start - stop).abs() < f64::EPSILON {
-                        self.validation_errors.insert("x_stop", "Stop must differ from Start".to_string());
+                        self.validation_errors
+                            .insert("x_stop", "Stop must differ from Start".to_string());
                     }
                 }
-                if let (Ok(start), Ok(stop)) = (self.y_start.parse::<f64>(), self.y_stop.parse::<f64>()) {
+                if let (Ok(start), Ok(stop)) =
+                    (self.y_start.parse::<f64>(), self.y_stop.parse::<f64>())
+                {
                     if (start - stop).abs() < f64::EPSILON {
-                        self.validation_errors.insert("y_stop", "Stop must differ from Start".to_string());
+                        self.validation_errors
+                            .insert("y_stop", "Stop must differ from Start".to_string());
                     }
                 }
             }
@@ -1319,7 +1398,8 @@ impl ScanBuilderPanel {
     /// Validate a field as a valid f64
     fn validate_float_field(&mut self, field_name: &'static str, value: &str) {
         if value.parse::<f64>().is_err() {
-            self.validation_errors.insert(field_name, "Must be a valid number".to_string());
+            self.validation_errors
+                .insert(field_name, "Must be a valid number".to_string());
         }
     }
 
@@ -1328,10 +1408,12 @@ impl ScanBuilderPanel {
         match value.parse::<f64>() {
             Ok(v) if v > 0.0 => {}
             Ok(_) => {
-                self.validation_errors.insert(field_name, "Must be positive".to_string());
+                self.validation_errors
+                    .insert(field_name, "Must be positive".to_string());
             }
             Err(_) => {
-                self.validation_errors.insert(field_name, "Must be a valid number".to_string());
+                self.validation_errors
+                    .insert(field_name, "Must be a valid number".to_string());
             }
         }
     }
@@ -1341,10 +1423,12 @@ impl ScanBuilderPanel {
         match value.parse::<u32>() {
             Ok(v) if v > 0 => {}
             Ok(_) => {
-                self.validation_errors.insert(field_name, "Must be > 0".to_string());
+                self.validation_errors
+                    .insert(field_name, "Must be > 0".to_string());
             }
             Err(_) => {
-                self.validation_errors.insert(field_name, "Must be a valid integer".to_string());
+                self.validation_errors
+                    .insert(field_name, "Must be a valid integer".to_string());
             }
         }
     }
@@ -1395,7 +1479,11 @@ impl ScanBuilderPanel {
             ScanMode::TwoDimensional => {
                 let x_points: u32 = self.x_points.parse().unwrap_or(0);
                 let y_points: u32 = self.y_points.parse().unwrap_or(0);
-                if x_points == 0 || y_points == 0 || self.selected_actuator_x.is_none() || self.selected_actuator_y.is_none() {
+                if x_points == 0
+                    || y_points == 0
+                    || self.selected_actuator_x.is_none()
+                    || self.selected_actuator_y.is_none()
+                {
                     return ScanPreview {
                         total_points: 0,
                         estimated_duration_secs: 0.0,
@@ -1437,7 +1525,14 @@ impl ScanBuilderPanel {
                 parameters,
                 device_mapping,
                 metadata,
-            } => self.start_scan(client, runtime, plan_type, parameters, device_mapping, metadata),
+            } => self.start_scan(
+                client,
+                runtime,
+                plan_type,
+                parameters,
+                device_mapping,
+                metadata,
+            ),
             PendingAction::AbortScan => self.abort_scan(client, runtime),
         }
     }

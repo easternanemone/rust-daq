@@ -317,10 +317,7 @@ impl RunHistoryPanel {
                             ui.label(acq.sample_count.to_string());
                         });
                         row.col(|ui| {
-                            ui.label(format!(
-                                "{:.2}",
-                                acq.file_size_bytes as f64 / 1_000_000.0
-                            ));
+                            ui.label(format!("{:.2}", acq.file_size_bytes as f64 / 1_000_000.0));
                         });
                         row.col(|ui| {
                             ui.label(&acq.name);
@@ -358,7 +355,10 @@ impl RunHistoryPanel {
                         ui.end_row();
 
                         ui.label("File Size:");
-                        ui.label(format!("{:.2} MB", acq.file_size_bytes as f64 / 1_000_000.0));
+                        ui.label(format!(
+                            "{:.2} MB",
+                            acq.file_size_bytes as f64 / 1_000_000.0
+                        ));
                         ui.end_row();
 
                         ui.label("Sample Count:");
@@ -391,7 +391,7 @@ impl RunHistoryPanel {
                 ui.label("Notes:");
                 ui.add(
                     egui::TextEdit::multiline(&mut self.annotation_notes)
-                        .desired_width(f32::INFINITY)
+                        .desired_width(f32::INFINITY),
                 );
 
                 ui.horizontal(|ui| {

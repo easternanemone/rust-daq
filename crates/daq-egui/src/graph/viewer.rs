@@ -252,7 +252,9 @@ impl ExperimentViewer {
         match (condition_type, &*condition) {
             (0, WaitCondition::Duration { .. }) => {}
             (0, _) => {
-                *condition = WaitCondition::Duration { milliseconds: 1000.0 };
+                *condition = WaitCondition::Duration {
+                    milliseconds: 1000.0,
+                };
             }
             (1, WaitCondition::Threshold { .. }) => {}
             (1, _) => {
@@ -372,7 +374,9 @@ impl ExperimentViewer {
             }
             (2, LoopTermination::Infinite { .. }) => {}
             (2, _) => {
-                config.termination = LoopTermination::Infinite { max_iterations: 1000 };
+                config.termination = LoopTermination::Infinite {
+                    max_iterations: 1000,
+                };
             }
             _ => {}
         }

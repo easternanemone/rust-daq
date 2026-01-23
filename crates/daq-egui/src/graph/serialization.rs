@@ -55,8 +55,8 @@ impl GraphFile {
 
 /// Save graph to JSON file.
 pub fn save_graph(path: &Path, file: &GraphFile) -> Result<(), String> {
-    let json =
-        serde_json::to_string_pretty(file).map_err(|e| format!("Failed to serialize graph: {e}"))?;
+    let json = serde_json::to_string_pretty(file)
+        .map_err(|e| format!("Failed to serialize graph: {e}"))?;
 
     std::fs::write(path, json).map_err(|e| format!("Failed to write file: {e}"))?;
 
