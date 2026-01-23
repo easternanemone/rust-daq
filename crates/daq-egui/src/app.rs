@@ -16,8 +16,9 @@ use crate::layout;
 use crate::panels::{
     ConnectionDiagnostics, ConnectionStatus as LogConnectionStatus, DevicesPanel,
     DocumentViewerPanel, ExperimentDesignerPanel, GettingStartedPanel, ImageViewerPanel,
-    InstrumentManagerPanel, LoggingPanel, ModulesPanel, PlanRunnerPanel, RunHistoryPanel,
-    ScanBuilderPanel, ScansPanel, ScriptsPanel, SignalPlotterPanel, StoragePanel,
+    InstrumentManagerPanel, LoggingPanel, ModulesPanel, PlanRunnerPanel, RunComparisonPanel,
+    RunHistoryPanel, ScanBuilderPanel, ScansPanel, ScriptsPanel, SignalPlotterPanel,
+    StoragePanel,
 };
 use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::theme::{self, ThemePreference};
@@ -71,6 +72,7 @@ pub struct DaqApp {
     scans_panel: ScansPanel,
     storage_panel: StoragePanel,
     run_history_panel: RunHistoryPanel,
+    run_comparison_panel: RunComparisonPanel,
     modules_panel: ModulesPanel,
     plan_runner_panel: PlanRunnerPanel,
     scan_builder_panel: ScanBuilderPanel,
@@ -215,6 +217,7 @@ pub enum Panel {
     ExperimentDesigner,
     Storage,
     RunHistory,
+    RunComparison,
     Modules,
     PlanRunner,
     DocumentViewer,
@@ -407,6 +410,7 @@ impl DaqApp {
             scans_panel: ScansPanel::default(),
             storage_panel: StoragePanel::default(),
             run_history_panel: RunHistoryPanel::default(),
+            run_comparison_panel: RunComparisonPanel::default(),
             modules_panel: ModulesPanel::default(),
             plan_runner_panel: PlanRunnerPanel::default(),
             scan_builder_panel: ScanBuilderPanel::default(),
@@ -1169,6 +1173,7 @@ impl DaqApp {
         self.modules_panel = ModulesPanel::default();
         self.storage_panel = StoragePanel::default();
         self.run_history_panel = RunHistoryPanel::default();
+        self.run_comparison_panel = RunComparisonPanel::default();
 
         self.logging_panel
             .info("Connection", "Connected - panels will refresh data");
@@ -1208,6 +1213,7 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
             Panel::ExperimentDesigner => "Experiment Designer".into(),
             Panel::Storage => format!("{} Storage", icons::nav::STORAGE).into(),
             Panel::RunHistory => "📚 Run History".into(),
+            Panel::RunComparison => "📊 Compare Runs".into(),
             Panel::Modules => format!("{} Modules", icons::nav::MODULES).into(),
             Panel::PlanRunner => format!("{} Plan Runner", icons::nav::PLAN_RUNNER).into(),
             Panel::DocumentViewer => format!("{} Documents", icons::nav::DOCUMENT_VIEWER).into(),
@@ -1279,6 +1285,11 @@ impl<'a> TabViewer for DaqTabViewer<'a> {
             Panel::RunHistory => {
                 self.app
                     .run_history_panel
+                    .ui(ui, self.app.client.as_mut(), &self.app.runtime)
+            }
+            Panel::RunComparison => {
+                self.app
+                    .run_comparison_panel
                     .ui(ui, self.app.client.as_mut(), &self.app.runtime)
             }
             Panel::Modules => {
