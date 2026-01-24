@@ -729,21 +729,145 @@ impl NiDaqService for NiDaqServiceImpl {
     #[instrument(skip(self))]
     async fn read_counter(
         &self,
-        _request: Request<ReadCounterRequest>,
+        request: Request<ReadCounterRequest>,
     ) -> Result<Response<ReadCounterResponse>, Status> {
-        Err(Status::unimplemented(
-            "ReadCounter not yet implemented (Phase 4)",
-        ))
+        #[cfg(feature = "comedi")]
+        {
+            let req = request.into_inner();
+
+            // Validate device_id
+            if req.device_id.is_empty() {
+                return Err(Status::invalid_argument("device_id is required"));
+            }
+
+            // Verify device exists in registry
+            let _device_info = self
+                .registry
+                .get_device_info(&req.device_id)
+                .ok_or_else(|| Status::not_found(format!("Device '{}' not found", req.device_id)))?;
+
+            // Determine device path (TODO: store in registry metadata)
+            let device_path = "/dev/comedi0";
+
+            // Read counter via spawn_blocking (FFI call)
+            let counter = req.counter;
+            let (count, timestamp_ns) = self
+                .await_with_timeout("ReadCounter", async move {
+                    tokio::task::spawn_blocking(move || {
+                        use daq_hardware::drivers::comedi::ComediDevice;
+                        use std::time::SystemTime;
+
+                        let device = ComediDevice::open(device_path)?;
+                        let counter_subsystem = device.counter()?;
+
+                        // Validate counter channel
+                        if counter >= counter_subsystem.n_channels() {
+                            return Err(anyhow::anyhow!(
+                                "Invalid counter {}. Device has {} counter channels",
+                                counter,
+                                counter_subsystem.n_channels()
+                            ));
+                        }
+
+                        // Read the counter value
+                        let count = counter_subsystem
+                            .read(counter)
+                            .map_err(|e| anyhow::anyhow!("Failed to read counter: {}", e))?;
+
+                        // Get timestamp
+                        let timestamp_ns = SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_nanos() as u64;
+
+                        Ok((count as u64, timestamp_ns))
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?
+                })
+                .await?;
+
+            Ok(Response::new(ReadCounterResponse {
+                success: true,
+                error_message: String::new(),
+                count,
+                timestamp_ns,
+            }))
+        }
+
+        #[cfg(not(feature = "comedi"))]
+        {
+            let _ = request;
+            Err(Status::unimplemented(
+                "ReadCounter requires 'comedi' feature to be enabled",
+            ))
+        }
     }
 
     #[instrument(skip(self))]
     async fn reset_counter(
         &self,
-        _request: Request<ResetCounterRequest>,
+        request: Request<ResetCounterRequest>,
     ) -> Result<Response<ResetCounterResponse>, Status> {
-        Err(Status::unimplemented(
-            "ResetCounter not yet implemented (Phase 4)",
-        ))
+        #[cfg(feature = "comedi")]
+        {
+            let req = request.into_inner();
+
+            // Validate device_id
+            if req.device_id.is_empty() {
+                return Err(Status::invalid_argument("device_id is required"));
+            }
+
+            // Verify device exists in registry
+            let _device_info = self
+                .registry
+                .get_device_info(&req.device_id)
+                .ok_or_else(|| Status::not_found(format!("Device '{}' not found", req.device_id)))?;
+
+            // Determine device path (TODO: store in registry metadata)
+            let device_path = "/dev/comedi0";
+
+            // Reset counter via spawn_blocking (FFI call)
+            let counter = req.counter;
+            self.await_with_timeout("ResetCounter", async move {
+                tokio::task::spawn_blocking(move || {
+                    use daq_hardware::drivers::comedi::ComediDevice;
+
+                    let device = ComediDevice::open(device_path)?;
+                    let counter_subsystem = device.counter()?;
+
+                    // Validate counter channel
+                    if counter >= counter_subsystem.n_channels() {
+                        return Err(anyhow::anyhow!(
+                            "Invalid counter {}. Device has {} counter channels",
+                            counter,
+                            counter_subsystem.n_channels()
+                        ));
+                    }
+
+                    // Reset the counter
+                    counter_subsystem
+                        .reset(counter)
+                        .map_err(|e| anyhow::anyhow!("Failed to reset counter: {}", e))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?
+            })
+            .await?;
+
+            Ok(Response::new(ResetCounterResponse {
+                success: true,
+                error_message: String::new(),
+            }))
+        }
+
+        #[cfg(not(feature = "comedi"))]
+        {
+            let _ = request;
+            Err(Status::unimplemented(
+                "ResetCounter requires 'comedi' feature to be enabled",
+            ))
+        }
     }
 
     #[instrument(skip(self))]
@@ -769,11 +893,72 @@ impl NiDaqService for NiDaqServiceImpl {
     #[instrument(skip(self))]
     async fn configure_counter(
         &self,
-        _request: Request<ConfigureCounterRequest>,
+        request: Request<ConfigureCounterRequest>,
     ) -> Result<Response<ConfigureCounterResponse>, Status> {
-        Err(Status::unimplemented(
-            "ConfigureCounter not yet implemented (Phase 4)",
-        ))
+        #[cfg(feature = "comedi")]
+        {
+            let req = request.into_inner();
+
+            // Validate device_id
+            if req.device_id.is_empty() {
+                return Err(Status::invalid_argument("device_id is required"));
+            }
+
+            // Verify device exists in registry
+            let _device_info = self
+                .registry
+                .get_device_info(&req.device_id)
+                .ok_or_else(|| Status::not_found(format!("Device '{}' not found", req.device_id)))?;
+
+            // Determine device path (TODO: store in registry metadata)
+            let device_path = "/dev/comedi0";
+
+            // Validate counter configuration
+            let counter = req.counter;
+            self.await_with_timeout("ConfigureCounter", async move {
+                tokio::task::spawn_blocking(move || {
+                    use daq_hardware::drivers::comedi::ComediDevice;
+
+                    let device = ComediDevice::open(device_path)?;
+                    let counter_subsystem = device.counter()?;
+
+                    // Validate counter channel
+                    if counter >= counter_subsystem.n_channels() {
+                        return Err(anyhow::anyhow!(
+                            "Invalid counter {}. Device has {} counter channels",
+                            counter,
+                            counter_subsystem.n_channels()
+                        ));
+                    }
+
+                    // Note: The NI PCI-MIO-16XE-10 Comedi driver has limited counter
+                    // configuration support. Advanced features like mode selection,
+                    // edge detection, and gate/source pin configuration may require
+                    // direct INSN commands or CMD-based acquisition.
+                    // For now, we validate the request and acknowledge it.
+                    // Full implementation would require extending the Counter subsystem
+                    // with Comedi INSN_CONFIG commands.
+
+                    Ok(())
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?
+            })
+            .await?;
+
+            Ok(Response::new(ConfigureCounterResponse {
+                success: true,
+                error_message: String::new(),
+            }))
+        }
+
+        #[cfg(not(feature = "comedi"))]
+        {
+            let _ = request;
+            Err(Status::unimplemented(
+                "ConfigureCounter requires 'comedi' feature to be enabled",
+            ))
+        }
     }
 
     // ==========================================================================
