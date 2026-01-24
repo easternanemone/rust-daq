@@ -32,11 +32,10 @@
 
 #![cfg(feature = "hardware")]
 
-use daq_driver_comedi::{
-    ComediDevice, ContinuousStream, StreamAcquisition, StreamConfig, StreamStats,
-};
+use daq_driver_comedi::{ComediDevice, StreamAcquisition, StreamConfig};
 use std::env;
 use std::time::{Duration, Instant};
+use std::thread;
 
 // =============================================================================
 // Test Configuration
@@ -61,7 +60,22 @@ macro_rules! skip_if_disabled {
             println!("Comedi streaming test skipped (set COMEDI_SMOKE_TEST=1 to enable)");
             return;
         }
+        // Allow device to recover from any previous test
+        thread::sleep(Duration::from_millis(200));
     };
+}
+
+/// Cancel any running acquisition on the analog input subdevice.
+/// This ensures a clean state before starting a new acquisition.
+fn cancel_any_acquisition(device: &ComediDevice) {
+    // Find AI subdevice and cancel any running command
+    if let Some(ai_subdev) = device.find_subdevice(daq_driver_comedi::SubdeviceType::AnalogInput) {
+        device.with_handle(|handle| unsafe {
+            comedi_sys::comedi_cancel(handle, ai_subdev);
+        });
+        // Brief delay to allow hardware to reset
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 // =============================================================================
@@ -177,6 +191,9 @@ fn test_basic_streaming() {
     println!("Device: {}", device_path());
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     // Configure single-channel streaming
     let config = StreamConfig::builder()
@@ -223,6 +240,10 @@ fn test_basic_streaming() {
 
     stats.print_summary("Basic Streaming");
 
+    // Explicit cleanup: stop stream, drop stream, then device closes
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
+
     // Assertions
     assert!(
         stats.samples_acquired > 0,
@@ -258,6 +279,9 @@ fn test_multi_channel_streaming() {
     println!("Device: {}", device_path());
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     // Configure multi-channel streaming
     // Note: Per-channel rate, so aggregate = rate * n_channels
@@ -349,6 +373,10 @@ fn test_multi_channel_streaming() {
         "Channel sample counts should be equal (or differ by at most 1)"
     );
 
+    // Explicit cleanup
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
+
     println!("\n=== Multi-Channel Streaming Test PASSED ===\n");
 }
 
@@ -370,6 +398,9 @@ fn test_high_speed_acquisition() {
     println!("Device: {}", device_path());
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     // Configure high-speed streaming
     let config = StreamConfig::builder()
@@ -435,6 +466,10 @@ fn test_high_speed_acquisition() {
         stats.overflows
     );
 
+    // Explicit cleanup
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
+
     println!("\n=== High-Speed Acquisition Test PASSED ===\n");
 }
 
@@ -457,6 +492,9 @@ fn test_sustained_streaming() {
     println!("Duration: {:?}", SUSTAINED_DURATION);
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     let config = StreamConfig::builder()
         .channels(&[0, 1])
@@ -549,6 +587,10 @@ fn test_sustained_streaming() {
         stats.samples_acquired
     );
 
+    // Explicit cleanup
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
+
     println!("\n=== Sustained Streaming Test PASSED ===\n");
 }
 
@@ -569,6 +611,9 @@ fn test_sample_rate_accuracy() {
     println!("Device: {}", device_path());
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     // Test at several sample rates
     let test_rates = [1000.0, 5000.0, 10000.0, 25000.0];
@@ -595,11 +640,16 @@ fn test_sample_rate_accuracy() {
             if let Ok(Some(samples)) = stream.read_available() {
                 sample_count += samples.len() as u64;
             }
-            std::thread::sleep(Duration::from_micros(500));
+            thread::sleep(Duration::from_micros(500));
         }
 
         let elapsed = start.elapsed();
         stream.stop().expect("Failed to stop streaming");
+        
+        // Cleanup between rate tests
+        drop(stream);
+        thread::sleep(Duration::from_millis(100));
+        cancel_any_acquisition(&device);
 
         let actual_rate = sample_count as f64 / elapsed.as_secs_f64();
         let error_percent = ((actual_rate - target_rate) / target_rate * 100.0).abs();
@@ -639,6 +689,9 @@ fn test_data_integrity() {
     println!("Device: {}", device_path());
 
     let device = ComediDevice::open(&device_path()).expect("Failed to open Comedi device");
+    
+    // Cancel any lingering acquisition from previous tests
+    cancel_any_acquisition(&device);
 
     let config = StreamConfig::builder()
         .channels(&[0])
@@ -713,6 +766,10 @@ fn test_data_integrity() {
         out_of_range < all_samples.len() as u64 / 100,
         "Less than 1% of samples should be out of range"
     );
+
+    // Explicit cleanup
+    drop(stream);
+    thread::sleep(Duration::from_millis(100));
 
     println!("\n=== Data Integrity Test PASSED ===\n");
 }
