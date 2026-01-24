@@ -82,7 +82,7 @@ pub fn graph_to_rhai_script(snarl: &Snarl<ExperimentNode>, filename: Option<&str
                 node.node_name()
             ));
             script.push_str(&node_to_rhai(node, *node_id, snarl, &loop_body_set, 0));
-            script.push_str("\n");
+            script.push('\n');
         }
     }
 
@@ -449,9 +449,9 @@ fn find_loop_body_nodes(loop_node_id: NodeId, snarl: &Snarl<ExperimentNode>) -> 
     }
     for (out_pin, in_pin) in snarl.wires() {
         if pure_body.contains(&out_pin.node) && pure_body.contains(&in_pin.node) {
-            body_adjacency
-                .get_mut(&out_pin.node)
-                .map(|v| v.push(in_pin.node));
+            if let Some(v) = body_adjacency.get_mut(&out_pin.node) {
+                v.push(in_pin.node);
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 //! Experiment Designer panel with node graph editor.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 
@@ -169,7 +170,7 @@ impl ExperimentDesignerPanel {
         runtime: Option<&Runtime>,
     ) {
         // If ejected, show script editor instead
-        if self.script_editor.is_some() {
+        if let Some(editor) = &mut self.script_editor {
             // Track if user wants to return to graph mode
             let mut return_to_graph = false;
 
@@ -186,9 +187,7 @@ impl ExperimentDesignerPanel {
             ui.separator();
 
             // Show editor (safe borrow after button logic)
-            if let Some(editor) = &mut self.script_editor {
-                editor.ui(ui);
-            }
+            editor.ui(ui);
 
             // Handle return to graph mode
             if return_to_graph {
@@ -204,7 +203,7 @@ impl ExperimentDesignerPanel {
 
         // Clone client for use in multiple places (DaqClient is Clone)
         // We clone first to preserve client for later use
-        let client_clone: Option<DaqClient> = client.as_ref().map(|c| (*c).clone());
+        let client_clone: Option<DaqClient> = client.as_deref().cloned();
 
         // Poll engine status when execution is active (every 500ms)
         if self.execution_state.is_active()
@@ -216,8 +215,7 @@ impl ExperimentDesignerPanel {
         // Fetch device list periodically (every 10s) for dropdown selectors
         let should_fetch_devices = self
             .last_device_fetch
-            .map(|t| t.elapsed() > std::time::Duration::from_secs(10))
-            .unwrap_or(true);
+            .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(10));
         if should_fetch_devices {
             self.update_device_list(client_clone.as_ref(), runtime);
         }
@@ -447,7 +445,7 @@ impl ExperimentDesignerPanel {
 
             // Define SnarlWidget
             let snarl_id = egui::Id::new("experiment_graph");
-            let widget = SnarlWidget::new().id(snarl_id).style(self.style.clone());
+            let widget = SnarlWidget::new().id(snarl_id).style(self.style);
 
             // 1. Render Graph FIRST (so it's the background/base layer)
             widget.show(&mut self.snarl, &mut self.viewer, ui);

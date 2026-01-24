@@ -129,11 +129,12 @@ impl Default for AnalogOutputPanel {
 impl AnalogOutputPanel {
     /// Create a new panel for a specific device.
     pub fn new(device_id: &str, n_channels: u32) -> Self {
-        let mut panel = Self::default();
-        panel.device_id = device_id.to_string();
-        panel.n_channels = n_channels;
-        panel.channels = vec![ChannelState::default(); n_channels as usize];
-        panel
+        Self {
+            device_id: device_id.to_string(),
+            n_channels,
+            channels: vec![ChannelState::default(); n_channels as usize],
+            ..Self::default()
+        }
     }
 
     /// Main UI entry point.

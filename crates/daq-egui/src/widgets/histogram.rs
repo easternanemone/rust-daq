@@ -66,6 +66,7 @@ impl Histogram {
     }
 
     /// Compute histogram from 8-bit pixel data
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_u8_pixels(&mut self, pixels: &[u8]) {
         self.clear();
         self.bit_depth = 8;
@@ -83,6 +84,7 @@ impl Histogram {
     }
 
     /// Compute histogram from 16-bit pixel data
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_u16_pixels(&mut self, pixels: &[u16], bit_depth: u32) {
         self.clear();
         self.bit_depth = bit_depth;
@@ -105,6 +107,7 @@ impl Histogram {
     }
 
     /// Compute histogram from raw frame data
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_frame_data(&mut self, data: &[u8], width: u32, height: u32, bit_depth: u32) {
         let expected_pixels = (width * height) as usize;
 

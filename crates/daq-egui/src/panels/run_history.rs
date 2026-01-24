@@ -8,6 +8,7 @@ use crate::client::DaqClient;
 use crate::widgets::{offline_notice, OfflineContext};
 
 /// Pending action for run history panel
+#[allow(dead_code)]
 enum PendingAction {
     Refresh,
     SaveAnnotation { file_path: String },

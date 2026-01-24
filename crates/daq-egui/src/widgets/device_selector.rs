@@ -30,7 +30,7 @@ impl DeviceSelector {
         let response = ui.text_edit_singleline(&mut self.text);
 
         // Show hint text when empty
-        if hint != "" && self.text.is_empty() && !response.has_focus() {
+        if !hint.is_empty() && self.text.is_empty() && !response.has_focus() {
             let rect = response.rect;
             let painter = ui.painter();
             painter.text(
@@ -89,6 +89,7 @@ impl DeviceSelector {
     }
 
     /// Update the list of available device IDs (for registry refresh).
+    #[allow(dead_code)]
     pub fn update_candidates(&mut self, device_ids: &[String]) {
         self.candidates = device_ids.to_vec();
     }

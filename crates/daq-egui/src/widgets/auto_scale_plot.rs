@@ -7,7 +7,7 @@ use egui::{Response, Ui, Vec2b};
 use egui_plot::Plot;
 
 /// Per-axis lock state for plot scaling.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AxisLockState {
     /// Whether X-axis is locked (true) or auto-scaling (false)
     pub x_locked: bool,
@@ -17,17 +17,6 @@ pub struct AxisLockState {
     pub x_bounds: Option<[f64; 2]>,
     /// Current Y-axis bounds [min, max]. None = uninitialized (first data sets initial bounds)
     pub y_bounds: Option<[f64; 2]>,
-}
-
-impl Default for AxisLockState {
-    fn default() -> Self {
-        Self {
-            x_locked: false,
-            y_locked: false,
-            x_bounds: None,
-            y_bounds: None,
-        }
-    }
 }
 
 /// Auto-scale plot wrapper with grow-to-fit logic.
@@ -66,11 +55,13 @@ impl AutoScalePlot {
     }
 
     /// Get a reference to the current axis lock state.
+    #[allow(dead_code)]
     pub fn state(&self) -> &AxisLockState {
         &self.state
     }
 
     /// Get a mutable reference to the axis lock state.
+    #[allow(dead_code)]
     pub fn state_mut(&mut self) -> &mut AxisLockState {
         &mut self.state
     }

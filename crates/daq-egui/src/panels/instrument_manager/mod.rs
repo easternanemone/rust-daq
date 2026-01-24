@@ -1344,10 +1344,7 @@ impl InstrumentManagerPanel {
             || driver_lower.contains("mai_tai")
             || (device.is_wavelength_tunable && device.is_emission_controllable)
         {
-            let panel = self
-                .maitai_panels
-                .entry(device_id.clone())
-                .or_insert_with(MaiTaiControlPanel::default);
+            let panel = self.maitai_panels.entry(device_id.clone()).or_default();
             // Use push_id to avoid widget ID collisions with docked panels
             ui.push_id(("instr_mgr", &device_id), |ui| {
                 panel.ui(ui, &device, client.as_deref_mut(), runtime);
@@ -1363,7 +1360,7 @@ impl InstrumentManagerPanel {
             let panel = self
                 .power_meter_panels
                 .entry(device_id.clone())
-                .or_insert_with(PowerMeterControlPanel::default);
+                .or_default();
             // Use push_id to avoid widget ID collisions with docked panels
             ui.push_id(("instr_mgr", &device_id), |ui| {
                 panel.ui(ui, &device, client.as_deref_mut(), runtime);
@@ -1373,10 +1370,7 @@ impl InstrumentManagerPanel {
 
         // Check for ELL14 rotator
         if driver_lower.contains("ell14") || driver_lower.contains("thorlabs") {
-            let panel = self
-                .rotator_panels
-                .entry(device_id.clone())
-                .or_insert_with(RotatorControlPanel::default);
+            let panel = self.rotator_panels.entry(device_id.clone()).or_default();
             // Use push_id to avoid widget ID collisions with docked panels
             ui.push_id(("instr_mgr", &device_id), |ui| {
                 panel.ui(ui, &device, client.as_deref_mut(), runtime);
@@ -1386,10 +1380,7 @@ impl InstrumentManagerPanel {
 
         // Check for ESP300 stage or other movable devices
         if device.is_movable {
-            let panel = self
-                .stage_panels
-                .entry(device_id.clone())
-                .or_insert_with(StageControlPanel::default);
+            let panel = self.stage_panels.entry(device_id.clone()).or_default();
             // Use push_id to avoid widget ID collisions with docked panels
             ui.push_id(("instr_mgr", &device_id), |ui| {
                 panel.ui(ui, &device, client.as_deref_mut(), runtime);

@@ -81,6 +81,7 @@ impl MultiDetectorGrid {
     }
 
     /// Create a grid with initial panels.
+    #[allow(dead_code)]
     pub fn with_panels(panels: Vec<DetectorPanel>) -> Self {
         Self { panels }
     }
@@ -96,6 +97,7 @@ impl MultiDetectorGrid {
     }
 
     /// Get the number of panels in the grid.
+    #[allow(dead_code)]
     pub fn panel_count(&self) -> usize {
         self.panels.len()
     }
@@ -106,6 +108,7 @@ impl MultiDetectorGrid {
     }
 
     /// Show the grid layout using egui.
+    #[allow(dead_code)]
     pub fn show(&mut self, ui: &mut Ui) {
         if self.panels.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -141,6 +144,7 @@ impl MultiDetectorGrid {
     }
 
     /// Render a single detector panel.
+    #[allow(dead_code)]
     fn render_panel(&self, ui: &mut Ui, panel_idx: usize) {
         let panel = &self.panels[panel_idx];
 
@@ -171,6 +175,7 @@ impl MultiDetectorGrid {
     }
 
     /// Render an empty grid cell.
+    #[allow(dead_code)]
     fn render_empty_cell(&self, ui: &mut Ui) {
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_stroke(

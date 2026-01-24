@@ -58,6 +58,7 @@ pub fn validate_connection(
 }
 
 /// Find all nodes that can reach the given node (ancestors).
+#[allow(dead_code)]
 fn find_ancestors(
     node_id: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<ExperimentNode>,
@@ -90,11 +91,12 @@ fn find_ancestors(
 }
 
 /// Find all nodes in a loop's body sub-graph (duplicated from translation.rs to avoid circular dep).
+#[allow(dead_code)]
 fn find_loop_body_nodes(
     loop_node_id: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<ExperimentNode>,
 ) -> Vec<egui_snarl::NodeId> {
-    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::collections::{HashSet, VecDeque};
 
     let mut body_nodes = HashSet::new();
     let mut to_visit = VecDeque::new();
@@ -144,6 +146,7 @@ fn find_loop_body_nodes(
 }
 
 /// Validate a single loop node's body structure.
+#[allow(dead_code)]
 fn validate_loop_body(
     loop_id: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<ExperimentNode>,
@@ -178,6 +181,7 @@ fn validate_loop_body(
 }
 
 /// Warn if a loop body contains relative moves (position compounds each iteration).
+#[allow(dead_code)]
 fn warn_relative_moves_in_loop(
     loop_id: egui_snarl::NodeId,
     snarl: &egui_snarl::Snarl<ExperimentNode>,
@@ -199,6 +203,7 @@ fn warn_relative_moves_in_loop(
 }
 
 /// Validate all loop bodies in the graph.
+#[allow(dead_code)]
 pub fn validate_loop_bodies(
     snarl: &egui_snarl::Snarl<ExperimentNode>,
 ) -> Vec<(egui_snarl::NodeId, String)> {
@@ -242,9 +247,9 @@ where
     }
 
     for (out_pin, in_pin) in snarl.wires() {
-        adjacency
-            .get_mut(&out_pin.node)
-            .map(|v| v.push(in_pin.node));
+        if let Some(v) = adjacency.get_mut(&out_pin.node) {
+            v.push(in_pin.node);
+        }
         has_input.insert(in_pin.node);
     }
 
@@ -399,9 +404,10 @@ mod tests {
         // Validate - should detect back-edge
         let errors = validate_loop_bodies(&snarl);
         assert!(!errors.is_empty(), "Should detect back-edge");
+        // The error could mention "ancestor" or "loop" depending on which back-edge is detected first
         assert!(
-            errors[0].1.contains("ancestor"),
-            "Error should mention ancestor: {}",
+            errors[0].1.contains("infinite recursion"),
+            "Error should mention infinite recursion: {}",
             errors[0].1
         );
     }

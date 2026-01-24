@@ -13,6 +13,7 @@ pub type GraphTarget = Snarl<ExperimentNode>;
 /// This enum wraps all edit command types so they can be stored
 /// in a single `undo::Record<GraphEdit>`.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum GraphEdit {
     AddNode(AddNodeData),
     RemoveNode(RemoveNodeData),

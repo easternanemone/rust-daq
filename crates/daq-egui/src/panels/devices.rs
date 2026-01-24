@@ -515,7 +515,7 @@ impl DevicesPanel {
                             }
 
                             let selected = self.selected_device.as_ref() == Some(&device.info.id);
-                            let is_online = device.state.as_ref().map_or(false, |s| s.online);
+                            let is_online = device.state.as_ref().is_some_and(|s| s.online);
 
                             let mut frame = layout::card_frame(ui);
                             if selected {
@@ -670,7 +670,7 @@ impl DevicesPanel {
                         let label = if delta > 0.0 {
                             format!("+{}", delta)
                         } else {
-                            format!("{}", delta)
+                            delta.to_string()
                         };
                         if ui.button(label).clicked() {
                             self.pending_action = Some(PendingAction::MoveRelative {
@@ -767,7 +767,7 @@ impl DevicesPanel {
                     });
                 }
 
-                let params_vec: Vec<_> = filtered.iter().cloned().cloned().collect();
+                let params_vec: Vec<_> = filtered.iter().map(|&p| p.clone()).collect();
                 let groups = group_parameters_by_prefix(&params_vec);
 
                 // Use device-scoped ID to prevent state bleed between devices

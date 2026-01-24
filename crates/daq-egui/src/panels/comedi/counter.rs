@@ -129,11 +129,12 @@ impl Default for CounterPanel {
 impl CounterPanel {
     /// Create a new panel.
     pub fn new(device_id: &str, n_counters: u32) -> Self {
-        let mut panel = Self::default();
-        panel.device_id = device_id.to_string();
-        panel.n_counters = n_counters;
-        panel.counters = vec![CounterConfig::default(); n_counters as usize];
-        panel
+        Self {
+            device_id: device_id.to_string(),
+            n_counters,
+            counters: vec![CounterConfig::default(); n_counters as usize],
+            ..Self::default()
+        }
     }
 
     /// Main UI entry point.

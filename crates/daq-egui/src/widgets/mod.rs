@@ -21,21 +21,26 @@ pub mod status_bar;
 pub mod toast;
 pub mod toggle;
 
+#[allow(unused_imports)]
 pub use auto_scale_plot::{AutoScalePlot, AxisLockState};
 pub use device_controls::{
     DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel, RotatorControlPanel,
     StageControlPanel,
 };
+#[allow(unused_imports)]
 pub use device_selector::DeviceSelector;
 pub use gauge::*;
 pub use histogram::*;
 pub use metadata_editor::MetadataEditor;
+#[allow(unused_imports)]
 pub use node_palette::{NodePalette, NodeType};
 pub use offline_notice::*;
 pub use parameter_editor::*;
 pub use pp_editor::*;
+#[allow(unused_imports)]
 pub use property_inspector::PropertyInspector;
 pub use roi_selector::*;
+#[allow(unused_imports)]
 pub use runtime_parameter_editor::{
     EditableParameter, ParameterType, RuntimeParameterEditResult, RuntimeParameterEditor,
 };

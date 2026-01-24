@@ -386,7 +386,7 @@ impl DeviceControlWidget for PowerMeterControlPanel {
             ui.checkbox(&mut self.auto_refresh, "Auto-refresh");
 
             if ui.button("🔄 Read Now").clicked() {
-                self.read_power(client.as_deref_mut(), runtime, &device_id);
+                self.read_power(client, runtime, &device_id);
             }
         });
 

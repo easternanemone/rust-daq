@@ -43,6 +43,7 @@ pub struct FrameUpdate {
     pub height: u32,
     pub data: Vec<u8>, // RGBA data
     pub frame_number: u64,
+    #[allow(dead_code)]
     pub timestamp_ns: u64,
 }
 
@@ -51,6 +52,7 @@ pub struct FrameUpdate {
 pub struct DataUpdate {
     pub device_id: String,
     pub value: f64,
+    #[allow(dead_code)]
     pub timestamp_secs: f64,
 }
 
@@ -193,7 +195,9 @@ impl CameraState {
 
 /// Plot state for live visualization
 struct PlotState {
+    #[allow(dead_code)]
     device_id: String,
+    #[allow(dead_code)]
     label: String,
     data: VecDeque<[f64; 2]>, // [time, value] pairs
     plot: AutoScalePlot,
@@ -223,7 +227,7 @@ impl PlotState {
         }
 
         // Update plot bounds
-        let points: Vec<[f64; 2]> = self.data.iter().copied().collect();
+        let points = self.data.iter().copied().collect::<Vec<_>>();
         self.plot.update_bounds(&points);
     }
 
@@ -422,7 +426,7 @@ impl LiveVisualizationPanel {
         }
 
         // Get panel list for rendering
-        let panels: Vec<DetectorPanel> = self.grid.panels().iter().cloned().collect();
+        let panels: Vec<DetectorPanel> = self.grid.panels().to_vec();
 
         if panels.is_empty() {
             return;

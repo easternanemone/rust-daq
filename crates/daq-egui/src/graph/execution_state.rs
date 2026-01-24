@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 /// State of a single node during execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum NodeExecutionState {
     /// Not yet executed
     Pending,
@@ -107,6 +108,7 @@ impl ExecutionState {
 
     /// Update active node from checkpoint label
     /// Labels are formatted as "node_{NodeId}_start" or "node_{NodeId}_end"
+    #[allow(dead_code)]
     pub fn update_from_checkpoint(&mut self, label: &str) {
         // Parse "node_NodeId(X)_start" or "node_NodeId(X)_end"
         if let Some(rest) = label.strip_prefix("node_") {
@@ -127,11 +129,9 @@ impl ExecutionState {
                                 self.completed_nodes.insert(prev);
                             }
                             self.active_node = Some(node_id);
-                        } else if label.ends_with("_end") {
-                            if self.active_node == Some(node_id) {
-                                self.completed_nodes.insert(node_id);
-                                self.active_node = None;
-                            }
+                        } else if label.ends_with("_end") && self.active_node == Some(node_id) {
+                            self.completed_nodes.insert(node_id);
+                            self.active_node = None;
                         }
                     }
                 }

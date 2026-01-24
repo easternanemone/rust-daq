@@ -978,7 +978,7 @@ impl OscilloscopePanel {
             let show_all = self
                 .channels
                 .get(8..)
-                .map_or(false, |rest| rest.iter().any(|c| c.enabled));
+                .is_some_and(|rest| rest.iter().any(|c| c.enabled));
             let max_visible = if show_all { 16 } else { 8 };
 
             egui::ScrollArea::vertical()

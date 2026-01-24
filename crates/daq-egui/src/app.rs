@@ -142,7 +142,7 @@ enum UiAction {
     /// Open a device control panel as a docked tab
     OpenDeviceControl {
         /// Full device info with capability flags
-        device_info: DeviceInfo,
+        device_info: Box<DeviceInfo>,
     },
 }
 
@@ -1505,7 +1505,7 @@ impl eframe::App for DaqApp {
         // Check for pop-out requests from InstrumentManagerPanel
         if let Some(request) = self.instrument_manager_panel.take_pop_out_request() {
             self.ui_actions.push(UiAction::OpenDeviceControl {
-                device_info: request.device_info,
+                device_info: Box::new(request.device_info),
             });
         }
 
@@ -1522,6 +1522,7 @@ impl eframe::App for DaqApp {
                     }
                 }
                 UiAction::OpenDeviceControl { device_info } => {
+                    let device_info = *device_info;
                     // Generate a new panel ID with wrapping on overflow
                     // (practically impossible to hit 2^64 panels, but safe regardless)
                     let panel_id = self.next_device_panel_id;

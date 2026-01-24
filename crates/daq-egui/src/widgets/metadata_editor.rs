@@ -169,6 +169,7 @@ impl MetadataEditor {
     ///
     /// Returns true if all fields are empty.
     #[must_use]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.sample_id.is_empty()
             && self.operator.is_empty()

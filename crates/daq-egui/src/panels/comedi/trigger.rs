@@ -254,9 +254,10 @@ impl Default for TriggerConfigPanel {
 impl TriggerConfigPanel {
     /// Create a new trigger configuration panel
     pub fn new(device_id: &str) -> Self {
-        let mut panel = Self::default();
-        panel.device_id = device_id.to_string();
-        panel
+        Self {
+            device_id: device_id.to_string(),
+            ..Self::default()
+        }
     }
 
     /// Main UI entry point

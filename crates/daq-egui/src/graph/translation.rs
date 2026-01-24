@@ -11,6 +11,7 @@ pub enum TranslationError {
     /// Graph contains a cycle
     CycleDetected,
     /// Node has invalid configuration
+    #[allow(dead_code)]
     InvalidNode { node_id: NodeId, reason: String },
     /// Graph is empty
     EmptyGraph,
@@ -155,7 +156,9 @@ pub fn build_adjacency(
     for (out_pin, in_pin) in snarl.wires() {
         let from = out_pin.node;
         let to = in_pin.node;
-        adjacency.get_mut(&from).map(|v| v.push(to));
+        if let Some(v) = adjacency.get_mut(&from) {
+            v.push(to);
+        }
         has_input.insert(to);
     }
 
@@ -450,9 +453,9 @@ fn find_loop_body_nodes(loop_node_id: NodeId, snarl: &Snarl<ExperimentNode>) -> 
     }
     for (out_pin, in_pin) in snarl.wires() {
         if pure_body.contains(&out_pin.node) && pure_body.contains(&in_pin.node) {
-            body_adjacency
-                .get_mut(&out_pin.node)
-                .map(|v| v.push(in_pin.node));
+            if let Some(v) = body_adjacency.get_mut(&out_pin.node) {
+                v.push(in_pin.node);
+            }
         }
     }
 
@@ -477,20 +480,21 @@ fn find_loop_body_nodes(loop_node_id: NodeId, snarl: &Snarl<ExperimentNode>) -> 
 }
 
 /// Check if a node is part of a loop body (should be skipped in main traversal).
+#[allow(dead_code)]
 fn is_loop_body_node(node_id: NodeId, snarl: &Snarl<ExperimentNode>) -> bool {
     // Check if this node is reachable from any Loop node's body output
     for (loop_id, loop_node) in snarl.node_ids() {
-        if matches!(loop_node, ExperimentNode::Loop(..)) {
-            let body_nodes = find_loop_body_nodes(loop_id, snarl);
-            if body_nodes.contains(&node_id) {
-                return true;
-            }
+        if matches!(loop_node, ExperimentNode::Loop(..))
+            && find_loop_body_nodes(loop_id, snarl).contains(&node_id)
+        {
+            return true;
         }
     }
     false
 }
 
 /// Detect cycles in the graph (for validation before translation)
+#[allow(dead_code)]
 pub fn detect_cycles(snarl: &Snarl<ExperimentNode>) -> Option<String> {
     if snarl.node_ids().count() == 0 {
         return None; // Empty graph has no cycles

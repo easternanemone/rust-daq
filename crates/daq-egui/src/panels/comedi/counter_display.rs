@@ -217,9 +217,10 @@ impl Default for CounterDisplayPanel {
 impl CounterDisplayPanel {
     /// Create a new counter display panel
     pub fn new(n_counters: u32) -> Self {
-        let mut panel = Self::default();
-        panel.n_counters = n_counters.min(8);
-        panel
+        Self {
+            n_counters: n_counters.min(8),
+            ..Self::default()
+        }
     }
 
     /// Get sender for pushing updates
@@ -268,12 +269,10 @@ impl CounterDisplayPanel {
                 let rate = self.counters[self.selected_counter as usize].rate();
                 if self.format == CounterDisplayFormat::Frequency {
                     Self::format_frequency(rate)
+                } else if rate > 0.0 {
+                    Self::format_period(1.0 / rate)
                 } else {
-                    if rate > 0.0 {
-                        Self::format_period(1.0 / rate)
-                    } else {
-                        "---".to_string()
-                    }
+                    "---".to_string()
                 }
             }
         }
@@ -504,13 +503,13 @@ impl CounterDisplayPanel {
                     });
 
                     // Count
-                    ui.label(RichText::new(format!("{}", counter.count)).monospace());
+                    ui.label(RichText::new(counter.count.to_string()).monospace());
 
                     // Rate
                     ui.label(RichText::new(Self::format_rate(counter.rate())).monospace());
 
                     // Total
-                    ui.label(RichText::new(format!("{}", counter.total)).monospace());
+                    ui.label(RichText::new(counter.total.to_string()).monospace());
 
                     // Age
                     let age = counter.age_secs();
