@@ -1,0 +1,19 @@
+{
+  "packages": [
+    "rustc",
+    "cargo",
+    "pkg-config",
+    "clang",
+    "llvmPackages_17.libclang",
+    "comedilib"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'Devbox ready: comedi + rust toolchain available.'"
+    ],
+    "scripts": {
+      "tests:core": "cargo test -p daq-core -p daq-hardware -p daq-server",
+      "tests:all": "cargo test"
+    }
+  }
+}
