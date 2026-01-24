@@ -12,9 +12,13 @@
 
 use eframe::egui::{self, Color32, RichText, Ui};
 use egui_plot::{Line, Plot, PlotPoints, VLine};
+use futures::StreamExt;
 use std::collections::VecDeque;
 use std::time::Instant;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+
+use crate::client::DaqClient;
 
 /// Maximum points to keep per channel (prevents unbounded memory growth)
 const MAX_POINTS_PER_CHANNEL: usize = 10_000;
@@ -296,6 +300,30 @@ impl SyntheticSignal {
     }
 }
 
+/// Streaming state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamingState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+}
+
+/// Handle for aborting the streaming task
+struct StreamingHandle {
+    abort_tx: mpsc::Sender<()>,
+}
+
+impl StreamingHandle {
+    fn new(abort_tx: mpsc::Sender<()>) -> Self {
+        Self { abort_tx }
+    }
+
+    async fn abort(&self) {
+        let _ = self.abort_tx.send(()).await;
+    }
+}
+
 /// Oscilloscope/Waveform Viewer Panel
 pub struct OscilloscopePanel {
     /// Panel start time for relative timestamps
@@ -342,6 +370,16 @@ pub struct OscilloscopePanel {
     // UI state
     show_measurements: bool,
     show_channel_config: bool,
+
+    // Streaming state (External signal source)
+    streaming_state: StreamingState,
+    streaming_handle: Option<StreamingHandle>,
+    streaming_device_id: Option<String>,
+    streaming_error: Option<String>,
+    /// Channels to stream when using external source
+    external_channels: Vec<u32>,
+    /// Sample rate for external streaming (Hz)
+    external_sample_rate: f64,
 }
 
 impl Default for OscilloscopePanel {
@@ -381,6 +419,12 @@ impl Default for OscilloscopePanel {
             synthetic_last_time: 0.0,
             show_measurements: true,
             show_channel_config: false,
+            streaming_state: StreamingState::Stopped,
+            streaming_handle: None,
+            streaming_device_id: None,
+            streaming_error: None,
+            external_channels: vec![0], // Default to CH0
+            external_sample_rate: 1000.0, // 1 kHz default
         }
     }
 }
@@ -394,6 +438,137 @@ impl OscilloscopePanel {
     /// Get a sender clone for pushing samples from external code
     pub fn get_sender(&self) -> OscilloscopeSender {
         self.sample_tx.clone()
+    }
+
+    /// Start streaming from a hardware device via gRPC
+    pub fn start_streaming(
+        &mut self,
+        mut client: DaqClient,
+        runtime: &Runtime,
+        device_id: String,
+        channels: Vec<u32>,
+        sample_rate_hz: f64,
+    ) {
+        if self.streaming_state != StreamingState::Stopped {
+            self.streaming_error = Some("Already streaming".to_string());
+            return;
+        }
+
+        self.streaming_state = StreamingState::Starting;
+        self.streaming_device_id = Some(device_id.clone());
+        self.streaming_error = None;
+
+        let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
+        let sample_tx = self.sample_tx.clone();
+
+        // Spawn background task to handle streaming
+        runtime.spawn(async move {
+            // Import NI DAQ proto types
+            use daq_proto::ni_daq::{
+                ni_daq_service_client::NiDaqServiceClient, StreamAnalogInputRequest,
+            };
+            use tonic::transport::Channel;
+
+            // Create NI DAQ client (reuse the gRPC channel from DaqClient)
+            // For now, we'll connect directly - TODO: get channel from DaqClient
+            let channel_result = Channel::from_static("http://127.0.0.1:50051")
+                .connect()
+                .await;
+
+            let mut ni_daq_client = match channel_result {
+                Ok(channel) => NiDaqServiceClient::new(channel),
+                Err(e) => {
+                    tracing::error!("Failed to connect NI DAQ client: {}", e);
+                    return;
+                }
+            };
+
+            let request = StreamAnalogInputRequest {
+                device_id: device_id.clone(),
+                channels: channels.clone(),
+                sample_rate_hz,
+                range_index: 0, // Default range
+                stop_condition: Some(
+                    daq_proto::ni_daq::stream_analog_input_request::StopCondition::Continuous(
+                        true,
+                    ),
+                ),
+                buffer_size: 1024,
+            };
+
+            let mut stream = match ni_daq_client.stream_analog_input(request).await {
+                Ok(response) => response.into_inner(),
+                Err(e) => {
+                    tracing::error!("Failed to start streaming: {}", e);
+                    return;
+                }
+            };
+
+            tracing::info!("Started streaming from device={}", device_id);
+
+            // Process stream until aborted or error
+            loop {
+                tokio::select! {
+                    // Check for abort signal
+                    _ = abort_rx.recv() => {
+                        tracing::info!("Streaming aborted by user");
+                        break;
+                    }
+                    // Process incoming data
+                    message = stream.next() => {
+                        match message {
+                            Some(Ok(data)) => {
+                                // Deinterleave voltages and push to channels
+                                let n_channels = data.n_channels as usize;
+                                if n_channels == 0 {
+                                    continue;
+                                }
+
+                                for (i, voltage) in data.voltages.iter().enumerate() {
+                                    let channel_idx = i % n_channels;
+                                    if let Some(&channel_id) = channels.get(channel_idx) {
+                                        let sample = OscilloscopeSample::new(channel_id, *voltage);
+                                        // Drop samples if channel is full (backpressure)
+                                        let _ = sample_tx.try_send(sample);
+                                    }
+                                }
+                            }
+                            Some(Err(e)) => {
+                                tracing::error!("Stream error: {}", e);
+                                break;
+                            }
+                            None => {
+                                tracing::info!("Stream ended");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!("Streaming task finished");
+        });
+
+        self.streaming_handle = Some(StreamingHandle::new(abort_tx));
+        self.streaming_state = StreamingState::Running;
+    }
+
+    /// Stop streaming
+    pub fn stop_streaming(&mut self, runtime: &Runtime) {
+        if self.streaming_state != StreamingState::Running {
+            return;
+        }
+
+        self.streaming_state = StreamingState::Stopping;
+
+        if let Some(handle) = self.streaming_handle.take() {
+            runtime.spawn(async move {
+                handle.abort().await;
+            });
+        }
+
+        self.streaming_state = StreamingState::Stopped;
+        self.streaming_device_id = None;
     }
 
     /// Current time since panel start
@@ -456,6 +631,17 @@ impl OscilloscopePanel {
 
     /// Main UI entry point
     pub fn ui(&mut self, ui: &mut Ui) {
+        self.ui_with_client(ui, None, None, None);
+    }
+
+    /// UI with optional client for external streaming
+    pub fn ui_with_client(
+        &mut self,
+        ui: &mut Ui,
+        client: Option<&mut DaqClient>,
+        runtime: Option<&Runtime>,
+        device_id: Option<&str>,
+    ) {
         // Drain pending samples
         self.drain_samples();
 
@@ -525,7 +711,54 @@ impl OscilloscopePanel {
                         self.synthetic_last_time = self.current_time();
                     }
                 });
+
+            // External streaming status and controls
+            if self.signal_source == SignalSource::External {
+                ui.separator();
+
+                match self.streaming_state {
+                    StreamingState::Stopped => {
+                        if ui.button("▶ Stream").clicked() {
+                            if let (Some(client), Some(runtime), Some(device_id)) =
+                                (client, runtime, device_id)
+                            {
+                                self.start_streaming(
+                                    client.clone(),
+                                    runtime,
+                                    device_id.to_string(),
+                                    self.external_channels.clone(),
+                                    self.external_sample_rate,
+                                );
+                            } else {
+                                self.streaming_error =
+                                    Some("No DAQ connection available".to_string());
+                            }
+                        }
+                    }
+                    StreamingState::Running => {
+                        if ui.button("⏹ Stop").clicked() {
+                            if let Some(runtime) = runtime {
+                                self.stop_streaming(runtime);
+                            }
+                        }
+                        ui.label(RichText::new("● STREAMING").color(Color32::GREEN));
+                    }
+                    StreamingState::Starting => {
+                        ui.spinner();
+                        ui.label("Starting...");
+                    }
+                    StreamingState::Stopping => {
+                        ui.spinner();
+                        ui.label("Stopping...");
+                    }
+                }
+            }
         });
+
+        // Show streaming error if present
+        if let Some(ref error) = self.streaming_error {
+            ui.colored_label(Color32::RED, format!("Error: {}", error));
+        }
 
         ui.separator();
 

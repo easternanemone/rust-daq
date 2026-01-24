@@ -4,9 +4,13 @@
 //! unit selection, statistics, and bar graph visualization.
 
 use eframe::egui::{self, Color32, RichText, Ui};
+use futures::StreamExt;
 use std::collections::VecDeque;
 use std::time::Instant;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+
+use crate::client::DaqClient;
 
 /// Maximum history for statistics
 const MAX_HISTORY: usize = 1000;
@@ -209,6 +213,30 @@ impl ChannelState {
     }
 }
 
+/// Streaming state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamingState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+}
+
+/// Handle for aborting the streaming task
+struct StreamingHandle {
+    abort_tx: mpsc::Sender<()>,
+}
+
+impl StreamingHandle {
+    fn new(abort_tx: mpsc::Sender<()>) -> Self {
+        Self { abort_tx }
+    }
+
+    async fn abort(&self) {
+        let _ = self.abort_tx.send(()).await;
+    }
+}
+
 /// Digital Voltmeter Display Panel
 pub struct VoltmeterPanel {
     /// Start time for relative timestamps
@@ -241,6 +269,13 @@ pub struct VoltmeterPanel {
     relative_mode: bool,
     /// Relative reference value
     relative_ref: f64,
+    /// Streaming state
+    streaming_state: StreamingState,
+    streaming_handle: Option<StreamingHandle>,
+    streaming_device_id: Option<String>,
+    streaming_error: Option<String>,
+    /// Sample rate for streaming (Hz)
+    stream_sample_rate: f64,
 }
 
 impl Default for VoltmeterPanel {
@@ -263,6 +298,11 @@ impl Default for VoltmeterPanel {
             hold: false,
             relative_mode: false,
             relative_ref: 0.0,
+            streaming_state: StreamingState::Stopped,
+            streaming_handle: None,
+            streaming_device_id: None,
+            streaming_error: None,
+            stream_sample_rate: 100.0, // 100 Hz default for voltmeter
         }
     }
 }
@@ -276,6 +316,123 @@ impl VoltmeterPanel {
     /// Get sender for pushing readings
     pub fn get_sender(&self) -> VoltmeterSender {
         self.reading_tx.clone()
+    }
+
+    /// Start streaming from a hardware device via gRPC
+    pub fn start_streaming(
+        &mut self,
+        mut client: DaqClient,
+        runtime: &Runtime,
+        device_id: String,
+        channel: u32,
+        sample_rate_hz: f64,
+    ) {
+        if self.streaming_state != StreamingState::Stopped {
+            self.streaming_error = Some("Already streaming".to_string());
+            return;
+        }
+
+        self.streaming_state = StreamingState::Starting;
+        self.streaming_device_id = Some(device_id.clone());
+        self.streaming_error = None;
+        self.selected_channel = channel;
+
+        let (abort_tx, mut abort_rx) = mpsc::channel::<()>(1);
+        let reading_tx = self.reading_tx.clone();
+
+        // Spawn background task to handle streaming
+        runtime.spawn(async move {
+            use daq_proto::ni_daq::{
+                ni_daq_service_client::NiDaqServiceClient, StreamAnalogInputRequest,
+            };
+            use tonic::transport::Channel;
+
+            let channel_result = Channel::from_static("http://127.0.0.1:50051")
+                .connect()
+                .await;
+
+            let mut ni_daq_client = match channel_result {
+                Ok(channel) => NiDaqServiceClient::new(channel),
+                Err(e) => {
+                    tracing::error!("Failed to connect NI DAQ client: {}", e);
+                    return;
+                }
+            };
+
+            let request = StreamAnalogInputRequest {
+                device_id: device_id.clone(),
+                channels: vec![channel],
+                sample_rate_hz,
+                range_index: 0,
+                stop_condition: Some(
+                    daq_proto::ni_daq::stream_analog_input_request::StopCondition::Continuous(
+                        true,
+                    ),
+                ),
+                buffer_size: 256,
+            };
+
+            let mut stream = match ni_daq_client.stream_analog_input(request).await {
+                Ok(response) => response.into_inner(),
+                Err(e) => {
+                    tracing::error!("Failed to start streaming: {}", e);
+                    return;
+                }
+            };
+
+            tracing::info!("Voltmeter streaming from device={} ch={}", device_id, channel);
+
+            loop {
+                tokio::select! {
+                    _ = abort_rx.recv() => {
+                        tracing::info!("Voltmeter streaming aborted");
+                        break;
+                    }
+                    message = stream.next() => {
+                        match message {
+                            Some(Ok(data)) => {
+                                // Average all voltages in this batch for stability
+                                if !data.voltages.is_empty() {
+                                    let avg_voltage: f64 = data.voltages.iter().sum::<f64>()
+                                        / data.voltages.len() as f64;
+                                    let reading = VoltmeterReading::new(channel, avg_voltage);
+                                    let _ = reading_tx.try_send(reading);
+                                }
+                            }
+                            Some(Err(e)) => {
+                                tracing::error!("Voltmeter stream error: {}", e);
+                                break;
+                            }
+                            None => {
+                                tracing::info!("Voltmeter stream ended");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        self.streaming_handle = Some(StreamingHandle::new(abort_tx));
+        self.streaming_state = StreamingState::Running;
+    }
+
+    /// Stop streaming
+    pub fn stop_streaming(&mut self, runtime: &Runtime) {
+        if self.streaming_state != StreamingState::Running {
+            return;
+        }
+
+        self.streaming_state = StreamingState::Stopping;
+
+        if let Some(handle) = self.streaming_handle.take() {
+            runtime.spawn(async move {
+                handle.abort().await;
+            });
+        }
+
+        self.streaming_state = StreamingState::Stopped;
+        self.streaming_device_id = None;
     }
 
     /// Drain pending readings
@@ -316,6 +473,17 @@ impl VoltmeterPanel {
 
     /// Main UI entry point
     pub fn ui(&mut self, ui: &mut Ui) {
+        self.ui_with_client(ui, None, None, None);
+    }
+
+    /// UI with optional client for streaming
+    pub fn ui_with_client(
+        &mut self,
+        ui: &mut Ui,
+        client: Option<&mut DaqClient>,
+        runtime: Option<&Runtime>,
+        device_id: Option<&str>,
+    ) {
         // Drain pending readings
         self.drain_readings();
 
@@ -334,7 +502,51 @@ impl VoltmeterPanel {
                         ui.selectable_value(&mut self.selected_channel, i, format!("CH{}", i));
                     }
                 });
+
+            ui.separator();
+
+            // Streaming controls
+            match self.streaming_state {
+                StreamingState::Stopped => {
+                    if ui.button("▶ Start").clicked() {
+                        if let (Some(client), Some(runtime), Some(device_id)) =
+                            (client, runtime, device_id)
+                        {
+                            self.start_streaming(
+                                client.clone(),
+                                runtime,
+                                device_id.to_string(),
+                                self.selected_channel,
+                                self.stream_sample_rate,
+                            );
+                        } else {
+                            self.streaming_error = Some("No DAQ connection".to_string());
+                        }
+                    }
+                }
+                StreamingState::Running => {
+                    if ui.button("⏹ Stop").clicked() {
+                        if let Some(runtime) = runtime {
+                            self.stop_streaming(runtime);
+                        }
+                    }
+                    ui.label(RichText::new("● LIVE").color(Color32::GREEN));
+                }
+                StreamingState::Starting => {
+                    ui.spinner();
+                    ui.label("Starting...");
+                }
+                StreamingState::Stopping => {
+                    ui.spinner();
+                    ui.label("Stopping...");
+                }
+            }
         });
+
+        // Show streaming error if present
+        if let Some(ref error) = self.streaming_error {
+            ui.colored_label(Color32::RED, format!("Error: {}", error));
+        }
 
         ui.separator();
 

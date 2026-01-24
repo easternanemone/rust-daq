@@ -141,6 +141,7 @@ pub mod device;
 pub mod error;
 pub mod factory;
 pub mod hal;
+pub mod multi_channel;
 pub mod streaming;
 pub mod subsystem;
 pub mod timing;
@@ -152,6 +153,7 @@ pub use continuous::{
 pub use device::{ComediDevice, DeviceInfo, SubdeviceInfo, SubdeviceType};
 pub use error::{ComediError, Result};
 pub use hal::{ReadableAnalogInput, ReadableCounter, SettableAnalogOutput, SwitchableDigitalIO};
+pub use multi_channel::ComediMultiChannelAcquisition;
 pub use streaming::{
     ChannelSpec, SharedStreamAcquisition, StopCondition, StreamAcquisition, StreamConfig,
     StreamConfigBuilder, StreamStats, TriggerSource,

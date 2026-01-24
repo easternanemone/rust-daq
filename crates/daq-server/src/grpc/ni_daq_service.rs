@@ -78,11 +78,196 @@ impl NiDaqService for NiDaqServiceImpl {
     #[instrument(skip(self))]
     async fn stream_analog_input(
         &self,
-        _request: Request<StreamAnalogInputRequest>,
+        request: Request<StreamAnalogInputRequest>,
     ) -> Result<Response<Self::StreamAnalogInputStream>, Status> {
-        Err(Status::unimplemented(
-            "StreamAnalogInput not yet implemented (Phase 2)",
-        ))
+        #[cfg(feature = "comedi")]
+        {
+            use daq_driver_comedi::multi_channel::ComediMultiChannelAcquisition;
+            use tokio::time::Duration;
+
+            let req = request.into_inner();
+
+            // Validate device exists in registry
+            if req.device_id.is_empty() {
+                return Err(Status::invalid_argument("device_id is required"));
+            }
+
+            let _device_info = self
+                .registry
+                .get_device_info(&req.device_id)
+                .ok_or_else(|| Status::not_found(format!("Device '{}' not found", req.device_id)))?;
+
+            // Validate channels
+            if req.channels.is_empty() {
+                return Err(Status::invalid_argument(
+                    "At least one channel is required",
+                ));
+            }
+
+            // Validate channel numbers (NI PCI-MIO-16XE-10 has 16 AI channels: 0-15)
+            for &ch in &req.channels {
+                if ch > 15 {
+                    return Err(Status::invalid_argument(format!(
+                        "Invalid channel {}. NI PCI-MIO-16XE-10 supports channels 0-15",
+                        ch
+                    )));
+                }
+            }
+
+            // Validate sample rate
+            if req.sample_rate_hz <= 0.0 {
+                return Err(Status::invalid_argument("sample_rate_hz must be positive"));
+            }
+
+            if req.sample_rate_hz > 100_000.0 {
+                return Err(Status::invalid_argument(
+                    "sample_rate_hz exceeds maximum (100 kS/s) for NI PCI-MIO-16XE-10",
+                ));
+            }
+
+            // Determine device path from registry metadata or use default
+            // TODO: Store device path in registry metadata during device initialization
+            let device_path = "/dev/comedi0";
+
+            // Create multi-channel acquisition instance
+            let mut acquisition = self
+                .await_with_timeout(
+                    "ComediMultiChannelAcquisition::new_async",
+                    ComediMultiChannelAcquisition::new_async(
+                        device_path,
+                        req.channels.clone(),
+                        req.sample_rate_hz,
+                    ),
+                )
+                .await?;
+
+            // Start background acquisition
+            acquisition
+                .start_acquisition()
+                .await
+                .map_err(|e| Status::internal(format!("Failed to start acquisition: {}", e)))?;
+
+            // Create gRPC streaming channel
+            const CHANNEL_CAPACITY: usize = 8;
+            let (tx, rx) = tokio::sync::mpsc::channel(CHANNEL_CAPACITY);
+
+            // Determine buffer size (default to 1024 samples if not specified)
+            let buffer_size = if req.buffer_size > 0 {
+                req.buffer_size as usize
+            } else {
+                1024
+            };
+
+            // Determine stop condition
+            let max_samples = match req.stop_condition {
+                Some(stream_analog_input_request::StopCondition::SampleCount(count)) => {
+                    Some(count as usize)
+                }
+                Some(stream_analog_input_request::StopCondition::DurationMs(duration_ms)) => {
+                    // Calculate approximate sample count from duration
+                    let duration_secs = duration_ms as f64 / 1000.0;
+                    let total_samples = (req.sample_rate_hz * duration_secs) as usize;
+                    Some(total_samples)
+                }
+                Some(stream_analog_input_request::StopCondition::Continuous(_)) | None => None,
+            };
+
+            // Spawn background task to poll samples and send via gRPC stream
+            let n_channels = req.channels.len();
+            tokio::spawn(async move {
+                let mut sequence_number = 0u64;
+                let mut total_samples_sent = 0usize;
+                let poll_interval = Duration::from_millis(10); // Poll every 10ms
+
+                loop {
+                    // Check stop condition
+                    if let Some(max) = max_samples {
+                        if total_samples_sent >= max {
+                            break;
+                        }
+                    }
+
+                    // Read latest samples from acquisition buffer
+                    let samples_result = acquisition.get_latest_samples(buffer_size);
+
+                    match samples_result {
+                        Ok(channel_data) => {
+                            // Check if we have data
+                            if !channel_data.is_empty() && !channel_data[0].is_empty() {
+                                let n_samples = channel_data[0].len();
+
+                                // Convert from per-channel format to interleaved format
+                                // [ch0: [s0, s1, ...], ch1: [s0, s1, ...]] -> [ch0_s0, ch1_s0, ch0_s1, ch1_s1, ...]
+                                let mut interleaved = Vec::with_capacity(n_samples * n_channels);
+                                for sample_idx in 0..n_samples {
+                                    for ch_data in &channel_data {
+                                        if sample_idx < ch_data.len() {
+                                            interleaved.push(ch_data[sample_idx]);
+                                        }
+                                    }
+                                }
+
+                                let overflow = acquisition.overflow_count() > 0;
+
+                                let data = AnalogInputData {
+                                    voltages: interleaved,
+                                    n_channels: n_channels as u32,
+                                    sequence_number,
+                                    timestamp_ns: now_ns(),
+                                    samples_acquired: acquisition.scans_acquired(),
+                                    overflow,
+                                };
+
+                                // Try to send data (non-blocking to handle backpressure)
+                                if tx.send(Ok(data)).await.is_err() {
+                                    // Client disconnected
+                                    break;
+                                }
+
+                                sequence_number += 1;
+                                total_samples_sent += n_samples;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to read samples: {}", e);
+                            let _ = tx
+                                .send(Err(Status::internal(format!(
+                                    "Failed to read samples: {}",
+                                    e
+                                ))))
+                                .await;
+                            break;
+                        }
+                    }
+
+                    // Sleep before next poll (avoid busy-waiting)
+                    tokio::time::sleep(poll_interval).await;
+                }
+
+                // Stop acquisition when stream ends
+                if let Err(e) = acquisition.stop_acquisition().await {
+                    tracing::error!("Failed to stop acquisition: {}", e);
+                }
+
+                tracing::info!(
+                    total_samples = total_samples_sent,
+                    sequence_number,
+                    "Analog input stream ended"
+                );
+            });
+
+            Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+                rx,
+            )))
+        }
+
+        #[cfg(not(feature = "comedi"))]
+        {
+            let _ = request; // Suppress unused warning
+            Err(Status::unimplemented(
+                "StreamAnalogInput requires 'comedi' feature to be enabled",
+            ))
+        }
     }
 
     type StreamAnalogInputStream =
