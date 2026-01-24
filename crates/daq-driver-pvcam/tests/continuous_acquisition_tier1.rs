@@ -62,6 +62,9 @@ async fn test_basic_frame_acquisition() {
         .await
         .expect("Failed to create PVCAM driver");
 
+    // Clean up any lingering state from previous tests
+    let _ = camera.stop_stream().await;
+
     // Set standard exposure (100ms)
     camera
         .set_exposure(exposures::STANDARD_SEC)
@@ -96,8 +99,9 @@ async fn test_basic_frame_acquisition() {
         "Frame data size should match dimensions × 2 bytes"
     );
 
-    // Stop stream
+    // Stop stream and close camera to release handle for next test
     let _ = camera.stop_stream().await;
+    let _ = camera.close().await;
 
     println!("\n=== Basic Frame Acquisition PASSED ===\n");
 }
@@ -121,6 +125,9 @@ async fn test_continuous_streaming() {
     let camera = PvcamDriver::new_async(CAMERA_NAME.to_string())
         .await
         .expect("Failed to create PVCAM driver");
+
+    // Clean up any lingering state from previous tests
+    let _ = camera.stop_stream().await;
 
     // Get sensor resolution to determine realistic FPS expectations
     // Full sensor (2048x2048) has ~23ms readout time, limiting max FPS to ~30
@@ -203,11 +210,12 @@ async fn test_continuous_streaming() {
     };
     stats.calculate_expected(frame_time_ms);
 
-    // Stop streaming
+    // Stop streaming and close camera to release handle for next test
     camera
         .stop_stream()
         .await
         .expect("Failed to stop streaming");
+    let _ = camera.close().await;
 
     // Print results
     stats.print_summary("Continuous Streaming");
@@ -235,6 +243,9 @@ async fn test_sustained_full_sensor_streaming() {
     let camera = PvcamDriver::new_async(CAMERA_NAME.to_string())
         .await
         .expect("Failed to create PVCAM driver");
+
+    // Clean up any lingering state from previous tests
+    let _ = camera.stop_stream().await;
 
     let (sensor_width, sensor_height) = camera.resolution();
     assert!(
@@ -306,10 +317,12 @@ async fn test_sustained_full_sensor_streaming() {
     let frame_time_ms = exposures::FAST_MS + 23.0;
     stats.calculate_expected(frame_time_ms);
 
+    // Stop streaming and close camera to release handle for next test
     camera
         .stop_stream()
         .await
         .expect("Failed to stop streaming");
+    let _ = camera.close().await;
 
     stats.print_summary("Sustained Full-Sensor Streaming");
 
@@ -344,6 +357,9 @@ async fn test_frame_data_integrity() {
     let camera = PvcamDriver::new_async(CAMERA_NAME.to_string())
         .await
         .expect("Failed to create PVCAM driver");
+
+    // Clean up any lingering state from previous tests
+    let _ = camera.stop_stream().await;
 
     // Get sensor resolution
     let (sensor_width, sensor_height) = camera.resolution();
@@ -425,10 +441,12 @@ async fn test_frame_data_integrity() {
         }
     }
 
+    // Stop streaming and close camera to release handle for next test
     camera
         .stop_stream()
         .await
         .expect("Failed to stop streaming");
+    let _ = camera.close().await;
 
     println!("\nResults:");
     println!("  Valid frames: {}/{}", valid_frames, frames_to_check);
@@ -459,6 +477,9 @@ async fn test_frame_numbering_sequence() {
     let camera = PvcamDriver::new_async(CAMERA_NAME.to_string())
         .await
         .expect("Failed to create PVCAM driver");
+
+    // Clean up any lingering state from previous tests
+    let _ = camera.stop_stream().await;
 
     // Use standard exposure
     camera
@@ -496,10 +517,12 @@ async fn test_frame_numbering_sequence() {
         }
     }
 
+    // Stop streaming and close camera to release handle for next test
     camera
         .stop_stream()
         .await
         .expect("Failed to stop streaming");
+    let _ = camera.close().await;
 
     let mut stats = TestStats::new();
     tracker.export_to_stats(&mut stats);
