@@ -9,6 +9,15 @@ mod tests {
         assert_eq!(status.code(), expected);
     }
 
+    fn assert_metadata(status: &tonic::Status, key: &str, expected: &str) {
+        let value = status
+            .metadata()
+            .get(key)
+            .and_then(|val| val.to_str().ok())
+            .unwrap_or("<missing>");
+        assert_eq!(value, expected);
+    }
+
     mod configuration_errors {
         use super::*;
 
@@ -46,6 +55,20 @@ mod tests {
         }
 
         #[test]
+        fn driver_error_includes_metadata() {
+            let err = DaqError::Driver(DriverError::new(
+                "mock_camera",
+                DriverErrorKind::Initialization,
+                "failed",
+            ));
+            let status = map_daq_error_to_status(err);
+
+            assert_metadata(&status, "x-daq-error-kind", "driver");
+            assert_metadata(&status, "x-daq-driver-type", "mock_camera");
+            assert_metadata(&status, "x-daq-driver-kind", "initialization");
+        }
+
+        #[test]
         fn driver_config_error_maps_to_invalid_argument() {
             let err = DaqError::Driver(DriverError::new(
                 "mock_camera",
@@ -58,6 +81,14 @@ mod tests {
         #[test]
         fn serial_port_not_connected_maps_to_unavailable() {
             assert_status_code(DaqError::SerialPortNotConnected, Code::Unavailable);
+        }
+
+        #[test]
+        fn instrument_error_includes_metadata() {
+            let err = DaqError::Instrument("camera fault".into());
+            let status = map_daq_error_to_status(err);
+
+            assert_metadata(&status, "x-daq-error-kind", "instrument");
         }
 
         #[test]
