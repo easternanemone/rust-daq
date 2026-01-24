@@ -1152,6 +1152,7 @@ pub async fn start_server_with_hardware(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::grpc::hardware_service::HardwareServiceImpl;
     use crate::grpc::module_service::ModuleServiceImpl;
+    use crate::grpc::ni_daq_service::NiDaqServiceImpl;
     use daq_storage::hdf5_writer::HDF5Writer;
     use daq_storage::ring_buffer::RingBuffer;
     // use crate::grpc::plugin_service::PluginServiceImpl; // Unused
@@ -1161,6 +1162,7 @@ pub async fn start_server_with_hardware(
     use crate::grpc::proto::health::health_server::HealthServer;
     use crate::grpc::proto::health_service_server::HealthServiceServer; // Custom HealthService
     use crate::grpc::proto::module_service_server::ModuleServiceServer;
+    use daq_proto::ni_daq::ni_daq_service_server::NiDaqServiceServer;
     // use crate::grpc::proto::plugin_service_server::PluginServiceServer; // Unused
     use crate::grpc::proto::preset_service_server::PresetServiceServer;
     use crate::grpc::proto::scan_service_server::ScanServiceServer;
@@ -1418,6 +1420,7 @@ pub async fn start_server_with_hardware(
 
     let hardware_server = HardwareServiceImpl::new(registry.clone());
     let module_server = ModuleServiceImpl::new(registry.clone());
+    let ni_daq_server = NiDaqServiceImpl::new(registry.clone());
 
     // Create PluginService with shared factory and registry (bd-0451)
     #[cfg(feature = "serial")]
@@ -1518,6 +1521,9 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(
             HardwareServiceServer::new(hardware_server).max_encoding_message_size(64 * 1024 * 1024),
         ))
+        .add_service(tonic_web::enable(NiDaqServiceServer::new(
+            ni_daq_server.clone(),
+        )))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(PluginServiceServer::new(plugin_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))
@@ -1560,6 +1566,7 @@ pub async fn start_server_with_hardware(
         .add_service(tonic_web::enable(
             HardwareServiceServer::new(hardware_server).max_encoding_message_size(64 * 1024 * 1024),
         ))
+        .add_service(tonic_web::enable(NiDaqServiceServer::new(ni_daq_server)))
         .add_service(tonic_web::enable(ModuleServiceServer::new(module_server)))
         .add_service(tonic_web::enable(ScanServiceServer::new(scan_server)))
         .add_service(tonic_web::enable(PresetServiceServer::new(preset_server)))

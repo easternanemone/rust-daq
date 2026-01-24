@@ -7,6 +7,7 @@ pub mod health_service;
 #[cfg(feature = "metrics")]
 pub mod metrics_service;
 pub mod module_service;
+pub mod ni_daq_service;
 pub mod plugin_service;
 pub mod preset_service;
 pub mod run_engine_service;
@@ -72,6 +73,7 @@ pub use health_service::HealthServiceImpl;
 #[cfg(feature = "metrics")]
 pub use metrics_service::{DaqMetrics, MetricsServerHandle, start_metrics_server};
 pub use module_service::ModuleServiceImpl;
+pub use ni_daq_service::NiDaqServiceImpl;
 pub use plugin_service::PluginServiceImpl;
 pub use preset_service::{PresetServiceImpl, default_preset_storage_path};
 pub use run_engine_service::RunEngineServiceImpl;
@@ -324,3 +326,11 @@ pub use proto::{
     SpawnPluginRequest,
     SpawnPluginResponse,
 };
+
+// Re-export NI DAQ Service types (bd-czem)
+/// NI DAQ Service for Comedi hardware control
+pub mod ni_daq_proto {
+    pub use daq_proto::ni_daq::*;
+}
+pub use daq_proto::ni_daq::ni_daq_service_client::NiDaqServiceClient;
+pub use daq_proto::ni_daq::ni_daq_service_server::{NiDaqService, NiDaqServiceServer};

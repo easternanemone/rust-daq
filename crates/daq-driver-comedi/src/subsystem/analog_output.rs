@@ -126,6 +126,12 @@ impl AnalogOutput {
         })
     }
 
+    /// Get all available ranges for a channel.
+    pub fn ranges(&self, channel: u32) -> Result<Vec<Range>> {
+        let n = self.n_ranges(channel)?;
+        (0..n).map(|i| self.range_info(channel, i)).collect()
+    }
+
     /// Write a raw value to a channel.
     ///
     /// The value should be in the range 0 to maxdata.
