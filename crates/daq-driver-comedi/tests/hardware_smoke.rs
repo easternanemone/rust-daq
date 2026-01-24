@@ -35,7 +35,7 @@
 
 #![cfg(feature = "hardware")]
 
-use daq_driver_comedi::{ComediDevice, DeviceInfo, Range, SubdeviceType};
+use daq_driver_comedi::{ComediDevice, DeviceInfo, Range, SubdeviceType, subsystem::AnalogReference};
 use std::env;
 
 // =============================================================================
@@ -370,7 +370,7 @@ fn analog_input_ranges_test() {
             i,
             range.min,
             range.max,
-            range.unit_description(),
+            range.description(),
             if range.is_bipolar() {
                 "bipolar"
             } else {
@@ -387,7 +387,7 @@ fn analog_input_ranges_test() {
     println!(
         "\nDefault range span: {} {}",
         range0.span(),
-        range0.unit_description()
+        range0.description()
     );
 
     println!("\n=== Analog Input Ranges Test PASSED ===");
@@ -415,7 +415,6 @@ fn analog_input_single_read_test() {
     println!("\nReading from channel 0...");
 
     // Read raw value
-    use daq_driver_comedi::AnalogReference;
     let raw = ai
         .read_raw(0, Range::default().index, AnalogReference::Ground)
         .expect("Failed to read raw value");
