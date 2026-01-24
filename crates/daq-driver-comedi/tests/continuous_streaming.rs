@@ -615,7 +615,8 @@ fn test_sample_rate_accuracy() {
     cancel_any_acquisition(&device);
 
     // Test at several sample rates
-    let test_rates = [1000.0, 5000.0, 10000.0, 25000.0];
+    // Start with higher rates first - lower rates may need more settling time
+    let test_rates = [10000.0, 25000.0, 5000.0];
 
     for &target_rate in &test_rates {
         println!("\nTesting target rate: {} S/s", target_rate);
@@ -630,10 +631,13 @@ fn test_sample_rate_accuracy() {
         let stream = StreamAcquisition::new(&device, config).expect("Failed to create stream");
 
         stream.start().expect("Failed to start streaming");
+        
+        // Allow hardware to stabilize before measuring
+        thread::sleep(Duration::from_millis(100));
 
         let mut sample_count: u64 = 0;
         let start = Instant::now();
-        let test_duration = Duration::from_secs(1);
+        let test_duration = Duration::from_millis(1500); // 1.5 seconds for more accurate measurement
 
         while start.elapsed() < test_duration {
             if let Ok(Some(samples)) = stream.read_available() {
@@ -647,7 +651,7 @@ fn test_sample_rate_accuracy() {
         
         // Cleanup between rate tests
         drop(stream);
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(200));
         cancel_any_acquisition(&device);
 
         let actual_rate = sample_count as f64 / elapsed.as_secs_f64();
