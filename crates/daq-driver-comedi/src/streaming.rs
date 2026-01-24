@@ -733,9 +733,10 @@ impl StreamAcquisition {
             scan_begin_src: self.config.scan_trigger.to_raw(),
             scan_begin_arg: scan_interval_ns,
 
-            // Convert: follow scan or timer
-            convert_src: if n_channels > 1 { TRIG_TIMER } else { TRIG_NOW },
-            convert_arg: convert_interval_ns,
+            // Convert: use TRIG_TIMER for all cases to ensure proper timing
+            // TRIG_NOW can cause command test to not converge on some hardware
+            convert_src: TRIG_TIMER,
+            convert_arg: if n_channels > 1 { convert_interval_ns } else { 0 },
 
             // Scan end: count channels
             scan_end_src: TRIG_COUNT,
