@@ -190,8 +190,8 @@ pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
 pvcam_hardware = ["pvcam_sdk"]
 
 # Comedi DAQ support
-comedi = ["dep:daq-driver-comedi", "daq-hardware/comedi"]
-comedi_hardware = ["comedi", "daq-driver-comedi/hardware", "daq-hardware/comedi_hardware"]
+comedi = ["dep:daq-driver-comedi", "daq-hardware/comedi", "daq-server/comedi"]
+comedi_hardware = ["comedi", "daq-driver-comedi/hardware", "daq-hardware/comedi_hardware", "daq-server/comedi_hardware"]
 
 # All hardware drivers (with mock PVCAM and Comedi)
 all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam", "comedi"]
