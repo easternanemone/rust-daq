@@ -649,12 +649,23 @@ impl PluginService for PluginServiceImpl {
             // Also unregister from the DeviceRegistry
             #[cfg(feature = "serial")]
             {
-                if !self.registry.unregister(&instance.device_id) {
-                    tracing::warn!(
-                        "Device '{}' for instance '{}' was not found in registry during destroy.",
-                        instance.device_id,
-                        req.instance_id
-                    );
+                match self.registry.unregister(&instance.device_id).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        tracing::warn!(
+                            "Device '{}' for instance '{}' was not found in registry during destroy.",
+                            instance.device_id,
+                            req.instance_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Device '{}' for instance '{}' failed to unregister cleanly: {}",
+                            instance.device_id,
+                            req.instance_id,
+                            e
+                        );
+                    }
                 }
             }
 

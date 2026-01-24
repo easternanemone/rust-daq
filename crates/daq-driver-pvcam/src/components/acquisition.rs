@@ -170,6 +170,11 @@ impl CallbackContext {
             // SDK pattern fields
             hcam: AtomicI16::new(hcam),
             frame_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            // SAFETY: FRAME_INFO is a plain-old-data (POD) C struct from the PVCAM SDK
+            // containing only primitive types (i32, u32, etc.) with no pointers, references,
+            // or drop semantics. Zero-initialization is valid as all fields accept 0 as a
+            // sentinel value meaning "uninitialized" or "no frame yet". The struct is fully
+            // overwritten by the SDK when pl_exp_get_oldest_frame_ex populates it.
             frame_info: std::sync::Mutex::new(unsafe { std::mem::zeroed() }),
             // Default to CIRC_OVERWRITE (true); updated by set_circ_overwrite() after fallback
             circ_overwrite: AtomicBool::new(true),
@@ -352,6 +357,9 @@ impl CallbackContext {
         // Reset SDK pattern fields
         self.frame_ptr.store(std::ptr::null_mut(), Ordering::SeqCst);
         if let Ok(mut guard) = self.frame_info.lock() {
+            // SAFETY: FRAME_INFO is a POD C struct with only primitive fields (i32, u32, etc.).
+            // Zero-initialization resets all fields to sentinel values indicating "no frame".
+            // This is safe because the struct has no pointers, references, or drop semantics.
             *guard = unsafe { std::mem::zeroed() };
         }
         tracing::debug!("CallbackContext::reset completed");
@@ -442,58 +450,82 @@ pub fn clear_global_callback_ctx() {
     GLOBAL_CALLBACK_CTX.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Release);
 }
 
+/// PVCAM EOF (End-of-Frame) callback invoked by the SDK when a frame is ready.
+///
+/// # Safety
+///
+/// This function is called from C code (PVCAM SDK) and must:
+/// - Never unwind (panic) across the FFI boundary - this is Undefined Behavior
+/// - Be reentrant-safe (called from PVCAM's internal thread)
+/// - Complete quickly to avoid blocking the camera's frame pipeline
+///
+/// The entire callback body is wrapped in `catch_unwind` to prevent any panic
+/// from unwinding into C code. If a panic occurs (e.g., mutex poisoning, formatting
+/// error in eprintln!), it is caught and silently discarded. The frame will be
+/// missed, but the process won't crash with UB.
 #[cfg(feature = "pvcam_sdk")]
 pub unsafe extern "system" fn pvcam_eof_callback(
     p_frame_info: *const FRAME_INFO,
     _p_context: *mut std::ffi::c_void, // bd-static-ctx-2026-01-12: IGNORED - use static global instead
 ) {
-    // bd-debug-2026-01-12: Trace callback entry BEFORE any checks
-    static CALLBACK_ENTRY_COUNT: std::sync::atomic::AtomicU32 =
-        std::sync::atomic::AtomicU32::new(0);
-    let entry_count = CALLBACK_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    // SAFETY: catch_unwind prevents panics from unwinding across FFI boundary (bd-ga6p.3).
+    // AssertUnwindSafe is needed because raw pointers are not UnwindSafe, but we
+    // acknowledge this is an FFI callback where we must handle any panic gracefully.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // bd-debug-2026-01-12: Trace callback entry BEFORE any checks
+        static CALLBACK_ENTRY_COUNT: std::sync::atomic::AtomicU32 =
+            std::sync::atomic::AtomicU32::new(0);
+        let entry_count =
+            CALLBACK_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
 
-    // bd-static-ctx-2026-01-12: Use static global context like minimal test
-    // This avoids the SDK p_context issue that stops callbacks after ~19 frames
-    let ctx_ptr = GLOBAL_CALLBACK_CTX.load(std::sync::atomic::Ordering::Acquire);
+        // bd-static-ctx-2026-01-12: Use static global context like minimal test
+        // This avoids the SDK p_context issue that stops callbacks after ~19 frames
+        let ctx_ptr = GLOBAL_CALLBACK_CTX.load(std::sync::atomic::Ordering::Acquire);
 
-    if entry_count <= 25 || entry_count % 50 == 0 {
-        eprintln!(
-            "[PVCAM CALLBACK ENTRY] #{}, static_ctx={:?}",
-            entry_count, ctx_ptr
-        );
-    }
-
-    if ctx_ptr.is_null() {
-        eprintln!(
-            "[PVCAM CALLBACK] static context is NULL at entry #{}",
-            entry_count
-        );
-        return;
-    }
-
-    let ctx = &*ctx_ptr;
-
-    // Extract frame number (infallible)
-    let frame_nr = if !p_frame_info.is_null() {
-        let info = *p_frame_info;
-
-        // Trace callbacks (eprintln is thread-safe, no allocation)
-        // Print first 25, then every 50th
-        if info.FrameNr <= 25 || info.FrameNr % 50 == 0 {
+        if entry_count <= 25 || entry_count % 50 == 0 {
             eprintln!(
-                "[PVCAM CALLBACK] Frame {} ready, timestamp={}",
-                info.FrameNr, info.TimeStamp
+                "[PVCAM CALLBACK ENTRY] #{}, static_ctx={:?}",
+                entry_count, ctx_ptr
             );
         }
 
-        info.FrameNr
-    } else {
-        -1
-    };
+        if ctx_ptr.is_null() {
+            eprintln!(
+                "[PVCAM CALLBACK] static context is NULL at entry #{}",
+                entry_count
+            );
+            return;
+        }
 
-    // Signal main thread - this is the ONLY essential operation
-    // In CIRC_NO_OVERWRITE mode, main loop uses get_oldest_frame for retrieval
-    ctx.signal_frame_ready(frame_nr);
+        let ctx = &*ctx_ptr;
+
+        // Extract frame number (infallible)
+        let frame_nr = if !p_frame_info.is_null() {
+            let info = *p_frame_info;
+
+            // Trace callbacks (eprintln is thread-safe, no allocation)
+            // Print first 25, then every 50th
+            if info.FrameNr <= 25 || info.FrameNr % 50 == 0 {
+                eprintln!(
+                    "[PVCAM CALLBACK] Frame {} ready, timestamp={}",
+                    info.FrameNr, info.TimeStamp
+                );
+            }
+
+            info.FrameNr
+        } else {
+            -1
+        };
+
+        // Signal main thread - this is the ONLY essential operation
+        // In CIRC_NO_OVERWRITE mode, main loop uses get_oldest_frame for retrieval
+        ctx.signal_frame_ready(frame_nr);
+    }))
+    .is_err()
+    {
+        // Log panic without extracting payload (which could itself panic)
+        eprintln!("[PVCAM CALLBACK] Panic caught in EOF callback - frame may be missed");
+    }
 }
 
 /// Hardware frame metadata decoded from PVCAM embedded metadata (Gemini SDK review).
@@ -558,6 +590,12 @@ impl PageAlignedBuffer {
                 e
             )
         })?;
+        // SAFETY: alloc_zeroed requirements are satisfied:
+        // 1. `layout` has non-zero size (validated by from_size_align above)
+        // 2. `layout.align()` is a power of two (PAGE_SIZE = 4096 = 2^12)
+        // 3. Rounding up `layout.size()` to a multiple of alignment won't overflow
+        //    (ensured by from_size_align validation)
+        // The returned pointer is checked for null before use.
         let ptr = unsafe { alloc_zeroed(layout) };
         if ptr.is_null() {
             bail!(
@@ -588,6 +626,11 @@ impl PageAlignedBuffer {
 impl Drop for PageAlignedBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
+            // SAFETY: dealloc requirements are satisfied:
+            // 1. `self.ptr` was allocated by `alloc_zeroed` with the same allocator
+            // 2. `self.layout` is the same Layout used for the original allocation
+            // 3. The null check above ensures we don't dealloc a null pointer
+            // 4. This is called only once (in Drop) and the struct is consumed
             unsafe {
                 dealloc(self.ptr, self.layout);
             }
@@ -696,6 +739,9 @@ mod ffi_safe {
         let (x_bin, y_bin) = binning;
 
         // Setup region (same as initial setup)
+        // SAFETY: rgn_type is a POD C struct with only primitive uns16 fields.
+        // Zero-initialization followed by explicit assignment of all fields is safe.
+        // See start_stream() for detailed safety justification.
         let region = unsafe {
             let mut rgn: rgn_type = std::mem::zeroed();
             rgn.s1 = roi_x as uns16;
@@ -1087,6 +1133,10 @@ pub struct PvcamAcquisition {
     pub lost_frames: Arc<AtomicU64>,
     /// Number of discontinuity events (gaps in frame sequence).
     pub discontinuity_events: Arc<AtomicU64>,
+    /// Number of frames dropped due to pool exhaustion (bd-dmbl).
+    /// When the buffer pool is exhausted, frames are dropped with a warning
+    /// rather than falling back to heap allocation.
+    pub dropped_frames: Arc<AtomicU64>,
     /// Last hardware frame number for gap detection (-1 = uninitialized).
     #[cfg(feature = "pvcam_sdk")]
     last_hardware_frame_nr: Arc<AtomicI32>,
@@ -1164,6 +1214,8 @@ impl PvcamAcquisition {
             // Frame loss detection counters (bd-ek9n.3)
             lost_frames: Arc::new(AtomicU64::new(0)),
             discontinuity_events: Arc::new(AtomicU64::new(0)),
+            // Pool exhaustion counter (bd-dmbl)
+            dropped_frames: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "pvcam_sdk")]
             last_hardware_frame_nr: Arc::new(AtomicI32::new(-1)), // -1 = uninitialized
 
@@ -1209,6 +1261,7 @@ impl PvcamAcquisition {
     pub fn reset_frame_loss_metrics(&self) {
         self.lost_frames.store(0, Ordering::SeqCst);
         self.discontinuity_events.store(0, Ordering::SeqCst);
+        self.dropped_frames.store(0, Ordering::SeqCst);
         #[cfg(feature = "pvcam_sdk")]
         {
             self.last_hardware_frame_nr.store(-1, Ordering::SeqCst);
@@ -1218,11 +1271,22 @@ impl PvcamAcquisition {
     }
 
     /// Get the current frame loss statistics.
-    pub fn frame_loss_stats(&self) -> (u64, u64) {
+    ///
+    /// Returns a tuple of (lost_frames, discontinuity_events, dropped_frames).
+    pub fn frame_loss_stats(&self) -> (u64, u64, u64) {
         (
             self.lost_frames.load(Ordering::Relaxed),
             self.discontinuity_events.load(Ordering::Relaxed),
+            self.dropped_frames.load(Ordering::Relaxed),
         )
+    }
+
+    /// Get the number of frames dropped due to pool exhaustion (bd-dmbl).
+    ///
+    /// This counter is incremented when the buffer pool is exhausted and
+    /// a frame must be dropped to maintain real-time performance.
+    pub fn dropped_frame_count(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 
     /// Check if an error occurred during acquisition (bd-g9po).
@@ -1550,8 +1614,13 @@ impl PvcamAcquisition {
                 y_bin,
                 "Creating PVCAM region (rgn_type)"
             );
+            // SAFETY: rgn_type is a plain-old-data (POD) C struct from the PVCAM SDK
+            // containing only primitive integer fields (uns16). Zero-initialization
+            // followed by explicit assignment of all fields is safe because:
+            // 1. The struct has no pointers, references, padding requirements, or drop semantics
+            // 2. All fields are primitive integers that accept any bit pattern
+            // 3. Every field is explicitly set before the struct is passed to PVCAM
             let region = unsafe {
-                // SAFETY: rgn_type is POD; zeroed then fully initialized before use.
                 let mut rgn: rgn_type = std::mem::zeroed();
                 rgn.s1 = roi.x as uns16;
                 rgn.s2 = (roi.x + roi.width - 1) as uns16;
@@ -2030,6 +2099,7 @@ impl PvcamAcquisition {
             let frame_count = self.frame_count.clone();
             let lost_frames = self.lost_frames.clone();
             let discontinuity_events = self.discontinuity_events.clone();
+            let dropped_frames = self.dropped_frames.clone();
             let last_hw_frame_nr = self.last_hardware_frame_nr.clone();
             let callback_ctx = self.callback_context.clone();
             let width = binned_width;
@@ -2089,6 +2159,7 @@ impl PvcamAcquisition {
                     frame_count,
                     lost_frames,
                     discontinuity_events,
+                    dropped_frames,
                     last_hw_frame_nr,
                     callback_ctx,
                     use_callback,
@@ -2152,7 +2223,7 @@ impl PvcamAcquisition {
                 }
             });
 
-            return Ok(());
+            Ok(())
         }
 
         // Mock path (or no handle)
@@ -2276,6 +2347,11 @@ impl PvcamAcquisition {
                         let byte_len = pixels.len() * 2;
                         if byte_len <= frame_data.pixels.capacity() {
                             let src_ptr = pixels.as_ptr() as *const u8;
+                            // SAFETY: copy_nonoverlapping is safe because:
+                            // 1. src_ptr points to valid pixel data (Vec<u16> on stack)
+                            // 2. frame_data.pixels has sufficient capacity (checked above)
+                            // 3. byte_len is exactly pixels.len() * 2, matching u16 -> u8 conversion
+                            // 4. Source and destination don't overlap (stack vs heap allocation)
                             unsafe {
                                 std::ptr::copy_nonoverlapping(
                                     src_ptr,
@@ -2287,13 +2363,13 @@ impl PvcamAcquisition {
                         }
 
                         // Send LoanedFrame - non-blocking
-                        if p_tx.try_send(loaned_frame).is_err() && frame_num % 100 == 0 {
+                        if p_tx.try_send(loaned_frame).is_err() && frame_num.is_multiple_of(100) {
                             tracing::warn!(
                                 "PVCAM mock: primary channel full at frame {}",
                                 frame_num
                             );
                         }
-                    } else if frame_num % 100 == 0 {
+                    } else if frame_num.is_multiple_of(100) {
                         tracing::warn!("PVCAM mock: frame pool exhausted at frame {}", frame_num);
                     }
                 }
@@ -2693,6 +2769,7 @@ impl PvcamAcquisition {
     /// * `frame_count` - Counter for acquired frames
     /// * `lost_frames` - Counter for lost frames (bd-ek9n.3)
     /// * `discontinuity_events` - Counter for gap events (bd-ek9n.3)
+    /// * `dropped_frames` - Counter for frames dropped due to pool exhaustion (bd-dmbl)
     /// * `last_hw_frame_nr` - Last hardware frame number for gap detection
     /// * `callback_ctx` - Callback context for EOF notifications (bd-ek9n.2)
     /// * `use_callback` - Whether EOF callback is registered
@@ -2725,6 +2802,7 @@ impl PvcamAcquisition {
         frame_count: Arc<AtomicU64>,
         lost_frames: Arc<AtomicU64>,
         discontinuity_events: Arc<AtomicU64>,
+        dropped_frames: Arc<AtomicU64>,
         last_hw_frame_nr: Arc<AtomicI32>,
         callback_ctx: Arc<std::pin::Pin<Box<CallbackContext>>>,
         use_callback: bool,
@@ -3060,7 +3138,9 @@ impl PvcamAcquisition {
             // the outer loop to wait for the next callback signal.
 
             // Stack-allocated FRAME_INFO for pl_exp_get_oldest_frame_ex (bd-ek9n.3)
-            // Using zeroed struct as PVCAM will fill in the fields on frame retrieval.
+            // SAFETY: FRAME_INFO is a POD C struct with only primitive fields (i32, u32, etc.).
+            // Zero-initialization is safe as all fields accept 0. The struct is immediately
+            // passed to pl_exp_get_oldest_frame_ex which populates all fields before we read them.
             let mut frame_info: FRAME_INFO = unsafe { std::mem::zeroed() };
 
             // bd-flatten-2026-01-12: CRITICAL FIX - Remove inner drain loop entirely.
@@ -3182,38 +3262,61 @@ impl PvcamAcquisition {
 
             // bd-0dax.4: TRUE zero-allocation path using BufferPool + freeze()
             // When consumers drop the Frame, buffer auto-returns to pool via Bytes::drop.
-            // Falls back to heap allocation if pool is exhausted (backpressure).
-            let (pixel_data, used_pool): (Bytes, bool) = match buffer_pool.try_acquire() {
+            // bd-dmbl: Drop frames with warning when pool is exhausted (Option A).
+            let pixel_data: Bytes = match buffer_pool.try_acquire() {
                 Some(mut buffer) => {
                     // Fast path: Copy SDK data into pre-allocated pool buffer
+                    // SAFETY: copy_from_ptr is safe because:
+                    // 1. frame_ptr is valid - returned by pl_exp_get_oldest_frame_ex
+                    // 2. copy_bytes <= expected_frame_bytes, validated against SDK frame_bytes
+                    // 3. In CIRC_NO_OVERWRITE mode, frame data remains valid after unlock
+                    //    because SDK won't reuse the buffer until all slots are filled
+                    // 4. buffer has capacity >= copy_bytes (created with actual_frame_bytes)
                     unsafe {
                         buffer.copy_from_ptr(frame_ptr as *const u8, copy_bytes);
                     }
                     // Zero-copy conversion to Bytes - buffer returns to pool when dropped
                     let data = buffer.freeze();
                     POOL_HITS.fetch_add(1, Ordering::Relaxed);
-                    (data, true)
+                    data
                 }
                 None => {
-                    // Slow path: Pool exhausted - fall back to heap allocation
-                    // This indicates backpressure (consumers too slow)
+                    // bd-dmbl: Pool exhausted - drop frame with warning (Option A)
+                    // This indicates backpressure (consumers too slow).
+                    // Dropping frames maintains real-time performance at the cost of completeness.
                     POOL_MISSES.fetch_add(1, Ordering::Relaxed);
+                    let drop_count = dropped_frames.fetch_add(1, Ordering::Relaxed) + 1;
                     let misses = POOL_MISSES.load(Ordering::Relaxed);
-                    if misses <= 10 || misses % 100 == 0 {
+
+                    // Log warning with rate limiting to avoid log spam
+                    if drop_count <= 10 || drop_count % 100 == 0 {
+                        // eprintln for guaranteed console visibility during debugging
+                        eprintln!(
+                            "[PVCAM BACKPRESSURE] Frame {} dropped - pool exhausted ({}/{} available, {} total dropped)",
+                            unsafe { frame_info.FrameNr },
+                            buffer_pool.available(),
+                            buffer_pool.size(),
+                            drop_count
+                        );
                         tracing::warn!(
                             target: "pvcam_pool",
+                            frame_nr = unsafe { frame_info.FrameNr },
+                            dropped_frames = drop_count,
                             pool_misses = misses,
                             pool_available = buffer_pool.available(),
                             pool_size = buffer_pool.size(),
-                            "Buffer pool exhausted - falling back to heap allocation (backpressure)"
+                            "Buffer pool exhausted - dropping frame (bd-dmbl). \
+                             Consumers may be too slow or pool size too small."
                         );
                     }
-                    let data = unsafe {
-                        let sdk_bytes =
-                            std::slice::from_raw_parts(frame_ptr as *const u8, copy_bytes);
-                        Bytes::copy_from_slice(sdk_bytes)
-                    };
-                    (data, false)
+
+                    // Consume callback signal since we're not processing this frame
+                    if use_callback {
+                        callback_ctx.consume_one();
+                    }
+
+                    // Skip to next frame - don't process this one
+                    continue;
                 }
             };
             let alloc_duration = alloc_start.elapsed();
@@ -3224,11 +3327,12 @@ impl PvcamAcquisition {
             let alloc_frame_num = ALLOC_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
 
             // Log allocation metrics every 100 frames
-            if alloc_frame_num % 100 == 0 {
+            if alloc_frame_num.is_multiple_of(100) {
                 let total_bytes = ALLOC_TOTAL_BYTES.load(Ordering::Relaxed);
                 let total_ns = ALLOC_TOTAL_TIME_NS.load(Ordering::Relaxed);
                 let pool_hits = POOL_HITS.load(Ordering::Relaxed);
                 let pool_misses = POOL_MISSES.load(Ordering::Relaxed);
+                let total_dropped = dropped_frames.load(Ordering::Relaxed);
                 let avg_alloc_us = if alloc_frame_num > 0 {
                     (total_ns / alloc_frame_num) / 1000
                 } else {
@@ -3249,8 +3353,8 @@ impl PvcamAcquisition {
                     pool_hit_rate_pct = hit_rate_pct,
                     pool_hits = pool_hits,
                     pool_misses = pool_misses,
-                    used_pool = used_pool,
-                    "Allocation metrics (bd-0dax.3)"
+                    dropped_frames = total_dropped,
+                    "Allocation metrics (bd-0dax.3, bd-dmbl)"
                 );
             }
 
@@ -3554,7 +3658,9 @@ impl PvcamAcquisition {
                 // If measurement pipeline is slow, frames will be dropped here
                 // rather than blocking broadcast delivery
                 if let Some(ref tx) = reliable_tx {
-                    if tx.try_send(frame_arc.clone()).is_err() && current_frame_nr % 100 == 0 {
+                    if tx.try_send(frame_arc.clone()).is_err()
+                        && current_frame_nr.is_multiple_of(100)
+                    {
                         // Rate-limit warnings to avoid log spam at high FPS
                         tracing::warn!(
                                 "Reliable channel full, dropping frames around {} for measurement pipeline",
@@ -3653,17 +3759,19 @@ impl PvcamAcquisition {
             tracing::debug!("Released md_frame struct");
         }
 
-        // Log acquisition summary with frame loss statistics (bd-ek9n.3)
+        // Log acquisition summary with frame loss statistics (bd-ek9n.3, bd-dmbl)
         let total_frames = frame_count.load(Ordering::Relaxed);
         let total_lost = lost_frames.load(Ordering::Relaxed);
         let total_discontinuities = discontinuity_events.load(Ordering::Relaxed);
+        let total_dropped = dropped_frames.load(Ordering::Relaxed);
 
-        if total_lost > 0 || total_discontinuities > 0 {
+        if total_lost > 0 || total_discontinuities > 0 || total_dropped > 0 {
             tracing::warn!(
-                "PVCAM acquisition ended: {} frames captured, {} frames lost, {} discontinuity events",
+                "PVCAM acquisition ended: {} frames captured, {} frames lost, {} discontinuities, {} dropped (pool exhaustion)",
                 total_frames,
                 total_lost,
-                total_discontinuities
+                total_discontinuities,
+                total_dropped
             );
         } else {
             tracing::info!(

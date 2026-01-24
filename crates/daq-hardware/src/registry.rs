@@ -78,7 +78,7 @@ use daq_core::capabilities::{
     Settable, ShutterControl, Stageable, Triggerable, WavelengthTunable,
 };
 use daq_core::data::Frame;
-use daq_core::driver::{DeviceComponents, DriverFactory};
+use daq_core::driver::{DeviceComponents, DeviceLifecycle, DriverFactory};
 use daq_core::error::DaqError;
 use daq_core::pipeline::MeasurementSource;
 
@@ -643,6 +643,8 @@ struct RegisteredDevice {
     emission_control: Option<Arc<dyn EmissionControl>>,
     /// WavelengthTunable implementation (if supported) - tunable laser wavelength (bd-pwjo)
     wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
+    /// Optional lifecycle hooks for registration/shutdown
+    lifecycle: Option<Arc<dyn DeviceLifecycle>>,
     /// Device metadata (units, ranges, etc.)
     metadata: DeviceMetadata,
 }
@@ -776,6 +778,47 @@ pub struct FactoryInfo {
 }
 
 impl DeviceRegistry {
+    async fn run_on_register(
+        &self,
+        device_id: &str,
+        driver_type: &str,
+        lifecycle: &Option<Arc<dyn DeviceLifecycle>>,
+    ) -> Result<(), DaqError> {
+        if let Some(hook) = lifecycle {
+            hook.on_register().await.map_err(|e| {
+                DaqError::Driver(daq_core::error::DriverError::new(
+                    driver_type,
+                    daq_core::error::DriverErrorKind::Initialization,
+                    format!(
+                        "Lifecycle on_register failed for device '{}': {}",
+                        device_id, e
+                    ),
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn run_on_unregister(
+        &self,
+        device_id: &str,
+        driver_type: &str,
+        lifecycle: &Option<Arc<dyn DeviceLifecycle>>,
+    ) -> Result<(), DaqError> {
+        if let Some(hook) = lifecycle {
+            hook.on_unregister().await.map_err(|e| {
+                DaqError::Driver(daq_core::error::DriverError::new(
+                    driver_type,
+                    daq_core::error::DriverErrorKind::Shutdown,
+                    format!(
+                        "Lifecycle on_unregister failed for device '{}': {}",
+                        device_id, e
+                    ),
+                ))
+            })?;
+        }
+        Ok(())
+    }
     /// Create a new empty device registry
     pub fn new() -> Self {
         Self {
@@ -980,9 +1023,13 @@ impl DeviceRegistry {
 
         // Validate configuration
         factory.validate(&config).map_err(|e| {
-            DaqError::Configuration(format!(
-                "Configuration validation failed for device '{}' ({}): {}",
-                device_id, driver_type, e
+            DaqError::Driver(daq_core::error::DriverError::new(
+                driver_type,
+                daq_core::error::DriverErrorKind::Configuration,
+                format!(
+                    "Configuration validation failed for device '{}' ({}): {}",
+                    device_id, driver_type, e
+                ),
             ))
         })?;
 
@@ -995,11 +1042,25 @@ impl DeviceRegistry {
         );
 
         let components = factory.build(config).await.map_err(|e| {
-            DaqError::Instrument(format!(
-                "Factory build failed for device '{}' ({}): {}",
-                device_id, driver_type, e
+            DaqError::Driver(daq_core::error::DriverError::new(
+                driver_type,
+                daq_core::error::DriverErrorKind::Initialization,
+                format!(
+                    "Factory build failed for device '{}' ({}): {}",
+                    device_id, driver_type, e
+                ),
             ))
         })?;
+
+        if let Err(err) = self
+            .run_on_register(device_id, driver_type, &components.lifecycle)
+            .await
+        {
+            let _ = self
+                .run_on_unregister(device_id, driver_type, &components.lifecycle)
+                .await;
+            return Err(err);
+        }
 
         // Convert to RegisteredDevice
         let registered = self.components_to_registered(
@@ -1074,6 +1135,7 @@ impl DeviceRegistry {
             shutter_control: components.shutter_control,
             emission_control: components.emission_control,
             wavelength_tunable: components.wavelength_tunable,
+            lifecycle: components.lifecycle,
             metadata,
         }
     }
@@ -1102,6 +1164,8 @@ impl DeviceRegistry {
             )));
         }
 
+        let driver_type = config.driver.driver_name().to_string();
+
         // Validate configuration before attempting to instantiate
         validate_driver_config(&config.driver).map_err(|e| {
             DaqError::Configuration(format!(
@@ -1112,10 +1176,22 @@ impl DeviceRegistry {
             ))
         })?;
 
-        let registered = self
-            .instantiate_device(config)
+        let registered = self.instantiate_device(config).await.map_err(|e| {
+            DaqError::Driver(daq_core::error::DriverError::new(
+                &driver_type,
+                daq_core::error::DriverErrorKind::Initialization,
+                e.to_string(),
+            ))
+        })?;
+        if let Err(err) = self
+            .run_on_register(&registered.config.id, &driver_type, &registered.lifecycle)
             .await
-            .map_err(|e| DaqError::Instrument(e.to_string()))?;
+        {
+            let _ = self
+                .run_on_unregister(&registered.config.id, &driver_type, &registered.lifecycle)
+                .await;
+            return Err(err);
+        }
         self.devices
             .insert(registered.config.id.clone(), registered);
         Ok(())
@@ -1151,7 +1227,23 @@ impl DeviceRegistry {
         let registered = self
             .create_registered_plugin(config, driver)
             .await
-            .map_err(|e| DaqError::Instrument(e.to_string()))?;
+            .map_err(|e| {
+                DaqError::Driver(daq_core::error::DriverError::new(
+                    "plugin",
+                    daq_core::error::DriverErrorKind::Initialization,
+                    e.to_string(),
+                ))
+            })?;
+        let driver_type = registered.config.driver.driver_name().to_string();
+        if let Err(err) = self
+            .run_on_register(&registered.config.id, &driver_type, &registered.lifecycle)
+            .await
+        {
+            let _ = self
+                .run_on_unregister(&registered.config.id, &driver_type, &registered.lifecycle)
+                .await;
+            return Err(err);
+        }
         self.devices
             .insert(registered.config.id.clone(), registered);
         Ok(())
@@ -1167,8 +1259,37 @@ impl DeviceRegistry {
     ///
     /// # Thread Safety (bd-pf31)
     /// This method is thread-safe and can be called concurrently.
-    pub fn unregister(&self, id: &str) -> bool {
-        self.devices.remove(id).is_some()
+    pub async fn unregister(&self, id: &str) -> Result<bool, DaqError> {
+        if let Some((_, device)) = self.devices.remove(id) {
+            let driver_type = device.config.driver.driver_name().to_string();
+            self.run_on_unregister(&device.config.id, &driver_type, &device.lifecycle)
+                .await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Shutdown all registered devices, collecting any lifecycle errors.
+    pub async fn shutdown_all(&self) -> Result<(), DaqError> {
+        let device_ids: Vec<String> = self
+            .devices
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        let mut errors = Vec::new();
+
+        for device_id in device_ids {
+            if let Err(err) = self.unregister(&device_id).await {
+                errors.push(err);
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(DaqError::ShutdownFailed(errors))
+        }
     }
 
     /// List all registered devices
@@ -1410,6 +1531,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-100.0),
@@ -1436,6 +1558,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -1460,6 +1583,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -1495,6 +1619,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         frame_width: Some(width),
                         frame_height: Some(height),
@@ -1531,6 +1656,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("V".to_string()), // Voltage
                         ..Default::default()
@@ -1583,6 +1709,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         position_units: Some("degrees".to_string()),
                         min_position: Some(0.0),
@@ -1615,6 +1742,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: Some(driver),
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         min_wavelength_nm: Some(wavelength_range.0),
@@ -1645,6 +1773,7 @@ impl DeviceRegistry {
                     shutter_control: Some(driver.clone()),
                     emission_control: Some(driver.clone()),
                     wavelength_tunable: Some(driver),
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         measurement_units: Some("W".to_string()),
                         ..Default::default()
@@ -1672,6 +1801,7 @@ impl DeviceRegistry {
                     shutter_control: None,
                     emission_control: None,
                     wavelength_tunable: None,
+                    lifecycle: None,
                     metadata: DeviceMetadata {
                         position_units: Some("mm".to_string()),
                         min_position: Some(-25.0), // Typical ESP300 stage range
@@ -1828,6 +1958,7 @@ impl DeviceRegistry {
             shutter_control: None,
             emission_control: None,
             wavelength_tunable: None,
+            lifecycle: None,
             metadata,
         })
     }
@@ -2460,9 +2591,135 @@ mod tests {
         let registry = create_mock_registry().await.unwrap();
 
         assert!(registry.contains("mock_stage"));
-        assert!(registry.unregister("mock_stage"));
+        assert!(registry.unregister("mock_stage").await.unwrap());
         assert!(!registry.contains("mock_stage"));
-        assert!(!registry.unregister("mock_stage")); // Already removed
+        assert!(!registry.unregister("mock_stage").await.unwrap()); // Already removed
+    }
+
+    struct TestLifecycle {
+        registered: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        unregistered: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl daq_core::driver::DeviceLifecycle for TestLifecycle {
+        fn on_register(&self) -> futures::future::BoxFuture<'static, Result<()>> {
+            let counter = self.registered.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }
+
+        fn on_unregister(&self) -> futures::future::BoxFuture<'static, Result<()>> {
+            let counter = self.unregistered.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
+    struct TestFactory {
+        lifecycle: std::sync::Arc<dyn daq_core::driver::DeviceLifecycle>,
+    }
+
+    impl daq_core::driver::DriverFactory for TestFactory {
+        fn driver_type(&self) -> &'static str {
+            "test_factory"
+        }
+
+        fn name(&self) -> &'static str {
+            "Test Factory"
+        }
+
+        fn validate(&self, _config: &toml::Value) -> Result<()> {
+            Ok(())
+        }
+
+        fn build(
+            &self,
+            _config: toml::Value,
+        ) -> futures::future::BoxFuture<'static, Result<DeviceComponents>> {
+            let lifecycle = self.lifecycle.clone();
+            Box::pin(async move {
+                let driver = std::sync::Arc::new(crate::drivers::mock::MockStage::new());
+                Ok(DeviceComponents::new()
+                    .with_movable(driver.clone())
+                    .with_parameterized(driver)
+                    .with_lifecycle(lifecycle))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_hooks_on_register_unregister() {
+        let registered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let unregistered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lifecycle = std::sync::Arc::new(TestLifecycle {
+            registered: registered.clone(),
+            unregistered: unregistered.clone(),
+        });
+
+        let registry = DeviceRegistry::new();
+        registry.register_factory(Box::new(TestFactory {
+            lifecycle: lifecycle.clone(),
+        }));
+
+        registry
+            .register_from_toml(
+                "test-device",
+                "Test Device",
+                "test_factory",
+                toml::Value::Table(toml::map::Map::new()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(registered.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(registry.unregister("test-device").await.unwrap());
+        assert_eq!(unregistered.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    struct FailingLifecycle {
+        unregistered: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl daq_core::driver::DeviceLifecycle for FailingLifecycle {
+        fn on_register(&self) -> futures::future::BoxFuture<'static, Result<()>> {
+            Box::pin(async { Err(anyhow!("boom")) })
+        }
+
+        fn on_unregister(&self) -> futures::future::BoxFuture<'static, Result<()>> {
+            let counter = self.unregistered.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failed_lifecycle_register_cleans_up() {
+        let unregistered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lifecycle = std::sync::Arc::new(FailingLifecycle {
+            unregistered: unregistered.clone(),
+        });
+
+        let registry = DeviceRegistry::new();
+        registry.register_factory(Box::new(TestFactory { lifecycle }));
+
+        let result = registry
+            .register_from_toml(
+                "test-device",
+                "Test Device",
+                "test_factory",
+                toml::Value::Table(toml::map::Map::new()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(DaqError::Driver(_))));
+        assert!(!registry.contains("test-device"));
+        assert_eq!(unregistered.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

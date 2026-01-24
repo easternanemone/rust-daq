@@ -38,11 +38,14 @@ static SDK_INIT_MUTEX: Mutex<()> = Mutex::new(());
 /// Helper to get PVCAM error string
 #[cfg(any(feature = "pvcam_sdk", feature = "pvcam_hardware"))]
 pub(crate) fn get_pvcam_error() -> String {
+    // SAFETY: All PVCAM SDK calls in this block are safe because:
+    // 1. pl_error_code() is thread-safe and can be called at any time after SDK init
+    // 2. pl_error_message() writes to our stack-allocated buffer with sufficient size
+    // 3. The buffer is 256 bytes as required by PVCAM SDK documentation
+    // 4. CStr::from_ptr is safe because pl_error_message null-terminates the string
     unsafe {
-        // SAFETY: PVCAM docs state error query functions are thread-safe after initialization.
         let err_code = pl_error_code();
         let mut err_msg = vec![0i8; 256];
-        // SAFETY: Buffer is valid and sized per SDK requirement (256 bytes).
         pl_error_message(err_code, err_msg.as_mut_ptr());
         let err_str = std::ffi::CStr::from_ptr(err_msg.as_ptr()).to_string_lossy();
         format!("error {} - {}", err_code, err_str)
@@ -170,6 +173,12 @@ impl PvcamConnection {
                 tracing::debug!("Environment LD_LIBRARY_PATH={}", v);
             }
 
+            // SAFETY: PVCAM SDK initialization calls are safe because:
+            // 1. SDK_INIT_MUTEX ensures single-threaded access to global SDK state
+            // 2. pl_pvcam_get_ver() is safe to call at any time (even before init)
+            // 3. pl_pvcam_init() is idempotent when protected by our ref count
+            // 4. All out-pointers (&mut ver) point to valid stack-allocated memory
+            // 5. On failure, we rollback the ref count before returning
             unsafe {
                 // Check version first (diagnostics)
                 tracing::trace!("Calling pl_pvcam_get_ver()...");
@@ -195,7 +204,6 @@ impl PvcamConnection {
                     );
                 }
 
-                // SAFETY: Global PVCAM init; protected by SDK_INIT_MUTEX.
                 tracing::trace!("Calling pl_pvcam_init()...");
                 let init_result = pl_pvcam_init();
                 tracing::debug!("pl_pvcam_init() returned {}", init_result);
@@ -242,6 +250,10 @@ impl PvcamConnection {
 
         // Get camera count
         let mut total_cameras: i16 = 0;
+        // SAFETY: pl_cam_get_total() is safe because:
+        // 1. SDK is initialized (checked by sdk_initialized flag above)
+        // 2. total_cameras is a valid stack-allocated out-pointer
+        // 3. The function only writes to the provided pointer
         unsafe {
             tracing::trace!("Calling pl_cam_get_total()...");
             let res = pl_cam_get_total(&mut total_cameras);
@@ -267,6 +279,11 @@ impl PvcamConnection {
 
             // List all available cameras for debugging
             for i in 0..total_cameras {
+                // SAFETY: pl_cam_get_name() is safe because:
+                // 1. SDK is initialized
+                // 2. Index i is in range [0, total_cameras)
+                // 3. name_buffer is a valid 256-byte buffer per SDK requirements
+                // 4. CStr::from_ptr is safe because SDK null-terminates the name
                 unsafe {
                     let mut name_buffer = vec![0i8; 256];
                     tracing::trace!("Calling pl_cam_get_name({})...", i);
@@ -284,6 +301,12 @@ impl PvcamConnection {
         let camera_name_cstr = CString::new(camera_name).context("Invalid camera name")?;
         let mut hcam: i16 = 0;
 
+        // SAFETY: pl_cam_open() is safe because:
+        // 1. SDK is initialized (checked above)
+        // 2. camera_name_cstr is a valid null-terminated C string
+        // 3. &mut hcam is a valid out-pointer for the camera handle
+        // 4. OPEN_EXCLUSIVE (0) is a valid open mode constant
+        // 5. On success, hcam will contain a valid handle for SDK operations
         unsafe {
             // Try to open the requested camera
             tracing::debug!("Attempting to open camera '{}'...", camera_name);
@@ -310,6 +333,7 @@ impl PvcamConnection {
                 );
 
                 // Try first available camera as fallback
+                // SAFETY: Same as above - SDK initialized, valid buffers and out-pointers
                 tracing::info!("Attempting fallback: opening first available camera...");
                 let mut name_buffer = vec![0i8; 256];
                 tracing::trace!("Calling pl_cam_get_name(0)...");
@@ -373,8 +397,12 @@ impl PvcamConnection {
     #[cfg(feature = "pvcam_sdk")]
     pub fn close(&mut self) {
         if let Some(h) = self.handle.take() {
+            // SAFETY: pl_cam_close() is safe because:
+            // 1. `h` was returned by a successful pl_cam_open() call
+            // 2. `h` is still valid (we're taking it from Option, so it hasn't been closed)
+            // 3. We use handle.take() to ensure we only close once
+            // 4. After this call, the handle is invalid and removed from self.handle
             unsafe {
-                // SAFETY: h was returned by pl_cam_open and is still owned by this connection.
                 pl_cam_close(h);
             }
         }
@@ -412,8 +440,12 @@ impl PvcamConnection {
 
         if prev_count == 1 {
             // We were the last connection - uninitialize the SDK
+            // SAFETY: pl_pvcam_uninit() is safe because:
+            // 1. SDK_INIT_MUTEX ensures single-threaded access to global SDK state
+            // 2. prev_count == 1 means we are the last connection (ref count now 0)
+            // 3. All cameras have been closed (close() called above)
+            // 4. No other threads can be using the SDK (protected by mutex + ref count)
             unsafe {
-                // SAFETY: Global PVCAM uninit; protected by SDK_INIT_MUTEX and ref count.
                 pl_pvcam_uninit();
             }
             tracing::info!("PVCAM SDK uninitialized (last connection closed)");
@@ -458,8 +490,10 @@ impl PvcamConnection {
         }
 
         let mut total_cameras: i16 = 0;
+        // SAFETY: pl_cam_get_total() is safe because:
+        // 1. SDK is initialized (ref_count > 0 checked above)
+        // 2. total_cameras is a valid stack-allocated out-pointer
         unsafe {
-            // SAFETY: total_cameras is a valid out pointer; SDK already initialized.
             if pl_cam_get_total(&mut total_cameras) == 0 {
                 return Err(anyhow!("Failed to get camera count: {}", get_pvcam_error()));
             }
@@ -469,8 +503,12 @@ impl PvcamConnection {
 
         for i in 0..total_cameras {
             let mut name_buffer = vec![0i8; 256];
+            // SAFETY: pl_cam_get_name() is safe because:
+            // 1. SDK is initialized
+            // 2. Index i is in valid range [0, total_cameras)
+            // 3. name_buffer is a valid 256-byte writable buffer
+            // 4. CStr::from_ptr is safe because SDK null-terminates the string
             unsafe {
-                // SAFETY: name_buffer is writable and sized per SDK requirement (256 bytes).
                 if pl_cam_get_name(i, name_buffer.as_mut_ptr()) != 0 {
                     let name = std::ffi::CStr::from_ptr(name_buffer.as_ptr())
                         .to_string_lossy()

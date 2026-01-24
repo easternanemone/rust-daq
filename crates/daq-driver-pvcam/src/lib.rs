@@ -192,10 +192,17 @@ impl PvcamDriver {
             {
                 let conn = connection.lock().await;
                 if let Some(hcam) = conn.handle() {
+                    // SAFETY: pl_get_param() calls are safe because:
+                    // 1. `hcam` is a valid camera handle from a successful pl_cam_open()
+                    // 2. PARAM_SER_SIZE and PARAM_PAR_SIZE are standard PVCAM parameters
+                    // 3. ATTR_CURRENT requests the current value (read-only query)
+                    // 4. &mut ser/par are valid stack-allocated uns16 out-pointers
+                    // 5. The cast to *mut _ is safe because uns16 has no alignment requirements
+                    //    beyond what the stack provides
+                    // 6. If pl_get_param fails, we keep the default values (2048x2048)
                     unsafe {
                         let mut ser: uns16 = 0;
                         let mut par: uns16 = 0;
-                        // SAFETY: hcam is open; ser/par are valid out pointers for current dimensions.
                         pl_get_param(
                             hcam,
                             PARAM_SER_SIZE,

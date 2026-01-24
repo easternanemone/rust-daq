@@ -7,7 +7,7 @@ use daq_core::capabilities::{
     ExposureControl, FrameObserver, FrameProducer, LoanedFrame, ObserverHandle, Parameterized,
     Stageable, Triggerable,
 };
-use daq_core::data::Frame;
+use daq_core::data::{Frame, FrameView};
 use daq_core::driver::{Capability, DeviceComponents, DriverFactory};
 use daq_core::observable::ParameterSet;
 use daq_core::parameter::Parameter;
@@ -192,6 +192,8 @@ impl MockCamera {
         let primary_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<LoanedFrame>>>> =
             Arc::new(Mutex::new(None));
         let frame_pool: Arc<Mutex<Option<Arc<Pool<FrameData>>>>> = Arc::new(Mutex::new(None));
+        let observers: Arc<RwLock<Vec<(u64, Box<dyn FrameObserver>)>>> =
+            Arc::new(RwLock::new(Vec::new()));
 
         let mut params = ParameterSet::new();
         let exposure = Parameter::new("exposure_s", config.exposure_s)
@@ -220,6 +222,7 @@ impl MockCamera {
 
         // Streaming parameter
         let mut streaming = Parameter::new("streaming", false).with_description("Streaming");
+        let observers_for_streaming = observers.clone(); // Clone the observers Arc for capture
         {
             let streaming_flag_write = streaming_flag.clone();
             let frame_tx_write = frame_tx.clone();
@@ -228,6 +231,7 @@ impl MockCamera {
             let reliable_tx_write = reliable_tx.clone();
             let primary_tx_write = primary_tx.clone();
             let frame_pool_write = frame_pool.clone();
+            let observers_write = observers_for_streaming.clone();
             let resolution = (config.width, config.height);
 
             streaming.connect_to_hardware_write(move |enable| {
@@ -238,6 +242,7 @@ impl MockCamera {
                 let reliable_tx = reliable_tx_write.clone();
                 let primary_tx = primary_tx_write.clone();
                 let frame_pool = frame_pool_write.clone();
+                let observers_for_task = observers_write.clone();
 
                 Box::pin(async move {
                     if enable {
@@ -254,6 +259,7 @@ impl MockCamera {
                         let res = resolution;
                         let count = frame_count.clone();
 
+                        let observers_for_spawn = observers_for_task.clone();
                         let handle = tokio::spawn(async move {
                             while flag_for_task.load(Ordering::SeqCst) {
                                 let frame_num = count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -301,6 +307,35 @@ impl MockCamera {
                                             "MockCamera: frame pool exhausted at frame {}",
                                             frame_num
                                         );
+                                    }
+                                }
+
+                                // Notify registered observers with FrameView (bd-flaky-test-fix)
+                                // Only allocate pixel_bytes if there are observers registered
+                                {
+                                    let observers_guard = observers_for_spawn.read().await;
+                                    if !observers_guard.is_empty() {
+                                        // Convert u16 buffer to bytes for FrameView
+                                        let pixel_bytes: Vec<u8> = buffer
+                                            .iter()
+                                            .flat_map(|&pixel| pixel.to_le_bytes())
+                                            .collect();
+                                        let timestamp_ns = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_nanos() as u64)
+                                            .unwrap_or(0);
+                                        let frame_view = FrameView::new(
+                                            w,
+                                            h,
+                                            16,
+                                            &pixel_bytes,
+                                            frame_num,
+                                            timestamp_ns,
+                                        )
+                                        .with_exposure(33.0);
+                                        for (_, observer) in observers_guard.iter() {
+                                            observer.on_frame(&frame_view);
+                                        }
                                     }
                                 }
 
@@ -393,7 +428,7 @@ impl MockCamera {
             staged_flag,
             primary_tx,
             frame_pool,
-            observers: Arc::new(RwLock::new(Vec::new())),
+            observers,
             next_observer_id: AtomicU64::new(0),
         }
     }

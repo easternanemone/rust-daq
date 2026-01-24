@@ -646,4 +646,244 @@ mod tests {
         // This should panic
         buf.set_len(20);
     }
+
+    /// Test pool exhaustion behavior (bd-dmbl).
+    ///
+    /// This test validates the core behavior that enables graceful frame dropping:
+    /// - `try_acquire()` returns `None` when pool is exhausted
+    /// - `available()` correctly reflects pool state
+    /// - Buffers are properly returned to pool when dropped
+    /// - Metrics accurately track acquire/return operations
+    #[test]
+    fn test_pool_exhaustion_returns_none() {
+        // Create a small pool to easily exhaust
+        let pool_size = 3;
+        let buffer_capacity = 1024;
+        let pool = BufferPool::new(pool_size, buffer_capacity);
+
+        // Initial state: all buffers available
+        assert_eq!(
+            pool.available(),
+            pool_size,
+            "Pool should start with all {} buffers available",
+            pool_size
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            0,
+            "Initial acquire count should be 0"
+        );
+        assert_eq!(pool.total_returns(), 0, "Initial return count should be 0");
+
+        // Acquire all buffers from the pool
+        let buf1 = pool.try_acquire();
+        assert!(
+            buf1.is_some(),
+            "First acquire should succeed when pool has {} available",
+            pool_size
+        );
+        assert_eq!(
+            pool.available(),
+            2,
+            "After first acquire, 2 buffers should remain available"
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            1,
+            "Acquire count should be 1 after first acquire"
+        );
+
+        let buf2 = pool.try_acquire();
+        assert!(
+            buf2.is_some(),
+            "Second acquire should succeed when pool has 2 available"
+        );
+        assert_eq!(
+            pool.available(),
+            1,
+            "After second acquire, 1 buffer should remain available"
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            2,
+            "Acquire count should be 2 after second acquire"
+        );
+
+        let buf3 = pool.try_acquire();
+        assert!(
+            buf3.is_some(),
+            "Third acquire should succeed when pool has 1 available"
+        );
+        assert_eq!(
+            pool.available(),
+            0,
+            "After exhausting pool, 0 buffers should be available"
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            3,
+            "Acquire count should be 3 after exhausting pool"
+        );
+
+        // Pool is now exhausted - try_acquire should return None
+        let exhausted_result = pool.try_acquire();
+        assert!(
+            exhausted_result.is_none(),
+            "try_acquire() should return None when pool is exhausted (bd-dmbl behavior)"
+        );
+        assert_eq!(
+            pool.available(),
+            0,
+            "Available count should remain 0 after failed acquire"
+        );
+        // Note: total_acquires should NOT increment on failed acquire
+        assert_eq!(
+            pool.total_acquires(),
+            3,
+            "Acquire count should NOT increment on failed acquire attempt"
+        );
+
+        // Verify exhaustion persists with multiple attempts
+        for i in 0..5 {
+            let result = pool.try_acquire();
+            assert!(
+                result.is_none(),
+                "Attempt {}: try_acquire() should consistently return None when exhausted",
+                i + 1
+            );
+        }
+        assert_eq!(
+            pool.total_acquires(),
+            3,
+            "Acquire count should remain 3 after multiple failed attempts"
+        );
+
+        // Return one buffer to pool by dropping it
+        drop(buf1);
+        assert_eq!(
+            pool.available(),
+            1,
+            "After dropping one buffer, 1 should be available again"
+        );
+        assert_eq!(
+            pool.total_returns(),
+            1,
+            "Return count should be 1 after first drop"
+        );
+
+        // Now acquire should succeed again
+        let buf4 = pool.try_acquire();
+        assert!(
+            buf4.is_some(),
+            "Acquire should succeed after buffer is returned to pool"
+        );
+        assert_eq!(
+            pool.available(),
+            0,
+            "Pool should be exhausted again after re-acquire"
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            4,
+            "Acquire count should be 4 after successful re-acquire"
+        );
+
+        // And exhausted again
+        let exhausted_again = pool.try_acquire();
+        assert!(
+            exhausted_again.is_none(),
+            "Pool should be exhausted again after re-acquire"
+        );
+
+        // Return all buffers and verify final state
+        drop(buf2);
+        drop(buf3);
+        drop(buf4);
+
+        assert_eq!(
+            pool.available(),
+            pool_size,
+            "All {} buffers should be available after dropping all",
+            pool_size
+        );
+        assert_eq!(
+            pool.total_acquires(),
+            4,
+            "Final acquire count should be 4 (3 initial + 1 re-acquire)"
+        );
+        assert_eq!(
+            pool.total_returns(),
+            4,
+            "Final return count should be 4 (matching acquires)"
+        );
+    }
+
+    /// Test that frozen buffers also return to pool correctly.
+    ///
+    /// This is important for the PVCAM frame pipeline where buffers are
+    /// converted to Bytes via freeze() before being sent to consumers.
+    #[test]
+    fn test_pool_exhaustion_with_frozen_buffers() {
+        let pool = BufferPool::new(2, 512);
+
+        // Acquire and freeze both buffers
+        let mut buf1 = pool.try_acquire().unwrap();
+        buf1.copy_from_slice(b"frame1");
+        let bytes1 = buf1.freeze();
+
+        let mut buf2 = pool.try_acquire().unwrap();
+        buf2.copy_from_slice(b"frame2");
+        let bytes2 = buf2.freeze();
+
+        // Pool should be exhausted
+        assert_eq!(
+            pool.available(),
+            0,
+            "Pool should be exhausted after freezing both buffers"
+        );
+        assert!(
+            pool.try_acquire().is_none(),
+            "try_acquire should return None when all buffers are frozen into Bytes"
+        );
+
+        // Clone the Bytes - buffer should still be held
+        let bytes1_clone = bytes1.clone();
+        assert_eq!(
+            pool.available(),
+            0,
+            "Cloning Bytes should not return buffer to pool"
+        );
+
+        // Drop original - clone still holds reference
+        drop(bytes1);
+        assert_eq!(
+            pool.available(),
+            0,
+            "Buffer should not return until ALL Bytes clones dropped"
+        );
+
+        // Drop clone - now buffer returns
+        drop(bytes1_clone);
+        assert_eq!(
+            pool.available(),
+            1,
+            "Buffer should return after all Bytes references dropped"
+        );
+
+        // Can acquire again
+        let buf3 = pool.try_acquire();
+        assert!(
+            buf3.is_some(),
+            "Should be able to acquire after Bytes dropped"
+        );
+
+        // Clean up
+        drop(bytes2);
+        drop(buf3);
+        assert_eq!(
+            pool.available(),
+            2,
+            "All buffers should be returned after cleanup"
+        );
+    }
 }

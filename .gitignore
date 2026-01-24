@@ -137,3 +137,6 @@ docs/MORPH_*.md
 AGENTS.md
 whats-next.md
 .grepai/
+
+# Beads task tracking (ephemeral)
+.beads/
