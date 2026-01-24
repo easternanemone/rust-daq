@@ -1,19 +1,40 @@
-# CLAUDE.md
+# rust-daq
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Orchestrator Rules
 
-# rust-daq Project Context
+**YOU ARE AN ORCHESTRATOR. You investigate, then delegate implementation.**
 
-Rust-based data acquisition system with V5 headless-first architecture for scientific instrumentation.
+- Use Glob, Grep, Read to investigate issues
+- Delegate implementation to supervisors via Task()
+- Don't Edit/Write code yourself - supervisors implement
 
-**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking. Use `bd` commands instead of markdown TODOs.
+## Investigation-First Workflow
 
-**Hardware Location:** Remote machine at `maitai@100.117.5.12`
+1. **Investigate** - Use Grep, Read, Glob to understand the issue
+2. **Identify root cause** - Find the specific file, function, line
+3. **Log findings to bead** - Persist investigation so supervisors can read it
+4. **Delegate with confidence** - Tell the supervisor the bead ID and brief fix
 
-## Quick Reference
+### Log Investigation Before Delegating
+
+**Always log your investigation to the bead:**
 
 ```bash
-# Environment Setup (PVCAM machines only)
+bd comment {BEAD_ID} "INVESTIGATION:
+Root cause: {file}:{line} - {what's wrong}
+Related files: {list of files that may need changes}
+Fix: {specific change to make}
+Gotchas: {anything tricky}"
+```
+
+This ensures:
+- Supervisors read full context from the bead
+- No re-investigation if session ends
+- Audit trail if fix was wrong
+
+### Environment Setup (PVCAM machines only)
+
+```bash
 source scripts/env-check.sh              # Validate & configure environment
 source config/hosts/maitai.env           # Or use host-specific config
 
@@ -90,11 +111,15 @@ This script:
 
 **Verification - daemon log MUST show:**
 ```
-pvcam_sdk feature enabled: true
-PVCAM SDK initialized successfully
-Successfully opened camera 'pvcamUSB_0' with handle 0
+Task(
+  subagent_type="{agent-name}",
+  prompt="BEAD_ID: {id}
+
+Fix: [brief summary - supervisor will read details from bead comments]"
+)
 ```
 
+<<<<<<< Updated upstream
 **If you see mock mode, the build is WRONG and must be rebuilt with the script.**
 
 ### Post-Build Verification - ALL Hardware Check
@@ -143,161 +168,268 @@ After connecting GUI to daemon:
 - Comedi channels should show real voltage readings
 
 ### Rhai Scripted Experiments Build
+=======
+Supervisors read the bead comments for full investigation context, then execute confidently.
+>>>>>>> Stashed changes
 
-For scripted experiments (polarization characterization, etc.) on maitai:
+## Beads Commands
 
 ```bash
-# Build with full scripting support (HDF5 + all hardware drivers)
-cargo build --release -p daq-scripting --features scripting_full --bin run_polarization
-
-# Run the experiment
-./target/release/run_polarization
+bd create "Title" -d "Description"                    # Create task
+bd create "Title" -d "..." --type epic                # Create epic
+bd create "Title" -d "..." --parent {EPIC_ID}         # Create child task
+bd create "Title" -d "..." --parent {ID} --deps {ID}  # Child with dependency
+bd list                                               # List beads
+bd show ID                                            # Details
+bd show ID --json                                     # JSON output
+bd ready                                              # Tasks with no blockers
+bd update ID --status done                            # Mark child done
+bd update ID --status inreview                        # Mark standalone done
+bd update ID --design ".designs/{ID}.md"              # Set design doc path
+bd close ID                                           # Close
+bd epic status ID                                     # Epic completion status
 ```
 
-**Feature flags (simplified):**
-- `scripting_full` - **RECOMMENDED**: All hardware drivers + HDF5 storage
-- `polarization`, `hardware_factories` - Aliases for `scripting_full` (backwards compat)
-- `hdf5_scripting` - HDF5 only (no hardware drivers)
+## When to Use Epic vs Standalone
 
-**HDF5 requirement:** Requires system HDF5 library (`libhdf5-dev` on Debian/Ubuntu).
+| Signals | Workflow |
+|---------|----------|
+| Single tech domain (just frontend, just DB, just backend) | Standalone |
+| Multiple supervisors needed | **Epic** |
+| "First X, then Y" in your thinking | **Epic** |
+| Any infrastructure + code change | **Epic** |
+| Any DB + API + frontend change | **Epic** |
 
-## Architecture Overview
+**Anti-pattern to avoid:**
+```
+"This is cross-domain but simple, so I'll just dispatch sequentially"
+```
+→ WRONG. Cross-domain = Epic. No exceptions.
 
-**Design Philosophy:** Headless-first + scriptable control + remote GUI
+## Worktree Workflow
 
-### Crate Structure
+Supervisors work in isolated worktrees (`.worktrees/bd-{BEAD_ID}/`), not branches on main.
 
-| Crate | Purpose |
+### Standalone Workflow (Single Supervisor)
+
+For simple tasks handled by one supervisor:
+
+1. Investigate the issue (Grep, Read)
+2. Create bead: `bd create "Task" -d "Details"`
+3. Dispatch with fix: `Task(subagent_type="<tech>-supervisor", prompt="BEAD_ID: {id}\n\n{problem + fix}")`
+4. Supervisor creates worktree, implements, pushes, marks `inreview` when done
+5. **User merges via UI** (Create PR → wait for CI → Merge PR → Clean Up)
+6. Close: `bd close {ID}` (or auto-close on cleanup)
+
+### Epic Workflow (Cross-Domain Features)
+
+For features requiring multiple supervisors (e.g., DB + API + Frontend):
+
+**Note:** Epics are organizational only - no git branch/worktree for epics. Each child gets its own worktree.
+
+#### 1. Create Epic
+
+```bash
+bd create "Feature name" -d "Description" --type epic
+# Returns: {EPIC_ID}
+```
+
+#### 2. Create Design Doc (if needed)
+
+If the epic involves cross-domain work, dispatch architect FIRST:
+
+```
+Task(
+  subagent_type="architect",
+  prompt="Create design doc for EPIC_ID: {EPIC_ID}
+         Feature: [description]
+         Output: .designs/{EPIC_ID}.md
+
+         Include:
+         - Schema definitions (exact column names, types)
+         - API contracts (endpoints, request/response shapes)
+         - Shared constants/enums
+         - Data flow between layers"
+)
+```
+
+Then link it to the epic:
+```bash
+bd update {EPIC_ID} --design ".designs/{EPIC_ID}.md"
+```
+
+#### 3. Create Children with Dependencies
+
+```bash
+# First task (no dependencies)
+bd create "Create DB schema" -d "..." --parent {EPIC_ID}
+# Returns: {EPIC_ID}.1
+
+# Second task (depends on first)
+bd create "Create API endpoints" -d "..." --parent {EPIC_ID} --deps "{EPIC_ID}.1"
+# Returns: {EPIC_ID}.2
+
+# Third task (depends on second)
+bd create "Create frontend" -d "..." --parent {EPIC_ID} --deps "{EPIC_ID}.2"
+# Returns: {EPIC_ID}.3
+```
+
+#### 4. Dispatch Sequentially
+
+Use `bd ready` to find unblocked tasks:
+
+```bash
+bd ready --json | jq -r '.[] | select(.id | startswith("{EPIC_ID}.")) | .id' | head -1
+```
+
+Dispatch format for epic children:
+```
+Task(
+  subagent_type="{appropriate}-supervisor",
+  prompt="BEAD_ID: {CHILD_ID}
+EPIC_ID: {EPIC_ID}
+
+{task description with fix}"
+)
+```
+
+**WAIT for each child to complete AND be merged before dispatching next.**
+
+Each child:
+1. Creates its own worktree: `.worktrees/bd-{CHILD_ID}/`
+2. Implements the fix
+3. Pushes to remote
+4. Marks `inreview`
+
+User merges each child's PR before the next can start (dependencies enforce this).
+
+#### 5. Close Epic
+
+After all children are merged:
+```bash
+bd close {EPIC_ID}  # Closes epic and all children
+```
+
+## Supervisor Phase 0 (Worktree Setup)
+
+Supervisors start by creating a worktree:
+
+```bash
+# Idempotent - returns existing worktree if it exists
+curl -X POST http://localhost:3008/api/git/worktree \
+  -H "Content-Type: application/json" \
+  -d '{"repo_path": "'$(git rev-parse --show-toplevel)'", "bead_id": "{BEAD_ID}"}'
+
+# Change to worktree
+cd $(git rev-parse --show-toplevel)/.worktrees/bd-{BEAD_ID}
+
+# Mark in progress
+bd update {BEAD_ID} --status in_progress
+```
+
+## Supervisor Completion Format
+
+```
+BEAD {BEAD_ID} COMPLETE
+Worktree: .worktrees/bd-{BEAD_ID}
+Files: [names only]
+Tests: pass
+Summary: [1 sentence]
+```
+
+Then:
+```bash
+git add -A && git commit -m "..."
+git push origin bd-{BEAD_ID}
+bd update {BEAD_ID} --status inreview
+```
+
+## Design Doc Guidelines
+
+When the architect creates a design doc, it should include:
+
+```markdown
+# Feature: {name}
+
+## Schema
+- Exact column names and types
+
+## API Contract
+- Endpoints, request/response shapes
+
+## Shared Constants
+- Enums, status codes
+
+## Data Flow
+- Step-by-step data movement
+```
+
+---
+
+## Supervisors (Implementers)
+
+Supervisors write code in worktrees. Use `Task(subagent_type="...", prompt="BEAD_ID: {id}\n\n...")`.
+
+| Supervisor | Scope (Crates) |
+|------------|----------------|
+| **egui-supervisor** (Eve) | `daq-egui` - GUI, visualization, UX |
+| **driver-supervisor** (Diana) | `daq-driver-*`, `comedi-sys`, `daq-hardware` - FFI, hardware |
+| **scripting-supervisor** (Sage) | `daq-scripting`, `daq-experiment` - DSL, automation |
+| **core-supervisor** (Corey) | `daq-core`, `daq-server`, `daq-storage`, `daq-plugin-*`, `daq-proto`, `daq-pool` |
+| **python-supervisor** (Tessa) | `python/` - Python client library |
+| **infra-supervisor** (Olive) | `.github/`, CI/CD pipelines |
+
+## Support Agents (Read-Only)
+
+Support agents investigate but don't write code. Use `Task(subagent_type="...", prompt="...")`.
+
+| Agent | Purpose |
 |-------|---------|
-| `daq-core` | Foundation types, errors, parameters, observables, DriverFactory trait |
-| `daq-hardware` | HAL, capability traits (`Movable`, `Readable`, `FrameProducer`), device registry |
-| `daq-driver-mock` | Mock drivers for testing (MockStage, MockCamera, MockPowerMeter) |
-| `daq-driver-thorlabs` | Thorlabs ELL14 rotation mount driver |
-| `daq-driver-newport` | Newport ESP300 motion controller, 1830-C power meter drivers |
-| `daq-driver-spectra-physics` | Spectra-Physics MaiTai laser driver |
-| `daq-driver-pvcam` | PVCAM camera driver (requires SDK) |
-| `daq-driver-comedi` | Comedi DAQ driver for Linux boards |
-| `daq-pool` | Zero-allocation object pool for high-FPS frame handling |
-| `daq-storage` | Data persistence (CSV, HDF5, Arrow), ring buffers |
-| `daq-proto` | Protobuf definitions and domain↔proto conversions |
-| `daq-server` | gRPC server with auth and CORS (optional) |
-| `daq-experiment` | RunEngine and Plan definitions |
-| `daq-scripting` | Rhai scripting engine (optional) |
-| `daq-egui` | GUI application with auto-reconnect |
-| `daq-bin` | CLI binaries and daemon entrypoints |
-| `rust-daq` | Integration layer with `prelude` module |
+| **scout** | Quick file/pattern discovery |
+| **detective** | Deep root cause analysis |
+| **architect** | Design docs for epics |
+| **scribe** | Documentation updates |
+| **code-reviewer** | Pre-merge code review |
+| **merge-supervisor** | Git conflict resolution |
 
-### Dependency Graph
+## External AI Agents (Read-Only)
+
+Use external models (Gemini, Codex) for validation and research.
+
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| **validation-agent** (Victor) | Multi-model validation | Before merging complex PRs |
+| **research-agent** (Rita) | Docs, best practices | Unfamiliar APIs, library research |
+
+### Validation Workflow
+
+Before merging a supervisor's PR:
 
 ```
-                           daq-core (foundation + DriverFactory trait)
-                               ↑
-                ┌──────────────┼──────────────┬─────────────┐
-                │              │              │             │
-         daq-driver-*      daq-proto    daq-storage   daq-experiment
-         (mock, thorlabs,                    ↑             ↑
-          newport, spectra,                  │             │
-          pvcam, comedi)                     │             │
-                │                            │             │
-                └────────→ daq-hardware ─────┴─────────────┤
-                               ↑                           │
-                ┌──────────────┼───────────────────────────┘
-                │              │
-          daq-scripting*   daq-server*
-          (optional)       (optional)
-                │              ↑
-                │         daq-bin, daq-egui
-                │
-           rust-daq (integration layer with prelude)
+Task(
+  subagent_type="validation-agent",
+  prompt="Validate changes in worktree bd-{BEAD_ID}
+
+Focus: [security | performance | correctness]
+Files: [key files to review]"
+)
 ```
 
-### Key Abstractions
+### Research Workflow
 
-- **Capability Traits** (defined in `daq-core::capabilities`):
-  - `Movable` - Motion control (motors, stages, rotators)
-  - `Readable` - Scalar value acquisition (sensors, power meters)
-  - `FrameProducer` - 2D image streaming (cameras, detectors)
-  - `Triggerable` - External trigger support
-  - `ExposureControl` - Integration time management
-  - `WavelengthTunable` - Wavelength control (lasers, monochromators)
-  - `ShutterControl` - Beam shutter open/close
-  - `EmissionControl` - Laser emission enable/disable
-  - `Parameterized` - Exposes `Parameter<T>` state
-- **Parameter<T>**: Reactive state with hardware callbacks - use instead of raw Mutex/RwLock
-- **Plan + RunEngine**: Bluesky-inspired experiment orchestration
-- **RingBuffer**: Sync and async variants for data streaming
+When investigating unfamiliar domain:
 
-## Feature Flags
-
-**High-Level Profiles:**
-- `backend` - Server, modules, all hardware, CSV storage
-- `frontend` - GUI (egui) + networking
-- `cli` - All hardware, CSV storage, scripting
-- `full` - Most features (excludes HDF5)
-- `maitai` - Full Maitai hardware stack (PVCAM + serial instruments)
-
-**Storage:** `storage_csv` (default), `storage_hdf5`, `storage_arrow`, `storage_matlab`
-
-**Hardware (daq-hardware):**
-- `serial` - Base serial port support (tokio-serial)
-- `thorlabs` - Thorlabs ELL14 rotators (requires `serial`)
-- `newport` - Newport ESP300 motion controller (requires `serial`)
-- `spectra_physics` - MaiTai laser (requires `serial`)
-- `newport_power_meter` - Newport 1830-C power meter (requires `serial`)
-- `pvcam_hardware` - Real PVCAM camera support (requires SDK)
-
-**Plugin System (rust-daq):**
-- `scripting` - Rhai script-based plugins (`daq-scripting`)
-- `native_plugins` - FFI native plugins (`daq-plugin-api`, abi_stable)
-- Note: Both can be enabled together; the `plugins` module conditionally compiles based on which are enabled
-
-**System:** `server`, `networking`, `modules`, `hardware_tests`
-
-## Critical Code Patterns
-
-### Reactive Parameters (MANDATORY for device state)
-
-**DO NOT** use raw `Arc<RwLock<T>>` or `Mutex<T>` for device state.
-
-**USE** `Parameter<T>` with async hardware callbacks:
-
-```rust
-use daq_core::parameter::Parameter;
-use futures::future::BoxFuture;
-
-let wavelength = Parameter::new("wavelength_nm", 800.0)
-    .with_range(690.0, 1040.0)
-    .connect_to_hardware_write({
-        let port = port.clone();
-        move |val: f64| -> BoxFuture<'static, Result<()>> {
-            Box::pin(async move {
-                port.lock().await.write_all(
-                    format!("WAVELENGTH:{}\r\n", val).as_bytes()
-                ).await?;
-                Ok(())
-            })
-        }
-    });
-
-// Trait methods delegate to parameter, NOT hardware directly
-impl Movable for MyDriver {
-    async fn move_abs(&self, position: f64) -> Result<()> {
-        self.position_param.set(position).await
-    }
-}
 ```
+Task(
+  subagent_type="research-agent",
+  prompt="Research: [topic]
 
-### Async Ring Buffer
-
-Use `AsyncRingBuffer` in async contexts to avoid blocking:
-
-```rust
-use daq_storage::ring_buffer::{RingBuffer, AsyncRingBuffer};
-
-let ring = Arc::new(RingBuffer::create(1024 * 1024)?);
-let async_ring = AsyncRingBuffer::new(ring);
-let snapshot = async_ring.read_snapshot().await;
+Questions:
+1. [specific question]
+2. [specific question]"
+)
 ```
+<<<<<<< Updated upstream
 
 ### Size Limits (DoS Prevention)
 
@@ -771,3 +903,5 @@ grepai trace graph "ValidateToken" --depth 3 --json
 3. Use `Read` tool to examine files from results
 4. Only use Grep for exact string searches if needed
 
+=======
+>>>>>>> Stashed changes

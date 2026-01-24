@@ -27,10 +27,13 @@ enum ActionResult {
 /// Loaded run data for comparison
 #[derive(Debug, Clone)]
 struct RunData {
+    #[allow(dead_code)]
     run_id: String,
     run_name: String,
     points: Vec<(f64, f64)>, // (x, y) for plotting
+    #[allow(dead_code)]
     x_label: String,
+    #[allow(dead_code)]
     y_label: String,
 }
 

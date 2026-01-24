@@ -194,9 +194,10 @@ impl Default for DioMonitorPanel {
 impl DioMonitorPanel {
     /// Create a new DIO monitor panel
     pub fn new(n_pins: u32) -> Self {
-        let mut panel = Self::default();
-        panel.n_pins = n_pins.min(32);
-        panel
+        Self {
+            n_pins: n_pins.min(32),
+            ..Self::default()
+        }
     }
 
     /// Get sender for pushing state updates
@@ -282,7 +283,7 @@ impl DioMonitorPanel {
     /// Render LED-style view
     fn render_led_view(&mut self, ui: &mut Ui) {
         let cols = 8;
-        let rows = (self.n_pins + cols - 1) / cols;
+        let rows = self.n_pins.div_ceil(cols);
 
         egui::Grid::new("dio_led_grid")
             .num_columns(cols as usize)
@@ -412,8 +413,8 @@ impl DioMonitorPanel {
                             ui.label(change_text);
 
                             if self.show_edge_counts {
-                                ui.label(format!("{}", pin.rising_edges));
-                                ui.label(format!("{}", pin.falling_edges));
+                                ui.label(pin.rising_edges.to_string());
+                                ui.label(pin.falling_edges.to_string());
                             }
 
                             if self.show_pulse_widths {

@@ -25,6 +25,7 @@ pub struct EditableParameter {
 
 /// Type of parameter for appropriate editor selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ParameterType {
     Float,
     Integer,
@@ -181,6 +182,7 @@ impl EditableParameter {
     }
 
     /// Create an integer parameter
+    #[allow(dead_code)]
     pub fn integer(device_id: &str, name: &str, label: &str, value: i64) -> Self {
         Self {
             device_id: device_id.to_string(),

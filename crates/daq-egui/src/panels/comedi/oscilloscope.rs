@@ -443,7 +443,7 @@ impl OscilloscopePanel {
     /// Start streaming from a hardware device via gRPC
     pub fn start_streaming(
         &mut self,
-        mut client: DaqClient,
+        _client: DaqClient,
         runtime: &Runtime,
         device_id: String,
         channels: Vec<u32>,
@@ -978,7 +978,7 @@ impl OscilloscopePanel {
             let show_all = self
                 .channels
                 .get(8..)
-                .map_or(false, |rest| rest.iter().any(|c| c.enabled));
+                .is_some_and(|rest| rest.iter().any(|c| c.enabled));
             let max_visible = if show_all { 16 } else { 8 };
 
             egui::ScrollArea::vertical()

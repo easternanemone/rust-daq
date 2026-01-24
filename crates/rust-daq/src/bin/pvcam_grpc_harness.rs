@@ -1,3 +1,4 @@
+//! PVCAM gRPC test harness for stress testing camera streaming.
 #![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::print_stdout)]
 
@@ -216,6 +217,7 @@ fn parse_args() -> Result<HarnessConfig> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_scenario_defaults(
     scenario: &str,
     duration: &mut Duration,
@@ -417,7 +419,7 @@ async fn run_stream(
     if config.multi_client {
         let config_clone = config.clone();
         let duration_secs = config.duration.as_secs();
-        let secondary_secs = std::cmp::min(60, std::cmp::max(20, duration_secs / 10));
+        let secondary_secs = (duration_secs / 10).clamp(20, 60);
         secondary_handle = Some(tokio::spawn(async move {
             run_secondary_client(&config_clone, Duration::from_secs(secondary_secs)).await
         }));
@@ -712,6 +714,7 @@ async fn run_secondary_client(config: &HarnessConfig, duration: Duration) -> Sec
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_summary(
     config: &HarnessConfig,
     stats: &StreamStats,

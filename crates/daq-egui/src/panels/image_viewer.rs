@@ -1636,7 +1636,7 @@ impl ImageViewerPanel {
                                     continue;
                                 }
 
-                                if frames_received > 10 && frames_received % 30 == 0 {
+                                if frames_received > 10 && frames_received.is_multiple_of(30) {
                                     tracing::debug!(
                                         device_id = %device_id_clone,
                                         frame = frames_received,
@@ -1660,7 +1660,7 @@ impl ImageViewerPanel {
                                     }
                                     Err(mpsc::TrySendError::Full(_)) => {
                                         frames_dropped += 1;
-                                        if frames_dropped % 10 == 0 {
+                                        if frames_dropped.is_multiple_of(10) {
                                             tracing::warn!(
                                                 device_id = %device_id_clone,
                                                 dropped = frames_dropped,
@@ -1843,7 +1843,7 @@ impl ImageViewerPanel {
         // Only poll every 500ms to avoid spamming
         let should_poll = self
             .last_recording_poll
-            .map_or(true, |t| t.elapsed().as_millis() > 500);
+            .is_none_or(|t| t.elapsed().as_millis() > 500);
         if !should_poll {
             return;
         }
@@ -1905,7 +1905,7 @@ impl ImageViewerPanel {
         }
 
         // Trace processed frames (throttled)
-        if frame.frame_number % 30 == 0 {
+        if frame.frame_number.is_multiple_of(30) {
             tracing::debug!(
                 frame = frame.frame_number,
                 width = frame.width,
@@ -1996,11 +1996,7 @@ impl ImageViewerPanel {
         }
 
         // Auto-refresh camera list on first load or if stale
-        let should_refresh = self.last_refresh.is_none()
-            || self
-                .last_refresh
-                .map(|t| t.elapsed().as_secs() > 30)
-                .unwrap_or(false);
+        let should_refresh = self.last_refresh.is_none_or(|t| t.elapsed().as_secs() > 30);
 
         // Track actions to take after UI rendering (avoid borrow issues)
         let mut start_stream_device: Option<String> = None;
@@ -2052,11 +2048,11 @@ impl ImageViewerPanel {
                         } else {
                             for cam_id in &self.available_cameras.clone() {
                                 let is_selected = self.device_id.as_ref() == Some(cam_id);
-                                if ui.selectable_label(is_selected, cam_id).clicked() {
-                                    if self.device_id.as_ref() != Some(cam_id) {
-                                        self.device_id = Some(cam_id.clone());
-                                        self.camera_params.clear();
-                                    }
+                                if ui.selectable_label(is_selected, cam_id).clicked()
+                                    && self.device_id.as_deref() != Some(cam_id.as_str())
+                                {
+                                    self.device_id = Some(cam_id.clone());
+                                    self.camera_params.clear();
                                 }
                             }
                         }
@@ -2092,15 +2088,14 @@ impl ImageViewerPanel {
                     {
                         stop_stream = true;
                     }
-                } else if self.device_id.is_some() {
-                    if ui
+                } else if self.device_id.is_some()
+                    && ui
                         .button(format!("{} Start", icons::action::START))
                         .on_hover_text("Start streaming")
                         .clicked()
-                    {
-                        if let Some(device_id) = &self.device_id {
-                            start_stream_device = Some(device_id.clone());
-                        }
+                {
+                    if let Some(device_id) = &self.device_id {
+                        start_stream_device = Some(device_id.clone());
                     }
                 }
 
@@ -2124,14 +2119,13 @@ impl ImageViewerPanel {
                 ui.separator();
                 match self.recording_state {
                     RecordingState::Idle => {
-                        if is_streaming {
-                            if ui
+                        if is_streaming
+                            && ui
                                 .button(icons::action::RECORD)
                                 .on_hover_text("Start recording frames to HDF5")
                                 .clicked()
-                            {
-                                start_recording = true;
-                            }
+                        {
+                            start_recording = true;
                         }
                     }
                     RecordingState::Recording => {
@@ -2290,14 +2284,13 @@ impl ImageViewerPanel {
                 {
                     self.roi_selector.selection_mode = !self.roi_selector.selection_mode;
                 }
-                if self.roi_selector.roi().is_some() {
-                    if ui
+                if self.roi_selector.roi().is_some()
+                    && ui
                         .button(icons::action::DELETE)
                         .on_hover_text("Clear ROI")
                         .clicked()
-                    {
-                        self.roi_selector.clear();
-                    }
+                {
+                    self.roi_selector.clear();
                 }
 
                 ui.separator();
@@ -2399,8 +2392,7 @@ impl ImageViewerPanel {
                 if matches!(self.recording_state, RecordingState::Recording) {
                     let should_poll = self
                         .last_recording_poll
-                        .map(|t| t.elapsed() > std::time::Duration::from_millis(500))
-                        .unwrap_or(true);
+                        .is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(500));
                     if should_poll {
                         self.poll_recording_status(client, runtime);
                     }
@@ -2652,10 +2644,10 @@ impl ImageViewerPanel {
                                             if let Some(roi) = self.roi_selector.roi() {
                                                 if let Some(dev_id) = self.device_id.clone() {
                                                     let roi_json = serde_json::json!({
-                                                        "x": roi.x as u32,
-                                                        "y": roi.y as u32,
-                                                        "width": roi.width as u32,
-                                                        "height": roi.height as u32
+                                                        "x": roi.x,
+                                                        "y": roi.y,
+                                                        "width": roi.width,
+                                                        "height": roi.height
                                                     });
                                                     self.pending_param_updates.push((
                                                         dev_id,

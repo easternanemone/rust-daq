@@ -489,7 +489,7 @@ impl DeviceControlWidget for MaiTaiControlPanel {
         // Advanced section (collapsible)
         ui.collapsing("▶ Advanced Parameters", |ui| {
             if ui.button("🔄 Refresh State").clicked() {
-                self.fetch_state(client.as_deref_mut(), runtime, &device_id);
+                self.fetch_state(client, runtime, &device_id);
             }
 
             egui::Grid::new("maitai_params")
@@ -505,23 +505,21 @@ impl DeviceControlWidget for MaiTaiControlPanel {
                     ui.end_row();
 
                     ui.label("Emission:");
-                    ui.label(format!(
-                        "{}",
+                    ui.label(
                         self.state
                             .emission_enabled
                             .map(|e| if e { "Enabled" } else { "Disabled" })
-                            .unwrap_or("Unknown")
-                    ));
+                            .unwrap_or("Unknown"),
+                    );
                     ui.end_row();
 
                     ui.label("Shutter:");
-                    ui.label(format!(
-                        "{}",
+                    ui.label(
                         self.state
                             .shutter_open
                             .map(|o| if o { "Open" } else { "Closed" })
-                            .unwrap_or("Unknown")
-                    ));
+                            .unwrap_or("Unknown"),
+                    );
                     ui.end_row();
 
                     ui.label("Wavelength:");

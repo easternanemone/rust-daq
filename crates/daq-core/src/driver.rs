@@ -244,6 +244,9 @@ pub struct DeviceComponents {
     /// WavelengthTunable implementation (tunable wavelength)
     pub wavelength_tunable: Option<Arc<dyn WavelengthTunable>>,
 
+    /// Optional lifecycle hooks for device registration/shutdown
+    pub lifecycle: Option<Arc<dyn DeviceLifecycle>>,
+
     /// Capability-specific metadata (units, ranges, etc.)
     pub metadata: DeviceMetadata,
 }
@@ -387,6 +390,12 @@ impl DeviceComponents {
         self
     }
 
+    /// Set device lifecycle hooks
+    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn DeviceLifecycle>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
+    }
+
     /// Set device metadata
     pub fn with_metadata(mut self, metadata: DeviceMetadata) -> Self {
         self.metadata = metadata;
@@ -439,6 +448,25 @@ pub struct DeviceMetadata {
 
     /// For WavelengthTunable devices: maximum wavelength in nm
     pub max_wavelength_nm: Option<f64>,
+}
+
+// =============================================================================
+// Device Lifecycle Hooks
+// =============================================================================
+
+/// Optional lifecycle hooks for devices that need explicit startup/shutdown.
+///
+/// Implementations should be idempotent and safe to call during partial failures.
+pub trait DeviceLifecycle: Send + Sync + 'static {
+    /// Called after a device is successfully instantiated but before it is exposed.
+    fn on_register(&self) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Called when a device is unregistered or during shutdown cleanup.
+    fn on_unregister(&self) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 // =============================================================================

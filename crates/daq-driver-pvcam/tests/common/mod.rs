@@ -130,7 +130,8 @@ impl Default for TestStats {
 pub struct FrameTracker {
     last_frame_nr: Option<i32>,
     first_frame_nr: Option<i32>,
-    frame_count: u64,
+    /// Current frame count (public for stress test progress reporting)
+    pub frame_count: u64,
     skipped: u64,
     duplicates: u64,
 }
@@ -402,6 +403,9 @@ pub mod durations {
 
     /// Long stability test (30 seconds)
     pub const LONG: Duration = Duration::from_secs(30);
+
+    /// Stress test duration (45 seconds for 1000+ frames at ~30 FPS)
+    pub const STRESS: Duration = Duration::from_secs(45);
 
     /// Frame receive timeout (how long to wait for a single frame)
     pub const FRAME_TIMEOUT: Duration = Duration::from_millis(500);

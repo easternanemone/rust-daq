@@ -125,6 +125,7 @@ impl CodePreviewPanel {
     }
 
     /// Get the current generated code (for export)
+    #[allow(dead_code)]
     pub fn code(&self) -> &str {
         &self.code
     }

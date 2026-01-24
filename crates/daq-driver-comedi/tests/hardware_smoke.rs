@@ -35,7 +35,7 @@
 
 #![cfg(feature = "hardware")]
 
-use daq_driver_comedi::{ComediDevice, DeviceInfo, Range, SubdeviceType};
+use daq_driver_comedi::{ComediDevice, DeviceInfo, Range, SubdeviceType, subsystem::AnalogReference};
 use std::env;
 
 // =============================================================================
@@ -364,13 +364,13 @@ fn analog_input_ranges_test() {
 
     for i in 0..n_ranges.min(10) {
         // Limit to first 10 ranges
-        let range = ai.get_range(0, i).expect("Failed to get range");
+        let range = ai.range_info(0, i).expect("Failed to get range");
         println!(
             "  [{}] {} to {} {} ({})",
             i,
             range.min,
             range.max,
-            range.unit_description(),
+            range.description(),
             if range.is_bipolar() {
                 "bipolar"
             } else {
@@ -383,11 +383,11 @@ fn analog_input_ranges_test() {
     assert!(n_ranges > 0, "Should have at least one voltage range");
 
     // Check for common NI ranges (typically ±10V, ±5V, ±1V, etc.)
-    let range0 = ai.get_range(0, 0).expect("Failed to get range 0");
+    let range0 = ai.range_info(0, 0).expect("Failed to get range 0");
     println!(
         "\nDefault range span: {} {}",
         range0.span(),
-        range0.unit_description()
+        range0.description()
     );
 
     println!("\n=== Analog Input Ranges Test PASSED ===");
@@ -416,7 +416,7 @@ fn analog_input_single_read_test() {
 
     // Read raw value
     let raw = ai
-        .read_raw(0, Range::default())
+        .read_raw(0, Range::default().index, AnalogReference::Ground)
         .expect("Failed to read raw value");
     println!("  Raw value: {}", raw);
 

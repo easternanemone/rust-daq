@@ -30,6 +30,54 @@
 
 use thiserror::Error;
 
+// =============================================================================
+// Driver Errors
+// =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverErrorKind {
+    Initialization,
+    Configuration,
+    Communication,
+    Shutdown,
+    Unknown,
+}
+
+impl std::fmt::Display for DriverErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            DriverErrorKind::Initialization => "initialization",
+            DriverErrorKind::Configuration => "configuration",
+            DriverErrorKind::Communication => "communication",
+            DriverErrorKind::Shutdown => "shutdown",
+            DriverErrorKind::Unknown => "unknown",
+        };
+        write!(f, "{}", label)
+    }
+}
+
+#[derive(Error, Debug, Clone)]
+#[error("Driver '{driver_type}' {kind} error: {message}")]
+pub struct DriverError {
+    pub driver_type: String,
+    pub kind: DriverErrorKind,
+    pub message: String,
+}
+
+impl DriverError {
+    pub fn new(
+        driver_type: impl Into<String>,
+        kind: DriverErrorKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            driver_type: driver_type.into(),
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 /// Convenience alias for results using the application error type.
 pub type AppResult<T> = std::result::Result<T, DaqError>;
 
@@ -186,6 +234,10 @@ pub enum DaqError {
     /// ```
     #[error("Instrument error: {0}")]
     Instrument(String),
+
+    /// Structured driver error with category
+    #[error("{0}")]
+    Driver(DriverError),
 
     /// Serial port is not connected.
     ///
@@ -443,5 +495,17 @@ mod tests {
             DaqError::Processing("buffer drain".into()),
         ]);
         assert!(err.to_string().contains("Shutdown failed"));
+    }
+
+    #[test]
+    fn test_driver_error_display() {
+        let err = DaqError::Driver(DriverError::new(
+            "mock_camera",
+            DriverErrorKind::Initialization,
+            "failed to connect",
+        ));
+        assert!(err
+            .to_string()
+            .contains("Driver 'mock_camera' initialization error"));
     }
 }

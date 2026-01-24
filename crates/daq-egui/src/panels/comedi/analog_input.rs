@@ -99,10 +99,11 @@ impl Default for AnalogInputPanel {
 impl AnalogInputPanel {
     /// Create a new panel for a specific device.
     pub fn new(device_id: &str, n_channels: u32) -> Self {
-        let mut panel = Self::default();
-        panel.device_id = device_id.to_string();
-        panel.n_channels = n_channels;
-        panel
+        Self {
+            device_id: device_id.to_string(),
+            n_channels,
+            ..Self::default()
+        }
     }
 
     /// Main UI entry point.

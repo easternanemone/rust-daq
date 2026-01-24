@@ -344,7 +344,7 @@ impl DeviceControlWidget for StageControlPanel {
             }
 
             if ui.button("🔄 Refresh").clicked() {
-                self.fetch_state(client.as_deref_mut(), runtime, &device_id);
+                self.fetch_state(client, runtime, &device_id);
             }
         });
 

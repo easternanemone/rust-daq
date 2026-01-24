@@ -9,12 +9,18 @@ pub struct SmartStreamEditor {
     pub new_exposure: u32,
 }
 
-impl SmartStreamEditor {
-    pub fn new() -> Self {
+impl Default for SmartStreamEditor {
+    fn default() -> Self {
         Self {
             exposures: vec![10, 20, 50, 100], // Example sequence
             new_exposure: 10,
         }
+    }
+}
+
+impl SmartStreamEditor {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, _device_id: &str) -> bool {

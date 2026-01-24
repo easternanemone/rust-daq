@@ -49,6 +49,19 @@ pub fn map_daq_error_to_status(err: DaqError) -> Status {
         DaqError::Instrument(msg) => {
             Status::new(Code::Unavailable, format!("Instrument error: {}", msg))
         }
+        DaqError::Driver(err) => match err.kind {
+            daq_core::error::DriverErrorKind::Configuration => {
+                Status::new(Code::InvalidArgument, err.to_string())
+            }
+            daq_core::error::DriverErrorKind::Initialization
+            | daq_core::error::DriverErrorKind::Communication => {
+                Status::new(Code::Unavailable, err.to_string())
+            }
+            daq_core::error::DriverErrorKind::Shutdown
+            | daq_core::error::DriverErrorKind::Unknown => {
+                Status::new(Code::Internal, err.to_string())
+            }
+        },
         DaqError::SerialPortNotConnected => {
             Status::new(Code::Unavailable, "Serial port not connected")
         }

@@ -3,6 +3,7 @@
 use crate::widgets::ParameterCache;
 use eframe::egui;
 
+#[derive(Default)]
 pub struct PPEditor {
     /// Search filter for PP features
     pub filter: String,
@@ -10,9 +11,7 @@ pub struct PPEditor {
 
 impl PPEditor {
     pub fn new() -> Self {
-        Self {
-            filter: String::new(),
-        }
+        Self::default()
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, device_id: &str, params: &[ParameterCache]) {

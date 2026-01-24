@@ -383,8 +383,9 @@ async fn start_daemon(
         };
 
         // Race server against shutdown signal
+        let registry_for_server = registry.clone();
         tokio::select! {
-            result = start_server_with_hardware(addr, registry, health_monitor) => {
+            result = start_server_with_hardware(addr, registry_for_server, health_monitor) => {
                 if let Err(e) = result {
                     eprintln!("❌ gRPC server error: {}", e);
                 }
@@ -392,6 +393,10 @@ async fn start_daemon(
             _ = shutdown_signal => {
                 println!("   Initiating graceful shutdown...");
             }
+        }
+
+        if let Err(err) = registry.shutdown_all().await {
+            eprintln!("   Warning: device shutdown encountered errors: {}", err);
         }
 
         // Perform cleanup
@@ -425,6 +430,10 @@ async fn start_daemon(
         tokio::signal::ctrl_c().await?;
 
         println!("\n🛑 Shutdown signal received, cleaning up...");
+
+        if let Err(err) = registry.shutdown_all().await {
+            eprintln!("   Warning: device shutdown encountered errors: {}", err);
+        }
 
         #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
         if let Some((writer, handle)) = writer_handle {

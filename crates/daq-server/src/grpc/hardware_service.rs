@@ -206,7 +206,7 @@ impl FrameObserver for GrpcStreamObserver {
         // Non-blocking send - drop frame if channel is full (backpressure)
         if self.tx.try_send(packet).is_err() {
             let dropped = self.frames_dropped.fetch_add(1, Ordering::Relaxed);
-            if dropped % 10 == 0 {
+            if dropped.is_multiple_of(10) {
                 tracing::debug!(
                     device_id = %self.device_id,
                     frames_dropped = dropped + 1,

@@ -1,4 +1,5 @@
 //! Property inspector widget for editing node properties.
+#![allow(dead_code)]
 
 use egui::Ui;
 

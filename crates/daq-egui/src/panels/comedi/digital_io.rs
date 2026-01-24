@@ -104,16 +104,17 @@ impl Default for DigitalIOPanel {
 impl DigitalIOPanel {
     /// Create a new panel.
     pub fn new(device_id: &str, n_channels: u32) -> Self {
-        let mut panel = Self::default();
-        panel.device_id = device_id.to_string();
-        panel.n_channels = n_channels;
-        panel.pins = (0..n_channels)
-            .map(|i| PinConfig {
-                label: format!("DIO{}", i),
-                ..Default::default()
-            })
-            .collect();
-        panel
+        Self {
+            device_id: device_id.to_string(),
+            n_channels,
+            pins: (0..n_channels)
+                .map(|i| PinConfig {
+                    label: format!("DIO{}", i),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Self::default()
+        }
     }
 
     /// Main UI entry point.
@@ -349,7 +350,7 @@ impl DigitalIOPanel {
 
     /// Render port view (8-bit ports).
     fn render_port_view(&mut self, ui: &mut Ui, runtime: &Runtime) {
-        let n_ports = (self.n_channels + 7) / 8;
+        let n_ports = self.n_channels.div_ceil(8);
         let mut write_actions: Vec<(u32, bool)> = Vec::new();
 
         ui.horizontal(|ui| {

@@ -131,17 +131,9 @@ impl Default for LoopTermination {
 }
 
 /// Configuration for Loop node.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LoopConfig {
     pub termination: LoopTermination,
-}
-
-impl Default for LoopConfig {
-    fn default() -> Self {
-        Self {
-            termination: LoopTermination::default(),
-        }
-    }
 }
 
 impl ExperimentNode {

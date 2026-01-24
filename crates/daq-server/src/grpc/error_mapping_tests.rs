@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::grpc::map_daq_error_to_status;
-    use daq_core::error::DaqError;
+    use daq_core::error::{DaqError, DriverError, DriverErrorKind};
     use tonic::Code;
 
     fn assert_status_code(err: DaqError, expected: Code) {
@@ -33,6 +33,26 @@ mod tests {
             // Hardware faults are expected runtime conditions, not server bugs
             let err = DaqError::Instrument("camera fault".into());
             assert_status_code(err, Code::Unavailable);
+        }
+
+        #[test]
+        fn driver_init_error_maps_to_unavailable() {
+            let err = DaqError::Driver(DriverError::new(
+                "mock_camera",
+                DriverErrorKind::Initialization,
+                "failed",
+            ));
+            assert_status_code(err, Code::Unavailable);
+        }
+
+        #[test]
+        fn driver_config_error_maps_to_invalid_argument() {
+            let err = DaqError::Driver(DriverError::new(
+                "mock_camera",
+                DriverErrorKind::Configuration,
+                "bad config",
+            ));
+            assert_status_code(err, Code::InvalidArgument);
         }
 
         #[test]
