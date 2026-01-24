@@ -656,6 +656,116 @@ impl Stageable for MockCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use daq_core::data::FrameView;
+
+    /// Test observer that counts frames received.
+    struct CountingObserver {
+        frames_received: Arc<AtomicU64>,
+        last_width: Arc<AtomicU64>,
+        last_height: Arc<AtomicU64>,
+    }
+
+    impl FrameObserver for CountingObserver {
+        fn on_frame(&self, frame: &FrameView<'_>) {
+            self.frames_received.fetch_add(1, Ordering::Relaxed);
+            self.last_width.store(frame.width as u64, Ordering::Relaxed);
+            self.last_height.store(frame.height as u64, Ordering::Relaxed);
+        }
+
+        fn name(&self) -> &str {
+            "counting_observer"
+        }
+    }
+
+    /// Test that observers receive frame notifications during streaming.
+    /// This is a regression test for bd-flaky-test-fix.
+    #[tokio::test]
+    async fn test_mock_camera_observers_receive_frames() {
+        // Use small resolution for fast test
+        let camera = MockCamera::new(64, 64);
+
+        // Create observer with shared counters
+        let frames_received = Arc::new(AtomicU64::new(0));
+        let last_width = Arc::new(AtomicU64::new(0));
+        let last_height = Arc::new(AtomicU64::new(0));
+
+        let observer = CountingObserver {
+            frames_received: frames_received.clone(),
+            last_width: last_width.clone(),
+            last_height: last_height.clone(),
+        };
+
+        // Register observer
+        let handle = camera.register_observer(Box::new(observer)).await.unwrap();
+        assert!(camera.supports_observers());
+
+        // Start streaming
+        camera.start_stream().await.unwrap();
+
+        // Wait for some frames (MockCamera streams at ~30fps, so 150ms should give ~4-5 frames)
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Stop streaming
+        camera.stop_stream().await.unwrap();
+
+        // Verify observer received frames
+        let received = frames_received.load(Ordering::Relaxed);
+        assert!(
+            received > 0,
+            "Observer should have received at least one frame, got {}",
+            received
+        );
+
+        // Verify frame dimensions were correct
+        let (w, h) = (
+            last_width.load(Ordering::Relaxed),
+            last_height.load(Ordering::Relaxed),
+        );
+        assert_eq!(w, 64, "Frame width should be 64");
+        assert_eq!(h, 64, "Frame height should be 64");
+
+        // Unregister observer (cleanup)
+        camera.unregister_observer(handle).await.unwrap();
+    }
+
+    /// Test that unregistering an observer stops frame delivery.
+    #[tokio::test]
+    async fn test_mock_camera_observer_unregister() {
+        let camera = MockCamera::new(64, 64);
+
+        let frames_received = Arc::new(AtomicU64::new(0));
+        let observer = CountingObserver {
+            frames_received: frames_received.clone(),
+            last_width: Arc::new(AtomicU64::new(0)),
+            last_height: Arc::new(AtomicU64::new(0)),
+        };
+
+        let handle = camera.register_observer(Box::new(observer)).await.unwrap();
+
+        // Start streaming and let it run briefly
+        camera.start_stream().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Unregister the observer
+        camera.unregister_observer(handle).await.unwrap();
+
+        // Record count after unregister
+        let count_after_unregister = frames_received.load(Ordering::Relaxed);
+
+        // Continue streaming for a bit more
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        camera.stop_stream().await.unwrap();
+
+        // Count should not have increased significantly after unregister
+        // (allowing for 1 frame that might have been in-flight)
+        let final_count = frames_received.load(Ordering::Relaxed);
+        assert!(
+            final_count <= count_after_unregister + 1,
+            "Frames should not be delivered after unregister: before={}, after={}",
+            count_after_unregister,
+            final_count
+        );
+    }
 
     #[tokio::test]
     async fn test_mock_camera_trigger() {
