@@ -2705,6 +2705,39 @@ height = 240
         }
     }
 
+    struct LifecycleFactory {
+        driver_type: &'static str,
+        lifecycle: std::sync::Arc<dyn daq_core::driver::DeviceLifecycle>,
+    }
+
+    impl daq_core::driver::DriverFactory for LifecycleFactory {
+        fn driver_type(&self) -> &'static str {
+            self.driver_type
+        }
+
+        fn name(&self) -> &'static str {
+            "Lifecycle Factory"
+        }
+
+        fn validate(&self, _config: &toml::Value) -> Result<()> {
+            Ok(())
+        }
+
+        fn build(
+            &self,
+            _config: toml::Value,
+        ) -> futures::future::BoxFuture<'static, Result<DeviceComponents>> {
+            let lifecycle = self.lifecycle.clone();
+            Box::pin(async move {
+                let driver = std::sync::Arc::new(crate::drivers::mock::MockStage::new());
+                Ok(DeviceComponents::new()
+                    .with_movable(driver.clone())
+                    .with_parameterized(driver)
+                    .with_lifecycle(lifecycle))
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_lifecycle_hooks_on_register_unregister() {
         let registered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2774,6 +2807,85 @@ height = 240
         assert!(matches!(result, Err(DaqError::Driver(_))));
         assert!(!registry.contains("test-device"));
         assert_eq!(unregistered.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    struct CountingLifecycle {
+        unregistered: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        fail_on_unregister: bool,
+    }
+
+    impl daq_core::driver::DeviceLifecycle for CountingLifecycle {
+        fn on_unregister(&self) -> futures::future::BoxFuture<'static, Result<()>> {
+            let counter = self.unregistered.clone();
+            let fail = self.fail_on_unregister;
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if fail {
+                    Err(anyhow!("boom"))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_all_attempts_all_unregister_hooks() {
+        let ok_unregistered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fail_unregistered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let ok_lifecycle = std::sync::Arc::new(CountingLifecycle {
+            unregistered: ok_unregistered.clone(),
+            fail_on_unregister: false,
+        });
+        let fail_lifecycle = std::sync::Arc::new(CountingLifecycle {
+            unregistered: fail_unregistered.clone(),
+            fail_on_unregister: true,
+        });
+
+        let registry = DeviceRegistry::new();
+        registry.register_factory(Box::new(LifecycleFactory {
+            driver_type: "test_factory_ok",
+            lifecycle: ok_lifecycle,
+        }));
+        registry.register_factory(Box::new(LifecycleFactory {
+            driver_type: "test_factory_fail",
+            lifecycle: fail_lifecycle,
+        }));
+
+        registry
+            .register_from_toml(
+                "test-device-ok",
+                "Test Device Ok",
+                "test_factory_ok",
+                toml::Value::Table(toml::map::Map::new()),
+            )
+            .await
+            .unwrap();
+        registry
+            .register_from_toml(
+                "test-device-fail",
+                "Test Device Fail",
+                "test_factory_fail",
+                toml::Value::Table(toml::map::Map::new()),
+            )
+            .await
+            .unwrap();
+
+        let result = registry.shutdown_all().await;
+        let errors = match result {
+            Err(DaqError::ShutdownFailed(errors)) => errors,
+            _ => panic!("Expected ShutdownFailed error"),
+        };
+
+        assert_eq!(errors.len(), 1);
+        assert!(!registry.contains("test-device-ok"));
+        assert!(!registry.contains("test-device-fail"));
+        assert_eq!(ok_unregistered.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            fail_unregistered.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
