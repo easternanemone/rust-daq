@@ -101,12 +101,25 @@ pub fn map_daq_error_to_status(err: DaqError) -> Status {
             None,
         ),
         DaqError::Driver(ref err) => match err.kind {
-            daq_core::error::DriverErrorKind::Configuration => {
+            daq_core::error::DriverErrorKind::Configuration
+            | daq_core::error::DriverErrorKind::InvalidParameter => {
                 status_with_metadata(Code::InvalidArgument, err.to_string(), "driver", Some(err))
             }
-            daq_core::error::DriverErrorKind::Initialization
-            | daq_core::error::DriverErrorKind::Communication => {
+            daq_core::error::DriverErrorKind::Initialization => status_with_metadata(
+                Code::FailedPrecondition,
+                err.to_string(),
+                "driver",
+                Some(err),
+            ),
+            daq_core::error::DriverErrorKind::Communication
+            | daq_core::error::DriverErrorKind::Hardware => {
                 status_with_metadata(Code::Unavailable, err.to_string(), "driver", Some(err))
+            }
+            daq_core::error::DriverErrorKind::Timeout => {
+                status_with_metadata(Code::DeadlineExceeded, err.to_string(), "driver", Some(err))
+            }
+            daq_core::error::DriverErrorKind::Permission => {
+                status_with_metadata(Code::PermissionDenied, err.to_string(), "driver", Some(err))
             }
             daq_core::error::DriverErrorKind::Shutdown
             | daq_core::error::DriverErrorKind::Unknown => {

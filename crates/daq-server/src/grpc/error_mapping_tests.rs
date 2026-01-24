@@ -45,13 +45,13 @@ mod tests {
         }
 
         #[test]
-        fn driver_init_error_maps_to_unavailable() {
+        fn driver_init_error_maps_to_failed_precondition() {
             let err = DaqError::Driver(DriverError::new(
                 "mock_camera",
                 DriverErrorKind::Initialization,
                 "failed",
             ));
-            assert_status_code(err, Code::Unavailable);
+            assert_status_code(err, Code::FailedPrecondition);
         }
 
         #[test]
@@ -99,6 +99,46 @@ mod tests {
         #[test]
         fn serial_feature_disabled_maps_to_unimplemented() {
             assert_status_code(DaqError::SerialFeatureDisabled, Code::Unimplemented);
+        }
+
+        #[test]
+        fn driver_timeout_error_maps_to_deadline_exceeded() {
+            let err = DaqError::Driver(DriverError::new(
+                "mock_camera",
+                DriverErrorKind::Timeout,
+                "operation timed out",
+            ));
+            assert_status_code(err, Code::DeadlineExceeded);
+        }
+
+        #[test]
+        fn driver_permission_error_maps_to_permission_denied() {
+            let err = DaqError::Driver(DriverError::new(
+                "comedi",
+                DriverErrorKind::Permission,
+                "access denied",
+            ));
+            assert_status_code(err, Code::PermissionDenied);
+        }
+
+        #[test]
+        fn driver_hardware_error_maps_to_unavailable() {
+            let err = DaqError::Driver(DriverError::new(
+                "comedi",
+                DriverErrorKind::Hardware,
+                "buffer overflow",
+            ));
+            assert_status_code(err, Code::Unavailable);
+        }
+
+        #[test]
+        fn driver_invalid_parameter_maps_to_invalid_argument() {
+            let err = DaqError::Driver(DriverError::new(
+                "comedi",
+                DriverErrorKind::InvalidParameter,
+                "channel out of range",
+            ));
+            assert_status_code(err, Code::InvalidArgument);
         }
     }
 
