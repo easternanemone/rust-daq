@@ -109,9 +109,9 @@ After building and starting the daemon, verify ALL 7 devices are registered:
 grep "Registered.*device(s)" daemon.log -A 10
 ```
 
-**Required output - MUST show exactly 7 devices:**
+**Required output - MUST show at least 9 devices (with Comedi):**
 ```
-Registered 7 device(s)
+Registered 9 device(s)
   - prime_bsi: Photometrics Prime BSI Camera ([Triggerable, FrameProducer, ...])
   - maitai: MaiTai Ti:Sapphire Laser ([Readable, ShutterControl, ...])
   - power_meter: Newport 1830-C Power Meter ([Readable, WavelengthTunable, ...])
@@ -119,9 +119,11 @@ Registered 7 device(s)
   - rotator_3: ELL14 Rotator (Address 3) ([Movable, Parameterized])
   - rotator_8: ELL14 Rotator (Address 8) ([Movable, Parameterized])
   - esp300_axis1: ESP300 Axis 1 ([Movable, Parameterized])
+  - photodiode: Photodiode Signal (ACH0) ([Readable])
+  - ni_daq_ao0: NI DAQ Analog Output 0 ([Settable])
 ```
 
-**If you see fewer than 7 devices, check:**
+**If you see fewer devices, check:**
 1. Did you use `bash scripts/build-maitai.sh`? (NOT just `cargo build`)
 2. Did the build script show "✓" for all 6 hardware types?
 3. Did you do a full `cargo clean` before rebuilding?
@@ -130,9 +132,15 @@ Registered 7 device(s)
 **GUI Verification:**
 After connecting GUI to daemon:
 - Open "Instruments" panel
-- Should show ALL 7 devices listed
-- Each device should have its control panel available
+- Should show ALL 9+ devices listed (PVCAM camera, laser, power meter, 3x rotators, ESP300, 2x Comedi DAQ)
+- Each device should have its control panel available:
+  - **Camera:** ImageViewerPanel with streaming controls
+  - **MaiTai Laser:** MaiTaiControlPanel with wavelength/shutter/emission controls
+  - **Power Meter:** PowerMeterControlPanel with live power reading
+  - **Rotators:** RotatorControlPanel with angle control
+  - **Comedi AI:** ComediAnalogInputPanel with voltage display and auto-refresh
 - Camera should stream real images (not synthetic gradients)
+- Comedi channels should show real voltage readings
 
 ### Rhai Scripted Experiments Build
 
@@ -530,6 +538,12 @@ The Comedi driver supports the NI PCI-MIO-16XE-10 DAQ card on maitai via the Lin
 - Card: NI PCI-MIO-16XE-10 (16-ch AI, 2-ch AO, 8 DIO, counters)
 - Breakout: BNC-2110 (68-pin shielded BNC terminal block)
 - Device: `/dev/comedi0`
+
+**Driver Support:**
+- **Daemon:** `ComediAnalogInputFactory` and `ComediAnalogOutputFactory` registered in hardware registry
+- **GUI:** `ComediAnalogInputPanel` provides real-time voltage display with auto-refresh
+- **gRPC:** ReadValue API for analog input channels
+- **Feature Flag:** `comedi` (mock mode) or `comedi_hardware` (real hardware)
 
 **Input Reference Modes:**
 

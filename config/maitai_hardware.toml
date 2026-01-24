@@ -116,3 +116,45 @@ name = "ESP300 Axis 3"
 type = "esp300"
 port = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if00-port0"
 axis = 3
+
+# ============================================================================
+# Comedi DAQ Card (NI PCI-MIO-16XE-10)
+# ============================================================================
+# Analog input/output channels via BNC-2110 terminal block
+#
+# Hardware connections (verified 2026-01-23):
+#   DAC1-OUT → ACH0 (loopback test, ~50mV error)
+#   ACH1 → ESP300 encoder out (4.78V signal)
+#   ACH2 → MaiTai reference out (DC average ~0V for 40MHz signal)
+#   DAC0-OUT → EOM amplifier (for laser power control)
+
+[[devices]]
+id = "photodiode"
+name = "Photodiode Signal (ACH0)"
+[devices.driver]
+type = "comedi_analog_input"
+device = "/dev/comedi0"
+channel = 0
+range_index = 0
+input_mode = "rse"
+units = "V"
+
+[[devices]]
+id = "ni_daq_ao0"
+name = "NI DAQ Analog Output 0 (EOM Control)"
+[devices.driver]
+type = "comedi_analog_output"
+device = "/dev/comedi0"
+channel = 0
+range_index = 0
+units = "V"
+
+[[devices]]
+id = "ni_daq_ao1"
+name = "NI DAQ Analog Output 1 (Loopback Test)"
+[devices.driver]
+type = "comedi_analog_output"
+device = "/dev/comedi0"
+channel = 1
+range_index = 0
+units = "V"

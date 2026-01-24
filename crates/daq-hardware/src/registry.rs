@@ -153,6 +153,44 @@ pub fn validate_driver_config(driver: &DriverType) -> Result<(), DaqError> {
             // Note: We don't check device existence here since the driver may not be
             // running on the machine with the hardware (remote development)
         }
+        #[cfg(feature = "comedi")]
+        DriverType::ComediAnalogInput {
+            device, input_mode, ..
+        } => {
+            if device.is_empty() {
+                return Err(DaqError::Configuration(
+                    "Comedi device path cannot be empty".to_string(),
+                ));
+            }
+            // Validate input mode
+            let mode_lower = input_mode.to_lowercase();
+            if ![
+                "rse",
+                "nrse",
+                "diff",
+                "ground",
+                "common",
+                "differential",
+                "single-ended",
+                "single_ended",
+                "other",
+            ]
+            .contains(&mode_lower.as_str())
+            {
+                return Err(DaqError::Configuration(format!(
+                    "Invalid input_mode '{}'. Valid values: rse, nrse, diff",
+                    input_mode
+                )));
+            }
+        }
+        #[cfg(feature = "comedi")]
+        DriverType::ComediAnalogOutput { device, .. } => {
+            if device.is_empty() {
+                return Err(DaqError::Configuration(
+                    "Comedi device path cannot be empty".to_string(),
+                ));
+            }
+        }
         #[cfg(feature = "serial")]
         DriverType::Plugin { plugin_id, address } => {
             if plugin_id.is_empty() {
@@ -369,6 +407,36 @@ pub enum DriverType {
         /// Device path (e.g., "/dev/comedi0")
         device_path: String,
     },
+    /// Comedi Analog Input (factory-based)
+    #[cfg(feature = "comedi")]
+    #[serde(rename = "comedi_analog_input")]
+    ComediAnalogInput {
+        /// Device path (e.g., "/dev/comedi0")
+        device: String,
+        /// Analog input channel number
+        channel: u32,
+        /// Voltage range index
+        range_index: u32,
+        /// Input reference mode: "rse", "nrse", or "diff"
+        input_mode: String,
+        /// Measurement units (default: "V")
+        #[serde(default)]
+        units: String,
+    },
+    /// Comedi Analog Output (factory-based)
+    #[cfg(feature = "comedi")]
+    #[serde(rename = "comedi_analog_output")]
+    ComediAnalogOutput {
+        /// Device path (e.g., "/dev/comedi0")
+        device: String,
+        /// Analog output channel number
+        channel: u32,
+        /// Voltage range index
+        range_index: u32,
+        /// Output units (default: "V")
+        #[serde(default)]
+        units: String,
+    },
     /// Plugin-based device loaded from YAML configuration
     #[cfg(feature = "serial")]
     Plugin {
@@ -425,6 +493,12 @@ impl DriverType {
                 Capability::Readable, // Analog input
                 Capability::Settable, // Analog output
             ],
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogInput { .. } => {
+                vec![Capability::Readable, Capability::Parameterized]
+            }
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogOutput { .. } => vec![Capability::Parameterized],
             #[cfg(feature = "serial")]
             DriverType::Plugin { .. } => {
                 // Note: Plugin capabilities are determined at runtime from YAML
@@ -453,6 +527,10 @@ impl DriverType {
             DriverType::Pvcam { .. } => "pvcam",
             #[cfg(feature = "comedi")]
             DriverType::Comedi { .. } => "comedi",
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogInput { .. } => "comedi_analog_input",
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogOutput { .. } => "comedi_analog_output",
             #[cfg(feature = "serial")]
             DriverType::Plugin { .. } => {
                 // Note: This is a generic name; actual plugin name is stored in plugin_id
@@ -1619,6 +1697,17 @@ impl DeviceRegistry {
 
             #[cfg(all(not(feature = "newport"), feature = "serial"))]
             DriverType::Esp300 { .. } => Err(anyhow!("ESP300 driver requires 'newport' feature")),
+
+            // Factory-based Comedi drivers (must use factory registration)
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogInput { .. } => Err(anyhow!(
+                "ComediAnalogInput devices must be registered via DriverFactory system"
+            )),
+
+            #[cfg(feature = "comedi")]
+            DriverType::ComediAnalogOutput { .. } => Err(anyhow!(
+                "ComediAnalogOutput devices must be registered via DriverFactory system"
+            )),
         }
     }
 
@@ -1864,6 +1953,9 @@ pub async fn create_registry_from_config(
 ) -> Result<DeviceRegistry, DaqError> {
     let registry = DeviceRegistry::new();
 
+    // Register all available driver factories BEFORE loading devices
+    register_all_factories(&registry, None).await?;
+
     // Validate all device configurations first (fail fast)
     let mut validation_errors = Vec::new();
     for device_config in &config.devices {
@@ -1927,7 +2019,33 @@ pub async fn create_registry_from_config(
             "Registering device"
         );
 
-        if let Err(e) = registry.register(device_config.clone()).await {
+        let driver_type = device_config.driver.driver_name();
+
+        // Check if a factory is registered for this driver type
+        let result = if registry.has_factory(driver_type) {
+            // Use factory-based registration
+            match toml::Value::try_from(&device_config.driver) {
+                Ok(toml_config) => {
+                    registry
+                        .register_from_toml(
+                            &device_config.id,
+                            &device_config.name,
+                            driver_type,
+                            toml_config,
+                        )
+                        .await
+                }
+                Err(e) => Err(DaqError::Configuration(format!(
+                    "Failed to convert driver config to TOML: {}",
+                    e
+                ))),
+            }
+        } else {
+            // Use legacy DriverType enum registration
+            registry.register(device_config.clone()).await
+        };
+
+        if let Err(e) = result {
             failure_count += 1;
             registry.record_registration_failure(RegistrationFailure {
                 device_id: device_config.id.clone(),

@@ -30,6 +30,9 @@ storage_arrow = ["rust_daq/storage_arrow"]
 pvcam_sdk = ["rust_daq/pvcam_sdk", "daq-hardware/pvcam_sdk"]
 pvcam_hardware = ["pvcam_sdk"]
 
+# Real Comedi hardware (requires libcomedi installed)
+comedi_hardware = ["rust_daq/comedi_hardware"]
+
 # ============================================================================
 # MAITAI LAB PROFILE - COMPLETE HARDWARE STACK
 # ============================================================================
@@ -41,21 +44,24 @@ pvcam_hardware = ["pvcam_sdk"]
 #
 # Enabled drivers:
 #   - pvcam_hardware    : Real PVCAM SDK (Prime BSI camera)
+#   - comedi_hardware   : NI PCI-MIO-16XE-10 DAQ card
 #   - thorlabs          : ELL14 rotation mounts (rotators 2, 3, 8)
 #   - newport           : ESP300 motion controller (axis 1, 2, 3)
 #   - spectra_physics   : MaiTai Ti:Sapphire laser
 #   - newport_power_meter : Newport 1830-C optical power meter
 #   - serial            : Base serial port communication
 #
-# Expected devices (7 total):
+# Expected devices (9+ total):
 #   1. prime_bsi (PVCAM camera)
-#   2. maitai (laser)
-#   3. power_meter (Newport 1830-C)
-#   4. rotator_2, rotator_3, rotator_8 (ELL14 rotators)
-#   5. esp300_axis1 (Newport motion controller)
+#   2. photodiode, ni_daq_ao0 (Comedi DAQ channels)
+#   3. maitai (laser)
+#   4. power_meter (Newport 1830-C)
+#   5. rotator_2, rotator_3, rotator_8 (ELL14 rotators)
+#   6. esp300_axis1, esp300_axis2, esp300_axis3 (Newport motion)
 # ============================================================================
 maitai = [
     "pvcam_hardware",              # Real PVCAM SDK (NOT mock)
+    "comedi_hardware",             # NI DAQ card (NOT mock)
     "rust_daq/thorlabs",           # ELL14 rotators
     "rust_daq/newport",            # ESP300 motion controller
     "rust_daq/spectra_physics",    # MaiTai laser

@@ -26,6 +26,7 @@ daq-hardware = { path = "../daq-hardware", default-features = false }
 daq-storage = { path = "../daq-storage" }
 daq-scripting = { path = "../daq-scripting", optional = true }
 daq-proto = { path = "../daq-proto" }
+daq-driver-comedi = { path = "../daq-driver-comedi", optional = true }
 # LZ4 compression for frame streaming (bd-7rk0: gRPC improvements)
 lz4_flex = "0.11"
 
@@ -75,7 +76,7 @@ pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
 pvcam_hardware = ["pvcam_sdk"]
 
 # Comedi DAQ support
-comedi = ["daq-hardware/comedi"]
+comedi = ["dep:daq-driver-comedi", "daq-hardware/comedi"]
 comedi_hardware = ["comedi", "daq-hardware/comedi_hardware"]
 
 # All hardware drivers (with mock PVCAM)
