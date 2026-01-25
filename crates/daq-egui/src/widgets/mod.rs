@@ -24,8 +24,8 @@ pub mod toggle;
 #[allow(unused_imports)]
 pub use auto_scale_plot::{AutoScalePlot, AxisLockState};
 pub use device_controls::{
-    DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel, RotatorControlPanel,
-    StageControlPanel,
+    AnalogOutputControlPanel, DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel,
+    RotatorControlPanel, StageControlPanel,
 };
 #[allow(unused_imports)]
 pub use device_selector::DeviceSelector;

@@ -22,14 +22,16 @@ use crate::panels::{
 use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::theme::{self, ThemePreference};
 use crate::widgets::{
-    DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel, RotatorControlPanel,
-    StageControlPanel, StatusBar,
+    AnalogOutputControlPanel, DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel,
+    RotatorControlPanel, StageControlPanel, StatusBar,
 };
 use daq_proto::daq::DeviceInfo;
 
 /// Layout version constant. Increment this when the default dock layout changes
 /// to force users with stale saved layouts to get the new default.
-const LAYOUT_VERSION: u32 = 1;
+/// v1: Initial version (had Devices panel as default in some builds)
+/// v2: Instruments panel as default (bd-kj7i fix)
+const LAYOUT_VERSION: u32 = 2;
 
 /// Storage key for layout version
 const LAYOUT_VERSION_KEY: &str = "layout_version";
@@ -134,6 +136,9 @@ pub struct DaqApp {
 
     /// Docked stage control panels (keyed by panel ID)
     docked_stage_panels: HashMap<usize, StageControlPanel>,
+
+    /// Docked analog output control panels (keyed by panel ID)
+    docked_analog_output_panels: HashMap<usize, AnalogOutputControlPanel>,
 
     /// PVCAM live view streaming state (requires rerun_viewer + instrument_photometrics)
     /// Works in mock mode without pvcam_hardware, or with real SDK when pvcam_hardware enabled
@@ -311,6 +316,7 @@ impl DaqApp {
             docked_power_meter_panels,
             docked_rotator_panels,
             docked_stage_panels,
+            docked_analog_output_panels,
         ) = if let Some(storage) = cc.storage {
             let persisted: HashMap<usize, PersistedPanelInfo> =
                 eframe::get_value(storage, "device_panel_info").unwrap_or_default();
@@ -327,10 +333,9 @@ impl DaqApp {
                 let device_info: DeviceInfo = persisted_info.clone().into();
 
                 // Create the appropriate panel widget based on capability flags
-                if device_info.is_emission_controllable
-                    || device_info.is_shutter_controllable
-                    || device_info.is_wavelength_tunable
-                {
+                // Priority: laser (emission/shutter) > power meter (readable) > rotator/stage (movable)
+                // Note: Power meters may have is_wavelength_tunable for calibration, but lack emission/shutter
+                if device_info.is_emission_controllable || device_info.is_shutter_controllable {
                     maitai.insert(id, MaiTaiControlPanel::default());
                 } else if device_info.is_readable && !device_info.is_movable {
                     power_meter.insert(id, PowerMeterControlPanel::default());
@@ -358,11 +363,13 @@ impl DaqApp {
                 power_meter,
                 rotator,
                 stage,
+                HashMap::new(), // analog_output - not persisted yet
             )
         } else {
             (
                 HashMap::new(),
                 0,
+                HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
@@ -467,6 +474,7 @@ impl DaqApp {
             docked_power_meter_panels,
             docked_rotator_panels,
             docked_stage_panels,
+            docked_analog_output_panels,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             pvcam_streaming: false,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
@@ -999,6 +1007,7 @@ impl DaqApp {
         self.docked_power_meter_panels.remove(&id);
         self.docked_rotator_panels.remove(&id);
         self.docked_stage_panels.remove(&id);
+        self.docked_analog_output_panels.remove(&id);
 
         // Remove and return the panel info
         self.device_panel_info.remove(&id)
@@ -1485,6 +1494,27 @@ impl<'a> DaqTabViewer<'a> {
 
         let device_info = &info.device_info;
 
+        // Debug: log which HashMap contains this panel (bd-kj7i)
+        let panel_type = if self.app.docked_maitai_panels.contains_key(&panel_id) {
+            "MaiTai"
+        } else if self.app.docked_power_meter_panels.contains_key(&panel_id) {
+            "PowerMeter"
+        } else if self.app.docked_rotator_panels.contains_key(&panel_id) {
+            "Rotator"
+        } else if self.app.docked_stage_panels.contains_key(&panel_id) {
+            "Stage"
+        } else if self.app.docked_analog_output_panels.contains_key(&panel_id) {
+            "AnalogOutput"
+        } else {
+            "NONE (bug!)"
+        };
+        tracing::debug!(
+            panel_id,
+            device_id = %device_info.id,
+            panel_type,
+            "render_device_control: found panel in HashMap"
+        );
+
         // Render the appropriate panel widget based on which HashMap contains the panel
         // (panel type was determined at creation time using capability flags)
         // Use push_id to avoid widget ID collisions with instrument manager panels
@@ -1496,6 +1526,8 @@ impl<'a> DaqTabViewer<'a> {
             } else if let Some(panel) = self.app.docked_rotator_panels.get_mut(&panel_id) {
                 panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
             } else if let Some(panel) = self.app.docked_stage_panels.get_mut(&panel_id) {
+                panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
+            } else if let Some(panel) = self.app.docked_analog_output_panels.get_mut(&panel_id) {
                 panel.ui(ui, device_info, self.app.client.as_mut(), &self.app.runtime);
             }
         });
@@ -1565,6 +1597,20 @@ impl eframe::App for DaqApp {
                     let panel_id = self.next_device_panel_id;
                     self.next_device_panel_id = self.next_device_panel_id.wrapping_add(1);
 
+                    // Debug logging for panel routing diagnosis (bd-kj7i)
+                    tracing::info!(
+                        panel_id = panel_id,
+                        device_id = %device_info.id,
+                        device_name = %device_info.name,
+                        driver_type = %device_info.driver_type,
+                        is_emission_controllable = device_info.is_emission_controllable,
+                        is_shutter_controllable = device_info.is_shutter_controllable,
+                        is_wavelength_tunable = device_info.is_wavelength_tunable,
+                        is_readable = device_info.is_readable,
+                        is_movable = device_info.is_movable,
+                        "OpenDeviceControl: creating pop-out panel with capabilities"
+                    );
+
                     // Store device info (full proto with capability flags)
                     self.device_panel_info.insert(
                         panel_id,
@@ -1573,35 +1619,44 @@ impl eframe::App for DaqApp {
                         },
                     );
 
-                    // Create the appropriate panel widget based on capability flags
-                    // Priority: laser controls > readable (power meter) > movable (rotator/stage)
-                    if device_info.is_emission_controllable
-                        || device_info.is_shutter_controllable
-                        || device_info.is_wavelength_tunable
-                    {
-                        // Laser with full control capabilities
+                    // Create the appropriate panel widget based on capability flags and driver type
+                    // Priority: laser (emission/shutter) > analog output (comedi_analog_output) > power meter (readable) > rotator/stage (movable)
+                    // Note: Power meters may have is_wavelength_tunable for calibration, but lack emission/shutter control
+                    let driver_lower = device_info.driver_type.to_lowercase();
+                    
+                    if device_info.is_emission_controllable || device_info.is_shutter_controllable {
+                        // Laser with control capabilities (emission or shutter)
+                        tracing::info!(panel_id, "OpenDeviceControl: routing to MaiTai panel");
                         self.docked_maitai_panels
                             .insert(panel_id, MaiTaiControlPanel::default());
+                    } else if driver_lower.contains("comedi_analog_output") || driver_lower.contains("analog_output") {
+                        // Analog output device (EOM, DAC) - route to voltage control panel
+                        tracing::info!(panel_id, "OpenDeviceControl: routing to AnalogOutput panel");
+                        self.docked_analog_output_panels
+                            .insert(panel_id, AnalogOutputControlPanel::default());
                     } else if device_info.is_readable && !device_info.is_movable {
-                        // Pure readable device (power meter, sensor)
+                        // Pure readable device (power meter, sensor) - may have wavelength calibration
+                        tracing::info!(panel_id, "OpenDeviceControl: routing to PowerMeter panel");
                         self.docked_power_meter_panels
                             .insert(panel_id, PowerMeterControlPanel::default());
                     } else if device_info.is_movable {
                         // Check driver_type for rotator vs stage distinction
                         // (both are movable, but rotators have different UI)
-                        let driver_lower = device_info.driver_type.to_lowercase();
                         if driver_lower.contains("ell14")
                             || driver_lower.contains("rotator")
                             || driver_lower.contains("thorlabs")
                         {
+                            tracing::info!(panel_id, "OpenDeviceControl: routing to Rotator panel");
                             self.docked_rotator_panels
                                 .insert(panel_id, RotatorControlPanel::default());
                         } else {
+                            tracing::info!(panel_id, "OpenDeviceControl: routing to Stage panel");
                             self.docked_stage_panels
                                 .insert(panel_id, StageControlPanel::default());
                         }
                     } else {
                         // Fallback to stage panel for unknown devices
+                        tracing::info!(panel_id, "OpenDeviceControl: routing to Stage panel (fallback)");
                         self.docked_stage_panels
                             .insert(panel_id, StageControlPanel::default());
                     }
