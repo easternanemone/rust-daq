@@ -13,3 +13,6 @@ bindgen = "0.69"
 # Requires the PVCAM_SDK_DIR environment variable to be set,
 # pointing to the root directory of your PVCAM SDK installation.
 pvcam-sdk = []
+
+[lints]
+workspace = true

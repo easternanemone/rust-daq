@@ -168,7 +168,7 @@ impl DeviceControlWidget for AnalogOutputControlPanel {
             if ui.add_enabled(!is_busy, slider).changed() {
                 self.voltage = voltage;
                 self.voltage_input = format!("{:.3}", voltage);
-                self.write_voltage(client.as_deref_mut(), runtime, &device_id, voltage);
+                self.write_voltage(client, runtime, &device_id, voltage);
             }
         });
 
@@ -186,7 +186,7 @@ impl DeviceControlWidget for AnalogOutputControlPanel {
             if ui.add_enabled(!is_busy, egui::Button::new("Apply")).clicked() {
                 if let Ok(v) = self.voltage_input.parse::<f64>() {
                     let v = v.clamp(self.min_voltage, self.max_voltage);
-                    self.write_voltage(client.as_deref_mut(), runtime, &device_id, v);
+                    self.write_voltage(client, runtime, &device_id, v);
                 } else {
                     self.error = Some("Invalid voltage value".to_string());
                 }
@@ -195,7 +195,7 @@ impl DeviceControlWidget for AnalogOutputControlPanel {
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !is_busy {
                 if let Ok(v) = self.voltage_input.parse::<f64>() {
                     let v = v.clamp(self.min_voltage, self.max_voltage);
-                    self.write_voltage(client.as_deref_mut(), runtime, &device_id, v);
+                    self.write_voltage(client, runtime, &device_id, v);
                 }
             }
         });
@@ -208,21 +208,21 @@ impl DeviceControlWidget for AnalogOutputControlPanel {
             ui.label("Quick set:");
 
             if ui.add_enabled(!is_busy, egui::Button::new("0 V")).clicked() {
-                self.write_voltage(client.as_deref_mut(), runtime, &device_id, 0.0);
+                self.write_voltage(client, runtime, &device_id, 0.0);
             }
 
             if ui
                 .add_enabled(!is_busy, egui::Button::new(format!("{:.0} V", self.min_voltage)))
                 .clicked()
             {
-                self.write_voltage(client.as_deref_mut(), runtime, &device_id, self.min_voltage);
+                self.write_voltage(client, runtime, &device_id, self.min_voltage);
             }
 
             if ui
                 .add_enabled(!is_busy, egui::Button::new(format!("{:.0} V", self.max_voltage)))
                 .clicked()
             {
-                self.write_voltage(client.as_deref_mut(), runtime, &device_id, self.max_voltage);
+                self.write_voltage(client, runtime, &device_id, self.max_voltage);
             }
         });
 

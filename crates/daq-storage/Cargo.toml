@@ -43,6 +43,9 @@ storage_tiff = ["dep:image"]
 networking = []
 
 # Examples that require specific features (bd-jnfu.13)
+[lints]
+workspace = true
+
 [[example]]
 name = "ring_arrow_bench"
 required-features = ["storage_arrow"]

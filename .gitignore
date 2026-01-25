@@ -144,3 +144,6 @@ whats-next.md
 # Local AI tool config
 .agents/
 .factory/
+
+# Git worktrees
+.worktrees/

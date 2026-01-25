@@ -43,3 +43,6 @@ scripting_full = [
 # Alias for backwards compatibility (prefer scripting_full)
 polarization = ["scripting_full"]
 hardware_factories = ["scripting_full"]
+
+[lints]
+workspace = true

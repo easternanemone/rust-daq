@@ -14,22 +14,9 @@ crate-type = ["cdylib", "rlib"]
 name = "rust_daq"
 path = "src/lib.rs"
 
-[lints.rust]
-# Enable additional safety warnings
-unsafe_code = "warn"
-missing_docs = "warn"
-
-[lints.clippy]
-# Safety & correctness
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
-# Performance
-large_futures = "warn"
-large_stack_frames = "warn"
-# Style
-module_name_repetitions = "allow"
-must_use_candidate = "warn"
+# Inherit workspace lints (crate-specific overrides moved to workspace Cargo.toml)
+[lints]
+workspace = true
 
 
 [dependencies]

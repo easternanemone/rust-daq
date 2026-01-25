@@ -23,5 +23,8 @@ tonic-build = "0.11"
 default = []
 server = []
 
+[lints]
+workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["prost", "tonic-build"]  # prost: used by tonic codegen; tonic-build: build dep

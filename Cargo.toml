@@ -30,3 +30,63 @@ exclude = [
     # "crates/daq-bin",
     "crates/daq-examples",
 ]
+
+# Workspace-wide lints (applied to all crates)
+[workspace.lints.clippy]
+# Enable pedantic lints for stricter code quality
+pedantic = { level = "warn", priority = -1 }
+
+# Allow common pedantic lints that are too noisy for this project
+module_name_repetitions = "allow"    # e.g., `daq_core::core::Frame` is fine
+must_use_candidate = "allow"         # Too many false positives for builder patterns
+missing_errors_doc = "allow"         # Would require extensive doc updates
+missing_panics_doc = "allow"         # Would require extensive doc updates
+too_many_lines = "allow"             # Some functions are legitimately long
+doc_markdown = "allow"               # Too strict for technical docs
+items_after_statements = "allow"     # Allow let bindings after statements
+wildcard_imports = "allow"           # Used for preludes and re-exports
+
+# Allow casting lints - too noisy for hardware drivers that need precise bit manipulation
+cast_possible_truncation = "allow"   # Hardware drivers often need u32 -> u16 etc.
+cast_sign_loss = "allow"             # Common in low-level code
+cast_precision_loss = "allow"        # f64 -> f32 is often intentional
+cast_lossless = "allow"              # Sometimes explicit casts are clearer
+cast_possible_wrap = "allow"         # Hardware drivers handle this case-by-case
+
+# Allow other noisy pedantic lints
+unnested_or_patterns = "allow"       # Style preference
+similar_names = "allow"              # Often unavoidable (e.g., min/max, x/y)
+single_match_else = "allow"          # Sometimes if-else is clearer
+match_same_arms = "allow"            # Sometimes intentional for documentation
+redundant_closure_for_method_calls = "allow"  # Closures can be clearer
+unused_self = "allow"                # Trait implementations may not use self
+used_underscore_binding = "allow"    # Underscore prefix used for clarity
+if_not_else = "allow"                # Style preference
+default_trait_access = "allow"       # T::default() vs Default::default()
+no_effect_underscore_binding = "allow"  # Intentional ignoring
+unneeded_field_pattern = "allow"     # Explicit patterns can be clearer
+
+# These are useful but would require too many changes to enable now
+needless_pass_by_value = "allow"     # Would require API changes
+struct_excessive_bools = "allow"     # Some state structs need many bools
+struct_field_names = "allow"         # Field names are domain-specific
+uninlined_format_args = "allow"      # format!("{}", x) vs format!("{x}")
+unreadable_literal = "allow"         # Long hex literals (e.g., 0xFFFF7400) are intentional
+used_underscore_items = "allow"      # Underscore prefix used for unused imports
+redundant_else = "allow"             # Sometimes explicit else is clearer
+return_self_not_must_use = "allow"   # Builder patterns don't always need #[must_use]
+match_wildcard_for_single_variants = "allow"  # Explicit _ arm can be clearer
+unnecessary_wraps = "allow"          # Result/Option wrapping for API consistency
+implicit_hasher = "allow"            # HashMap with default hasher is fine
+fn_params_excessive_bools = "allow"  # Some functions need multiple bool params
+match_bool = "allow"                 # match on bool can be clearer than if-else
+borrow_as_ptr = "allow"              # Explicit borrows before ptr conversion are fine
+significant_drop_tightening = "allow" # Lock guard drop timing is often intentional
+ref_as_ptr = "allow"                 # Explicit ref before ptr conversion
+missing_const_for_fn = "allow"       # Would require many changes, limited benefit
+map_unwrap_or = "allow"              # .map().unwrap_or() can be clearer than .map_or()
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+# Disabled for now - too many missing docs
+# missing_docs = "warn"

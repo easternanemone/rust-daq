@@ -41,3 +41,6 @@ tokio = { version = "1", features = ["full", "test-util"] }
 default = []
 # Enable real hardware support (requires comedilib installed)
 hardware = ["comedi-sys/comedi-sdk"]
+
+[lints]
+workspace = true

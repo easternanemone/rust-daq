@@ -69,5 +69,8 @@ maitai = [
     "rust_daq/serial"              # Serial port base
 ]
 
+[lints]
+workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["daq-hardware"]  # Needed for pvcam feature passthrough

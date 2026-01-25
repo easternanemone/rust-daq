@@ -15,3 +15,6 @@ default = []
 # Enable this feature to generate bindings from system comedilib headers.
 # Requires comedilib-dev or equivalent to be installed.
 comedi-sdk = []
+
+[lints]
+workspace = true

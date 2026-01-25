@@ -15,3 +15,6 @@ tracing = "0.1"
 default = []
 # Enable hot-reload support for development
 hot-reload = []
+
+[lints]
+workspace = true

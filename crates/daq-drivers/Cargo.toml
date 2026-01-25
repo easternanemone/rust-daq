@@ -63,3 +63,6 @@ maitai = ["thorlabs", "newport", "spectra_physics", "pvcam_sdk"]
 
 # hardware: All drivers with real hardware support
 hardware = ["thorlabs", "newport", "spectra_physics", "pvcam_sdk", "comedi_hardware"]
+
+[lints]
+workspace = true
