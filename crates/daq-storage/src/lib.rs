@@ -14,6 +14,8 @@ pub mod ring_buffer_reader;
 pub mod tap_registry;
 #[cfg(feature = "storage_tiff")]
 pub mod tiff_writer;
+#[cfg(feature = "storage_zarr")]
+pub mod zarr_writer;
 
 pub use comedi_writer::{
     AcquisitionMetadata, ChannelConfig, ComediStreamWriter, ComediStreamWriterBuilder,
@@ -32,3 +34,5 @@ pub use arrow_writer::ArrowDocumentWriter;
 pub use arrow_writer::ParquetDocumentWriter;
 #[cfg(feature = "storage_tiff")]
 pub use tiff_writer::{LoanedFrame, TiffWriter};
+#[cfg(feature = "storage_zarr")]
+pub use zarr_writer::{ZarrArrayBuilder, ZarrWriter};
