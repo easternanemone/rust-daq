@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Sequences and Control Flow** - Sequence composition with loops
 - [x] **Phase 5: Live Visualization** - Real-time plotting during acquisition
 - [x] **Phase 6: Data Management** - Auto-save, metadata, and run history
-- [ ] **Phase 7: Code Export and Provenance** - Rhai generation and versioning
+- [x] **Phase 7: Code Export and Provenance** - Rhai generation and versioning
 - [ ] **Phase 8: Advanced Scans** - Nested and adaptive scans
 - [ ] **Phase 9: Templates and Library** - Reusable experiment patterns (including subgraph grouping)
 - [ ] **Phase 10: Polish and Integration** - Final features and production readiness
@@ -140,10 +140,10 @@ Plans:
 **Plans**: 4 plans in 2 waves
 
 Plans:
-- [ ] 07-01-PLAN.md — Code generation engine (ExperimentNode to Rhai translation)
-- [ ] 07-02-PLAN.md — Provenance tracking (git commit, graph hash in ExperimentManifest)
-- [ ] 07-03-PLAN.md — Code preview panel with syntax highlighting
-- [ ] 07-04-PLAN.md — Export and script editor mode
+- [x] 07-01-PLAN.md — Code generation engine (ExperimentNode to Rhai translation)
+- [x] 07-02-PLAN.md — Provenance tracking (git commit, graph hash in ExperimentManifest)
+- [x] 07-03-PLAN.md — Code preview panel with syntax highlighting
+- [x] 07-04-PLAN.md — Export and script editor mode
 
 ### Phase 8: Advanced Scans
 **Goal**: Nested multi-dimensional scans and adaptive plans responding to data
@@ -204,7 +204,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 4. Sequences and Control Flow | 3/3 | Complete | 2026-01-22 |
 | 5. Live Visualization | 5/5 | Complete | 2026-01-22 |
 | 6. Data Management | 4/4 | Complete | 2026-01-22 |
-| 7. Code Export and Provenance | 0/4 | Planned | - |
+| 7. Code Export and Provenance | 4/4 | Complete | 2026-01-25 |
 | 8. Advanced Scans | 0/TBD | Not started | - |
 | 9. Templates and Library | 0/TBD | Not started | - |
 | 10. Polish and Integration | 0/TBD | Not started | - |

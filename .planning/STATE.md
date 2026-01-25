@@ -9,10 +9,10 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 
 ## Current Position
 
-Phase: 7 of 10 (Code Export and Provenance)
-Plan: 4 of 4 complete
-Status: Phase complete
-Last activity: 2026-01-25 - Completed 07-04-PLAN.md (Export and Script Editor Mode)
+Phase: 8 of 10 (Advanced Scans)
+Plan: 0 of TBD
+Status: Not started
+Last activity: 2026-01-25 - Completed Phase 7 (Code Export and Provenance)
 
 Progress: [███████░░░] 70%
 
@@ -114,6 +114,7 @@ Recent decisions affecting current work:
 - Mode switching in ExperimentDesignerPanel (graph vs script editor via Option<ScriptEditorPanel>)
 - Eject confirmation dialog prevents accidental one-way conversion
 - Theme selector in script editor (Gruvbox Dark/Light, Aura Dark)
+- Code preview uses show_inside() for proper tab layout (not window-level SidePanel)
 
 ### Pending Todos
 
@@ -161,6 +162,6 @@ See: .planning/phases/06-data-management/06-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-25
-Stopped at: Completed 07-04-PLAN.md (Export and Script Editor Mode)
+Stopped at: Completed Phase 7 (Code Export and Provenance)
 Resume file: None
-Next action: Phase 7 complete, proceed to Phase 8 (Script Execution and Testing)
+Next action: Plan Phase 8 (Advanced Scans)
