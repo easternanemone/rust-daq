@@ -49,7 +49,7 @@ impl Default for AnalogOutputControlPanel {
         let (action_tx, action_rx) = mpsc::channel(16);
         Self {
             voltage: 0.0,
-            voltage_input: "0.0".to_string(),
+            voltage_input: "0.000".to_string(),
             action_tx,
             action_rx,
             actions_in_flight: 0,
@@ -251,10 +251,10 @@ mod tests {
         // Initial voltage should be 0.0
         assert_eq!(panel.voltage, 0.0, "Default voltage should be 0.0");
 
-        // Voltage input string should match the voltage value
+        // Voltage input string should match the voltage value with 3 decimal places
         assert_eq!(
-            panel.voltage_input, "0.0",
-            "Default voltage input should be '0.0'"
+            panel.voltage_input, "0.000",
+            "Default voltage input should be '0.000' (3 decimal places)"
         );
 
         // No actions should be in flight initially
@@ -303,8 +303,8 @@ mod tests {
         let panel = AnalogOutputControlPanel::default();
 
         assert_eq!(
-            panel.voltage_input, "0.0",
-            "Voltage input string should be '0.0' for proper text field display"
+            panel.voltage_input, "0.000",
+            "Voltage input string should be '0.000' (3 decimal places) for proper text field display"
         );
 
         // Verify it parses correctly
