@@ -236,3 +236,144 @@ impl DeviceControlWidget for AnalogOutputControlPanel {
         "Analog Output"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that a new AnalogOutputControlPanel has correct default state.
+    /// This ensures the panel initializes with sensible values before any
+    /// user interaction or daemon connection.
+    #[test]
+    fn test_default_panel_state() {
+        let panel = AnalogOutputControlPanel::default();
+
+        // Initial voltage should be 0.0
+        assert_eq!(panel.voltage, 0.0, "Default voltage should be 0.0");
+
+        // Voltage input string should match the voltage value
+        assert_eq!(
+            panel.voltage_input, "0.0",
+            "Default voltage input should be '0.0'"
+        );
+
+        // No actions should be in flight initially
+        assert_eq!(
+            panel.actions_in_flight, 0,
+            "No actions should be in flight on creation"
+        );
+
+        // No error or status messages initially
+        assert!(
+            panel.error.is_none(),
+            "Error should be None on creation"
+        );
+        assert!(
+            panel.status.is_none(),
+            "Status should be None on creation"
+        );
+
+        // Device ID not set until UI is rendered with device info
+        assert!(
+            panel.device_id.is_none(),
+            "Device ID should be None on creation"
+        );
+    }
+
+    /// Test that voltage bounds are set to standard DAC range.
+    /// The default range of -10V to +10V is standard for most DAC hardware.
+    #[test]
+    fn test_voltage_bounds() {
+        let panel = AnalogOutputControlPanel::default();
+
+        assert_eq!(
+            panel.min_voltage, -10.0,
+            "Min voltage should be -10.0 V (standard DAC range)"
+        );
+        assert_eq!(
+            panel.max_voltage, 10.0,
+            "Max voltage should be +10.0 V (standard DAC range)"
+        );
+    }
+
+    /// Test that the voltage input string defaults to "0.0".
+    /// This is important for proper text field initialization.
+    #[test]
+    fn test_voltage_input_string_default() {
+        let panel = AnalogOutputControlPanel::default();
+
+        assert_eq!(
+            panel.voltage_input, "0.0",
+            "Voltage input string should be '0.0' for proper text field display"
+        );
+
+        // Verify it parses correctly
+        let parsed: Result<f64, _> = panel.voltage_input.parse();
+        assert!(
+            parsed.is_ok(),
+            "Default voltage input should be parseable as f64"
+        );
+        assert_eq!(
+            parsed.unwrap(),
+            panel.voltage,
+            "Parsed voltage input should match voltage field"
+        );
+    }
+
+    /// Test that actions_in_flight counter starts at zero.
+    /// This is critical for proper control enable/disable logic.
+    #[test]
+    fn test_actions_in_flight_default() {
+        let panel = AnalogOutputControlPanel::default();
+
+        assert_eq!(
+            panel.actions_in_flight, 0,
+            "Actions in flight should start at 0"
+        );
+    }
+
+    /// Test that the device_type() method returns the correct type string.
+    /// This is used for panel identification and routing.
+    #[test]
+    fn test_device_type() {
+        let panel = AnalogOutputControlPanel::default();
+
+        assert_eq!(
+            panel.device_type(),
+            "Analog Output",
+            "Device type should be 'Analog Output'"
+        );
+    }
+
+    /// Test voltage clamping logic by verifying the bounds.
+    /// In write_voltage(), voltage is clamped to [min_voltage, max_voltage].
+    /// This test documents the expected clamping behavior.
+    #[test]
+    fn test_voltage_clamping_bounds() {
+        let panel = AnalogOutputControlPanel::default();
+
+        // Values within range should not be clamped
+        let in_range = 5.0_f64;
+        let clamped = in_range.clamp(panel.min_voltage, panel.max_voltage);
+        assert_eq!(clamped, 5.0, "In-range value should not change");
+
+        // Values below min should be clamped to min
+        let below_min = -15.0_f64;
+        let clamped = below_min.clamp(panel.min_voltage, panel.max_voltage);
+        assert_eq!(clamped, -10.0, "Value below min should clamp to -10.0");
+
+        // Values above max should be clamped to max
+        let above_max = 15.0_f64;
+        let clamped = above_max.clamp(panel.min_voltage, panel.max_voltage);
+        assert_eq!(clamped, 10.0, "Value above max should clamp to +10.0");
+
+        // Edge cases: exactly at bounds
+        let at_min = -10.0_f64;
+        let clamped = at_min.clamp(panel.min_voltage, panel.max_voltage);
+        assert_eq!(clamped, -10.0, "Value at min should stay at min");
+
+        let at_max = 10.0_f64;
+        let clamped = at_max.clamp(panel.min_voltage, panel.max_voltage);
+        assert_eq!(clamped, 10.0, "Value at max should stay at max");
+    }
+}
