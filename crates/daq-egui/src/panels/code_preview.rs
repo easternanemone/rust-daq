@@ -100,16 +100,20 @@ impl CodePreviewPanel {
 
                 ui.separator();
 
-                // Scrollable code area
+                // Scrollable code area - fill remaining vertical space
+                let available_height = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .max_height(available_height)
                     .show(ui, |ui| {
                         // Use egui_code_editor for syntax highlighting
                         // Note: CodeEditor requires mutable string but we ignore changes (read-only)
                         let mut code_copy = self.code.clone();
+                        // Calculate rows based on available height (approximate 14px per line)
+                        let rows = ((available_height / 14.0) as usize).max(10);
                         CodeEditor::default()
                             .id_source("rhai_preview")
-                            .with_rows(30)
+                            .with_rows(rows)
                             .with_fontsize(12.0)
                             .with_theme(self.theme)
                             .with_syntax(Syntax::rust()) // Rhai similar to Rust
