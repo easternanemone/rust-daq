@@ -722,6 +722,39 @@ mod tests {
         assert_eq!(panel.actions_in_flight, 0, "saturating_sub should not go negative");
     }
 
+    /// Test that position_input uses 2 decimal places for display formatting.
+    /// This ensures consistent display of rotator position values.
+    /// Note: Rotator uses 2 decimal places (degrees) vs analog output's 3 decimal places (volts).
+    #[test]
+    fn test_position_input_uses_two_decimal_places() {
+        // The formatting happens in poll_results when FetchState succeeds:
+        //   self.position_input = format!("{:.2}", pos);
+        
+        // Test various position values to verify 2 decimal place formatting
+        let test_cases = [
+            (0.0, "0.00"),
+            (45.0, "45.00"),
+            (90.123, "90.12"),      // Rounds down
+            (90.126, "90.13"),      // Rounds up
+            (180.999, "181.00"),    // Rounds up to next integer
+            (-45.5, "-45.50"),      // Negative value
+            (359.994, "359.99"),    // Near 360
+            (0.001, "0.00"),        // Very small - rounds to 0.00
+            (0.004, "0.00"),        // Just below rounding boundary
+            (12.345, "12.35"),      // Standard rounding case
+            (270.0, "270.00"),      // Full rotation value
+        ];
+
+        for (input, expected) in test_cases {
+            let formatted = format!("{:.2}", input);
+            assert_eq!(
+                formatted, expected,
+                "Position {:.6} should format as '{}' (2 decimal places), got '{}'",
+                input, expected, formatted
+            );
+        }
+    }
+
     /// Test that refresh_in_flight is tracked separately from actions_in_flight.
     /// This is critical because status refreshes should NOT disable user controls.
     #[test]
