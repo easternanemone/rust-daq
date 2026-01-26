@@ -21,15 +21,18 @@ pub enum PanelType {
     Rotator,
     /// Stage control panel (linear/XY stages)
     Stage,
+    /// Comedi DAQ unified control panel (AI, AO, DIO, counters)
+    Comedi,
 }
 
 /// Determine the appropriate control panel type for a device.
 ///
 /// Priority order:
-/// 1. Laser capabilities (emission/shutter/wavelength) → MaiTai
-/// 2. Readable without motion (sensors, meters) → PowerMeter
-/// 3. Movable with "ell14" in driver name → Rotator
-/// 4. Movable → Stage (default for motion devices)
+/// 1. Comedi DAQ devices (comedi_analog_input, comedi_analog_output, ni_daq) → Comedi
+/// 2. Laser capabilities (emission/shutter/wavelength) → MaiTai
+/// 3. Readable without motion (sensors, meters) → PowerMeter
+/// 4. Movable with "ell14" in driver name → Rotator
+/// 5. Movable → Stage (default for motion devices)
 ///
 /// # Arguments
 /// * `device` - Device info with capability flags
@@ -37,7 +40,19 @@ pub enum PanelType {
 /// # Returns
 /// The `PanelType` to use for this device's control panel
 pub fn determine_panel_type(device: &DeviceInfo) -> PanelType {
-    // Priority 1: Laser controls (MaiTai-style devices)
+    let driver_lower = device.driver_type.to_lowercase();
+
+    // Priority 1: Comedi DAQ devices
+    if driver_lower.contains("comedi")
+        || driver_lower.contains("ni_daq")
+        || driver_lower.contains("nidaq")
+        || driver_lower.contains("pci-mio")
+        || driver_lower.contains("pcimio")
+    {
+        return PanelType::Comedi;
+    }
+
+    // Priority 2: Laser controls (MaiTai-style devices)
     if device.is_emission_controllable
         || device.is_shutter_controllable
         || device.is_wavelength_tunable
@@ -45,14 +60,13 @@ pub fn determine_panel_type(device: &DeviceInfo) -> PanelType {
         return PanelType::MaiTai;
     }
 
-    // Priority 2: Pure readable devices (power meters, sensors)
+    // Priority 3: Pure readable devices (power meters, sensors)
     if device.is_readable && !device.is_movable {
         return PanelType::PowerMeter;
     }
 
-    // Priority 3: Movable devices - distinguish rotator vs stage
+    // Priority 4: Movable devices - distinguish rotator vs stage
     if device.is_movable {
-        let driver_lower = device.driver_type.to_lowercase();
         if driver_lower.contains("ell14") || driver_lower.contains("rotator") {
             return PanelType::Rotator;
         }

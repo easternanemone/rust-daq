@@ -36,9 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use daq_proto::daq::hardware_service_server::HardwareService;
-use daq_proto::daq::{
-    ListDevicesRequest, MoveRequest, ReadValueRequest,
-};
+use daq_proto::daq::{ListDevicesRequest, MoveRequest, ReadValueRequest};
 use daq_server::grpc::hardware_service::HardwareServiceImpl;
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use tokio::time::timeout;
@@ -204,7 +202,10 @@ async fn test_read_power_meter() {
 
     let read_response = response.into_inner();
     // MockPowerMeter returns a value - verify it's a number
-    assert!(read_response.value.is_finite(), "Should return a finite value");
+    assert!(
+        read_response.value.is_finite(),
+        "Should return a finite value"
+    );
 }
 
 // =============================================================================

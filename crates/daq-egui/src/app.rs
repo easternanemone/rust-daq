@@ -665,6 +665,12 @@ impl DaqApp {
                 }
 
                 ui.menu_button("View", |ui| {
+                    if ui.button("Reset Layout").clicked() {
+                        self.dock_state = Some(Self::default_dock_state());
+                        ui.close();
+                    }
+                    ui.separator();
+
                     if ui.button("Getting Started").clicked() {
                         self.ui_actions
                             .push(UiAction::FocusTab(Panel::GettingStarted));

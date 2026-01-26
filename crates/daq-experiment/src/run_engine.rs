@@ -399,19 +399,19 @@ impl RunEngine {
         // Using observer pattern for secondary frame capture (experiment persistence)
         let mut frame_observers = HashMap::new();
         let mut frame_channels = HashMap::new();
-        
+
         for det_id in plan.detectors() {
             if let Some(producer) = self.device_registry.get_frame_producer(&det_id) {
                 if producer.supports_observers() {
                     // Create channel for frame capture
                     let (tx, rx) = mpsc::channel(16);
-                    
+
                     // Create observer
                     let observer = Box::new(ExperimentFrameObserver {
                         tx,
                         device_id: det_id.to_string(),
                     });
-                    
+
                     // Register observer
                     match producer.register_observer(observer).await {
                         Ok(handle) => {
@@ -420,10 +420,7 @@ impl RunEngine {
                             frame_channels.insert(det_id.to_string(), rx);
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to register observer for {}: {}",
-                                det_id, e
-                            );
+                            warn!("Failed to register observer for {}: {}", det_id, e);
                         }
                     }
                 }

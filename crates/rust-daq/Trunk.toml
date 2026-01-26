@@ -1,8 +1,0 @@
-[build]
-target = "index.html"
-
-# Generic proxy for all gRPC services starting with /daq.
-# This avoids issues where individual rewrites might strip the service name incorrectly.
-[[proxy]]
-rewrite = "/daq."
-backend = "http://127.0.0.1:50051/daq."

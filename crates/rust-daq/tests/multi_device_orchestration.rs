@@ -146,9 +146,7 @@ async fn test_gridscan_two_stages() {
     let engine_arc = Arc::new(engine);
     let engine_for_task = engine_arc.clone();
 
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     // Collect documents
     let docs = collect_documents(rx, Duration::from_secs(10)).await;
@@ -159,7 +157,11 @@ async fn test_gridscan_two_stages() {
         .expect("Engine timed out")
         .expect("Engine task panicked");
 
-    assert!(result.is_ok(), "Engine should complete successfully: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Engine should complete successfully: {:?}",
+        result
+    );
 
     // Verify document structure
     assert!(
@@ -172,7 +174,10 @@ async fn test_gridscan_two_stages() {
     );
 
     // Count events - should have 3x3 = 9 events
-    let event_count = docs.iter().filter(|d| matches!(d, Document::Event(_))).count();
+    let event_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Event(_)))
+        .count();
     assert_eq!(event_count, 9, "3x3 GridScan should produce 9 events");
 
     // Verify positions in events
@@ -220,9 +225,7 @@ async fn test_linescan_single_axis() {
     let engine_arc = Arc::new(engine);
     let engine_for_task = engine_arc.clone();
 
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     let docs = collect_documents(rx, Duration::from_secs(5)).await;
 
@@ -234,7 +237,10 @@ async fn test_linescan_single_axis() {
     assert!(result.is_ok(), "Engine should complete successfully");
 
     // Count events - should have 5 events
-    let event_count = docs.iter().filter(|d| matches!(d, Document::Event(_))).count();
+    let event_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Event(_)))
+        .count();
     assert_eq!(event_count, 5, "5-point LineScan should produce 5 events");
 }
 
@@ -259,9 +265,7 @@ async fn test_pause_resume_multi_device() {
     let engine_for_control = engine.clone();
 
     // Start the engine
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     // Wait a bit, then pause
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -270,7 +274,7 @@ async fn test_pause_resume_multi_device() {
     let state_before = engine_for_control.state().await;
     if state_before == EngineState::Running {
         let pause_result = engine_for_control.pause().await;
-        
+
         if pause_result.is_ok() {
             // Give the engine time to transition to paused state (may be async)
             let mut paused = false;
@@ -282,7 +286,7 @@ async fn test_pause_resume_multi_device() {
                     break;
                 }
             }
-            
+
             // Verify we reached paused or idle state
             let state = engine_for_control.state().await;
             if state == EngineState::Running {
@@ -323,15 +327,17 @@ async fn test_pause_resume_multi_device() {
         .expect("Engine timed out")
         .expect("Engine task panicked");
 
-    assert!(result.is_ok(), "Engine should complete successfully after resume");
+    assert!(
+        result.is_ok(),
+        "Engine should complete successfully after resume"
+    );
 
     // Collect remaining documents
     let docs = collect_documents(rx, Duration::from_millis(100)).await;
 
     // Verify we got a stop document
     assert!(
-        docs.iter().any(|d| matches!(d, Document::Stop(_))) ||
-        docs.is_empty(), // Might have collected all docs before pause
+        docs.iter().any(|d| matches!(d, Document::Stop(_))) || docs.is_empty(), // Might have collected all docs before pause
         "Should eventually get StopDoc"
     );
 }
@@ -356,9 +362,7 @@ async fn test_abort_multi_device_scan() {
     let engine_for_task = engine.clone();
     let engine_for_control = engine.clone();
 
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     // Wait a bit, then abort
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -427,9 +431,7 @@ async fn test_count_plan() {
     let engine_arc = Arc::new(engine);
     let engine_for_task = engine_arc.clone();
 
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     let docs = collect_documents(rx, Duration::from_secs(5)).await;
 
@@ -446,7 +448,10 @@ async fn test_count_plan() {
         "Should have StartDoc"
     );
 
-    let event_count = docs.iter().filter(|d| matches!(d, Document::Event(_))).count();
+    let event_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Event(_)))
+        .count();
     assert_eq!(event_count, 5, "Count(5) should produce 5 events");
 
     if let Some(Document::Stop(stop)) = docs.iter().find(|d| matches!(d, Document::Stop(_))) {
@@ -473,9 +478,7 @@ async fn test_document_fields() {
     let engine_arc = Arc::new(engine);
     let engine_for_task = engine_arc.clone();
 
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     let docs = collect_documents(rx, Duration::from_secs(5)).await;
 
@@ -487,7 +490,10 @@ async fn test_document_fields() {
 
     // Verify StartDoc
     if let Some(Document::Start(start)) = docs.iter().find(|d| matches!(d, Document::Start(_))) {
-        assert_eq!(start.plan_type, "line_scan", "Plan type should be 'line_scan'");
+        assert_eq!(
+            start.plan_type, "line_scan",
+            "Plan type should be 'line_scan'"
+        );
         assert!(!start.plan_args.is_empty(), "Plan args should be populated");
     } else {
         panic!("Missing StartDoc");
@@ -558,15 +564,27 @@ async fn test_queue_multiple_plans() {
         .expect("Engine failed");
 
     // Should have 2 start docs and 2 stop docs (one per plan)
-    let start_count = docs.iter().filter(|d| matches!(d, Document::Start(_))).count();
-    let stop_count = docs.iter().filter(|d| matches!(d, Document::Stop(_))).count();
+    let start_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Start(_)))
+        .count();
+    let stop_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Stop(_)))
+        .count();
 
     assert!(start_count >= 1, "Should have at least 1 StartDoc");
     assert!(stop_count >= 1, "Should have at least 1 StopDoc");
 
     // Total events should be 2 + 3 = 5 (from both plans)
-    let event_count = docs.iter().filter(|d| matches!(d, Document::Event(_))).count();
-    assert!(event_count >= 2, "Should have events from at least one plan");
+    let event_count = docs
+        .iter()
+        .filter(|d| matches!(d, Document::Event(_)))
+        .count();
+    assert!(
+        event_count >= 2,
+        "Should have events from at least one plan"
+    );
 }
 
 /// Test: Engine state is correct during execution
@@ -589,9 +607,7 @@ async fn test_engine_state_transitions() {
     let engine_for_check = engine.clone();
 
     // Start in background
-    let run_handle = tokio::spawn(async move {
-        engine_for_task.start().await
-    });
+    let run_handle = tokio::spawn(async move { engine_for_task.start().await });
 
     // Give it time to start
     tokio::time::sleep(Duration::from_millis(10)).await;

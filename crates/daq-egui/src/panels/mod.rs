@@ -23,13 +23,12 @@ mod signal_plotter;
 mod signal_plotter_stream;
 mod storage;
 
-// WIP Comedi panels - not yet integrated into the main UI.
-// Uncomment when Comedi gRPC interface is complete.
-// pub use comedi::{
-//     AnalogInputPanel, AnalogOutputPanel, ComediPanel, CounterPanel, DigitalIOPanel,
-//     OscilloscopePanel,
-// };
+// Comedi panels for NI DAQ control
 pub use code_preview::CodePreviewPanel;
+pub use comedi::{
+    AnalogInputPanel, AnalogOutputPanel, ComediPanel, CounterDisplayPanel, CounterPanel,
+    DigitalIOPanel, DioMonitorPanel, OscilloscopePanel, VoltmeterPanel,
+};
 pub use devices::DevicesPanel;
 pub use document_viewer::DocumentViewerPanel;
 pub use experiment_designer::ExperimentDesignerPanel;

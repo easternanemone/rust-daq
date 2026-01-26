@@ -24,10 +24,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use daq_experiment::{RunEngine, EngineState};
 use daq_experiment::Document;
-use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use daq_experiment::{EngineState, RunEngine};
 use daq_scripting::script_runner::ScriptPlanRunner;
+use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use tokio::time::timeout;
 
 /// Create a registry with mock devices
@@ -80,11 +80,15 @@ async fn test_e2e_script_count_plan() {
     // Actually runner.run() handles the orchestration. We can just await it.
     // But docs are emitted during execution. We can collect them in parallel if we want,
     // or just trust the report. Let's trust the report first.
-    
+
     let report = runner.run(script).await.expect("Script execution failed");
 
     // Verify report
-    assert!(report.success, "Script should succeed. Error: {:?}", report.error);
+    assert!(
+        report.success,
+        "Script should succeed. Error: {:?}",
+        report.error
+    );
     assert_eq!(report.plans_executed, 1, "Should execute 1 plan");
     assert_eq!(report.total_events, 5, "Should produce 5 events");
 }
@@ -105,7 +109,11 @@ async fn test_e2e_script_linescan_plan() {
 
     let report = runner.run(script).await.expect("Script execution failed");
 
-    assert!(report.success, "Script should succeed. Error: {:?}", report.error);
+    assert!(
+        report.success,
+        "Script should succeed. Error: {:?}",
+        report.error
+    );
     assert_eq!(report.plans_executed, 1);
     assert_eq!(report.total_events, 5);
 }
@@ -125,7 +133,11 @@ async fn test_e2e_script_multiple_plans() {
 
     let report = runner.run(script).await.expect("Script execution failed");
 
-    assert!(report.success, "Script should succeed. Error: {:?}", report.error);
+    assert!(
+        report.success,
+        "Script should succeed. Error: {:?}",
+        report.error
+    );
     assert_eq!(report.plans_executed, 2);
     assert_eq!(report.total_events, 5); // 2 + 3
 }

@@ -2237,16 +2237,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9745,7 +9735,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic 0.14.2",
- "tonic-web-wasm-client 0.8.0",
+ "tonic-web-wasm-client",
  "wasm-bindgen-futures",
  "web-time",
 ]
@@ -10094,7 +10084,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic 0.14.2",
- "tonic-web-wasm-client 0.8.0",
+ "tonic-web-wasm-client",
  "tower 0.5.3",
  "tracing",
  "url",
@@ -11408,7 +11398,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "config",
- "console_error_panic_hook",
  "criterion",
  "csv",
  "daq-core",
@@ -11435,9 +11424,6 @@ dependencies = [
  "flatbuffers 24.12.23",
  "flatc-rust",
  "futures",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "gloo-timers",
  "hdf5-metno",
  "hostname",
  "log",
@@ -11459,19 +11445,12 @@ dependencies = [
  "tokio-test",
  "toml 0.8.23",
  "tonic 0.10.2",
- "tonic 0.11.0",
  "tonic-build",
- "tonic-web-wasm-client 0.5.1",
  "tracing",
  "tracing-subscriber",
  "tracing-test",
- "tracing-wasm",
  "uuid",
  "visa-rs",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
 ]
 
 [[package]]
@@ -13099,30 +13078,6 @@ dependencies = [
 
 [[package]]
 name = "tonic-web-wasm-client"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79bb296fba9974fbc7ea2f1364a661c0e7acb7ebfca648343e5a4ac44ec9a0ec"
-dependencies = [
- "base64 0.21.7",
- "byteorder",
- "bytes",
- "futures-util",
- "http 0.2.12",
- "http-body 0.4.6",
- "httparse",
- "js-sys",
- "pin-project",
- "thiserror 1.0.69",
- "tonic 0.11.0",
- "tower-service",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-streams",
- "web-sys",
-]
-
-[[package]]
-name = "tonic-web-wasm-client"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "898cd44be5e23e59d2956056538f1d6b3c5336629d384ffd2d92e76f87fb98ff"
@@ -13315,17 +13270,6 @@ checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
 dependencies = [
  "quote",
  "syn 2.0.114",
-]
-
-[[package]]
-name = "tracing-wasm"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
-dependencies = [
- "tracing",
- "tracing-subscriber",
- "wasm-bindgen",
 ]
 
 [[package]]

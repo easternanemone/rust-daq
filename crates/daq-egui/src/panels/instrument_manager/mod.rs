@@ -18,6 +18,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
+use crate::panels::ComediPanel;
 use crate::widgets::{
     offline_notice, DeviceControlWidget, MaiTaiControlPanel, OfflineContext,
     PowerMeterControlPanel, RotatorControlPanel, StageControlPanel,
@@ -135,6 +136,8 @@ pub struct InstrumentManagerPanel {
     rotator_panels: HashMap<String, RotatorControlPanel>,
     /// Stage control panels
     stage_panels: HashMap<String, StageControlPanel>,
+    /// Comedi DAQ control panels
+    comedi_panels: HashMap<String, ComediPanel>,
 
     /// Pending pop-out request containing full device info
     /// Checked by DaqApp after each ui() call
@@ -194,6 +197,7 @@ impl Default for InstrumentManagerPanel {
             power_meter_panels: HashMap::new(),
             rotator_panels: HashMap::new(),
             stage_panels: HashMap::new(),
+            comedi_panels: HashMap::new(),
             pending_pop_out: None,
         }
     }
@@ -1407,6 +1411,21 @@ impl InstrumentManagerPanel {
             // Use push_id to avoid widget ID collisions with docked panels
             ui.push_id(("instr_mgr", &device_id), |ui| {
                 panel.ui(ui, &device, client.as_deref_mut(), runtime);
+            });
+            return;
+        }
+
+        // Check for Comedi DAQ devices
+        if driver_lower.contains("comedi")
+            || driver_lower.contains("ni_daq")
+            || driver_lower.contains("nidaq")
+            || driver_lower.contains("pci-mio")
+            || driver_lower.contains("pcimio")
+        {
+            let panel = self.comedi_panels.entry(device_id.clone()).or_default();
+            // Use push_id to avoid widget ID collisions with docked panels
+            ui.push_id(("instr_mgr", &device_id), |ui| {
+                panel.ui(ui, client.as_deref_mut(), runtime);
             });
             return;
         }
