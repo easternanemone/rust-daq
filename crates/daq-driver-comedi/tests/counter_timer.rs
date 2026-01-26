@@ -276,21 +276,19 @@ fn test_counter_info() {
     println!("\nCounter Subsystem Information:");
     println!("  Number of channels: {}", counter.n_channels());
     println!("  Bit width: {} bits", counter.bit_width());
-    println!("  Maximum value: {} (0x{:X})", counter.maxdata(), counter.maxdata());
+    println!(
+        "  Maximum value: {} (0x{:X})",
+        counter.maxdata(),
+        counter.maxdata()
+    );
 
     // Verify reasonable values
-    assert!(
-        counter.n_channels() > 0,
-        "Should have at least one counter"
-    );
+    assert!(counter.n_channels() > 0, "Should have at least one counter");
     assert!(
         counter.bit_width() >= 16,
         "Counter should be at least 16 bits"
     );
-    assert!(
-        counter.maxdata() > 0,
-        "Max data should be non-zero"
-    );
+    assert!(counter.maxdata() > 0, "Max data should be non-zero");
 
     // Calculate expected max from bit width
     let expected_max = (1u64 << counter.bit_width()) - 1;
@@ -344,7 +342,10 @@ fn test_event_counting() {
 
     let events = after_wait.saturating_sub(initial);
     if events > 0 {
-        println!("  {} events detected (may be noise or external signal)", events);
+        println!(
+            "  {} events detected (may be noise or external signal)",
+            events
+        );
     } else {
         println!("  No events detected (counter stable or no signal)");
     }

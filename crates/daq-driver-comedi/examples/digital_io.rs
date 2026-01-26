@@ -68,7 +68,10 @@ fn main() -> anyhow::Result<()> {
 
     // Read port as bitmask
     let port_value = dio.read_port(0)?;
-    println!("\nPort value: 0x{:02X} (binary: {:08b})", port_value, port_value);
+    println!(
+        "\nPort value: 0x{:02X} (binary: {:08b})",
+        port_value, port_value
+    );
 
     // Write pattern to outputs
     println!("\nWriting alternating pattern (0xAA) to output pins...");

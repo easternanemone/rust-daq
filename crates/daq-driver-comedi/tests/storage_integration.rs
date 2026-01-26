@@ -94,7 +94,10 @@ fn test_acquire_for_storage() {
 
     let stream = StreamAcquisition::new(&device, config).expect("Failed to create stream");
 
-    println!("\nAcquiring {} samples at {} S/s...", DEFAULT_SAMPLE_COUNT, DEFAULT_SAMPLE_RATE);
+    println!(
+        "\nAcquiring {} samples at {} S/s...",
+        DEFAULT_SAMPLE_COUNT, DEFAULT_SAMPLE_RATE
+    );
 
     stream.start().expect("Failed to start");
 
@@ -127,7 +130,10 @@ fn test_acquire_for_storage() {
         all_samples.len() >= DEFAULT_SAMPLE_COUNT / 2,
         "Should acquire at least half the requested samples"
     );
-    assert!(min >= -15.0 && max <= 15.0, "Values should be in reasonable range");
+    assert!(
+        min >= -15.0 && max <= 15.0,
+        "Values should be in reasonable range"
+    );
 
     println!("\n=== Acquisition for Storage Test PASSED ===\n");
 }
@@ -185,7 +191,9 @@ fn test_csv_output() {
     fs::write(&csv_path, &csv_content).expect("Failed to write CSV");
 
     // Verify file
-    let file_size = fs::metadata(&csv_path).expect("Failed to get metadata").len();
+    let file_size = fs::metadata(&csv_path)
+        .expect("Failed to get metadata")
+        .len();
     println!("  File size: {} bytes", file_size);
     assert!(file_size > 100, "CSV file should have content");
 
@@ -363,13 +371,11 @@ fn test_metadata_recording() {
     println!("  Channels: {}", read_meta["analog_input"]["channels"]);
 
     assert_eq!(
-        metadata["device"]["board"],
-        read_meta["device"]["board"],
+        metadata["device"]["board"], read_meta["device"]["board"],
         "Board name should match"
     );
     assert_eq!(
-        metadata["analog_input"]["resolution_bits"],
-        read_meta["analog_input"]["resolution_bits"],
+        metadata["analog_input"]["resolution_bits"], read_meta["analog_input"]["resolution_bits"],
         "Resolution should match"
     );
 
@@ -437,7 +443,11 @@ fn test_multi_channel_storage() {
             let max = data.iter().cloned().fold(f64::MIN, f64::max);
             println!(
                 "  CH{}: {} samples, mean={:.4}V, range=[{:.4}, {:.4}]V",
-                channels[ch_idx], data.len(), mean, min, max
+                channels[ch_idx],
+                data.len(),
+                mean,
+                min,
+                max
             );
         }
     }

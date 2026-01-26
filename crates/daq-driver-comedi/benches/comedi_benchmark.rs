@@ -20,8 +20,8 @@
 #![cfg(feature = "hardware")]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use daq_driver_comedi::{ComediDevice, Range, StreamAcquisition, StreamConfig};
 use daq_driver_comedi::subsystem::AnalogReference;
+use daq_driver_comedi::{ComediDevice, Range, StreamAcquisition, StreamConfig};
 use std::env;
 use std::time::Duration;
 
@@ -43,16 +43,12 @@ fn bench_single_read(c: &mut Criterion) {
     let ai = device.analog_input().expect("Failed to get AI");
 
     c.bench_function("ai_single_read_raw", |b| {
-        b.iter(|| {
-            black_box(ai.read_raw(0, 0, AnalogReference::Ground).unwrap())
-        })
+        b.iter(|| black_box(ai.read_raw(0, 0, AnalogReference::Ground).unwrap()))
     });
 
     c.bench_function("ai_single_read_voltage", |b| {
         let range = Range::default();
-        b.iter(|| {
-            black_box(ai.read_voltage(0, range).unwrap())
-        })
+        b.iter(|| black_box(ai.read_voltage(0, range).unwrap()))
     });
 }
 
@@ -94,15 +90,11 @@ fn bench_dio(c: &mut Criterion) {
     };
 
     c.bench_function("dio_read_single", |b| {
-        b.iter(|| {
-            black_box(dio.read(0).unwrap())
-        })
+        b.iter(|| black_box(dio.read(0).unwrap()))
     });
 
     c.bench_function("dio_read_port", |b| {
-        b.iter(|| {
-            black_box(dio.read_port(0).unwrap())
-        })
+        b.iter(|| black_box(dio.read_port(0).unwrap()))
     });
 }
 
@@ -173,16 +165,10 @@ fn bench_counter(c: &mut Criterion) {
     };
 
     c.bench_function("counter_read", |b| {
-        b.iter(|| {
-            black_box(counter.read(0).unwrap())
-        })
+        b.iter(|| black_box(counter.read(0).unwrap()))
     });
 
-    c.bench_function("counter_reset", |b| {
-        b.iter(|| {
-            counter.reset(0).unwrap()
-        })
-    });
+    c.bench_function("counter_reset", |b| b.iter(|| counter.reset(0).unwrap()));
 }
 
 /// Benchmark device open/close cycle (resource management)

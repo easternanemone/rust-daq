@@ -32,7 +32,10 @@ fn main() -> anyhow::Result<()> {
     println!("\nConfiguration:");
     println!("  Channels: {:?}", channels);
     println!("  Sample rate: {} S/s per channel", sample_rate);
-    println!("  Aggregate rate: {} S/s", sample_rate * channels.len() as f64);
+    println!(
+        "  Aggregate rate: {} S/s",
+        sample_rate * channels.len() as f64
+    );
 
     let config = StreamConfig::builder()
         .channels(&channels)
@@ -84,7 +87,10 @@ fn main() -> anyhow::Result<()> {
     println!("  Duration: {:?}", elapsed);
     println!("  Total samples: {}", total_samples);
     println!("  Total scans: {}", total_scans);
-    println!("  Effective rate: {:.1} S/s", total_samples as f64 / elapsed.as_secs_f64());
+    println!(
+        "  Effective rate: {:.1} S/s",
+        total_samples as f64 / elapsed.as_secs_f64()
+    );
     println!("  Overflows: {}", stats.overflows);
 
     Ok(())

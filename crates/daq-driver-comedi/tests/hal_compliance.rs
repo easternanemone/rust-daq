@@ -32,7 +32,9 @@
 #![cfg(feature = "hardware")]
 
 use daq_core::capabilities::{Readable, Settable};
-use daq_driver_comedi::hal::{ReadableAnalogInput, ReadableCounter, SettableAnalogOutput, SwitchableDigitalIO};
+use daq_driver_comedi::hal::{
+    ReadableAnalogInput, ReadableCounter, SettableAnalogOutput, SwitchableDigitalIO,
+};
 use daq_driver_comedi::ComediDevice;
 use serde_json::json;
 use std::env;
@@ -113,7 +115,8 @@ fn test_readable_analog_input() {
 
         // Check variance (should be relatively stable for floating input)
         let mean: f64 = readings.iter().sum::<f64>() / readings.len() as f64;
-        let variance: f64 = readings.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / readings.len() as f64;
+        let variance: f64 =
+            readings.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / readings.len() as f64;
         println!("  Mean: {:.6} V, Variance: {:.9}", mean, variance);
 
         println!("\n=== Readable Analog Input Test PASSED ===\n");

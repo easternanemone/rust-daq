@@ -72,11 +72,7 @@ fn test_device_not_found() {
 
     println!("\n=== Comedi Device Not Found Test ===");
 
-    let nonexistent_paths = vec![
-        "/dev/comedi99",
-        "/dev/nonexistent",
-        "/dev/comedi_fake",
-    ];
+    let nonexistent_paths = vec!["/dev/comedi99", "/dev/nonexistent", "/dev/comedi_fake"];
 
     for path in nonexistent_paths {
         println!("\nTrying to open: {}", path);
@@ -91,10 +87,7 @@ fn test_device_not_found() {
 
                 // Verify error is descriptive
                 let error_str = e.to_string();
-                assert!(
-                    !error_str.is_empty(),
-                    "Error message should not be empty"
-                );
+                assert!(!error_str.is_empty(), "Error message should not be empty");
                 println!("  Error message is descriptive ✓");
             }
         }
@@ -134,7 +127,8 @@ fn test_invalid_channel() {
                     // Verify error contains channel info
                     let err_str = e.to_string();
                     assert!(
-                        err_str.contains(&ch.to_string()) || err_str.to_lowercase().contains("channel"),
+                        err_str.contains(&ch.to_string())
+                            || err_str.to_lowercase().contains("channel"),
                         "Error should mention invalid channel"
                     );
                 }

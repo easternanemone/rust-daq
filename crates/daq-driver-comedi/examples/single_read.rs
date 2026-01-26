@@ -53,7 +53,11 @@ fn main() -> anyhow::Result<()> {
     // Also show raw ADC values
     println!("\nRaw ADC values:");
     for ch in 0..4.min(ai.n_channels()) {
-        let raw = ai.read_raw(ch, range.index, daq_driver_comedi::subsystem::AnalogReference::Ground)?;
+        let raw = ai.read_raw(
+            ch,
+            range.index,
+            daq_driver_comedi::subsystem::AnalogReference::Ground,
+        )?;
         println!("  CH{}: {} (0x{:04X})", ch, raw, raw);
     }
 

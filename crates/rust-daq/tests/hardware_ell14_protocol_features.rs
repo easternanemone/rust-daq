@@ -43,7 +43,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 fn get_elliptec_port() -> String {
-    std::env::var("ELLIPTEC_PORT").unwrap_or_else(|_| "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0".to_string())
+    std::env::var("ELLIPTEC_PORT").unwrap_or_else(|_| {
+        "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0".to_string()
+    })
 }
 
 const TEST_ADDRESS: &str = "2";

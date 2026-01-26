@@ -39,7 +39,11 @@ fn main() -> anyhow::Result<()> {
     println!("\nCounter Subsystem:");
     println!("  Channels: {}", counter.n_channels());
     println!("  Bit width: {} bits", counter.bit_width());
-    println!("  Max value: {} (0x{:X})", counter.maxdata(), counter.maxdata());
+    println!(
+        "  Max value: {} (0x{:X})",
+        counter.maxdata(),
+        counter.maxdata()
+    );
 
     // Read all counter values
     println!("\nInitial counter values:");

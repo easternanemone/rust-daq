@@ -4,6 +4,7 @@
 //! metadata and factory functions for creating modules.
 
 #![allow(non_camel_case_types)] // abi_stable generates `*_Ref` types
+#![allow(clippy::expl_impl_clone_on_copy)] // StableAbi macro generates Clone impl for Copy type
 
 use crate::metadata::{AbiVersion, PluginMetadata};
 use crate::module_ffi::{FfiModuleTypeInfo, ModuleFfiBox};

@@ -48,7 +48,7 @@ impl std::fmt::Debug for LoadedPlugin {
         f.debug_struct("LoadedPlugin")
             .field("metadata", &self.metadata)
             .field("path", &self.path)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -197,7 +197,7 @@ impl PluginManager {
         let plugin_id = metadata.plugin_id.to_string();
 
         // Index module types
-        for type_info in plugin_ref.list_module_types()().iter() {
+        for type_info in &plugin_ref.list_module_types()() {
             self.module_type_index
                 .insert(type_info.type_id.to_string(), plugin_id.clone());
         }
@@ -230,7 +230,7 @@ impl PluginManager {
     pub fn list_module_types(&self) -> Vec<(String, FfiModuleTypeInfo)> {
         let mut types = Vec::new();
         for (plugin_id, plugin) in &self.plugins {
-            for type_info in plugin.module_types().iter() {
+            for type_info in &plugin.module_types() {
                 types.push((plugin_id.clone(), type_info.clone()));
             }
         }

@@ -84,46 +84,31 @@ impl Default for ConnectionConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionType {
+    #[default]
     Serial,
     Tcp,
     Udp,
 }
 
-impl Default for ConnectionType {
-    fn default() -> Self {
-        Self::Serial
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Parity {
+    #[default]
     None,
     Odd,
     Even,
 }
 
-impl Default for Parity {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowControl {
+    #[default]
     None,
     Software,
     Hardware,
-}
-
-impl Default for FlowControl {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -135,18 +120,13 @@ pub struct BusConfig {
     pub default_address: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AddressFormat {
+    #[default]
     HexChar,
     Decimal,
     HexByte,
-}
-
-impl Default for AddressFormat {
-    fn default() -> Self {
-        Self::HexChar
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -243,18 +223,13 @@ pub struct ErrorCodeConfig {
     pub recoverable: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorSeverity {
     Warning,
+    #[default]
     Error,
     Critical,
-}
-
-impl Default for ErrorSeverity {
-    fn default() -> Self {
-        Self::Error
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
