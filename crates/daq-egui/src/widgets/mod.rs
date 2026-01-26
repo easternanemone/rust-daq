@@ -3,6 +3,7 @@
 //! This module contains parameter editors and other UI components
 //! that can be shared across different panels.
 
+pub mod adaptive_alert;
 pub mod auto_scale_plot;
 pub mod device_controls;
 pub mod device_selector;
@@ -48,3 +49,6 @@ pub use smart_stream_editor::*;
 pub use status_bar::*;
 #[allow(unused_imports)]
 pub use toast::*;
+
+#[allow(unused_imports)]
+pub use adaptive_alert::{show_adaptive_alert, AdaptiveAlertData, AdaptiveAlertResponse};
