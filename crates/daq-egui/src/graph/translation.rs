@@ -393,6 +393,24 @@ fn translate_node_with_snarl(
         ExperimentNode::NestedScan(config) => {
             // Nested scan generates outer x inner grid with body nodes at each point
             // Get body nodes (reuse existing find_loop_body_nodes - same pin 1 convention)
+            //
+            // ==== ZARR INTEGRATION FOR NESTED SCANS ====
+            // Nested scans produce multi-dimensional data that should be stored in Zarr format
+            // with proper dimensional metadata for scientific analysis tools (xarray, napari).
+            //
+            // Key Zarr V3 attributes required:
+            // - _ARRAY_DIMENSIONS: ["outer_dim_name", "inner_dim_name", ...] for xarray compat
+            // - Each EmitEvent includes dimensional indices for Zarr coordinate assignment
+            //
+            // TODO: Implement Zarr writer setup:
+            // 1. Create Zarr V3 store with shape (outer_points, inner_points, ...)
+            // 2. Set _ARRAY_DIMENSIONS attribute with dimension names from config
+            // 3. Create coordinate arrays for each dimension
+            // 4. On EmitEvent, use dimensional indices to write to correct Zarr position
+            //
+            // Dimension naming convention:
+            // - config.outer.dimension_name -> outer array dimension (e.g., "wavelength")
+            // - config.inner.dimension_name -> inner array dimension (e.g., "position")
             let body_nodes = find_loop_body_nodes(node_id, snarl);
 
             // Add actuators to movers list
@@ -461,7 +479,28 @@ fn translate_node_with_snarl(
                         }
                     }
 
-                    // Emit event with dimensional positions
+                    // Emit event with dimensional positions and indices
+                    // The positions map contains actuator -> position for coordinate tracking
+                    //
+                    // ==== DIMENSIONAL INDEXING FOR ZARR ====
+                    // For Zarr V3 multi-dimensional storage, the RunEngine needs to know
+                    // which array indices to write data to. We encode this via:
+                    //
+                    // 1. Special position keys: "_outer_idx", "_inner_idx" (f64-encoded indices)
+                    //    These are used by the Zarr writer to determine array position
+                    //
+                    // 2. Dimension names are passed via checkpoint labels earlier:
+                    //    "nested_{node_id}_outer_{idx}_start" -> outer dimension progress
+                    //    Combined with GraphPlan metadata for dimension names
+                    //
+                    // Example: For nested scan with outer=wavelength (10 pts), inner=position (100 pts)
+                    //    positions = {
+                    //      "wavelength": 450.0,  // actual wavelength value
+                    //      "position": 25.5,     // actual position value
+                    //      "_outer_idx": 3.0,    // outer array index (wavelength index 3)
+                    //      "_inner_idx": 45.0,   // inner array index (position index 45)
+                    //    }
+                    //    Zarr writes to array[3, 45, ...]
                     let mut positions = HashMap::new();
                     if !config.outer.actuator.is_empty() {
                         positions.insert(config.outer.actuator.clone(), outer_pos);
@@ -469,6 +508,12 @@ fn translate_node_with_snarl(
                     if !config.inner.actuator.is_empty() {
                         positions.insert(config.inner.actuator.clone(), inner_pos);
                     }
+
+                    // Include dimensional indices for Zarr coordinate assignment
+                    // Convention: "_outer_idx", "_inner_idx" are reserved keys
+                    positions.insert("_outer_idx".to_string(), outer_idx as f64);
+                    positions.insert("_inner_idx".to_string(), inner_idx as f64);
+
                     commands.push(PlanCommand::EmitEvent {
                         stream: "primary".to_string(),
                         data: HashMap::new(),
