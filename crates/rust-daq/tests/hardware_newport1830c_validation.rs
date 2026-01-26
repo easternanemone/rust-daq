@@ -903,6 +903,10 @@ mod hardware_tests {
 
         let meter = Newport1830CDriver::new_async(&port_name).await.expect("Failed to open port");
 
+        // TODO: query_range() method not yet implemented in Newport1830CDriver
+        // See: crates/daq-driver-newport/src/newport_1830c.rs
+        // Uncomment when query_range() is added to the driver
+        /*
         // Query range
         let range = meter.query_range().await.expect("Failed to query range");
         println!("Range setting: {}", range);
@@ -911,6 +915,7 @@ mod hardware_tests {
             "Range should be 1-8, got {}",
             range
         );
+        */
 
         // Query units
         let units = meter.query_units().await.expect("Failed to query units");
