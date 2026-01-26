@@ -142,7 +142,7 @@ fn test_settable_analog_output() {
         let ao = device.analog_output().expect("Failed to get AO subsystem");
 
         // Create HAL wrapper
-        let settable = SettableAnalogOutput::new(ao.clone(), 0, 0);
+        let settable = SettableAnalogOutput::new(ao.clone(), 0);
 
         println!("\nTesting Settable trait on channel 0:");
 
@@ -195,7 +195,7 @@ fn test_switchable_digital_io() {
         let dio = device.digital_io().expect("Failed to get DIO subsystem");
 
         // Create HAL wrapper for pin 0
-        let switchable = SwitchableDigitalIO::new(dio.clone(), 0);
+        let switchable = SwitchableDigitalIO::new(dio.clone());
 
         println!("\nTesting Switchable trait on pin 0:");
 
@@ -305,7 +305,7 @@ fn test_generic_device_code() {
 
         // Create HAL wrappers
         let readable_ai = ReadableAnalogInput::new(ai, 0, 0);
-        let settable_ao = SettableAnalogOutput::new(ao, 0, 0);
+        let settable_ao = SettableAnalogOutput::new(ao, 0);
 
         // Generic function that works with any Readable
         async fn read_any<R: Readable>(device: &R, name: &str) -> anyhow::Result<f64> {
