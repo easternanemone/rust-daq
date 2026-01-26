@@ -119,7 +119,6 @@ Fix: [brief summary - supervisor will read details from bead comments]"
 )
 ```
 
-<<<<<<< Updated upstream
 **If you see mock mode, the build is WRONG and must be rebuilt with the script.**
 
 ### Post-Build Verification - ALL Hardware Check
@@ -167,10 +166,11 @@ After connecting GUI to daemon:
 - Camera should stream real images (not synthetic gradients)
 - Comedi channels should show real voltage readings
 
-### Rhai Scripted Experiments Build
-=======
+### Supervisor Dispatch Guidelines
+
 Supervisors read the bead comments for full investigation context, then execute confidently.
->>>>>>> Stashed changes
+
+### Rhai Scripted Experiments Build
 
 ## Beads Commands
 
@@ -429,7 +429,6 @@ Questions:
 2. [specific question]"
 )
 ```
-<<<<<<< Updated upstream
 
 ### Size Limits (DoS Prevention)
 
@@ -902,6 +901,3 @@ grepai trace graph "ValidateToken" --depth 3 --json
 2. Use `grepai trace` to understand function relationships
 3. Use `Read` tool to examine files from results
 4. Only use Grep for exact string searches if needed
-
-=======
->>>>>>> Stashed changes
