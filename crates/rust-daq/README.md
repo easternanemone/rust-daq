@@ -119,7 +119,7 @@ cargo run --features networking --bin rust-daq-gui
 ### Test
 
 ```bash
-# Run all tests (122 passing)
+# Run all tests
 cargo test
 
 # Run specific test suite
@@ -257,8 +257,8 @@ See [CLAUDE.md](./CLAUDE.md#documentation-search--knowledge-base) for detailed u
 
 ## Project Status
 
-**Build**: ✅ Passing  
-**Tests**: ✅ 122 passing  
+**Build**: ✅ Passing
+**Tests**: ✅ Passing
 **Architecture**: V5 Headless-First (stable)
 
 ### Known Issues
@@ -268,4 +268,4 @@ See [CLAUDE.md](./CLAUDE.md#documentation-search--knowledge-base) for detailed u
 
 ## License
 
-[License information here]
+Dual-licensed under MIT or Apache 2.0.

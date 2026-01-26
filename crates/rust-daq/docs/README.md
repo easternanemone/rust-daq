@@ -30,12 +30,11 @@ See [Hybrid Search Setup](./HYBRID_SEARCH_SETUP.md) for detailed usage and [CLAU
 
 ## Documentation Structure
 
-### 🏗️ [Architecture](./architecture/)
+### 🏗️ [Architecture](../../docs/architecture/)
 High-level design documents explaining the core principles of the V5 "Headless-First" architecture.
-- [System Architecture](./architecture/01_system_architecture.md): The master design document.
-- [Configuration](./architecture/02_configuration.md): How configuration is handled (Figment, layering).
-- [Hardware Communication](./architecture/03_hardware_communication.md): Protocols and patterns.
-- [gRPC API](./architecture/04_grpc_api.md): The remote control interface.
+- [System Architecture](../../docs/architecture/ARCHITECTURE.md): Detailed breakdown of system design.
+- [Feature Matrix](../../docs/architecture/FEATURE_MATRIX.md): Guide to cargo features and build profiles.
+- [PVCAM Driver Architecture](../../docs/architecture/adr-pvcam-driver-architecture.md): PVCAM integration patterns.
 
 ### 📚 [Guides](./guides/)
 Practical how-to guides for users and developers.
@@ -58,6 +57,4 @@ Technical reference material.
   - [PVCAM Validation Checklist](./reference/instruments/PVCAM_VALIDATION_CHECKLIST.md): Prime BSI camera testing.
   - [PVCAM Hardware Validation](./reference/instruments/PVCAM_HARDWARE_VALIDATION.md): SDK installation and validation.
   - [PVCAM Operator Guide](./reference/instruments/PVCAM_OPERATOR_GUIDE.md): Operating the Prime BSI camera.
-- [Hardware Inventory](./reference/hardware_inventory.md): List of supported and available hardware.
-- [Hardware Testing Strategy](./reference/hardware_testing_strategy.md): Testing methodologies.
 - [PVCAM SDK](./reference/pvcam-sdk/): Documentation for the PVCAM camera SDK.

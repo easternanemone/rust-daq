@@ -493,4 +493,4 @@ If timing tests fail in CI:
 - [cargo-nextest documentation](https://nexte.st/)
 - [Tokio testing guide](https://tokio.rs/tokio/topics/testing)
 - [Hardware Validation README](../../crates/rust-daq/tests/HARDWARE_VALIDATION_README.md)
-- [Hardware Testing Strategy](../reference/hardware_testing_strategy.md)
+- [Hardware Testing Resources](../../CLAUDE.md#hardware-testing): See CLAUDE.md for hardware inventory and testing setup
