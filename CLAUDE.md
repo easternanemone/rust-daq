@@ -691,10 +691,21 @@ The Comedi driver supports the NI PCI-MIO-16XE-10 DAQ card on maitai via the Lin
 | NRSE | `"nrse"` | Non-Referenced Single-Ended (vs AISENSE) |
 | DIFF | `"diff"` | Differential (ACH0+ACH8 pairs, 8 channels max) |
 
-**BNC-2110 Channel Mapping:**
-- ACH0-ACH7 (AI0-AI7): Available on BNC connectors
-- ACH8-ACH15 (AI8-AI15): Spring terminal block only
-- DAC0, DAC1 (AO0, AO1): Available on BNC connectors
+**BNC-2110 Channel Mapping (maitai):**
+
+| Channel | Signal | Description |
+|---------|--------|-------------|
+| **ACH0** | DAC1 Loopback | Test loopback from AO1 (DAC1) |
+| **ACH1** | ESP300 Encoder | Encoder signal from Newport ESP300 motion controller |
+| **ACH2** | MaiTai Rep Rate | ~40MHz signal (half of laser repetition rate) |
+| **ACH3-ACH7** | Available | Unassigned, available on BNC connectors |
+| **ACH8-ACH15** | Terminal Block | Spring terminal block only (not BNC) |
+| **DAC0 (AO0)** | EOM Amplifier | Laser power control via electro-optic modulator |
+| **DAC1 (AO1)** | Test Loopback | Connected to ACH0 for self-test |
+| **DIO0-DIO7** | Digital I/O | 8 bidirectional digital lines |
+
+**Important:** DAC0 controls the EOM amplifier - do NOT write arbitrary voltages
+to DAC0 during testing as this affects laser power. Use DAC1→ACH0 for loopback tests.
 
 **Example Configuration:**
 
@@ -712,10 +723,15 @@ input_mode = "rse"  # or "nrse", "diff"
 units = "V"
 ```
 
-**Loopback Testing:**
-1. Connect BNC cable from DAC0 to ACH0
-2. Set ACH0 switch on BNC-2110 to FS (Floating Source)
+**Loopback Testing (DAC1→ACH0):**
+
+The maitai machine has a permanent loopback cable from DAC1 (AO1) to ACH0 (AI0).
+This allows self-test without affecting the EOM amplifier on DAC0.
+
+1. Loopback cable: DAC1 → ACH0 (already connected)
+2. ACH0 switch on BNC-2110: Set to FS (Floating Source)
 3. Use `input_mode = "rse"` in config
+4. Expected accuracy: ±100mV (uncalibrated hardware)
 
 **Test Commands:**
 ```bash
@@ -727,7 +743,7 @@ export COMEDI_SMOKE_TEST=1
 cargo nextest run --profile hardware --features hardware -p daq-driver-comedi -- hardware_smoke
 
 # Run all Comedi tests (set env vars for specific test suites)
-export COMEDI_LOOPBACK_TEST=1    # Analog loopback (requires AO0→ACH1 connection)
+export COMEDI_LOOPBACK_TEST=1    # Analog loopback (uses DAC1→ACH0 connection)
 export COMEDI_DIO_TEST=1          # Digital I/O tests
 export COMEDI_COUNTER_TEST=1      # Counter/timer tests
 export COMEDI_HAL_TEST=1          # HAL trait compliance

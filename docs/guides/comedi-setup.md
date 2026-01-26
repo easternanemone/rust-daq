@@ -147,25 +147,32 @@ comedi_test -t read -s 0 -c 0 /dev/comedi0
 
 The BNC 2110 provides easy access to DAQ signals via BNC connectors:
 
-### Analog Input Channels
+### Analog Input Channels (maitai Configuration)
 
-| BNC Label | Signal | Notes |
-|-----------|--------|-------|
-| ACH0-ACH7 | AI0-AI7 | Single-ended or differential |
-| ACH8-ACH15 | AI8-AI15 | Spring terminals only |
+| BNC Label | Signal | Description |
+|-----------|--------|-------------|
+| **ACH0** | DAC1 Loopback | Test loopback from AO1 (permanently connected) |
+| **ACH1** | ESP300 Encoder | Encoder signal from Newport ESP300 motion controller |
+| **ACH2** | MaiTai Rep Rate | ~40MHz signal (half of laser repetition rate) |
+| ACH3-ACH7 | Available | Unassigned, available on BNC connectors |
+| ACH8-ACH15 | Terminal Block | Spring terminals only (not BNC accessible) |
 
 ### Analog Output Channels
 
-| BNC Label | Signal | Notes |
-|-----------|--------|-------|
-| DAC0 | AO0 | ±10V range |
-| DAC1 | AO1 | ±10V range |
+| BNC Label | Signal | Description |
+|-----------|--------|-------------|
+| **DAC0 (AO0)** | EOM Amplifier | **CAUTION:** Controls laser power via electro-optic modulator |
+| **DAC1 (AO1)** | Test Loopback | Connected to ACH0 for self-test |
+
+> **Warning:** Do NOT write arbitrary voltages to DAC0 during testing as this 
+> directly controls laser power through the EOM amplifier. Always use DAC1→ACH0
+> for loopback tests.
 
 ### Digital I/O
 
 | Connector | Signal | Notes |
 |-----------|--------|-------|
-| P0.0-P0.7 | DIO0-DIO7 | Directly on 68-pin connector |
+| P0.0-P0.7 | DIO0-DIO7 | 8 bidirectional digital lines |
 
 ### Reference Mode Switch
 
@@ -174,7 +181,13 @@ The ACH<0..7> BNC inputs have a switch for each channel:
 - **GS (Ground-referenced Source)**: Source is grounded elsewhere
 - **FS (Floating Source)**: Source has no ground reference
 
-For loopback testing (AO → AI), set the switch to **FS**.
+For loopback testing (DAC1 → ACH0), set the ACH0 switch to **FS**.
+
+### Hardware Accuracy
+
+The NI PCI-MIO-16XE-10 without calibration typically has:
+- DC offset: ~50mV
+- Expected accuracy: ±100mV for loopback tests
 
 ## Rust Driver Setup
 
