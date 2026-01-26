@@ -153,7 +153,13 @@ mod tests {
 
     #[test]
     fn test_alert_response_equality() {
-        assert_eq!(AdaptiveAlertResponse::Pending, AdaptiveAlertResponse::Pending);
-        assert_ne!(AdaptiveAlertResponse::Approved, AdaptiveAlertResponse::Cancelled);
+        assert_eq!(
+            AdaptiveAlertResponse::Pending,
+            AdaptiveAlertResponse::Pending
+        );
+        assert_ne!(
+            AdaptiveAlertResponse::Approved,
+            AdaptiveAlertResponse::Cancelled
+        );
     }
 }

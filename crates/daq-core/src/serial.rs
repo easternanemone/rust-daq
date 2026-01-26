@@ -256,10 +256,7 @@ pub async fn open_serial_async(
 ///     Ok(())
 /// }
 /// ```
-pub async fn drain_serial_buffer<R: AsyncRead + Unpin>(
-    port: &mut R,
-    timeout_ms: u64,
-) -> usize {
+pub async fn drain_serial_buffer<R: AsyncRead + Unpin>(port: &mut R, timeout_ms: u64) -> usize {
     let mut discard = [0u8; 256];
     let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     let mut total_discarded = 0usize;
@@ -367,10 +364,10 @@ mod tests {
         // Buffer should now be empty
         let mut buf = [0u8; 1];
         match tokio::time::timeout(Duration::from_millis(10), device.read(&mut buf)).await {
-            Ok(Ok(0)) => {}, // EOF is ok
+            Ok(Ok(0)) => {} // EOF is ok
             Ok(Ok(_)) => panic!("Expected no data, but read some"),
-            Err(_) => {}, // Timeout is expected
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {}, // No data available
+            Err(_) => {} // Timeout is expected
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {} // No data available
             Ok(Err(e)) => panic!("Unexpected error: {}", e),
         }
     }
