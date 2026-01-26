@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Live Visualization** - Real-time plotting during acquisition
 - [x] **Phase 6: Data Management** - Auto-save, metadata, and run history
 - [x] **Phase 7: Code Export and Provenance** - Rhai generation and versioning
-- [ ] **Phase 8: Advanced Scans** - Nested and adaptive scans
+- [x] **Phase 8: Advanced Scans** - Nested and adaptive scans (7/7 plans complete)
 - [ ] **Phase 9: Templates and Library** - Reusable experiment patterns (including subgraph grouping)
 - [ ] **Phase 10: Polish and Integration** - Final features and production readiness
 
@@ -156,13 +156,22 @@ Plans:
 **Plans**: 7 plans in 3 waves
 
 Plans:
-- [ ] 08-01-PLAN.md — Zarr V3 storage foundation (zarrs crate, Xarray-compatible encoding)
-- [ ] 08-02-PLAN.md — NestedScan node type with outer/inner configuration
-- [ ] 08-03-PLAN.md — AdaptiveScan node type with trigger conditions and actions
-- [ ] 08-04-PLAN.md — NestedScan translation and code generation
-- [ ] 08-05-PLAN.md — AdaptiveScan translation with peak detection
-- [ ] 08-06-PLAN.md — Nested progress display and Zarr integration points
-- [ ] 08-07-PLAN.md — Adaptive trigger alert modal UI
+- [x] 08-01-PLAN.md — Zarr V3 storage foundation (zarrs crate, Xarray-compatible encoding)
+- [x] 08-02-PLAN.md — NestedScan node type with outer/inner configuration
+- [x] 08-03-PLAN.md — AdaptiveScan node type with trigger conditions and actions
+- [x] 08-04-PLAN.md — NestedScan translation and code generation
+- [x] 08-05-PLAN.md — AdaptiveScan translation with peak detection
+- [x] 08-06-PLAN.md — Nested progress display and Zarr integration points
+- [x] 08-07-PLAN.md — Adaptive trigger alert modal UI
+
+**Phase 8 Completion Summary:**
+- Zarr V3 storage foundation with Xarray compatibility
+- NestedScan node type with outer/inner loop configuration
+- AdaptiveScan node type with trigger conditions and dynamic actions
+- Translation and code generation for nested and adaptive scans
+- Nested progress display with row-major dimension tracking
+- Adaptive trigger alert modal with user approval flow
+- All 7 plans delivered on schedule
 
 ### Phase 9: Templates and Library
 **Goal**: Reusable experiment patterns and subgraph grouping accelerate common tasks
@@ -210,6 +219,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 5. Live Visualization | 5/5 | Complete | 2026-01-22 |
 | 6. Data Management | 4/4 | Complete | 2026-01-22 |
 | 7. Code Export and Provenance | 4/4 | Complete | 2026-01-25 |
-| 8. Advanced Scans | 0/TBD | Not started | - |
-| 9. Templates and Library | 0/TBD | Not started | - |
+| 8. Advanced Scans | 7/7 | Complete | 2026-01-25 |
+| 9. Templates and Library | 0/TBD | Planning | - |
 | 10. Polish and Integration | 0/TBD | Not started | - |
