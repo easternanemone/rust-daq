@@ -370,7 +370,8 @@ impl Movable for Esp300Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, BufReader};
+    use tokio::sync::Mutex;
 
     #[test]
     fn test_factory_driver_type() {
