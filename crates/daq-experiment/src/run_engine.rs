@@ -48,12 +48,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::plans::{Plan, PlanCommand};
-use daq_core::data::Frame;
+use daq_core::capabilities::{FrameObserver, ObserverHandle};
+use daq_core::data::FrameView;
 use daq_core::experiment::document::{
     new_uid, DataKey, DescriptorDoc, Document, EventDoc, ExperimentManifest, StartDoc, StopDoc,
 };
@@ -90,6 +91,39 @@ struct QueuedPlan {
     run_uid: String,
 }
 
+/// Frame capture data for experiment persistence
+struct FrameCapture {
+    device_id: String,
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    frame_number: u64,
+}
+
+/// Observer that captures frames for experiment persistence
+struct ExperimentFrameObserver {
+    tx: mpsc::Sender<FrameCapture>,
+    device_id: String,
+}
+
+impl FrameObserver for ExperimentFrameObserver {
+    fn on_frame(&self, frame: &FrameView<'_>) {
+        let capture = FrameCapture {
+            device_id: self.device_id.clone(),
+            data: frame.pixels().to_vec(),
+            width: frame.width,
+            height: frame.height,
+            frame_number: frame.frame_number,
+        };
+        // Non-blocking send - drop frames if channel is full
+        let _ = self.tx.try_send(capture);
+    }
+
+    fn name(&self) -> &str {
+        "experiment_capture"
+    }
+}
+
 /// Run context for the currently executing plan
 struct RunContext {
     run_uid: String,
@@ -98,7 +132,8 @@ struct RunContext {
     collected_data: HashMap<String, f64>,
     collected_frames: HashMap<String, Vec<u8>>,
     current_positions: HashMap<String, f64>,
-    frame_subscriptions: HashMap<String, broadcast::Receiver<Arc<Frame>>>,
+    frame_observers: HashMap<String, ObserverHandle>,
+    frame_channels: HashMap<String, mpsc::Receiver<FrameCapture>>,
     /// Unix timestamp in nanoseconds when the run started
     run_start_ns: u64,
 }
@@ -360,23 +395,37 @@ impl RunEngine {
         // and persist the hardware state snapshot for experiment reproducibility
         self.emit_document(Document::Manifest(manifest)).await;
 
-        // Setup frame subscriptions for any FrameProducers in the plan
-        // NOTE: Using deprecated subscribe_frames() because register_primary_output()
-        // is not yet implemented in the streaming loop (frames aren't sent to primary_tx)
-        #[allow(deprecated)]
-        let mut frame_subscriptions = HashMap::new();
+        // Setup frame observers for any FrameProducers in the plan (bd-b86g.3)
+        // Using observer pattern for secondary frame capture (experiment persistence)
+        let mut frame_observers = HashMap::new();
+        let mut frame_channels = HashMap::new();
+        
         for det_id in plan.detectors() {
-            // Check if it's a FrameProducer
             if let Some(producer) = self.device_registry.get_frame_producer(&det_id) {
-                #[allow(deprecated)]
-                if let Some(rx) = producer.subscribe_frames().await {
-                    info!("Subscribed to frames from {}", det_id);
-                    frame_subscriptions.insert(det_id.to_string(), rx);
-                } else {
-                    warn!(
-                        "Device {} is FrameProducer but returned no subscription",
-                        det_id
-                    );
+                if producer.supports_observers() {
+                    // Create channel for frame capture
+                    let (tx, rx) = mpsc::channel(16);
+                    
+                    // Create observer
+                    let observer = Box::new(ExperimentFrameObserver {
+                        tx,
+                        device_id: det_id.to_string(),
+                    });
+                    
+                    // Register observer
+                    match producer.register_observer(observer).await {
+                        Ok(handle) => {
+                            info!("Registered frame observer for {}", det_id);
+                            frame_observers.insert(det_id.to_string(), handle);
+                            frame_channels.insert(det_id.to_string(), rx);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to register observer for {}: {}",
+                                det_id, e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -418,7 +467,8 @@ impl RunEngine {
                 collected_data: HashMap::new(),
                 collected_frames: HashMap::new(),
                 current_positions: HashMap::new(),
-                frame_subscriptions,
+                frame_observers,
+                frame_channels,
                 run_start_ns: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_nanos() as u64)
@@ -485,6 +535,28 @@ impl RunEngine {
             }
         }
 
+        // Clean up frame observers before emitting StopDoc (bd-b86g.3)
+        {
+            let mut ctx_guard = self.run_context.lock().await;
+            if let Some(ctx) = ctx_guard.as_mut() {
+                for (det_id, handle) in ctx.frame_observers.drain() {
+                    if let Some(producer) = self.device_registry.get_frame_producer(&det_id) {
+                        if let Err(e) = producer.unregister_observer(handle).await {
+                            warn!(
+                                device = %det_id,
+                                error = %e,
+                                "Failed to unregister frame observer"
+                            );
+                        } else {
+                            debug!(device = %det_id, "Unregistered frame observer");
+                        }
+                    }
+                }
+                // Clear channels
+                ctx.frame_channels.clear();
+            }
+        }
+
         // Emit StopDoc
         let stop_doc = match exit_status {
             "success" => StopDoc::success(&run_uid, num_events),
@@ -527,25 +599,30 @@ impl RunEngine {
             }
 
             PlanCommand::Read { device_id } => {
-                // Check if we have a frame subscription for this device
+                // Check if we have a frame channel for this device
                 let mut is_frame_device = false;
 
                 {
                     // Scope to hold lock briefly
                     let mut ctx_guard = self.run_context.lock().await;
                     if let Some(ctx) = ctx_guard.as_mut() {
-                        if let Some(rx) = ctx.frame_subscriptions.get_mut(&device_id) {
+                        if let Some(rx) = ctx.frame_channels.get_mut(&device_id) {
                             is_frame_device = true;
-                            // Wait for a frame (async)
+                            // Wait for a frame (async, non-blocking channel receive)
                             match rx.recv().await {
-                                Ok(frame) => {
-                                    // Convert Bytes to Vec<u8> for EventDoc serialization
-                                    let data_copy = frame.data.to_vec();
-                                    ctx.collected_frames.insert(device_id.clone(), data_copy);
-                                    debug!(device = %device_id, size = %frame.data.len(), "Captured frame");
+                                Some(capture) => {
+                                    let data_len = capture.data.len();
+                                    let frame_num = capture.frame_number;
+                                    ctx.collected_frames.insert(device_id.clone(), capture.data);
+                                    debug!(
+                                        device = %device_id,
+                                        size = %data_len,
+                                        frame_num = %frame_num,
+                                        "Captured frame"
+                                    );
                                 }
-                                Err(e) => {
-                                    warn!(device = %device_id, error = %e, "Failed to receive frame");
+                                None => {
+                                    warn!(device = %device_id, "Frame channel closed");
                                 }
                             }
                         }
