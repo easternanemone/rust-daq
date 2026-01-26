@@ -38,7 +38,7 @@
 #![cfg(all(feature = "hardware_tests", feature = "thorlabs"))]
 
 use rust_daq::hardware::capabilities::Movable;
-use rust_daq::hardware::ell14::{Ell14Driver, HomeDirection};
+use daq_hardware::drivers::ell14::{Ell14Driver, HomeDirection};
 use std::time::Duration;
 use tokio::time::sleep;
 
