@@ -155,10 +155,12 @@ impl PowerMeterControlPanel {
                     Ok(wl) => {
                         self.state.wavelength_nm = Some(wl);
                         self.wavelength_input = format!("{:.0}", wl);
-                        self.panel_state.set_status(format!("Calibration wavelength set to {} nm", wl));
+                        self.panel_state
+                            .set_status(format!("Calibration wavelength set to {} nm", wl));
                     }
                     Err(e) => {
-                        self.panel_state.set_error(format!("Failed to set wavelength: {}", e));
+                        self.panel_state
+                            .set_error(format!("Failed to set wavelength: {}", e));
                     }
                 },
             }

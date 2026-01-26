@@ -86,21 +86,45 @@ impl Default for ConnectionConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ConnectionType { Serial, Tcp, Udp }
+pub enum ConnectionType {
+    Serial,
+    Tcp,
+    Udp,
+}
 
-impl Default for ConnectionType { fn default() -> Self { Self::Serial } }
+impl Default for ConnectionType {
+    fn default() -> Self {
+        Self::Serial
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Parity { None, Odd, Even }
+pub enum Parity {
+    None,
+    Odd,
+    Even,
+}
 
-impl Default for Parity { fn default() -> Self { Self::None } }
+impl Default for Parity {
+    fn default() -> Self {
+        Self::None
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FlowControl { None, Software, Hardware }
+pub enum FlowControl {
+    None,
+    Software,
+    Hardware,
+}
 
-impl Default for FlowControl { fn default() -> Self { Self::None } }
+impl Default for FlowControl {
+    fn default() -> Self {
+        Self::None
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BusConfig {
@@ -113,9 +137,17 @@ pub struct BusConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AddressFormat { HexChar, Decimal, HexByte }
+pub enum AddressFormat {
+    HexChar,
+    Decimal,
+    HexByte,
+}
 
-impl Default for AddressFormat { fn default() -> Self { Self::HexChar } }
+impl Default for AddressFormat {
+    fn default() -> Self {
+        Self::HexChar
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ParameterConfig {
@@ -129,7 +161,12 @@ pub struct ParameterConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ParameterType { String, Int, Float, Bool }
+pub enum ParameterType {
+    String,
+    Int,
+    Float,
+    Bool,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CommandConfig {
@@ -161,10 +198,18 @@ pub struct ResponseFieldConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ResponseFieldType { HexU32, HexI32, Int, Float, String }
+pub enum ResponseFieldType {
+    HexU32,
+    HexI32,
+    Int,
+    Float,
+    String,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ConversionConfig { pub formula: String }
+pub struct ConversionConfig {
+    pub formula: String,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TraitMappingConfig {
@@ -200,9 +245,17 @@ pub struct ErrorCodeConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ErrorSeverity { Warning, Error, Critical }
+pub enum ErrorSeverity {
+    Warning,
+    Error,
+    Critical,
+}
 
-impl Default for ErrorSeverity { fn default() -> Self { Self::Error } }
+impl Default for ErrorSeverity {
+    fn default() -> Self {
+        Self::Error
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RetryConfig {
@@ -220,16 +273,42 @@ pub struct RetryConfig {
     pub no_retry_on_errors: Vec<String>,
 }
 
-fn default_baud_rate() -> u32 { 9600 }
-fn default_data_bits() -> u8 { 8 }
-fn default_stop_bits() -> u8 { 1 }
-fn default_terminator_rx() -> String { "\r\n".to_string() }
-fn default_timeout_ms() -> u64 { 1000 }
-fn default_expects_response() -> bool { true }
-fn default_address_format() -> AddressFormat { AddressFormat::HexChar }
-fn default_bus_address() -> String { "0".to_string() }
-fn default_recoverable() -> bool { true }
-fn default_max_retries() -> u8 { 3 }
-fn default_initial_delay_ms() -> u32 { 100 }
-fn default_max_delay_ms() -> u32 { 1000 }
-fn default_backoff_multiplier() -> f64 { 2.0 }
+fn default_baud_rate() -> u32 {
+    9600
+}
+fn default_data_bits() -> u8 {
+    8
+}
+fn default_stop_bits() -> u8 {
+    1
+}
+fn default_terminator_rx() -> String {
+    "\r\n".to_string()
+}
+fn default_timeout_ms() -> u64 {
+    1000
+}
+fn default_expects_response() -> bool {
+    true
+}
+fn default_address_format() -> AddressFormat {
+    AddressFormat::HexChar
+}
+fn default_bus_address() -> String {
+    "0".to_string()
+}
+fn default_recoverable() -> bool {
+    true
+}
+fn default_max_retries() -> u8 {
+    3
+}
+fn default_initial_delay_ms() -> u32 {
+    100
+}
+fn default_max_delay_ms() -> u32 {
+    1000
+}
+fn default_backoff_multiplier() -> f64 {
+    2.0
+}

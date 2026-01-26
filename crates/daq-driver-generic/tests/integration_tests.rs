@@ -871,9 +871,7 @@ mod trait_execution_tests {
         });
 
         // Execute stop
-        let result = driver
-            .execute_trait_method("Movable", "stop", None)
-            .await;
+        let result = driver.execute_trait_method("Movable", "stop", None).await;
 
         assert!(result.is_ok());
 
