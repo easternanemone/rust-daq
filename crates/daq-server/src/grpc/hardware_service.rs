@@ -439,10 +439,7 @@ macro_rules! require_capability {
     ($self:expr, $getter:ident, $device_id:expr, $capability_desc:literal) => {{
         let capability = $self.registry.$getter($device_id);
         capability.ok_or_else(|| {
-            Status::not_found(format!(
-                "Device '{}' {}",
-                $device_id, $capability_desc
-            ))
+            Status::not_found(format!("Device '{}' {}", $device_id, $capability_desc))
         })?
     }};
 }
@@ -705,7 +702,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let movable = require_capability!(self, get_movable, &req.device_id, "not found or not movable");
+        let movable = require_capability!(
+            self,
+            get_movable,
+            &req.device_id,
+            "not found or not movable"
+        );
 
         self.await_with_timeout("move_abs", movable.move_abs(req.value))
             .await?;
@@ -771,7 +773,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let movable = require_capability!(self, get_movable, &req.device_id, "not found or not movable");
+        let movable = require_capability!(
+            self,
+            get_movable,
+            &req.device_id,
+            "not found or not movable"
+        );
 
         self.await_with_timeout("move_rel", movable.move_rel(req.value))
             .await?;
@@ -837,7 +844,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let movable = require_capability!(self, get_movable, &req.device_id, "not found or not movable");
+        let movable = require_capability!(
+            self,
+            get_movable,
+            &req.device_id,
+            "not found or not movable"
+        );
 
         self.await_with_timeout("stop_motion", movable.stop())
             .await?;
@@ -859,7 +871,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let movable = require_capability!(self, get_movable, &req.device_id, "not found or not movable");
+        let movable = require_capability!(
+            self,
+            get_movable,
+            &req.device_id,
+            "not found or not movable"
+        );
 
         if let Some(timeout_ms) = req.timeout_ms {
             match tokio::time::timeout(
@@ -968,7 +985,12 @@ impl HardwareService for HardwareServiceImpl {
         tracing::debug!("read_value called for device_id={}", req.device_id);
 
         // Extract Arc and metadata without lock before awaiting hardware
-        let readable = require_capability!(self, get_readable, &req.device_id, "not found or not readable");
+        let readable = require_capability!(
+            self,
+            get_readable,
+            &req.device_id,
+            "not found or not readable"
+        );
         let units = self
             .registry
             .get_device_info(&req.device_id)
@@ -1069,7 +1091,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let triggerable = require_capability!(self, get_triggerable, &req.device_id, "not found or not triggerable");
+        let triggerable = require_capability!(
+            self,
+            get_triggerable,
+            &req.device_id,
+            "not found or not triggerable"
+        );
 
         match triggerable.arm().await {
             Ok(_) => Ok(Response::new(ArmResponse {
@@ -1093,7 +1120,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let triggerable = require_capability!(self, get_triggerable, &req.device_id, "not found or not triggerable");
+        let triggerable = require_capability!(
+            self,
+            get_triggerable,
+            &req.device_id,
+            "not found or not triggerable"
+        );
 
         let timestamp_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1126,7 +1158,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let exposure_ctrl = require_capability!(self, get_exposure_control, &req.device_id, "not found or has no exposure control");
+        let exposure_ctrl = require_capability!(
+            self,
+            get_exposure_control,
+            &req.device_id,
+            "not found or has no exposure control"
+        );
 
         // Convert ms to seconds for the trait API
         let exposure_seconds = req.exposure_ms / 1000.0;
@@ -1170,7 +1207,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let exposure_ctrl = require_capability!(self, get_exposure_control, &req.device_id, "not found or has no exposure control");
+        let exposure_ctrl = require_capability!(
+            self,
+            get_exposure_control,
+            &req.device_id,
+            "not found or has no exposure control"
+        );
 
         // Convert seconds to ms for response
         match exposure_ctrl.get_exposure().await {
@@ -1195,7 +1237,12 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetShutterResponse>, Status> {
         let req = request.into_inner();
 
-        let shutter_ctrl = require_capability!(self, get_shutter_control, &req.device_id, "not found or has no shutter control");
+        let shutter_ctrl = require_capability!(
+            self,
+            get_shutter_control,
+            &req.device_id,
+            "not found or has no shutter control"
+        );
 
         let open = req.open;
         match if open {
@@ -1221,7 +1268,12 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetShutterResponse>, Status> {
         let req = request.into_inner();
 
-        let shutter_ctrl = require_capability!(self, get_shutter_control, &req.device_id, "not found or has no shutter control");
+        let shutter_ctrl = require_capability!(
+            self,
+            get_shutter_control,
+            &req.device_id,
+            "not found or has no shutter control"
+        );
 
         match shutter_ctrl.is_shutter_open().await {
             Ok(is_open) => Ok(Response::new(GetShutterResponse { is_open })),
@@ -1239,7 +1291,12 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<SetWavelengthResponse>, Status> {
         let req = request.into_inner();
 
-        let wavelength_ctrl = require_capability!(self, get_wavelength_tunable, &req.device_id, "not found or has no wavelength control");
+        let wavelength_ctrl = require_capability!(
+            self,
+            get_wavelength_tunable,
+            &req.device_id,
+            "not found or has no wavelength control"
+        );
 
         let requested_nm = req.wavelength_nm;
         match wavelength_ctrl.set_wavelength(requested_nm).await {
@@ -1261,7 +1318,12 @@ impl HardwareService for HardwareServiceImpl {
     ) -> Result<Response<GetWavelengthResponse>, Status> {
         let req = request.into_inner();
 
-        let wavelength_ctrl = require_capability!(self, get_wavelength_tunable, &req.device_id, "not found or has no wavelength control");
+        let wavelength_ctrl = require_capability!(
+            self,
+            get_wavelength_tunable,
+            &req.device_id,
+            "not found or has no wavelength control"
+        );
 
         match wavelength_ctrl.get_wavelength().await {
             Ok(nm) => Ok(Response::new(GetWavelengthResponse { wavelength_nm: nm })),
@@ -1284,7 +1346,12 @@ impl HardwareService for HardwareServiceImpl {
             req.enabled
         );
 
-        let emission_ctrl = require_capability!(self, get_emission_control, &req.device_id, "not found or has no emission control");
+        let emission_ctrl = require_capability!(
+            self,
+            get_emission_control,
+            &req.device_id,
+            "not found or has no emission control"
+        );
 
         let enabled = req.enabled;
         match if enabled {
@@ -1312,7 +1379,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
         log::info!(">>> get_emission RPC called: device={}", req.device_id);
 
-        let emission_ctrl = require_capability!(self, get_emission_control, &req.device_id, "not found or has no emission control");
+        let emission_ctrl = require_capability!(
+            self,
+            get_emission_control,
+            &req.device_id,
+            "not found or has no emission control"
+        );
 
         log::info!(">>> get_emission: calling is_emission_enabled()...");
         match emission_ctrl.is_emission_enabled().await {
@@ -1339,7 +1411,12 @@ impl HardwareService for HardwareServiceImpl {
         let req = request.into_inner();
 
         // Extract Arc without lock before awaiting hardware
-        let frame_producer = require_capability!(self, get_frame_producer, &req.device_id, "not found or not a frame producer");
+        let frame_producer = require_capability!(
+            self,
+            get_frame_producer,
+            &req.device_id,
+            "not found or not a frame producer"
+        );
 
         // Use frame_count from request (0 or None = continuous)
         let frame_limit = req.frame_count.filter(|&n| n > 0);
@@ -1375,7 +1452,12 @@ impl HardwareService for HardwareServiceImpl {
         tracing::debug!(device_id = %req.device_id, "stop_stream called");
 
         // Extract Arc without lock before awaiting hardware
-        let frame_producer = require_capability!(self, get_frame_producer, &req.device_id, "not found or not a frame producer");
+        let frame_producer = require_capability!(
+            self,
+            get_frame_producer,
+            &req.device_id,
+            "not found or not a frame producer"
+        );
 
         match frame_producer.stop_stream().await {
             Ok(_) => {
@@ -1427,7 +1509,12 @@ impl HardwareService for HardwareServiceImpl {
         let quality = req.quality();
 
         // Get frame producer
-        let frame_producer = require_capability!(self, get_frame_producer, &device_id, "not found or not a frame producer");
+        let frame_producer = require_capability!(
+            self,
+            get_frame_producer,
+            &device_id,
+            "not found or not a frame producer"
+        );
 
         // Check if device supports observers (bd-0dax.6.3)
         if !frame_producer.supports_observers() {
@@ -2062,9 +2149,7 @@ impl HardwareService for HardwareServiceImpl {
                     // Try as raw string if JSON parsing fails
                     Ok::<_, serde_json::Error>(serde_json::Value::String(req.value.clone()))
                 })
-                .map_err(|e| {
-                    Status::invalid_argument(format!("Invalid value format: {}", e))
-                })?;
+                .map_err(|e| Status::invalid_argument(format!("Invalid value format: {}", e)))?;
 
             // Set the parameter
             settable

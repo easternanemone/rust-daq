@@ -5,4 +5,4 @@ pub mod factory;
 pub mod script_engine;
 
 pub use driver::GenericSerialDriver;
-pub use factory::{GenericSerialDriverFactory, GenericSerialInstanceConfig, load_all_factories};
+pub use factory::{load_all_factories, GenericSerialDriverFactory, GenericSerialInstanceConfig};

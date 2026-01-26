@@ -63,7 +63,8 @@ impl StageControlPanel {
                         self.panel_state.error = None;
                     }
                     Err(e) => {
-                        self.panel_state.set_error(format!("Failed to fetch state: {}", e));
+                        self.panel_state
+                            .set_error(format!("Failed to fetch state: {}", e));
                     }
                 },
                 ActionResult::Move(result) => match result {

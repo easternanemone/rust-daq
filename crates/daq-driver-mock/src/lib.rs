@@ -30,6 +30,7 @@
 //! registry.register_factory(Box::new(MockPowerMeterFactory));
 //! ```
 
+mod common;
 mod mock_camera;
 mod mock_power_meter;
 mod mock_stage;

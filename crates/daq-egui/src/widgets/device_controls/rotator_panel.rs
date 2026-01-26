@@ -90,7 +90,8 @@ impl RotatorControlPanel {
                             self.panel_state.error = None;
                         }
                         Err(e) => {
-                            self.panel_state.set_error(format!("Failed to fetch state: {}", e));
+                            self.panel_state
+                                .set_error(format!("Failed to fetch state: {}", e));
                         }
                     }
                 }
@@ -318,8 +319,8 @@ impl DeviceControlWidget for RotatorControlPanel {
         }
 
         // Auto-refresh logic - only refresh if no refresh already in flight
-        let should_refresh = self.panel_state.should_refresh(Self::REFRESH_INTERVAL)
-            && !self.refresh_in_flight;
+        let should_refresh =
+            self.panel_state.should_refresh(Self::REFRESH_INTERVAL) && !self.refresh_in_flight;
 
         if should_refresh && client.is_some() {
             self.fetch_state(client.as_deref_mut(), runtime, &device_id);
@@ -501,8 +502,14 @@ mod tests {
         );
 
         // No error or status messages initially
-        assert!(panel.panel_state.error.is_none(), "Error should be None on creation");
-        assert!(panel.panel_state.status.is_none(), "Status should be None on creation");
+        assert!(
+            panel.panel_state.error.is_none(),
+            "Error should be None on creation"
+        );
+        assert!(
+            panel.panel_state.status.is_none(),
+            "Status should be None on creation"
+        );
 
         // Device ID not set until UI is rendered with device info
         assert!(
