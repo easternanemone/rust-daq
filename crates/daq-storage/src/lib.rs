@@ -1,3 +1,42 @@
+//! # daq-storage
+//!
+//! High-throughput data storage and buffering infrastructure for rust-daq.
+//!
+//! This crate provides the storage layer handling:
+//!
+//! - **[`RingBuffer`]** - Memory-mapped circular buffers for high-speed streaming
+//! - **[`HDF5Writer`]** - HDF5 file output with compression
+//! - **[`DocumentWriter`]** - Bluesky document persistence
+//! - **Cross-Process Access** - Python and Julia can read ring buffers via mmap
+//!
+//! ## Quick Example
+//!
+//! ```rust,ignore
+//! use daq_storage::ring_buffer::RingBuffer;
+//! use std::path::Path;
+//!
+//! // Create a ring buffer with 100 frame slots
+//! let buffer = RingBuffer::create(Path::new("/tmp/daq_ring"), 100)?;
+//!
+//! // Write frames (from camera callback)
+//! buffer.write(&frame_bytes)?;
+//!
+//! // Read frames (for storage or visualization)
+//! let frame = buffer.read_latest()?;
+//! ```
+//!
+//! ## Feature Flags
+//!
+//! - `storage_hdf5` - HDF5 file output with compression
+//! - `storage_arrow` - Arrow IPC format support
+//! - `storage_parquet` - Parquet columnar format
+//! - `storage_tiff` - TIFF image stacks
+//! - `storage_zarr` - Zarr V3 chunked arrays
+//!
+//! [`RingBuffer`]: ring_buffer::RingBuffer
+//! [`HDF5Writer`]: hdf5_writer::HDF5Writer
+//! [`DocumentWriter`]: document_writer::DocumentWriter
+
 // TODO: Fix doc comment generic types to use backticks
 #![allow(rustdoc::invalid_html_tags)]
 #![allow(rustdoc::broken_intra_doc_links)]
