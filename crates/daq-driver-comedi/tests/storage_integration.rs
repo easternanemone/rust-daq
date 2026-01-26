@@ -34,7 +34,6 @@
 use daq_driver_comedi::{ComediDevice, StreamAcquisition, StreamConfig};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;

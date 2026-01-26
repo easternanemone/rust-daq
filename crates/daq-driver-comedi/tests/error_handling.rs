@@ -32,7 +32,7 @@
 
 #![cfg(feature = "hardware")]
 
-use daq_driver_comedi::{ComediDevice, ComediError};
+use daq_driver_comedi::ComediDevice;
 use std::env;
 
 // =============================================================================

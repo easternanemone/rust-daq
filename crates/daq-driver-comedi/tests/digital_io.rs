@@ -38,7 +38,7 @@
 
 #![cfg(feature = "hardware")]
 
-use daq_driver_comedi::{subsystem::DioDirection, ComediDevice};
+use daq_driver_comedi::{ComediDevice, DioDirection};
 use std::env;
 use std::thread;
 use std::time::Duration;
