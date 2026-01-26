@@ -148,6 +148,13 @@ pub struct GenericDriver {
     /// Set to true after PluginFactory::spawn() runs on_connect, so
     /// DeviceLifecycle::on_register() can skip if already done.
     on_connect_executed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+
+    /// Frame observers for secondary frame access (taps).
+    /// Stores (observer_id, observer) pairs for dispatching on_frame() calls.
+    observers: std::sync::Arc<RwLock<Vec<(u64, Box<dyn crate::capabilities::FrameObserver>)>>>,
+
+    /// Monotonic counter for generating unique observer IDs.
+    next_observer_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl GenericDriver {
@@ -235,6 +242,8 @@ impl GenericDriver {
             is_streaming: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             parameters: std::sync::Arc::new(ParameterSet::new()),
             on_connect_executed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            observers: std::sync::Arc::new(RwLock::new(Vec::new())),
+            next_observer_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
     }
 
@@ -1411,6 +1420,17 @@ impl GenericDriver {
                 self.acquire_frame(frame_producer).await?
             };
 
+            // Dispatch to observers (taps) before broadcasting
+            {
+                let observers = self.observers.read().await;
+                if !observers.is_empty() {
+                    let frame_view = daq_core::data::FrameView::from_frame(&frame);
+                    for (_id, observer) in observers.iter() {
+                        observer.on_frame(&frame_view);
+                    }
+                }
+            }
+
             // Broadcast frame
             let frame_arc = std::sync::Arc::new(frame);
             let _ = self.frame_broadcaster.send(frame_arc); // Ignore if no subscribers
@@ -1476,6 +1496,59 @@ impl GenericDriver {
         }
 
         Ok(crate::Frame::from_u16(width, height, &buffer))
+    }
+
+    // =========================================================================
+    // Frame Observer Methods (bd-b86g.1)
+    // =========================================================================
+
+    /// Register a frame observer for secondary frame access (tap).
+    ///
+    /// # Arguments
+    /// * `observer` - The observer implementing FrameObserver trait
+    ///
+    /// # Returns
+    /// * Ok(handle) - Use handle to unregister observer later
+    /// * Err if registration fails
+    pub async fn register_observer(
+        &self,
+        observer: Box<dyn crate::capabilities::FrameObserver>,
+    ) -> Result<crate::capabilities::ObserverHandle> {
+        let id = self
+            .next_observer_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut observers = self.observers.write().await;
+        observers.push((id, observer));
+        Ok(crate::capabilities::ObserverHandle::new(id))
+    }
+
+    /// Unregister a previously registered frame observer.
+    ///
+    /// # Arguments
+    /// * `handle` - Handle returned from register_observer
+    ///
+    /// # Returns
+    /// * Ok(()) if unregistration succeeded
+    /// * Err if handle is invalid
+    pub async fn unregister_observer(
+        &self,
+        handle: crate::capabilities::ObserverHandle,
+    ) -> Result<()> {
+        let mut observers = self.observers.write().await;
+        let initial_len = observers.len();
+        observers.retain(|(id, _)| *id != handle.id());
+        if observers.len() == initial_len {
+            anyhow::bail!("Observer handle {:?} not found", handle.id());
+        }
+        Ok(())
+    }
+
+    /// Check if this device supports frame observers.
+    ///
+    /// # Returns
+    /// * `true` - GenericDriver always supports observers if FrameProducer is configured
+    pub fn supports_observers(&self) -> bool {
+        self.config.capabilities.frame_producer.is_some()
     }
 
     /// Marks the on_connect sequence as having been executed.
