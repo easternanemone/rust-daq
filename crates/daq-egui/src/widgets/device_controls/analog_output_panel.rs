@@ -55,7 +55,8 @@ impl AnalogOutputControlPanel {
                     Ok(voltage) => {
                         self.voltage = voltage;
                         self.voltage_input = format!("{:.3}", voltage);
-                        self.panel_state.set_status(format!("Set to {:.3} V", voltage));
+                        self.panel_state
+                            .set_status(format!("Set to {:.3} V", voltage));
                     }
                     Err(e) => {
                         self.panel_state.set_error(format!("Write failed: {}", e));
@@ -255,8 +256,14 @@ mod tests {
         );
 
         // No error or status messages initially
-        assert!(panel.panel_state.error.is_none(), "Error should be None on creation");
-        assert!(panel.panel_state.status.is_none(), "Status should be None on creation");
+        assert!(
+            panel.panel_state.error.is_none(),
+            "Error should be None on creation"
+        );
+        assert!(
+            panel.panel_state.status.is_none(),
+            "Status should be None on creation"
+        );
 
         // Device ID not set until UI is rendered with device info
         assert!(
