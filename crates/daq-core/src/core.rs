@@ -1186,7 +1186,7 @@ pub trait Stage: Instrument {
             if start.elapsed() > timeout {
                 return Err(anyhow::anyhow!("Timeout waiting for motion to settle"));
             }
-            crate::platform::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 }
