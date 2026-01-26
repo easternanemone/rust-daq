@@ -221,7 +221,7 @@ impl SystemHealthMonitor {
         });
 
         // Check for critical errors in recent history (last 5 minutes)
-        let five_minutes_ago = now - Duration::from_secs(300);
+        let five_minutes_ago = now.checked_sub(Duration::from_secs(300)).unwrap_or(now);
         let has_critical_errors = state
             .error_history
             .iter()

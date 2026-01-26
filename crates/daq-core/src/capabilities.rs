@@ -382,7 +382,7 @@ pub trait FrameObserver: Send + Sync {
     fn on_frame(&self, frame: &crate::data::FrameView<'_>);
 
     /// Optional: Return a descriptive name for this observer (for debugging/logging).
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "unnamed_observer"
     }
 }

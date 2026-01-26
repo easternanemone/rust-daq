@@ -273,6 +273,7 @@ impl Frame {
         // Vec<u8> is not guaranteed to be u16 aligned, so we rely on `align_to`.
         // Ideally we would use `bytemuck::cast_slice`, but we want to avoid deps if possible.
         // For now, we will perform a check-and-cast.
+        #[allow(unsafe_code)]
         let (prefix, mid, suffix) = unsafe { self.data.align_to::<u16>() };
 
         if !prefix.is_empty() || !suffix.is_empty() {
@@ -557,6 +558,7 @@ impl<'a> FrameView<'a> {
         }
 
         // SAFETY: Casting [u8] to [u16] requires alignment check
+        #[allow(unsafe_code)]
         let (prefix, mid, suffix) = unsafe { self.pixels.align_to::<u16>() };
 
         if !prefix.is_empty() || !suffix.is_empty() {

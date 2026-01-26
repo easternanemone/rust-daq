@@ -1322,12 +1322,12 @@ impl InstrumentHandle {
     }
 
     /// Check if instrument implements Stage trait
-    pub async fn as_stage(&self) -> Option<Arc<tokio::sync::Mutex<Box<dyn Stage>>>> {
+    pub fn as_stage(&self) -> Option<Arc<tokio::sync::Mutex<Box<dyn Stage>>>> {
         None
     }
 
     /// Check if instrument implements Spectrometer trait
-    pub async fn as_spectrometer(&self) -> Option<Arc<tokio::sync::Mutex<Box<dyn Spectrometer>>>> {
+    pub fn as_spectrometer(&self) -> Option<Arc<tokio::sync::Mutex<Box<dyn Spectrometer>>>> {
         None
     }
 }

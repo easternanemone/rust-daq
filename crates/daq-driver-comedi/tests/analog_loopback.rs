@@ -83,7 +83,7 @@ macro_rules! skip_if_disabled {
 
 /// Read multiple samples and return average (reduces noise)
 fn read_averaged(
-    ai: &daq_driver_comedi::subsystem::AnalogInput,
+    ai: &daq_driver_comedi::AnalogInput,
     channel: u32,
     range: Range,
     samples: usize,

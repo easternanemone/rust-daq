@@ -119,7 +119,7 @@ impl FrameObserver for ExperimentFrameObserver {
         let _ = self.tx.try_send(capture);
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "experiment_capture"
     }
 }

@@ -236,7 +236,7 @@ where
     where
         F: FnOnce(&mut crate::observable::ObservableMetadata),
     {
-        self.inner.with_metadata(f)
+        self.inner.with_metadata(f);
     }
 
     /// Set discrete choice constraints

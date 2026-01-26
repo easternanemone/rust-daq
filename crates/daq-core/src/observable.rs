@@ -209,7 +209,7 @@ impl<T: Clone + Send + Sync + 'static> std::fmt::Debug for Observable<T> {
         f.debug_struct("Observable")
             .field("metadata", &shared.metadata)
             .field("has_validator", &shared.validator.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -823,7 +823,7 @@ impl Observable<String> {
         // Populate introspectable metadata for GUI and add validator
         {
             let mut guard = self.shared.write();
-            guard.metadata.enum_values = choices.clone();
+            guard.metadata.enum_values.clone_from(&choices);
             guard.metadata.dtype = "enum".to_string(); // Per proto contract (daq.proto:610)
 
             // Add validator that rejects values not in choices
@@ -883,7 +883,7 @@ impl Observable<String> {
     /// ```
     pub fn update_choices(&self, choices: Vec<String>) {
         let mut guard = self.shared.write();
-        guard.metadata.enum_values = choices.clone();
+        guard.metadata.enum_values.clone_from(&choices);
         guard.metadata.dtype = "enum".to_string();
 
         // Update validator with new choices
@@ -957,7 +957,7 @@ impl ParameterSet {
     where
         P: ParameterAny + 'static,
     {
-        let name = parameter.name().to_string();
+        let name = parameter.name();
         self.parameters.insert(name, Box::new(parameter));
     }
 

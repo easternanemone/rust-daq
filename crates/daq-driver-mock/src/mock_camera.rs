@@ -1002,7 +1002,7 @@ mod tests {
                 .store(frame.height as u64, Ordering::Relaxed);
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "counting_observer"
         }
     }

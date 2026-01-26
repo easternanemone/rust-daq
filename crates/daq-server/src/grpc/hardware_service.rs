@@ -221,7 +221,7 @@ impl FrameObserver for GrpcStreamObserver {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "grpc_stream_observer"
     }
 }
