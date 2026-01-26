@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2025-01-22)
 ## Current Position
 
 Phase: 8 of 10 (Advanced Scans)
-Plan: 2 of 7 (08-02 complete)
+Plan: 5 of 7 (08-05 complete)
 Status: In progress
-Last activity: 2026-01-25 - Completed 08-02-PLAN.md (NestedScan Node)
+Last activity: 2026-01-25 - Completed 08-05-PLAN.md (AdaptiveScan Translation)
 
-Progress: [███████░░░] 73%
+Progress: [███████░░░] 76%
 
 ## Performance Metrics
 
@@ -36,8 +36,8 @@ Progress: [███████░░░] 73%
 | 07 | 4 | 31min | 7.8min | ✓ Complete |
 
 **Recent Trend:**
-- Last 5 plans: 07-01 (8min), 07-02 (4min), 07-03 (7min), 07-04 (12min)
-- Trend: Phase 7 completed at 7.8min/plan average (full code export pipeline)
+- Last 5 plans: 07-04 (12min), 08-01 (?), 08-02 (?), 08-03 (?), 08-05 (24min)
+- Trend: Phase 8 in progress (advanced scan types with translation and trigger evaluation)
 
 *Updated after each plan completion*
 
@@ -118,6 +118,9 @@ Recent decisions affecting current work:
 - zarrs 0.22 with filesystem feature for Zarr V3 storage (08-01)
 - _ARRAY_DIMENSIONS attribute for Xarray compatibility (08-01)
 - ReadableWritableListableStorage Arc pattern since FilesystemStore not Clone (08-01)
+- Translation generates checkpoints, RunEngine evaluates triggers at runtime (08-05)
+- Peak detection uses find_peaks PeakFinder with prominence filtering (08-05)
+- Validation integrated into validate_loop_bodies() for AdaptiveScan (08-05)
 
 ### Pending Todos
 
@@ -165,6 +168,6 @@ See: .planning/phases/06-data-management/06-VERIFICATION.md
 ## Session Continuity
 
 Last session: 2026-01-25
-Stopped at: Completed 08-02-PLAN.md (NestedScan Node)
+Stopped at: Completed 08-05-PLAN.md (AdaptiveScan Translation)
 Resume file: None
-Next action: Execute 08-03-PLAN.md (if exists)
+Next action: Execute 08-06-PLAN.md (if exists)
