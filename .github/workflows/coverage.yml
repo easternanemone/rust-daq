@@ -1,0 +1,153 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Minimum coverage threshold (percentage)
+  COVERAGE_THRESHOLD: 40
+
+jobs:
+  coverage:
+    name: Coverage Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        uses: ./.github/actions/setup-daq
+        with:
+          cache-key: coverage
+
+      - name: Install cargo-tarpaulin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+
+      - name: Run tests with coverage
+        run: |
+          # Run tarpaulin with coverage collection
+          # Exclude daq-egui (requires X11/Wayland), hardware-specific crates, and examples
+          cargo tarpaulin \
+            --workspace \
+            --exclude daq-egui \
+            --exclude daq-driver-pvcam \
+            --exclude daq-driver-comedi \
+            --exclude daq-examples \
+            --exclude pvcam-sys \
+            --exclude comedi-sys \
+            --out Xml \
+            --out Html \
+            --output-dir coverage \
+            --skip-clean \
+            --timeout 300 \
+            --ignore-tests \
+            -- --test-threads=4
+
+      - name: Check coverage threshold
+        id: coverage-check
+        run: |
+          # Extract coverage percentage from XML
+          COVERAGE=$(grep -oP 'line-rate="\K[^"]+' coverage/cobertura.xml | head -1)
+          COVERAGE_PCT=$(echo "$COVERAGE * 100" | bc -l | cut -d. -f1)
+          
+          echo "coverage=$COVERAGE_PCT" >> $GITHUB_OUTPUT
+          echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Line Coverage: ${COVERAGE_PCT}%**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$COVERAGE_PCT" -lt "$COVERAGE_THRESHOLD" ]; then
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "❌ Coverage ${COVERAGE_PCT}% is below threshold ${COVERAGE_THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "status=passed" >> $GITHUB_OUTPUT
+            echo "✅ Coverage ${COVERAGE_PCT}% meets threshold ${COVERAGE_THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ github.sha }}
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/cobertura.xml
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true  # Don't fail if Codecov token not configured
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = '${{ steps.coverage-check.outputs.coverage }}';
+            const status = '${{ steps.coverage-check.outputs.status }}';
+            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
+            const emoji = status === 'passed' ? '✅' : '❌';
+            
+            const body = `## ${emoji} Coverage Report
+            
+            | Metric | Value |
+            |--------|-------|
+            | Line Coverage | **${coverage}%** |
+            | Threshold | ${threshold}% |
+            | Status | ${status === 'passed' ? 'Passing' : 'Below threshold'} |
+            
+            ${status === 'failed' ? '⚠️ Please add tests to improve coverage.' : ''}
+            
+            <details>
+            <summary>Coverage Details</summary>
+            
+            View the full coverage report in the [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+            </details>`;
+            
+            // Find existing coverage comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const coverageComment = comments.find(c => 
+              c.user.type === 'Bot' && c.body.includes('Coverage Report')
+            );
+            
+            if (coverageComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: coverageComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+        continue-on-error: true
+
+      - name: Enforce coverage threshold
+        if: steps.coverage-check.outputs.status == 'failed'
+        run: |
+          echo "::error::Coverage ${{ steps.coverage-check.outputs.coverage }}% is below threshold ${{ env.COVERAGE_THRESHOLD }}%"
+          exit 1

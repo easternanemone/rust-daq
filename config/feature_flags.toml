@@ -1,0 +1,41 @@
+# Feature Flags Configuration
+# ===========================
+# This file controls runtime feature toggles for the rust-daq system.
+# Flags can be simple booleans or complex rollout configurations.
+#
+# Usage in code:
+#   let flags = FeatureFlags::load("config/feature_flags.toml")?;
+#   if flags.is_enabled("experimental_streaming") { ... }
+
+# Default value for flags not explicitly defined
+default_enabled = false
+
+[flags]
+# Experimental features - disabled by default
+experimental_streaming = false
+experimental_frame_compression = false
+
+# Debug features - enable for troubleshooting
+debug_frame_timing = false
+debug_serial_commands = false
+verbose_grpc_logging = false
+
+# Performance features
+frame_pool_preallocation = true
+async_ring_buffer = true
+
+# Hardware compatibility modes
+legacy_pvcam_mode = false
+strict_serial_validation = true
+
+# GUI features
+dark_mode_default = false
+show_debug_panels = false
+
+# Rollout example (percentage-based)
+# [flags.new_scan_algorithm]
+# percentage = 50  # Enable for 50% of sessions
+
+# Environment-specific example
+# [flags.production_monitoring]
+# environments = ["production", "staging"]

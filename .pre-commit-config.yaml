@@ -1,0 +1,122 @@
+# Pre-commit hooks for rust-daq
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+#
+# Installation:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Run manually on all files:
+#   pre-commit run --all-files
+#
+# Skip hooks (emergency use only):
+#   git commit --no-verify
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$|\.txt$'
+      - id: end-of-file-fixer
+        exclude: '\.md$|\.txt$'
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: detect-private-key
+
+  # Rust formatting with cargo fmt
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: "Format Rust code with cargo fmt"
+
+  # Rust linting with clippy
+  - repo: local
+    hooks:
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cargo clippy --workspace --all-targets --features full --exclude daq-egui -- -D warnings'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: "Lint Rust code with clippy (excludes daq-egui)"
+
+  # Rust tests (fast unit tests only, not integration tests)
+  - repo: local
+    hooks:
+      - id: cargo-test
+        name: cargo test (unit tests)
+        entry: bash -c 'cargo test --lib --bins --workspace --exclude daq-egui'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: "Run fast unit tests"
+        # Only run on Rust file changes to avoid slowdowns
+        stages: [commit]
+
+  # Check for unsafe code (warning only)
+  - repo: local
+    hooks:
+      - id: check-unsafe
+        name: check for new unsafe blocks
+        entry: bash -c 'git diff --cached --name-only | grep "\.rs$" | xargs -r rg "unsafe" --count || true'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: "Warn about unsafe blocks in changed files"
+        verbose: true
+
+  # Cargo.toml dependency check
+  - repo: local
+    hooks:
+      - id: cargo-check
+        name: cargo check
+        entry: cargo check --workspace --all-targets --features full
+        language: system
+        types: [rust]
+        pass_filenames: false
+        description: "Verify code compiles"
+        stages: [push]  # Only on push to save time on local commits
+
+  # Python formatting (for Python bindings and tools)
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3
+        files: '^crates/rust-daq/python/.*\.py$'
+
+  # TOML formatting
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.12.0
+    hooks:
+      - id: pretty-format-toml
+        args: [--autofix]
+        exclude: 'Cargo\.lock$'
+
+# Configuration
+default_language_version:
+  python: python3
+
+# Run hooks in order
+default_stages: [commit]
+
+# Don't skip any hooks by default
+fail_fast: false
+
+# CI mode (for GitHub Actions)
+ci:
+  skip: [cargo-clippy, cargo-test, cargo-check]  # These run separately in CI

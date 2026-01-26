@@ -1,0 +1,36 @@
+# Quick pre-commit hooks for rust-daq
+# Faster variant that skips slow checks for rapid development
+#
+# Use this for fast iterations:
+#   pre-commit install --config .pre-commit-quick.yaml
+#
+# Switch back to full checks:
+#   pre-commit install --config .pre-commit-config.yaml
+
+repos:
+  # Essential file checks only
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$|\.txt$'
+      - id: end-of-file-fixer
+        exclude: '\.md$|\.txt$'
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Rust formatting only (fast)
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+default_language_version:
+  python: python3
+
+default_stages: [commit]
+fail_fast: false
