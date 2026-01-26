@@ -21,7 +21,8 @@ use crate::panels::{
 };
 use crate::widgets::node_palette::{NodePalette, NodeType};
 use crate::widgets::{
-    EditableParameter, PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor,
+    show_adaptive_alert, AdaptiveAlertData, AdaptiveAlertResponse, EditableParameter,
+    PropertyInspector, RuntimeParameterEditResult, RuntimeParameterEditor,
 };
 use daq_experiment::Plan;
 use daq_proto::daq::StreamQuality;
@@ -102,6 +103,12 @@ pub struct ExperimentDesignerPanel {
     cached_device_ids: Vec<String>,
     /// Last time device list was fetched
     last_device_fetch: Option<std::time::Instant>,
+    /// Whether to show flattened progress (vs nested) for multi-dimensional scans
+    show_flattened_progress: bool,
+    /// Active adaptive alert (if any)
+    adaptive_alert: Option<AdaptiveAlertData>,
+    /// Timestamp when auto-proceed should trigger (for non-approval alerts)
+    adaptive_alert_auto_proceed_at: Option<std::time::Instant>,
 }
 
 /// Create custom SnarlStyle for the experiment designer.
@@ -160,6 +167,9 @@ impl Default for ExperimentDesignerPanel {
             graph_version: 0,
             cached_device_ids: Vec::new(),
             last_device_fetch: None,
+            show_flattened_progress: false,
+            adaptive_alert: None,
+            adaptive_alert_auto_proceed_at: None,
         }
     }
 }
@@ -411,6 +421,36 @@ impl ExperimentDesignerPanel {
                         }
                     });
                 });
+        }
+
+        // Show adaptive alert modal if present
+        if let Some(ref alert_data) = self.adaptive_alert.clone() {
+            let response = show_adaptive_alert(ui.ctx(), &alert_data);
+
+            match response {
+                AdaptiveAlertResponse::Approved => {
+                    // Resume execution with approved action
+                    self.confirm_adaptive_action();
+                    self.adaptive_alert = None;
+                    self.adaptive_alert_auto_proceed_at = None;
+                }
+                AdaptiveAlertResponse::Cancelled => {
+                    // Cancel adaptive action and abort or continue
+                    self.cancel_adaptive_action();
+                    self.adaptive_alert = None;
+                    self.adaptive_alert_auto_proceed_at = None;
+                }
+                AdaptiveAlertResponse::Pending => {
+                    // Check auto-proceed timeout for non-approval alerts
+                    if let Some(auto_time) = self.adaptive_alert_auto_proceed_at {
+                        if std::time::Instant::now() >= auto_time {
+                            self.confirm_adaptive_action();
+                            self.adaptive_alert = None;
+                            self.adaptive_alert_auto_proceed_at = None;
+                        }
+                    }
+                }
+            }
         }
 
         // Run validation each frame (cheap check)
@@ -1065,20 +1105,50 @@ impl ExperimentDesignerPanel {
         // Progress display
         if self.execution_state.is_active() {
             ui.separator();
-            let progress = self.execution_state.progress();
+
+            // Progress bar always uses flat values for accurate percentage
+            let progress = if let Some(ref nested) = self.execution_state.nested_progress {
+                nested.progress()
+            } else {
+                self.execution_state.progress()
+            };
             ui.add(egui::ProgressBar::new(progress).show_percentage());
 
+            // Status text with optional nested/flat toggle
             let status_text = match self.execution_state.engine_state {
                 EngineStateLocal::Running => {
-                    format!(
-                        "Running: {}/{}",
-                        self.execution_state.current_event, self.execution_state.total_events
-                    )
+                    if let Some(ref nested) = self.execution_state.nested_progress {
+                        // Multi-dimensional scan: show nested or flat based on toggle
+                        if self.show_flattened_progress {
+                            format!("Running: {}", nested.format_flat())
+                        } else {
+                            format!("Running: {}", nested.format_nested())
+                        }
+                    } else {
+                        // Simple scan: show flat progress
+                        format!(
+                            "Running: {}/{}",
+                            self.execution_state.current_event + 1,
+                            self.execution_state.total_events
+                        )
+                    }
                 }
                 EngineStateLocal::Paused => "Paused".to_string(),
                 _ => String::new(),
             };
-            ui.label(status_text);
+            ui.label(&status_text);
+
+            // Toggle button for nested vs flat view (only for multi-dimensional scans)
+            if self.execution_state.nested_progress.is_some() {
+                let toggle_label = if self.show_flattened_progress {
+                    "Show Nested"
+                } else {
+                    "Show Flat"
+                };
+                if ui.small_button(toggle_label).clicked() {
+                    self.show_flattened_progress = !self.show_flattened_progress;
+                }
+            }
 
             // ETA
             if let Some(eta) = self.execution_state.estimated_remaining() {
@@ -1736,5 +1806,33 @@ impl ExperimentDesignerPanel {
         }
         // Keep panel visible but mark as inactive
         // Don't drop channels yet - they may have pending data
+    }
+
+    // ========== Adaptive Alert Handling ==========
+
+    /// Show an adaptive trigger alert.
+    #[allow(dead_code)]
+    fn show_adaptive_trigger_alert(&mut self, data: AdaptiveAlertData) {
+        if !data.requires_approval {
+            // Auto-proceed after 3 seconds
+            self.adaptive_alert_auto_proceed_at =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        }
+        self.adaptive_alert = Some(data);
+    }
+
+    /// Confirm adaptive action and resume execution.
+    fn confirm_adaptive_action(&mut self) {
+        // TODO: Send signal to RunEngine to proceed with adaptive action
+        tracing::info!("Adaptive action approved");
+        self.set_status("Adaptive action approved - proceeding");
+    }
+
+    /// Cancel adaptive action.
+    fn cancel_adaptive_action(&mut self) {
+        // TODO: Send signal to RunEngine to skip adaptive action
+        // May need to abort scan or continue without action
+        tracing::info!("Adaptive action cancelled");
+        self.set_status("Adaptive action cancelled");
     }
 }
