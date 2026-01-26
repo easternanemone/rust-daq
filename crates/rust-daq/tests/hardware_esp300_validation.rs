@@ -71,7 +71,7 @@ fn get_esp300_port() -> String {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            "/dev/ttyUSB0".to_string()
+            "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Cable_FT1RALWL-if00-port0".to_string()
         }
     })
 }

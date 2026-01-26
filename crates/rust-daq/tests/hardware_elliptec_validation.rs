@@ -35,7 +35,7 @@ use tokio::time::sleep;
 // TODO: Implement HWID-based discovery instead of hardcoded port
 // Current mapping: FT230X_Basic_UART (serial DK0AHAJZ) = ELL14 bus
 fn get_elliptec_port() -> String {
-    std::env::var("ELLIPTEC_PORT").unwrap_or_else(|_| "/dev/ttyUSB1".to_string())
+    std::env::var("ELLIPTEC_PORT").unwrap_or_else(|_| "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0".to_string())
 }
 const ADDRESSES: [&str; 3] = ["2", "3", "8"];
 const POSITION_TOLERANCE_DEG: f64 = 1.0;
