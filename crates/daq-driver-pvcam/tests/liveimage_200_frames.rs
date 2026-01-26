@@ -78,9 +78,13 @@ async fn liveimage_200_frames() {
     let readback = camera.get_exposure().await.expect("get exposure");
     println!("      Exposure: {:.3}ms", readback * 1000.0);
 
-    // Subscribe to frame stream
-    println!("[3/5] Subscribing to frame stream...");
-    let mut rx = camera.subscribe_frames().await.expect("subscribe");
+    // Register output
+    println!("[3/5] Registering output...");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
+        .await
+        .expect("register output");
 
     // Start continuous streaming
     println!("[4/5] Starting continuous acquisition...");
@@ -97,7 +101,7 @@ async fn liveimage_200_frames() {
 
     while frames_received < target_frames {
         match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 frames_received += 1;
                 last_frame_num = frame.frame_number;
 

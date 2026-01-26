@@ -120,26 +120,29 @@ mod mock_driver {
         let streaming = driver.is_streaming().await.unwrap();
         assert!(!streaming, "Should not be streaming initially");
 
+        // Register output BEFORE starting stream
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        driver
+            .register_primary_output(tx)
+            .await
+            .expect("Failed to register output");
+
         // Start streaming
         driver.start_stream().await.unwrap();
 
         let streaming = driver.is_streaming().await.unwrap();
         assert!(streaming, "Should be streaming after start_stream()");
 
-        // Subscribe and receive a frame
-        // NOTE: Using deprecated subscribe_frames() because register_primary_output()
-        // is not yet implemented in the streaming loop (frames aren't sent to primary_tx)
-        if let Some(mut rx) = driver.subscribe_frames().await {
-            tokio::select! {
-                frame = rx.recv() => {
-                    let frame = frame.expect("Should receive frame");
-                    assert!(frame.width > 0);
-                    assert!(frame.height > 0);
-                    println!("Received mock frame: {}x{}", frame.width, frame.height);
-                }
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {
-                    panic!("Timed out waiting for frame");
-                }
+        // Receive a frame
+        tokio::select! {
+            frame = rx.recv() => {
+                let frame = frame.expect("Should receive frame");
+                assert!(frame.width > 0);
+                assert!(frame.height > 0);
+                println!("Received mock frame: {}x{}", frame.width, frame.height);
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                panic!("Timed out waiting for frame");
             }
         }
 
@@ -279,31 +282,33 @@ mod hardware_driver {
         driver.start_stream().await.unwrap();
         println!("Streaming started");
 
-        // Subscribe and receive frames
-        // NOTE: Using deprecated subscribe_frames() because register_primary_output()
-        // is not yet implemented in the streaming loop (frames aren't sent to primary_tx)
-        if let Some(mut rx) = driver.subscribe_frames().await {
-            let mut received = 0;
-            let start = std::time::Instant::now();
+        // Register output and receive frames
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        driver
+            .register_primary_output(tx)
+            .await
+            .expect("Failed to register output");
 
-            while received < 5 && start.elapsed() < Duration::from_secs(30) {
-                tokio::select! {
-                    frame = rx.recv() => {
-                        if let Ok(frame) = frame {
-                            received += 1;
-                            println!("Frame {}: {}x{}", received, frame.width, frame.height);
-                        }
+        let mut received = 0;
+        let start = std::time::Instant::now();
+
+        while received < 5 && start.elapsed() < Duration::from_secs(30) {
+            tokio::select! {
+                frame = rx.recv() => {
+                    if let Some(frame) = frame {
+                        received += 1;
+                        println!("Frame {}: {}x{}", received, frame.width, frame.height);
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                 }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }
-
-            assert!(
-                received >= 3,
-                "Should receive at least 3 frames, got {}",
-                received
-            );
         }
+
+        assert!(
+            received >= 3,
+            "Should receive at least 3 frames, got {}",
+            received
+        );
 
         // Stop streaming
         driver.stop_stream().await.unwrap();
@@ -363,26 +368,30 @@ mod hardware_driver {
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(60); // 60 seconds should be plenty for 200 frames at 100ms
 
-        if let Some(mut rx) = driver.subscribe_frames().await {
-            while received < TARGET_FRAMES && start.elapsed() < timeout {
-                tokio::select! {
-                    frame = rx.recv() => {
-                        if let Ok(frame) = frame {
-                            received += 1;
-                            if received <= 25 || received % 50 == 0 {
-                                println!(
-                                    "[FRAME {}] {}x{}, frame_nr={}",
-                                    received, frame.width, frame.height, frame.frame_number
-                                );
-                            }
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        driver
+            .register_primary_output(tx)
+            .await
+            .expect("Failed to register output");
+
+        while received < TARGET_FRAMES && start.elapsed() < timeout {
+            tokio::select! {
+                frame = rx.recv() => {
+                    if let Some(frame) = frame {
+                        received += 1;
+                        if received <= 25 || received % 50 == 0 {
+                            println!(
+                                "[FRAME {}] {}x{}, frame_nr={}",
+                                received, frame.width, frame.height, frame.frame_number
+                            );
                         }
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                        // Check if streaming stopped
-                        if !driver.is_streaming().await.unwrap_or(false) {
-                            println!("[ERROR] Streaming stopped unexpectedly at frame {}", received);
-                            break;
-                        }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                    // Check if streaming stopped
+                    if !driver.is_streaming().await.unwrap_or(false) {
+                        println!("[ERROR] Streaming stopped unexpectedly at frame {}", received);
+                        break;
                     }
                 }
             }

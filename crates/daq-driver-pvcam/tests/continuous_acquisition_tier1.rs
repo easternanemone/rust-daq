@@ -118,7 +118,6 @@ async fn test_basic_frame_acquisition() {
 /// - Frame rate is within expected range for exposure time
 /// - Clean shutdown without errors
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn test_continuous_streaming() {
     println!("\n=== Tier 1 Test: Continuous Streaming ===\n");
 
@@ -159,11 +158,12 @@ async fn test_continuous_streaming() {
         expected_fps
     );
 
-    // Subscribe before starting stream
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output before starting stream
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     // Start streaming
     camera
@@ -185,12 +185,13 @@ async fn test_continuous_streaming() {
     // Collect frames for test duration
     while start.elapsed() < test_duration {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 tracker.record_frame(&frame);
             }
-            Ok(Err(e)) => {
+            Ok(None) => {
                 stats.channel_errors += 1;
-                println!("Channel error: {}", e);
+                println!("Channel closed");
+                break;
             }
             Err(_) => {
                 stats.timeout_errors += 1;
@@ -237,7 +238,6 @@ async fn test_continuous_streaming() {
 /// Exercise the full-sensor path long enough to validate sustained throughput.
 /// Targets 500+ frames on Prime BSI at ~30 FPS (10ms exposure + ~23ms readout).
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn test_sustained_full_sensor_streaming() {
     println!("\n=== Tier 1 Test: Sustained Full-Sensor Streaming ===\n");
 
@@ -273,10 +273,11 @@ async fn test_sustained_full_sensor_streaming() {
         expected_fps
     );
 
-    let mut rx = camera
-        .subscribe_frames()
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     camera
         .start_stream()
@@ -296,12 +297,13 @@ async fn test_sustained_full_sensor_streaming() {
 
     while start.elapsed() < test_duration {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 tracker.record_frame(&frame);
             }
-            Ok(Err(e)) => {
+            Ok(None) => {
                 stats.channel_errors += 1;
-                println!("Channel error: {}", e);
+                println!("Channel closed");
+                break;
             }
             Err(_) => {
                 stats.timeout_errors += 1;
@@ -353,7 +355,6 @@ async fn test_sustained_full_sensor_streaming() {
 /// - Pixel data is not all zeros (buffer was actually filled)
 /// - Data buffer size matches expected pixel count
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn test_frame_data_integrity() {
     println!("\n=== Tier 1 Test: Frame Data Integrity ===\n");
 
@@ -374,11 +375,12 @@ async fn test_frame_data_integrity() {
         .await
         .expect("Failed to set exposure");
 
-    // Subscribe and start streaming
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output and start streaming
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     camera
         .start_stream()
@@ -396,7 +398,7 @@ async fn test_frame_data_integrity() {
 
     for i in 0..frames_to_check {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 // Validate dimensions and data size
                 match validator.validate(&frame) {
                     Ok(()) => {
@@ -435,11 +437,14 @@ async fn test_frame_data_integrity() {
                     }
                 }
             }
-            Ok(Err(e)) => {
-                println!("  Frame {}: Channel error - {}", i + 1, e);
+            Ok(None) => {
+                stats.channel_errors += 1;
+                println!("Channel closed");
+                break;
             }
             Err(_) => {
-                println!("  Frame {}: Timeout", i + 1);
+                stats.timeout_errors += 1;
+                println!("Timeout waiting for frame at {:?}", start.elapsed());
             }
         }
     }
@@ -473,7 +478,6 @@ async fn test_frame_data_integrity() {
 /// - No duplicate frame numbers (would indicate buffer issues)
 /// - Frame number gaps are tracked (unexpected under FIFO)
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn test_frame_numbering_sequence() {
     println!("\n=== Tier 1 Test: Frame Numbering Sequence ===\n");
 
@@ -490,10 +494,11 @@ async fn test_frame_numbering_sequence() {
         .await
         .expect("Failed to set exposure");
 
-    let mut rx = camera
-        .subscribe_frames()
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     camera
         .start_stream()
@@ -509,13 +514,19 @@ async fn test_frame_numbering_sequence() {
 
     while start.elapsed() < test_duration {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 let frame_nr = frame.frame_number as i32;
                 frame_numbers.push(frame_nr);
                 tracker.record_frame(&frame);
             }
-            Ok(Err(_)) | Err(_) => {
-                // Timeout or channel error, continue
+            Ok(None) => {
+                stats.channel_errors += 1;
+                println!("Channel closed");
+                break;
+            }
+            Err(_) => {
+                stats.timeout_errors += 1;
+                println!("Timeout waiting for frame at {:?}", start.elapsed());
             }
         }
     }

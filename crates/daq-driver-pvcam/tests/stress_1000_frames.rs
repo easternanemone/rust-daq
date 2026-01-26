@@ -140,11 +140,12 @@ async fn test_stress_1000_frames_sustained_streaming() {
     println!("Minimum required: {} frames", MIN_REQUIRED_FRAMES);
     println!();
 
-    // Subscribe before starting stream
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output before starting stream
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     // Start streaming
     println!("Starting sustained streaming...\n");
@@ -174,17 +175,17 @@ async fn test_stress_1000_frames_sustained_streaming() {
     // Main acquisition loop
     while stream_start.elapsed() < STRESS_TEST_DURATION {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 tracker.record_frame(&frame);
                 interval_frame_count += 1;
             }
-            Ok(Err(e)) => {
+            Ok(None) => {
                 stats.channel_errors += 1;
                 eprintln!(
-                    "[ERROR] Channel error at {:.1}s: {}",
-                    stream_start.elapsed().as_secs_f64(),
-                    e
+                    "[ERROR] Channel closed at {:.1}s",
+                    stream_start.elapsed().as_secs_f64()
                 );
+                break;
             }
             Err(_) => {
                 stats.timeout_errors += 1;
@@ -352,10 +353,11 @@ async fn test_stress_2000_frames_extended() {
     println!("Extended test duration: 90 seconds");
     println!("Target: 2000+ frames\n");
 
-    let mut rx = camera
-        .subscribe_frames()
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frames");
+        .expect("Failed to register output");
 
     camera
         .start_stream()
@@ -370,7 +372,7 @@ async fn test_stress_2000_frames_extended() {
 
     while start.elapsed() < extended_duration {
         match tokio::time::timeout(durations::FRAME_TIMEOUT, rx.recv()).await {
-            Ok(Ok(frame)) => {
+            Ok(Some(frame)) => {
                 tracker.record_frame(&frame);
 
                 // Report every 10 seconds

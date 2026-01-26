@@ -283,7 +283,6 @@ async fn pvcam_multiple_frames_test() {
 
 /// Test continuous streaming for a short duration
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn pvcam_streaming_test() {
     skip_if_disabled!();
 
@@ -302,11 +301,12 @@ async fn pvcam_streaming_test() {
         .await
         .expect("Failed to set exposure");
 
-    // Subscribe to frame stream BEFORE starting
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output BEFORE starting
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frame stream");
+        .expect("Failed to register output");
 
     // Start streaming
     println!("Starting continuous streaming...");
@@ -322,11 +322,11 @@ async fn pvcam_streaming_test() {
 
     while start.elapsed() < stream_duration {
         match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
-            Ok(Ok(_frame)) => {
+            Ok(Some(_frame)) => {
                 frame_count += 1;
             }
-            Ok(Err(e)) => {
-                println!("  Receive error: {}", e);
+            Ok(None) => {
+                println!("  Channel closed");
                 break;
             }
             Err(_) => {
@@ -418,7 +418,6 @@ async fn pvcam_exposure_range_test() {
 
 /// Test frame data statistics (validates pixel data is reasonable)
 #[tokio::test]
-#[allow(deprecated)] // subscribe_frames() still works; register_primary_output() not yet wired
 async fn pvcam_frame_statistics_test() {
     skip_if_disabled!();
 
@@ -438,11 +437,12 @@ async fn pvcam_frame_statistics_test() {
         .expect("Failed to set exposure");
 
     // Use streaming pattern for more robust callback registration
-    // Subscribe to frame stream BEFORE starting (critical for callback timing)
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output BEFORE starting (critical for callback timing)
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frame stream");
+        .expect("Failed to register output");
 
     // Start streaming
     println!("Starting stream for frame capture...");
@@ -456,11 +456,11 @@ async fn pvcam_frame_statistics_test() {
 
     // Wait for first frame with longer timeout (10s) for robust callback capture
     let frame = match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
-        Ok(Ok(frame)) => frame,
-        Ok(Err(e)) => {
+        Ok(Some(frame)) => frame,
+        Ok(None) => {
             let _ = camera.stop_stream().await;
             let _ = camera.close().await;
-            panic!("Frame receive error: {}", e);
+            panic!("Channel closed before receiving frame");
         }
         Err(_) => {
             let _ = camera.stop_stream().await;

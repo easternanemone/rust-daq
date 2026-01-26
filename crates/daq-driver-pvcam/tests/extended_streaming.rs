@@ -42,11 +42,12 @@ async fn extended_streaming_test() {
         .await
         .expect("Failed to set exposure");
 
-    // Subscribe BEFORE starting stream
-    let mut rx = camera
-        .subscribe_frames()
+    // Register output BEFORE starting stream
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    camera
+        .register_primary_output(tx)
         .await
-        .expect("Failed to subscribe to frame stream");
+        .expect("Failed to register output");
 
     // Start streaming
     println!("Starting continuous streaming for 5 seconds...");
@@ -63,7 +64,7 @@ async fn extended_streaming_test() {
 
     while start.elapsed() < stream_duration {
         match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
-            Ok(Ok(_frame)) => {
+            Ok(Some(_frame)) => {
                 frame_count += 1;
                 // Report every second
                 if last_report.elapsed() >= Duration::from_secs(1) {
