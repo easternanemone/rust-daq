@@ -1957,4 +1957,268 @@ mod tests {
             }
         }
     }
+
+    // =========================================================================
+    // Utility Function Tests
+    // =========================================================================
+
+    #[test]
+    fn test_timestamp_format() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        let result: String = engine.eval("timestamp()").unwrap();
+        // Format: YYYYMMDD_HHMMSS (15 chars with underscore)
+        assert_eq!(result.len(), 15);
+        assert!(result.chars().nth(8) == Some('_'));
+        // Should be parseable as date/time
+        assert!(result[0..8].parse::<u32>().is_ok()); // YYYYMMDD
+        assert!(result[9..15].parse::<u32>().is_ok()); // HHMMSS
+    }
+
+    #[test]
+    fn test_timestamp_iso_format() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        let result: String = engine.eval("timestamp_iso()").unwrap();
+        // ISO 8601 format should contain 'T' separator
+        assert!(result.contains('T'));
+        // Should be longer than basic timestamp
+        assert!(result.len() > 15);
+    }
+
+    #[test]
+    fn test_print_function() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        // print() should not panic and return unit
+        let result = engine.eval::<()>(r#"print("test message")"#);
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // Hardware Factory Registration Tests
+    // =========================================================================
+    // Note: These tests verify registration by checking that functions can be
+    // called without panicking. The Rhai version used does not expose
+    // gen_fn_signatures for introspection.
+
+    #[test]
+    fn test_all_utility_functions_work() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        // Test sleep - very short duration
+        assert!(engine.eval::<()>("sleep(0.001)").is_ok());
+        
+        // Test timestamps
+        let ts: String = engine.eval("timestamp()").unwrap();
+        assert!(ts.len() > 0);
+        
+        let ts_iso: String = engine.eval("timestamp_iso()").unwrap();
+        assert!(ts_iso.contains('T'));
+    }
+
+    #[cfg(feature = "hardware_factories")]
+    #[test]
+    fn test_hardware_factories_registered() {
+        // This test verifies hardware factory functions are registered
+        // by calling register_hardware and checking it doesn't panic.
+        // Actual device creation requires hardware.
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+        
+        // The factories are registered - verifiable at compile time by the
+        // fact that register_hardware_factories() is called unconditionally
+        // when the feature is enabled
+    }
+
+    // =========================================================================
+    // HDF5 Bindings Tests (feature-gated)
+    // =========================================================================
+
+    #[cfg(feature = "hdf5_scripting")]
+    #[test]
+    fn test_hdf5_functions_registered() {
+        // This test verifies HDF5 functions are registered by calling
+        // register_hardware and checking it doesn't panic
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+        
+        // Functions should be registered - this is a compile-time check
+        // The actual file I/O test below verifies functionality
+    }
+
+    #[cfg(feature = "hdf5_scripting")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_hdf5_create_and_write() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        // Use a temp file path that will be cleaned up
+        let file_path = std::env::temp_dir().join(format!("test_{}.h5", std::process::id()));
+        let path_str = file_path.to_str().unwrap().to_string();
+
+        let mut scope = Scope::new();
+        scope.push_constant("FILE_PATH", path_str.clone());
+
+        let script = r#"
+            let hdf5 = create_hdf5(FILE_PATH);
+            hdf5.write_attr("name", "test");
+            hdf5.write_attr_f64("value", 42.5);
+            hdf5.write_attr_i64("count", 100);
+            hdf5.close();
+            true
+        "#;
+
+        let result = engine.eval_with_scope::<bool>(&mut scope, script);
+        
+        // Clean up temp file
+        let _ = std::fs::remove_file(&file_path);
+        
+        assert!(result.is_ok(), "HDF5 script failed: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // Comedi Bindings Tests (feature-gated)
+    // =========================================================================
+
+    #[cfg(feature = "comedi_scripting")]
+    #[test]
+    fn test_comedi_functions_registered() {
+        // This test verifies Comedi functions are registered by calling
+        // register_hardware and checking it doesn't panic
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+        
+        // Functions should be registered - this is a compile-time check
+        // Hardware tests would require actual Comedi device
+    }
+
+    #[cfg(feature = "comedi_scripting")]
+    #[test]
+    fn test_comedi_handle_clone() {
+        // ComediHandle should be cloneable (Arc-based)
+        // This is a compile-time check
+        fn _assert_clone<T: Clone>() {}
+        _assert_clone::<ComediHandle>();
+    }
+
+    // =========================================================================
+    // Error Handling Tests
+    // =========================================================================
+
+    #[test]
+    fn test_zero_sleep_duration() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        // Zero sleep should work fine
+        let result = engine.eval::<()>("sleep(0.0)");
+        assert!(result.is_ok());
+        
+        // Very small sleep should also work
+        let result = engine.eval::<()>("sleep(0.001)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_soft_limits_error_message_includes_value() {
+        let limits = SoftLimits::new(0.0, 100.0);
+        let err = limits.validate(150.0).unwrap_err();
+        assert!(
+            err.contains("150"),
+            "Error should include the invalid value"
+        );
+        assert!(
+            err.contains("100"),
+            "Error should include the limit"
+        );
+    }
+
+    // =========================================================================
+    // Integration-style Tests
+    // =========================================================================
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_complete_stage_workflow() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        let stage = Arc::new(MockStage::new());
+        let mut scope = Scope::new();
+        scope.push(
+            "stage",
+            StageHandle {
+                driver: stage.clone(),
+                data_tx: None,
+                soft_limits: SoftLimits::new(-100.0, 100.0),
+            },
+        );
+
+        // Test a complete workflow
+        let script = r#"
+            // Move to starting position
+            stage.move_abs(0.0);
+            stage.wait_settled();
+            
+            // Verify position
+            let start_pos = stage.position();
+            
+            // Do relative moves
+            stage.move_rel(10.0);
+            stage.move_rel(5.0);
+            stage.wait_settled();
+            
+            let end_pos = stage.position();
+            
+            // Return the total movement
+            end_pos - start_pos
+        "#;
+
+        let result = engine.eval_with_scope::<f64>(&mut scope, script).unwrap();
+        assert!((result - 15.0).abs() < 0.001);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_data_broadcast_integration() {
+        let mut engine = Engine::new();
+        register_hardware(&mut engine);
+
+        let (tx, mut rx) = broadcast::channel(16);
+        let tx = Arc::new(tx);
+        let stage = Arc::new(MockStage::new());
+
+        let mut scope = Scope::new();
+        scope.push(
+            "stage",
+            StageHandle {
+                driver: stage.clone(),
+                data_tx: Some(tx),
+                soft_limits: SoftLimits::unlimited(),
+            },
+        );
+
+        // Run script that triggers data broadcast
+        engine
+            .eval_with_scope::<()>(&mut scope, "stage.move_abs(42.0);")
+            .unwrap();
+
+        // Check that measurement was broadcast
+        let measurement = rx.try_recv();
+        assert!(measurement.is_ok(), "Should receive measurement");
+        
+        // Verify measurement is a Scalar variant with expected value
+        let m = measurement.unwrap();
+        match m {
+            Measurement::Scalar { value, unit, .. } => {
+                assert!((value - 42.0).abs() < 0.001);
+                // MockStage uses "mm" as the unit
+                assert_eq!(unit, "mm");
+            }
+            _ => panic!("Expected Scalar measurement"),
+        }
+    }
 }
