@@ -197,10 +197,11 @@ fn save_to_hdf5(
         .create("long_name")?
         .write_scalar(&"Optical Power".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
     // Link to coordinate dimension (xarray convention)
-    power_ds
-        .new_attr::<hdf5::types::VarLenUnicode>()
-        .create("_ARRAY_DIMENSIONS")?
-        .write(&["voltage".parse::<hdf5::types::VarLenUnicode>().unwrap()])?;
+    // Note: _ARRAY_DIMENSIONS needs to be a 1D array attribute
+    let _dims_attr = power_ds
+        .new_attr_builder()
+        .with_data(&["voltage".parse::<hdf5::types::VarLenUnicode>().unwrap()])
+        .create("_ARRAY_DIMENSIONS")?;
 
     // Add global attributes (experiment metadata)
     let timestamp_str = Local::now().to_rfc3339();
