@@ -1598,10 +1598,10 @@ impl eframe::App for DaqApp {
                 }
                 UiAction::OpenDeviceControl { device_info } => {
                     let device_info = *device_info;
-                    // Generate a new panel ID with wrapping on overflow
-                    // (practically impossible to hit 2^64 panels, but safe regardless)
+                    // Generate a new panel ID with saturation on overflow
+                    // (practically impossible to hit usize::MAX panels, but prevents ID collisions)
                     let panel_id = self.next_device_panel_id;
-                    self.next_device_panel_id = self.next_device_panel_id.wrapping_add(1);
+                    self.next_device_panel_id = self.next_device_panel_id.saturating_add(1);
 
                     // Debug logging for panel routing diagnosis (bd-kj7i)
                     tracing::info!(
