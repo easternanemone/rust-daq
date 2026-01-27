@@ -218,6 +218,29 @@ pub struct ShutterHandle {
     pub driver: Arc<dyn ShutterControl>,
 }
 
+/// Handle to MaiTai laser with both shutter and wavelength control
+///
+/// This handle provides access to both shutter control methods and
+/// wavelength tuning methods for the MaiTai Ti:Sapphire laser.
+///
+/// # Script Example
+/// ```rhai
+/// let laser = create_maitai_tunable("/dev/ttyUSB0");
+/// laser.set_wavelength(800.0);  // Set to 800nm
+/// let wl = laser.get_wavelength();
+/// print("Wavelength: " + wl + " nm");
+///
+/// // Can also use as shutter
+/// laser.open();
+/// laser.close();
+/// ```
+#[cfg(feature = "hardware_factories")]
+#[derive(Clone)]
+pub struct MaiTaiHandle {
+    /// MaiTai driver with full access to all capabilities
+    pub driver: Arc<daq_driver_spectra_physics::MaiTaiDriver>,
+}
+
 /// Handle to an ELL14 rotator with velocity control for Rhai scripts
 ///
 /// Unlike `StageHandle`, this stores the concrete `Ell14Driver` to expose
@@ -986,6 +1009,28 @@ fn register_hardware_factories(engine: &mut Engine) {
         },
     );
 
+    // power_meter.set_wavelength(nm) - Set calibration wavelength in nanometers
+    engine.register_fn(
+        "set_wavelength",
+        |pm: &mut Newport1830CHandle, wavelength_nm: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            use daq_hardware::capabilities::WavelengthTunable;
+            run_blocking(
+                "Newport 1830-C set_wavelength",
+                pm.driver.set_wavelength(wavelength_nm),
+            )?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // power_meter.get_wavelength() - Get current calibration wavelength in nanometers
+    engine.register_fn(
+        "get_wavelength",
+        |pm: &mut Newport1830CHandle| -> Result<f64, Box<EvalAltResult>> {
+            use daq_hardware::capabilities::WavelengthTunable;
+            run_blocking("Newport 1830-C get_wavelength", pm.driver.get_wavelength())
+        },
+    );
+
     // =========================================================================
     // MaiTai Laser Shutter Factory
     // =========================================================================
@@ -1017,6 +1062,83 @@ fn register_hardware_factories(engine: &mut Engine) {
             Ok(ShutterHandle {
                 driver: Arc::new(driver),
             })
+        },
+    );
+
+    // =========================================================================
+    // MaiTai Laser with Wavelength Control
+    // =========================================================================
+
+    // Register MaiTaiHandle type for wavelength-tunable laser access
+    engine.register_type_with_name::<MaiTaiHandle>("MaiTaiLaser");
+
+    // create_maitai_tunable(port) - Create MaiTai with wavelength control
+    engine.register_fn(
+        "create_maitai_tunable",
+        |port: &str| -> Result<MaiTaiHandle, Box<EvalAltResult>> {
+            let port = port.to_string();
+            let driver = run_blocking("MaiTai create", MaiTaiDriver::new_async_default(&port))?;
+            Ok(MaiTaiHandle {
+                driver: Arc::new(driver),
+            })
+        },
+    );
+
+    // laser.open() - Open the shutter
+    engine.register_fn(
+        "open",
+        move |laser: &mut MaiTaiHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("MaiTai shutter open", laser.driver.open_shutter())?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // laser.close() - Close the shutter
+    engine.register_fn(
+        "close",
+        move |laser: &mut MaiTaiHandle| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_blocking("MaiTai shutter close", laser.driver.close_shutter())?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // laser.is_open() - Query shutter state
+    engine.register_fn(
+        "is_open",
+        move |laser: &mut MaiTaiHandle| -> Result<bool, Box<EvalAltResult>> {
+            run_blocking("MaiTai is_open", laser.driver.is_shutter_open())
+        },
+    );
+
+    // laser.set_wavelength(nm) - Set laser wavelength in nanometers
+    engine.register_fn(
+        "set_wavelength",
+        |laser: &mut MaiTaiHandle, wavelength_nm: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+            use daq_hardware::capabilities::WavelengthTunable;
+            run_blocking(
+                "MaiTai set_wavelength",
+                laser.driver.set_wavelength(wavelength_nm),
+            )?;
+            Ok(Dynamic::UNIT)
+        },
+    );
+
+    // laser.get_wavelength() - Get current wavelength in nanometers
+    engine.register_fn(
+        "get_wavelength",
+        |laser: &mut MaiTaiHandle| -> Result<f64, Box<EvalAltResult>> {
+            use daq_hardware::capabilities::WavelengthTunable;
+            run_blocking("MaiTai get_wavelength", laser.driver.get_wavelength())
+        },
+    );
+
+    // Convert MaiTaiHandle to ShutterHandle for use with with_shutter_open()
+    engine.register_fn(
+        "as_shutter",
+        |laser: &mut MaiTaiHandle| -> ShutterHandle {
+            ShutterHandle {
+                driver: laser.driver.clone(),
+            }
         },
     );
 }
