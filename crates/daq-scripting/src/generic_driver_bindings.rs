@@ -1,3 +1,66 @@
+//! GenericDriver bindings for Rhai scripts.
+//!
+//! This module enables Rhai scripts to control any TOML-configured serial device
+//! via the GenericSerialDriver from daq-hardware.
+//!
+//! # Quick Start
+//!
+//! ```rhai
+//! // Load config and create driver
+//! let driver = create_generic_driver(
+//!     "config/devices/ell14.toml",
+//!     "/dev/ttyUSB0",
+//!     "2"
+//! );
+//!
+//! // Use trait methods
+//! driver.move_abs(45.0);
+//! driver.wait_settled();
+//! let pos = driver.position();
+//! print("Position: " + pos);
+//! ```
+//!
+//! # Available Methods
+//!
+//! ## Factory
+//! - `create_generic_driver(config_path, port_path, address)` - Create driver
+//!
+//! ## Movable Trait
+//! - `move_abs(position)` - Move to absolute position
+//! - `move_rel(distance)` - Move relative amount
+//! - `position()` - Get current position
+//! - `wait_settled()` - Wait for motion to complete
+//! - `stop()` - Emergency stop
+//!
+//! ## Readable Trait
+//! - `read()` - Read value from device
+//!
+//! ## WavelengthTunable Trait
+//! - `set_wavelength(nm)` - Set wavelength
+//! - `get_wavelength()` - Get current wavelength
+//!
+//! ## ShutterControl Trait
+//! - `open()` - Open shutter
+//! - `close()` - Close shutter
+//! - `is_open()` - Check if shutter is open
+//!
+//! ## Low-Level API
+//! - `transaction(command)` - Send raw command, get response
+//! - `send_command(command)` - Send command without response
+//! - `format_command(cmd_name, params)` - Format command from config
+//!
+//! ## Parameters
+//! - `get_param(name)` - Get device parameter
+//! - `set_param(name, value)` - Set device parameter
+//! - `address()` - Get device address
+//!
+//! ## Safety
+//! - `set_soft_limits(min, max)` - Set software motion limits
+//!
+//! # Feature Flag
+//!
+//! Requires `generic_driver` feature (included in `scripting_full`).
+
 use crate::{rhai_error, run_blocking, SoftLimits};
 use daq_core::capabilities::{Movable, Readable, ShutterControl, WavelengthTunable};
 use daq_core::serial::open_serial_async;

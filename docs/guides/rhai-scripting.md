@@ -165,6 +165,77 @@ let ts = timestamp();       // "20260127_115319" format
 let iso = timestamp_iso();  // Full ISO8601 timestamp
 ```
 
+## GenericDriver: Config-Driven Devices
+
+The GenericDriver allows you to control any serial device defined by a TOML
+configuration file, without writing any Rust code. This is useful for:
+
+- Prototyping new device support quickly
+- Controlling devices with simple ASCII protocols
+- Sharing device configurations across scripts
+
+### Creating a GenericDriver
+
+```rhai
+let driver = create_generic_driver(
+    "config/devices/ell14.toml",  // Device config path
+    "/dev/serial/by-id/...",      // Serial port
+    "2"                           // Device address
+);
+```
+
+### Available Methods
+
+| Method | Description |
+|--------|-------------|
+| `move_abs(pos)` | Move to absolute position |
+| `move_rel(dist)` | Move relative amount |
+| `position()` | Get current position |
+| `wait_settled()` | Wait for motion complete |
+| `stop()` | Emergency stop |
+| `read()` | Read value (Readable trait) |
+| `set_wavelength(nm)` | Set wavelength (WavelengthTunable) |
+| `get_wavelength()` | Get wavelength |
+| `open()`, `close()`, `is_open()` | Shutter control |
+| `transaction(cmd)` | Send raw command, get response |
+| `get_param(name)` | Get device parameter |
+| `set_param(name, val)` | Set device parameter |
+| `set_soft_limits(min, max)` | Set motion limits |
+| `address()` | Get device address |
+
+### Example: Using ELL14 via GenericDriver
+
+```rhai
+let rotator = create_generic_driver(
+    "config/devices/ell14.toml",
+    "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0",
+    "2"
+);
+
+// Configure safety limits
+rotator.set_soft_limits(0.0, 360.0);
+
+// Move to position
+rotator.move_abs(45.0);
+rotator.wait_settled();
+print("Position: " + rotator.position());
+
+// Scan positions
+for angle in [0.0, 45.0, 90.0, 135.0, 180.0] {
+    rotator.move_abs(angle);
+    rotator.wait_settled();
+    // Take measurement here
+}
+```
+
+### Feature Flag
+
+Requires `generic_driver` feature (included in `scripting_full`):
+
+```bash
+cargo build -p daq-scripting --features generic_driver
+```
+
 ## Shutter Safety
 
 **CRITICAL**: Always use `with_shutter_open()` for laser experiments. This
