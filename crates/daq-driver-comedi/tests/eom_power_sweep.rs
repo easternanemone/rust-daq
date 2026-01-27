@@ -78,7 +78,8 @@ use std::time::Duration;
 
 /// Default device paths
 const DEFAULT_COMEDI_DEVICE: &str = "/dev/comedi0";
-const DEFAULT_MAITAI_PORT: &str = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
+const DEFAULT_MAITAI_PORT: &str =
+    "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
 const DEFAULT_NEWPORT_PORT: &str = "/dev/ttyS0";
 
 /// EOM channel on Comedi DAQ
@@ -178,7 +179,11 @@ fn save_to_hdf5(
     voltage_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
         .create("long_name")?
-        .write_scalar(&"EOM Control Voltage".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"EOM Control Voltage"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Create power dataset (data variable)
     let power_ds = file
@@ -195,7 +200,11 @@ fn save_to_hdf5(
     power_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
         .create("long_name")?
-        .write_scalar(&"Optical Power".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"Optical Power"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
     // Link to coordinate dimension (xarray convention)
     // Note: _ARRAY_DIMENSIONS needs to be a 1D array attribute
     let _dims_attr = power_ds
@@ -207,16 +216,30 @@ fn save_to_hdf5(
     let timestamp_str = Local::now().to_rfc3339();
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("experiment")?
-        .write_scalar(&"EOM Power Sweep".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"EOM Power Sweep"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("timestamp")?
         .write_scalar(&timestamp_str.parse::<hdf5::types::VarLenUnicode>().unwrap())?;
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("instrument")?
-        .write_scalar(&"MaiTai + Comedi DAQ + Newport 1830-C".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    file.new_attr::<f64>().create("voltage_min")?.write_scalar(&voltage_min)?;
-    file.new_attr::<f64>().create("voltage_max")?.write_scalar(&voltage_max)?;
-    file.new_attr::<f64>().create("voltage_step")?.write_scalar(&voltage_step)?;
+        .write_scalar(
+            &"MaiTai + Comedi DAQ + Newport 1830-C"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
+    file.new_attr::<f64>()
+        .create("voltage_min")?
+        .write_scalar(&voltage_min)?;
+    file.new_attr::<f64>()
+        .create("voltage_max")?
+        .write_scalar(&voltage_max)?;
+    file.new_attr::<f64>()
+        .create("voltage_step")?
+        .write_scalar(&voltage_step)?;
     file.new_attr::<u64>()
         .create("n_points")?
         .write_scalar(&(results.len() as u64))?;
@@ -225,7 +248,10 @@ fn save_to_hdf5(
     let valid_powers: Vec<f64> = powers.iter().filter(|p| !p.is_nan()).copied().collect();
     if !valid_powers.is_empty() {
         let min_power = valid_powers.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_power = valid_powers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let max_power = valid_powers
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         let extinction_ratio = if min_power > 0.0 {
             max_power / min_power
         } else {
@@ -356,7 +382,10 @@ fn test_eom_power_sweep() {
     println!("  Comedi device:  {}", comedi_device);
     println!("  MaiTai port:    {}", maitai_port);
     println!("  Newport port:   {}", newport_port);
-    println!("  Voltage range:  {} to {} V (step: {})", voltage_min, voltage_max, voltage_step);
+    println!(
+        "  Voltage range:  {} to {} V (step: {})",
+        voltage_min, voltage_max, voltage_step
+    );
     println!("  Output dir:     {}", output_dir);
     println!();
 
@@ -364,14 +393,19 @@ fn test_eom_power_sweep() {
     println!("[1/5] Opening Comedi DAQ...");
     let device = ComediDevice::open(&comedi_device).expect("Failed to open Comedi device");
     let ao = device.analog_output().expect("Failed to get analog output");
-    let ao_range = ao.range_info(EOM_DAC_CHANNEL, 0).expect("Failed to get AO range");
+    let ao_range = ao
+        .range_info(EOM_DAC_CHANNEL, 0)
+        .expect("Failed to get AO range");
     println!("  DAC0 range: {} to {} V", ao_range.min, ao_range.max);
 
     // Validate voltage range
     assert!(
         voltage_min >= ao_range.min && voltage_max <= ao_range.max,
         "Voltage range {} to {} exceeds DAC range {} to {}",
-        voltage_min, voltage_max, ao_range.min, ao_range.max
+        voltage_min,
+        voltage_max,
+        ao_range.min,
+        ao_range.max
     );
 
     // Set initial voltage to 0V (safe state)
@@ -383,8 +417,8 @@ fn test_eom_power_sweep() {
 
     // Open MaiTai shutter
     println!("[3/5] Opening MaiTai shutter...");
-    let mut maitai = SimpleSerial::open(&maitai_port, 115200)
-        .expect("Failed to open MaiTai serial port");
+    let mut maitai =
+        SimpleSerial::open(&maitai_port, 115200).expect("Failed to open MaiTai serial port");
 
     // Check current shutter state
     let shutter_state = maitai.send_command("SHUTTER?").unwrap_or_default();
@@ -398,12 +432,16 @@ fn test_eom_power_sweep() {
 
     // Open power meter
     println!("[4/5] Opening Newport 1830-C power meter...");
-    let mut power_meter = Newport1830C::open(&newport_port)
-        .expect("Failed to open Newport power meter");
+    let mut power_meter =
+        Newport1830C::open(&newport_port).expect("Failed to open Newport power meter");
 
     // Initial power reading
     let initial_power = power_meter.read_power().unwrap_or(0.0);
-    println!("  Initial power: {:.6e} W ({:.3} mW)", initial_power, initial_power * 1000.0);
+    println!(
+        "  Initial power: {:.6e} W ({:.3} mW)",
+        initial_power,
+        initial_power * 1000.0
+    );
 
     // Perform voltage sweep
     println!("[5/5] Performing EOM voltage sweep...");
@@ -454,13 +492,22 @@ fn test_eom_power_sweep() {
 
     // Save to HDF5
     println!("[6/6] Saving data to HDF5...");
-    match save_to_hdf5(&results, &output_dir, voltage_min, voltage_max, voltage_step) {
+    match save_to_hdf5(
+        &results,
+        &output_dir,
+        voltage_min,
+        voltage_max,
+        voltage_step,
+    ) {
         Ok(filepath) => {
             println!("  Data saved to: {}", filepath.display());
             println!();
             println!("  Python analysis:");
             println!("    import xarray as xr");
-            println!("    ds = xr.open_dataset('{}', engine='h5netcdf')", filepath.display());
+            println!(
+                "    ds = xr.open_dataset('{}', engine='h5netcdf')",
+                filepath.display()
+            );
             println!("    ds.power.plot()");
         }
         Err(e) => {
@@ -475,11 +522,19 @@ fn test_eom_power_sweep() {
     println!("═══════════════════════════════════════════════════════════════");
 
     if !results.is_empty() {
-        let powers: Vec<f64> = results.iter().map(|(_, p)| *p).filter(|p| !p.is_nan()).collect();
+        let powers: Vec<f64> = results
+            .iter()
+            .map(|(_, p)| *p)
+            .filter(|p| !p.is_nan())
+            .collect();
         if !powers.is_empty() {
             let min_power = powers.iter().cloned().fold(f64::INFINITY, f64::min);
             let max_power = powers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let extinction_ratio = if min_power > 0.0 { max_power / min_power } else { f64::INFINITY };
+            let extinction_ratio = if min_power > 0.0 {
+                max_power / min_power
+            } else {
+                f64::INFINITY
+            };
 
             // Find voltage at minimum power
             let v_at_min = results
@@ -489,9 +544,22 @@ fn test_eom_power_sweep() {
                 .map(|(v, _)| *v)
                 .unwrap_or(0.0);
 
-            println!("  Min power:        {:.6e} W ({:.3} mW) at {:.2} V", min_power, min_power * 1000.0, v_at_min);
-            println!("  Max power:        {:.6e} W ({:.3} mW)", max_power, max_power * 1000.0);
-            println!("  Extinction ratio: {:.1}:1 ({:.1} dB)", extinction_ratio, 10.0 * extinction_ratio.log10());
+            println!(
+                "  Min power:        {:.6e} W ({:.3} mW) at {:.2} V",
+                min_power,
+                min_power * 1000.0,
+                v_at_min
+            );
+            println!(
+                "  Max power:        {:.6e} W ({:.3} mW)",
+                max_power,
+                max_power * 1000.0
+            );
+            println!(
+                "  Extinction ratio: {:.1}:1 ({:.1} dB)",
+                extinction_ratio,
+                10.0 * extinction_ratio.log10()
+            );
         }
     }
 
