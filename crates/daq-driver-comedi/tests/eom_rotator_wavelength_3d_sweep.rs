@@ -707,7 +707,7 @@ impl MaiTaiSimple {
     }
 }
 
-// Simple Newport 1830-C wrapper
+// Simple Newport 1830-C wrapper (matches working 2D implementation)
 struct Newport1830Simple {
     port: Box<dyn serialport::SerialPort>,
 }
@@ -715,70 +715,35 @@ struct Newport1830Simple {
 impl Newport1830Simple {
     fn open(port_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let port = serialport::new(port_path, 9600)
-            .timeout(Duration::from_millis(500))
+            .timeout(Duration::from_secs(2))
+            .data_bits(serialport::DataBits::Eight)
+            .parity(serialport::Parity::None)
+            .stop_bits(serialport::StopBits::One)
             .open()?;
         Ok(Self { port })
     }
 
-    fn send_command(&mut self, cmd: &str) -> Result<String, Box<dyn std::error::Error>> {
-        // Clear buffer
-        let mut discard = [0u8; 256];
-        let _ = self.port.read(&mut discard);
-
-        // Send command (no terminator needed for 1830-C)
-        self.port.write_all(cmd.as_bytes())?;
-        self.port.flush()?;
-
-        thread::sleep(Duration::from_millis(100));
-
-        // Read response
-        let mut response = [0u8; 64];
-        let n = self.port.read(&mut response).unwrap_or(0);
-        Ok(String::from_utf8_lossy(&response[..n]).to_string())
-    }
-
     fn read_power(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
-        // Clear input buffer
-        let mut discard = [0u8; 256];
-        let _ = self.port.read(&mut discard);
-
-        // Send command (no terminator for 1830-C)
-        self.port.write_all(b"D?")?;
+        // Send command with CR terminator (required by 1830-C)
+        self.port.write_all(b"D?\r")?;
         self.port.flush()?;
+        thread::sleep(Duration::from_millis(200));
 
-        thread::sleep(Duration::from_millis(150));
+        // Read response using BufReader
+        let mut reader = BufReader::new(&mut self.port);
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
 
-        // Read response with multiple attempts
-        let mut response = Vec::with_capacity(32);
-        let mut buf = [0u8; 32];
-        for _ in 0..5 {
-            match self.port.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    response.extend_from_slice(&buf[..n]);
-                    // Look for newline or enough digits
-                    if response.contains(&b'\n') || response.contains(&b'\r') || response.len() >= 12 {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-            thread::sleep(Duration::from_millis(30));
-        }
-
-        let response_str = String::from_utf8_lossy(&response);
-        // Parse floating point value (may have E notation)
-        let trimmed = response_str.trim();
-        trimmed
-            .parse::<f64>()
-            .map_err(|_| format!("Failed to parse power: '{}'", trimmed).into())
+        let power: f64 = response.trim().parse()?;
+        Ok(power)
     }
 
     fn set_wavelength(&mut self, wavelength_nm: f64) -> Result<(), Box<dyn std::error::Error>> {
-        // Newport 1830-C uses W command with 4-digit integer nm
+        // Newport 1830-C uses W command with 4-digit integer nm and CR terminator
         let wl_int = wavelength_nm.round() as u32;
-        let cmd = format!("W{:04}", wl_int);
-        self.send_command(&cmd)?;
+        let cmd = format!("W{:04}\r", wl_int);
+        self.port.write_all(cmd.as_bytes())?;
+        self.port.flush()?;
         thread::sleep(Duration::from_millis(200));
         Ok(())
     }
