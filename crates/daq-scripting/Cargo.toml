@@ -46,5 +46,10 @@ scripting_full = [
 # Alias for backwards compatibility (prefer scripting_full)
 polarization = ["scripting_full"]
 
+[[bin]]
+name = "rhai-runner"
+path = "src/bin/rhai_runner.rs"
+required-features = ["scripting_full"]
+
 [lints]
 workspace = true
