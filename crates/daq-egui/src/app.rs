@@ -8,7 +8,6 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use tokio::sync::mpsc;
 
-use crate::client::DaqClient;
 use crate::connection::{
     load_daemon_address, resolve_address, save_daemon_address, AddressSource, DaemonAddress,
 };
@@ -22,12 +21,13 @@ use crate::panels::{
     InstrumentManagerPanel, LoggingPanel, ModulesPanel, PlanRunnerPanel, RunComparisonPanel,
     RunHistoryPanel, ScanBuilderPanel, ScansPanel, ScriptsPanel, SignalPlotterPanel, StoragePanel,
 };
-use crate::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
 use crate::theme::{self, ThemePreference};
 use crate::widgets::{
     AnalogOutputControlPanel, DeviceControlWidget, MaiTaiControlPanel, PowerMeterControlPanel,
     RotatorControlPanel, StageControlPanel, StatusBar,
 };
+use daq_client::reconnect::{friendly_error_message, ConnectionManager, ConnectionState};
+use daq_client::DaqClient;
 use daq_proto::daq::DeviceInfo;
 
 /// Layout version constant. Increment this when the default dock layout changes
