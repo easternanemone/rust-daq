@@ -9,7 +9,9 @@ use egui_dock::{DockArea, DockState, NodeIndex, Style, TabViewer};
 use tokio::sync::mpsc;
 
 use crate::client::DaqClient;
-use crate::connection::{resolve_address, save_to_storage, AddressSource, DaemonAddress};
+use crate::connection::{
+    load_daemon_address, resolve_address, save_daemon_address, AddressSource, DaemonAddress,
+};
 use crate::daemon_launcher::{AutoConnectState, DaemonLauncher, DaemonMode};
 use crate::icons;
 use crate::layout;
@@ -297,11 +299,18 @@ impl DaqApp {
         let daemon_address = if matches!(daemon_mode, DaemonMode::Remote { .. }) {
             // For remote mode, use the provided URL directly
             DaemonAddress::parse(&daemon_mode.daemon_url(), AddressSource::UserInput)
-                .unwrap_or_else(|_| resolve_address(None, cc.storage))
+                .unwrap_or_else(|_| {
+                    let persisted = cc.storage.and_then(load_daemon_address);
+                    resolve_address(None, persisted.as_deref())
+                })
         } else {
             // For local modes, use the generated URL
-            DaemonAddress::parse(&daemon_mode.daemon_url(), AddressSource::Default)
-                .unwrap_or_else(|_| resolve_address(None, cc.storage))
+            DaemonAddress::parse(&daemon_mode.daemon_url(), AddressSource::Default).unwrap_or_else(
+                |_| {
+                    let persisted = cc.storage.and_then(load_daemon_address);
+                    resolve_address(None, persisted.as_deref())
+                },
+            )
         };
         let address_input = daemon_address.original().to_string();
 
@@ -1687,7 +1696,7 @@ impl eframe::App for DaqApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if self.connection.state().is_connected() {
-            save_to_storage(storage, &self.daemon_address);
+            save_daemon_address(storage, &self.daemon_address);
         }
 
         if let Some(dock_state) = &self.dock_state {

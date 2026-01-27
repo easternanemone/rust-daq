@@ -2851,6 +2851,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "clap",
+ "daq-client",
  "daq-core",
  "daq-driver-pvcam",
  "daq-experiment",
