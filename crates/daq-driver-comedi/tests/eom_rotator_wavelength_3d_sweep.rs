@@ -738,12 +738,40 @@ impl Newport1830Simple {
     }
 
     fn read_power(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
-        let response = self.send_command("D?")?;
-        // Response format: floating point in Watts
-        response
-            .trim()
+        // Clear input buffer
+        let mut discard = [0u8; 256];
+        let _ = self.port.read(&mut discard);
+
+        // Send command (no terminator for 1830-C)
+        self.port.write_all(b"D?")?;
+        self.port.flush()?;
+
+        thread::sleep(Duration::from_millis(150));
+
+        // Read response with multiple attempts
+        let mut response = Vec::with_capacity(32);
+        let mut buf = [0u8; 32];
+        for _ in 0..5 {
+            match self.port.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    response.extend_from_slice(&buf[..n]);
+                    // Look for newline or enough digits
+                    if response.contains(&b'\n') || response.contains(&b'\r') || response.len() >= 12 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+            thread::sleep(Duration::from_millis(30));
+        }
+
+        let response_str = String::from_utf8_lossy(&response);
+        // Parse floating point value (may have E notation)
+        let trimmed = response_str.trim();
+        trimmed
             .parse::<f64>()
-            .map_err(|_| format!("Failed to parse power: {}", response).into())
+            .map_err(|_| format!("Failed to parse power: '{}'", trimmed).into())
     }
 
     fn set_wavelength(&mut self, wavelength_nm: f64) -> Result<(), Box<dyn std::error::Error>> {
@@ -804,19 +832,26 @@ impl Ell14Simple {
         let response_str = String::from_utf8_lossy(&response);
 
         // Parse pulses per degree from IN response
-        // Format: {addr}IN{type}{serial}{year}{fwrel}{hwrel}{travel}{pulses}
-        // pulses is 8 hex chars at position 23-30
+        // Format: {addr}IN{type:2}{serial:8}{year:4}{fwrel:2}{hwrel:2}{travel:4}{pulses:8}
+        // Total data after IN: 30 chars
+        // pulses is 8 hex chars at position 22-30 (after travel)
         let expected_prefix = format!("{}IN", address);
         let pulses_per_degree = if let Some(idx) = response_str.find(&expected_prefix) {
-            let data_start = idx + 3;
-            if response_str.len() >= data_start + 28 {
-                let pulses_hex = &response_str[data_start + 20..data_start + 28];
-                u32::from_str_radix(pulses_hex, 16).unwrap_or(143360) as f64 / 100.0
+            let data_start = idx + 3; // After "{addr}IN"
+            // ELL14 has 143360 pulses/revolution = 1433.60 pulses/degree
+            // The response has: type(2) + serial(8) + year(4) + fwrel(2) + hwrel(2) + travel(4) + pulses(8) = 30 chars
+            if response_str.len() >= data_start + 30 {
+                let pulses_hex = &response_str[data_start + 22..data_start + 30];
+                // pulses is total pulses per revolution, divide by 100 to get degrees
+                match u32::from_str_radix(pulses_hex.trim(), 16) {
+                    Ok(p) if p > 1000 && p < 1000000 => p as f64 / 100.0,
+                    _ => 1433.60, // ELL14 default
+                }
             } else {
-                1433.60
+                1433.60 // ELL14 default
             }
         } else {
-            1433.60
+            1433.60 // ELL14 default: 143360/100 pulses per degree
         };
 
         Ok(Self {
