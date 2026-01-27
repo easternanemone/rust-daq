@@ -6,8 +6,8 @@ use crate::connection_state_ext::ConnectionStateExt;
 use eframe::egui::{self, Color32, RichText, Ui};
 use tokio::runtime::Runtime;
 
-use crate::client::DaqClient;
 use crate::widgets::{offline_notice, OfflineContext};
+use daq_client::DaqClient;
 
 use super::{AnalogInputPanel, AnalogOutputPanel, CounterPanel, DigitalIOPanel};
 
