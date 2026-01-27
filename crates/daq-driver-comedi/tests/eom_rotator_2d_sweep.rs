@@ -206,11 +206,17 @@ fn save_to_hdf5_2d(
         power_flat.extend(angle_row);
     }
 
+    // Create dataset and write using raw slice with explicit shape
     let power_ds = file
         .new_dataset::<f64>()
         .shape([n_angles, n_voltages])
         .create("power")?;
-    power_ds.write(&power_flat)?;
+    
+    // Write using ndarray for proper 2D shape handling
+    use ndarray::Array2;
+    let power_array = Array2::from_shape_vec((n_angles, n_voltages), power_flat)
+        .map_err(|e| format!("Failed to create 2D array: {}", e))?;
+    power_ds.write(&power_array)?;
 
     power_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
@@ -381,19 +387,31 @@ impl Ell14Simple {
         let pulses = (degrees * self.pulses_per_degree).round() as u32;
         let cmd = format!("{}ma{:08X}", self.address, pulses);
 
-        // Clear any pending data
+        // Clear any pending data aggressively
         let mut discard = [0u8; 256];
-        let _ = self.port.read(&mut discard);
+        for _ in 0..5 {
+            match self.port.read(&mut discard) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
 
         self.port.write_all(cmd.as_bytes())?;
         self.port.flush()?;
 
-        // Wait for move to complete
-        thread::sleep(Duration::from_millis(ROTATOR_SETTLING_MS));
+        // Wait for move to complete (longer for larger moves)
+        let move_time = ((degrees.abs() / 360.0) * 2000.0).max(ROTATOR_SETTLING_MS as f64);
+        thread::sleep(Duration::from_millis(move_time as u64));
 
-        // Read response (PO)
+        // Read and discard response (PO)
         let mut response = [0u8; 64];
-        let _ = self.port.read(&mut response);
+        for _ in 0..3 {
+            match self.port.read(&mut response) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
 
         Ok(())
     }
@@ -401,17 +419,39 @@ impl Ell14Simple {
     fn get_position(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
         let cmd = format!("{}gp", self.address);
 
+        // Clear buffer aggressively
         let mut discard = [0u8; 256];
-        let _ = self.port.read(&mut discard);
+        for _ in 0..5 {
+            match self.port.read(&mut discard) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
 
         self.port.write_all(cmd.as_bytes())?;
         self.port.flush()?;
 
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(150));
 
-        let mut response = [0u8; 64];
-        let n = self.port.read(&mut response)?;
-        let response_str = String::from_utf8_lossy(&response[..n]);
+        // Read response with multiple attempts
+        let mut response = Vec::with_capacity(64);
+        let mut buf = [0u8; 64];
+        for _ in 0..5 {
+            match self.port.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    response.extend_from_slice(&buf[..n]);
+                    if response.len() >= 12 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        let response_str = String::from_utf8_lossy(&response);
 
         // Parse position from PO response: {addr}PO{8 hex}
         let expected_prefix = format!("{}PO", self.address);
@@ -419,13 +459,15 @@ impl Ell14Simple {
             let hex_start = idx + 3;
             if response_str.len() >= hex_start + 8 {
                 let hex_str = &response_str[hex_start..hex_start + 8];
-                if let Ok(pulses) = u32::from_str_radix(hex_str, 16) {
+                if let Ok(pulses) = u32::from_str_radix(hex_str.trim(), 16) {
                     return Ok(pulses as f64 / self.pulses_per_degree);
                 }
             }
         }
 
-        Err("Failed to parse position".into())
+        // If position query failed, return NaN rather than error
+        // (better to continue sweep than abort)
+        Ok(f64::NAN)
     }
 
     fn home(&mut self) -> Result<(), Box<dyn std::error::Error>> {
