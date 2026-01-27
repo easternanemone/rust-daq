@@ -150,18 +150,19 @@ fn test_waveplate_calibration_4d() {
     // Initialize hardware
     let start_time = Instant::now();
 
-    println!("[1/6] Opening ELL14 rotators...");
-    let mut rotator_lp = Ell14Simple::open(ELLIPTEC_PORT, LP_ADDRESS)
-        .expect("Failed to open LP rotator");
-    println!("  LP (addr {}): pulses/deg = {:.2}", LP_ADDRESS, rotator_lp.pulses_per_degree);
+    println!("[1/6] Opening ELL14 rotators (shared RS-485 bus)...");
+    let mut rotator_bus = Ell14Bus::open(ELLIPTEC_PORT)
+        .expect("Failed to open Elliptec bus");
     
-    let mut rotator_hwp = Ell14Simple::open(ELLIPTEC_PORT, HWP_ADDRESS)
-        .expect("Failed to open HWP rotator");
-    println!("  HWP (addr {}): pulses/deg = {:.2}", HWP_ADDRESS, rotator_hwp.pulses_per_degree);
+    // Query pulses per degree for each rotator
+    let lp_ppd = rotator_bus.query_pulses_per_degree(LP_ADDRESS);
+    println!("  LP (addr {}): pulses/deg = {:.2}", LP_ADDRESS, lp_ppd);
     
-    let mut rotator_qwp = Ell14Simple::open(ELLIPTEC_PORT, QWP_ADDRESS)
-        .expect("Failed to open QWP rotator");
-    println!("  QWP (addr {}): pulses/deg = {:.2}", QWP_ADDRESS, rotator_qwp.pulses_per_degree);
+    let hwp_ppd = rotator_bus.query_pulses_per_degree(HWP_ADDRESS);
+    println!("  HWP (addr {}): pulses/deg = {:.2}", HWP_ADDRESS, hwp_ppd);
+    
+    let qwp_ppd = rotator_bus.query_pulses_per_degree(QWP_ADDRESS);
+    println!("  QWP (addr {}): pulses/deg = {:.2}", QWP_ADDRESS, qwp_ppd);
 
     println!("[2/6] Opening MaiTai laser...");
     let mut maitai = MaiTaiSimple::open(MAITAI_PORT).expect("Failed to open MaiTai");
@@ -223,7 +224,7 @@ fn test_waveplate_calibration_4d() {
         // Sweep LP, HWP, QWP
         for (lp_idx, &lp_angle) in lp_angles.iter().enumerate() {
             // Move LP
-            rotator_lp.move_abs(lp_angle).expect("Failed to move LP");
+            rotator_bus.move_abs(LP_ADDRESS, lp_angle, lp_ppd).expect("Failed to move LP");
             
             print!("  LP {:3.0}° ({:2}/{:2}): ", lp_angle, lp_idx + 1, n_lp);
             std::io::stdout().flush().unwrap();
@@ -233,11 +234,11 @@ fn test_waveplate_calibration_4d() {
 
             for (hwp_idx, &hwp_angle) in hwp_angles.iter().enumerate() {
                 // Move HWP
-                rotator_hwp.move_abs(hwp_angle).expect("Failed to move HWP");
+                rotator_bus.move_abs(HWP_ADDRESS, hwp_angle, hwp_ppd).expect("Failed to move HWP");
 
                 for (qwp_idx, &qwp_angle) in qwp_angles.iter().enumerate() {
                     // Move QWP
-                    rotator_qwp.move_abs(qwp_angle).expect("Failed to move QWP");
+                    rotator_bus.move_abs(QWP_ADDRESS, qwp_angle, qwp_ppd).expect("Failed to move QWP");
                     
                     thread::sleep(Duration::from_millis(POWER_SETTLE_MS));
 
@@ -277,9 +278,9 @@ fn test_waveplate_calibration_4d() {
     // Reset to safe state
     println!("Resetting to safe state...");
     maitai.close_shutter().expect("Failed to close shutter");
-    rotator_lp.move_abs(0.0).expect("Failed to home LP");
-    rotator_hwp.move_abs(0.0).expect("Failed to home HWP");
-    rotator_qwp.move_abs(0.0).expect("Failed to home QWP");
+    rotator_bus.move_abs(LP_ADDRESS, 0.0, lp_ppd).expect("Failed to home LP");
+    rotator_bus.move_abs(HWP_ADDRESS, 0.0, hwp_ppd).expect("Failed to home HWP");
+    rotator_bus.move_abs(QWP_ADDRESS, 0.0, qwp_ppd).expect("Failed to home QWP");
     println!("  Shutter closed, all rotators homed to 0°");
 
     // Save 4D data
@@ -553,39 +554,42 @@ impl Newport1830Simple {
     }
 }
 
-// Simple ELL14 wrapper with RS-485 multidrop support
-struct Ell14Simple {
+// Shared RS-485 bus for multiple ELL14 rotators
+struct Ell14Bus {
     port: Box<dyn serialport::SerialPort>,
-    address: String,
-    pulses_per_degree: f64,
 }
 
-impl Ell14Simple {
-    fn open(port_path: &str, address: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut port = serialport::new(port_path, 9600)
+impl Ell14Bus {
+    fn open(port_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let port = serialport::new(port_path, 9600)
             .timeout(Duration::from_millis(500))
             .open()?;
+        Ok(Self { port })
+    }
 
-        // Clear buffer
+    fn clear_buffer(&mut self) {
         let mut discard = [0u8; 256];
         for _ in 0..5 {
-            match port.read(&mut discard) {
+            match self.port.read(&mut discard) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => continue,
             }
         }
-        thread::sleep(Duration::from_millis(100));
+    }
 
-        // Query device info
+    fn query_pulses_per_degree(&mut self, address: &str) -> f64 {
+        self.clear_buffer();
+        thread::sleep(Duration::from_millis(50));
+
         let cmd = format!("{}in", address);
-        port.write_all(cmd.as_bytes())?;
-        port.flush()?;
+        if self.port.write_all(cmd.as_bytes()).is_err() { return 1433.60; }
+        let _ = self.port.flush();
         thread::sleep(Duration::from_millis(200));
 
         let mut response = Vec::with_capacity(64);
         let mut buf = [0u8; 64];
         for _ in 0..5 {
-            match port.read(&mut buf) {
+            match self.port.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
                     response.extend_from_slice(&buf[..n]);
@@ -599,41 +603,24 @@ impl Ell14Simple {
         let response_str = String::from_utf8_lossy(&response);
         let expected_prefix = format!("{}IN", address);
         
-        // Default for ELL14: 143360 pulses/revolution = 1433.60 pulses/degree
-        let pulses_per_degree = if let Some(idx) = response_str.find(&expected_prefix) {
+        if let Some(idx) = response_str.find(&expected_prefix) {
             let data_start = idx + 3;
             if response_str.len() >= data_start + 30 {
                 let pulses_hex = &response_str[data_start + 22..data_start + 30];
                 match u32::from_str_radix(pulses_hex.trim(), 16) {
-                    Ok(p) if p > 1000 && p < 1000000 => p as f64 / 100.0,
-                    _ => 1433.60,
+                    Ok(p) if p > 1000 && p < 1000000 => return p as f64 / 100.0,
+                    _ => {}
                 }
-            } else {
-                1433.60
-            }
-        } else {
-            1433.60
-        };
-
-        Ok(Self {
-            port,
-            address: address.to_string(),
-            pulses_per_degree,
-        })
-    }
-
-    fn move_abs(&mut self, degrees: f64) -> Result<(), Box<dyn std::error::Error>> {
-        let pulses = (degrees * self.pulses_per_degree).round() as u32;
-        let cmd = format!("{}ma{:08X}", self.address, pulses);
-
-        // Clear buffer
-        let mut discard = [0u8; 256];
-        for _ in 0..3 {
-            match self.port.read(&mut discard) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => continue,
             }
         }
+        1433.60 // ELL14 default
+    }
+
+    fn move_abs(&mut self, address: &str, degrees: f64, pulses_per_degree: f64) -> Result<(), Box<dyn std::error::Error>> {
+        let pulses = (degrees * pulses_per_degree).round() as u32;
+        let cmd = format!("{}ma{:08X}", address, pulses);
+
+        self.clear_buffer();
 
         self.port.write_all(cmd.as_bytes())?;
         self.port.flush()?;
@@ -643,14 +630,21 @@ impl Ell14Simple {
         thread::sleep(Duration::from_millis(move_time as u64));
 
         // Discard response
-        let mut response = [0u8; 64];
-        for _ in 0..3 {
-            match self.port.read(&mut response) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => continue,
-            }
-        }
+        self.clear_buffer();
 
         Ok(())
+    }
+}
+
+// Rotator handle that references shared bus
+struct RotatorHandle<'a> {
+    bus: &'a mut Ell14Bus,
+    address: String,
+    pulses_per_degree: f64,
+}
+
+impl<'a> RotatorHandle<'a> {
+    fn move_abs(&mut self, degrees: f64) -> Result<(), Box<dyn std::error::Error>> {
+        self.bus.move_abs(&self.address, degrees, self.pulses_per_degree)
     }
 }
