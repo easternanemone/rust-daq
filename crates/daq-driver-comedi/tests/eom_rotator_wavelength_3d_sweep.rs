@@ -117,7 +117,9 @@ fn test_eom_rotator_wavelength_3d_sweep() {
     let n_voltages = voltages.len();
     let total_points = n_wavelengths * n_angles * n_voltages;
 
-    let output_dir = shellexpand::tilde("~/rust-daq/data").to_string();
+    let output_dir = env::var("HOME")
+        .map(|h| format!("{}/rust-daq/data", h))
+        .unwrap_or_else(|_| "/tmp".to_string());
 
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  EOM + ROTATOR + WAVELENGTH 3D POWER SWEEP TEST              ║");
