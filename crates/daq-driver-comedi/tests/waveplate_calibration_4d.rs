@@ -36,15 +36,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 // Serial port paths
-const MAITAI_PORT: &str = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
+const MAITAI_PORT: &str =
+    "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
 const NEWPORT_PORT: &str = "/dev/ttyS0";
-const ELLIPTEC_PORT: &str =
-    "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
+const ELLIPTEC_PORT: &str = "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
 
 // Rotator addresses
-const LP_ADDRESS: &str = "3";   // Linear Polarizer
-const HWP_ADDRESS: &str = "2";  // Half-Wave Plate
-const QWP_ADDRESS: &str = "8";  // Quarter-Wave Plate
+const LP_ADDRESS: &str = "3"; // Linear Polarizer
+const HWP_ADDRESS: &str = "2"; // Half-Wave Plate
+const QWP_ADDRESS: &str = "8"; // Quarter-Wave Plate
 
 // Timing
 const ROTATOR_SETTLING_MS: u64 = 300;
@@ -118,7 +118,8 @@ fn test_waveplate_calibration_4d() {
     // Time estimate
     let points_per_wl = n_lp * n_hwp * n_qwp;
     let time_per_point_ms = POWER_SETTLE_MS + 50; // measurement + overhead
-    let time_per_wl_secs = (points_per_wl as u64 * time_per_point_ms) / 1000 + wavelength_settle_secs;
+    let time_per_wl_secs =
+        (points_per_wl as u64 * time_per_point_ms) / 1000 + wavelength_settle_secs;
     let total_time_secs = n_wl as u64 * time_per_wl_secs;
 
     println!("\n╔══════════════════════════════════════════════════════════════╗");
@@ -131,19 +132,36 @@ fn test_waveplate_calibration_4d() {
     println!("  Newport port:   {}", NEWPORT_PORT);
     println!("  Elliptec port:  {}", ELLIPTEC_PORT);
     println!();
-    println!("  Wavelength:     {:.0}nm to {:.0}nm (step {:.0}nm) -> {} points", 
-        wavelength_min, wavelength_max, wavelength_step, n_wl);
-    println!("  Stabilization:  {} seconds after wavelength change", wavelength_settle_secs);
-    println!("  LP (addr {}):    {:.0}° to {:.0}° (step {:.0}°) -> {} points",
-        LP_ADDRESS, lp_min, lp_max, lp_step, n_lp);
-    println!("  HWP (addr {}):   {:.0}° to {:.0}° (step {:.0}°) -> {} points",
-        HWP_ADDRESS, hwp_min, hwp_max, hwp_step, n_hwp);
-    println!("  QWP (addr {}):   {:.0}° to {:.0}° (step {:.0}°) -> {} points",
-        QWP_ADDRESS, qwp_min, qwp_max, qwp_step, n_qwp);
+    println!(
+        "  Wavelength:     {:.0}nm to {:.0}nm (step {:.0}nm) -> {} points",
+        wavelength_min, wavelength_max, wavelength_step, n_wl
+    );
+    println!(
+        "  Stabilization:  {} seconds after wavelength change",
+        wavelength_settle_secs
+    );
+    println!(
+        "  LP (addr {}):    {:.0}° to {:.0}° (step {:.0}°) -> {} points",
+        LP_ADDRESS, lp_min, lp_max, lp_step, n_lp
+    );
+    println!(
+        "  HWP (addr {}):   {:.0}° to {:.0}° (step {:.0}°) -> {} points",
+        HWP_ADDRESS, hwp_min, hwp_max, hwp_step, n_hwp
+    );
+    println!(
+        "  QWP (addr {}):   {:.0}° to {:.0}° (step {:.0}°) -> {} points",
+        QWP_ADDRESS, qwp_min, qwp_max, qwp_step, n_qwp
+    );
     println!();
-    println!("  Total points:   {} ({} × {} × {} × {})", 
-        total_points, n_wl, n_lp, n_hwp, n_qwp);
-    println!("  Estimated time: {} hr {} min", total_time_secs / 3600, (total_time_secs % 3600) / 60);
+    println!(
+        "  Total points:   {} ({} × {} × {} × {})",
+        total_points, n_wl, n_lp, n_hwp, n_qwp
+    );
+    println!(
+        "  Estimated time: {} hr {} min",
+        total_time_secs / 3600,
+        (total_time_secs % 3600) / 60
+    );
     println!("  Output dir:     {}", output_dir);
     println!();
 
@@ -151,16 +169,15 @@ fn test_waveplate_calibration_4d() {
     let start_time = Instant::now();
 
     println!("[1/6] Opening ELL14 rotators (shared RS-485 bus)...");
-    let mut rotator_bus = Ell14Bus::open(ELLIPTEC_PORT)
-        .expect("Failed to open Elliptec bus");
-    
+    let mut rotator_bus = Ell14Bus::open(ELLIPTEC_PORT).expect("Failed to open Elliptec bus");
+
     // Query pulses per degree for each rotator
     let lp_ppd = rotator_bus.query_pulses_per_degree(LP_ADDRESS);
     println!("  LP (addr {}): pulses/deg = {:.2}", LP_ADDRESS, lp_ppd);
-    
+
     let hwp_ppd = rotator_bus.query_pulses_per_degree(HWP_ADDRESS);
     println!("  HWP (addr {}): pulses/deg = {:.2}", HWP_ADDRESS, hwp_ppd);
-    
+
     let qwp_ppd = rotator_bus.query_pulses_per_degree(QWP_ADDRESS);
     println!("  QWP (addr {}): pulses/deg = {:.2}", QWP_ADDRESS, qwp_ppd);
 
@@ -179,7 +196,7 @@ fn test_waveplate_calibration_4d() {
     println!("  Initial power: {:.3} mW", initial_power * 1000.0);
 
     // 4D data storage: [wavelength][lp][hwp][qwp]
-    let mut power_4d: Vec<Vec<Vec<Vec<f64>>>> = 
+    let mut power_4d: Vec<Vec<Vec<Vec<f64>>>> =
         vec![vec![vec![vec![0.0; n_qwp]; n_hwp]; n_lp]; n_wl];
 
     println!("[5/6] Performing 4D calibration sweep...\n");
@@ -188,7 +205,7 @@ fn test_waveplate_calibration_4d() {
 
     for (wl_idx, &wavelength) in wavelengths.iter().enumerate() {
         let wl_start = Instant::now();
-        
+
         println!("═══════════════════════════════════════════════════════════════");
         println!("  Wavelength {:.0}nm ({}/{})", wavelength, wl_idx + 1, n_wl);
         println!("═══════════════════════════════════════════════════════════════");
@@ -196,12 +213,16 @@ fn test_waveplate_calibration_4d() {
         // Set wavelengths
         print!("  Setting MaiTai to {:.0}nm... ", wavelength);
         std::io::stdout().flush().unwrap();
-        maitai.set_wavelength(wavelength).expect("Failed to set MaiTai wavelength");
+        maitai
+            .set_wavelength(wavelength)
+            .expect("Failed to set MaiTai wavelength");
         println!("done");
 
         print!("  Setting Newport calibration to {:.0}nm... ", wavelength);
         std::io::stdout().flush().unwrap();
-        power_meter.set_wavelength(wavelength).expect("Failed to set Newport wavelength");
+        power_meter
+            .set_wavelength(wavelength)
+            .expect("Failed to set Newport wavelength");
         println!("done");
 
         // Stabilization
@@ -224,8 +245,10 @@ fn test_waveplate_calibration_4d() {
         // Sweep LP, HWP, QWP
         for (lp_idx, &lp_angle) in lp_angles.iter().enumerate() {
             // Move LP
-            rotator_bus.move_abs(LP_ADDRESS, lp_angle, lp_ppd).expect("Failed to move LP");
-            
+            rotator_bus
+                .move_abs(LP_ADDRESS, lp_angle, lp_ppd)
+                .expect("Failed to move LP");
+
             print!("  LP {:3.0}° ({:2}/{:2}): ", lp_angle, lp_idx + 1, n_lp);
             std::io::stdout().flush().unwrap();
 
@@ -234,12 +257,16 @@ fn test_waveplate_calibration_4d() {
 
             for (hwp_idx, &hwp_angle) in hwp_angles.iter().enumerate() {
                 // Move HWP
-                rotator_bus.move_abs(HWP_ADDRESS, hwp_angle, hwp_ppd).expect("Failed to move HWP");
+                rotator_bus
+                    .move_abs(HWP_ADDRESS, hwp_angle, hwp_ppd)
+                    .expect("Failed to move HWP");
 
                 for (qwp_idx, &qwp_angle) in qwp_angles.iter().enumerate() {
                     // Move QWP
-                    rotator_bus.move_abs(QWP_ADDRESS, qwp_angle, qwp_ppd).expect("Failed to move QWP");
-                    
+                    rotator_bus
+                        .move_abs(QWP_ADDRESS, qwp_angle, qwp_ppd)
+                        .expect("Failed to move QWP");
+
                     thread::sleep(Duration::from_millis(POWER_SETTLE_MS));
 
                     // Read power
@@ -247,8 +274,12 @@ fn test_waveplate_calibration_4d() {
                     power_4d[wl_idx][lp_idx][hwp_idx][qwp_idx] = power_w;
 
                     let power_mw = power_w * 1000.0;
-                    if power_mw < lp_min_power { lp_min_power = power_mw; }
-                    if power_mw > lp_max_power { lp_max_power = power_mw; }
+                    if power_mw < lp_min_power {
+                        lp_min_power = power_mw;
+                    }
+                    if power_mw > lp_max_power {
+                        lp_max_power = power_mw;
+                    }
 
                     total_measured += 1;
                 }
@@ -268,19 +299,27 @@ fn test_waveplate_calibration_4d() {
         let remaining_wl = n_wl - wl_idx - 1;
         let eta_secs = remaining_wl as u64 * wl_elapsed.as_secs();
         println!();
-        println!("  Wavelength complete in {:.1} min, ETA: {} min {} sec remaining",
+        println!(
+            "  Wavelength complete in {:.1} min, ETA: {} min {} sec remaining",
             wl_elapsed.as_secs_f64() / 60.0,
             eta_secs / 60,
-            eta_secs % 60);
+            eta_secs % 60
+        );
         println!();
     }
 
     // Reset to safe state
     println!("Resetting to safe state...");
     maitai.close_shutter().expect("Failed to close shutter");
-    rotator_bus.move_abs(LP_ADDRESS, 0.0, lp_ppd).expect("Failed to home LP");
-    rotator_bus.move_abs(HWP_ADDRESS, 0.0, hwp_ppd).expect("Failed to home HWP");
-    rotator_bus.move_abs(QWP_ADDRESS, 0.0, qwp_ppd).expect("Failed to home QWP");
+    rotator_bus
+        .move_abs(LP_ADDRESS, 0.0, lp_ppd)
+        .expect("Failed to home LP");
+    rotator_bus
+        .move_abs(HWP_ADDRESS, 0.0, hwp_ppd)
+        .expect("Failed to home HWP");
+    rotator_bus
+        .move_abs(QWP_ADDRESS, 0.0, qwp_ppd)
+        .expect("Failed to home QWP");
     println!("  Shutter closed, all rotators homed to 0°");
 
     // Save 4D data
@@ -301,8 +340,13 @@ fn test_waveplate_calibration_4d() {
             println!("  Data saved to: {}", filename);
             println!("\n  Python analysis:");
             println!("    import xarray as xr");
-            println!("    ds = xr.open_dataset('{}', engine='h5netcdf')", filename);
-            println!("    ds.power.sel(wavelength=800.0, method='nearest').max(dim='qwp_angle').plot()");
+            println!(
+                "    ds = xr.open_dataset('{}', engine='h5netcdf')",
+                filename
+            );
+            println!(
+                "    ds.power.sel(wavelength=800.0, method='nearest').max(dim='qwp_angle').plot()"
+            );
             println!("    ds.power.sel(lp_angle=90.0, hwp_angle=45.0, method='nearest').plot()");
         }
         Err(e) => {
@@ -313,7 +357,10 @@ fn test_waveplate_calibration_4d() {
     // Statistics
     let all_powers: Vec<f64> = power_4d
         .iter()
-        .flat_map(|wl| wl.iter().flat_map(|lp| lp.iter().flat_map(|hwp| hwp.iter().copied())))
+        .flat_map(|wl| {
+            wl.iter()
+                .flat_map(|lp| lp.iter().flat_map(|hwp| hwp.iter().copied()))
+        })
         .filter(|p| p.is_finite())
         .collect();
 
@@ -325,24 +372,39 @@ fn test_waveplate_calibration_4d() {
         (min, max)
     };
 
-    let dynamic_range = if min_power > 0.0 { max_power / min_power } else { 0.0 };
-    let dynamic_range_db = if dynamic_range > 0.0 { 10.0 * dynamic_range.log10() } else { 0.0 };
+    let dynamic_range = if min_power > 0.0 {
+        max_power / min_power
+    } else {
+        0.0
+    };
+    let dynamic_range_db = if dynamic_range > 0.0 {
+        10.0 * dynamic_range.log10()
+    } else {
+        0.0
+    };
 
     let total_elapsed = start_time.elapsed();
 
     println!("\n═══════════════════════════════════════════════════════════════");
     println!("  4D CALIBRATION COMPLETE");
     println!("═══════════════════════════════════════════════════════════════");
-    println!("  Grid size:       {} wl × {} LP × {} HWP × {} QWP = {} points",
-        n_wl, n_lp, n_hwp, n_qwp, total_points);
+    println!(
+        "  Grid size:       {} wl × {} LP × {} HWP × {} QWP = {} points",
+        n_wl, n_lp, n_hwp, n_qwp, total_points
+    );
     println!("  Points measured: {}", total_measured);
     println!("  Min power:       {:.3} mW", min_power * 1000.0);
     println!("  Max power:       {:.3} mW", max_power * 1000.0);
-    println!("  Dynamic range:   {:.1}:1 ({:.1} dB)", dynamic_range, dynamic_range_db);
-    println!("  Total time:      {} hr {} min {} sec",
+    println!(
+        "  Dynamic range:   {:.1}:1 ({:.1} dB)",
+        dynamic_range, dynamic_range_db
+    );
+    println!(
+        "  Total time:      {} hr {} min {} sec",
         total_elapsed.as_secs() / 3600,
         (total_elapsed.as_secs() % 3600) / 60,
-        total_elapsed.as_secs() % 60);
+        total_elapsed.as_secs() % 60
+    );
     println!();
 }
 
@@ -363,33 +425,77 @@ fn save_4d_hdf5(
     let file = File::create(filename)?;
 
     // Coordinate arrays
-    let wl_ds = file.new_dataset::<f64>().shape([wavelengths.len()]).create("wavelength")?;
+    let wl_ds = file
+        .new_dataset::<f64>()
+        .shape([wavelengths.len()])
+        .create("wavelength")?;
     wl_ds.write(wavelengths)?;
-    wl_ds.new_attr::<hdf5::types::VarLenUnicode>().create("units")?
+    wl_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("units")?
         .write_scalar(&"nm".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    wl_ds.new_attr::<hdf5::types::VarLenUnicode>().create("long_name")?
-        .write_scalar(&"Laser Wavelength".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    wl_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("long_name")?
+        .write_scalar(
+            &"Laser Wavelength"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
-    let lp_ds = file.new_dataset::<f64>().shape([lp_angles.len()]).create("lp_angle")?;
+    let lp_ds = file
+        .new_dataset::<f64>()
+        .shape([lp_angles.len()])
+        .create("lp_angle")?;
     lp_ds.write(lp_angles)?;
-    lp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("units")?
+    lp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("units")?
         .write_scalar(&"deg".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    lp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("long_name")?
-        .write_scalar(&"Linear Polarizer Angle".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    lp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("long_name")?
+        .write_scalar(
+            &"Linear Polarizer Angle"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
-    let hwp_ds = file.new_dataset::<f64>().shape([hwp_angles.len()]).create("hwp_angle")?;
+    let hwp_ds = file
+        .new_dataset::<f64>()
+        .shape([hwp_angles.len()])
+        .create("hwp_angle")?;
     hwp_ds.write(hwp_angles)?;
-    hwp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("units")?
+    hwp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("units")?
         .write_scalar(&"deg".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    hwp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("long_name")?
-        .write_scalar(&"Half-Wave Plate Angle".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    hwp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("long_name")?
+        .write_scalar(
+            &"Half-Wave Plate Angle"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
-    let qwp_ds = file.new_dataset::<f64>().shape([qwp_angles.len()]).create("qwp_angle")?;
+    let qwp_ds = file
+        .new_dataset::<f64>()
+        .shape([qwp_angles.len()])
+        .create("qwp_angle")?;
     qwp_ds.write(qwp_angles)?;
-    qwp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("units")?
+    qwp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("units")?
         .write_scalar(&"deg".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    qwp_ds.new_attr::<hdf5::types::VarLenUnicode>().create("long_name")?
-        .write_scalar(&"Quarter-Wave Plate Angle".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    qwp_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("long_name")?
+        .write_scalar(
+            &"Quarter-Wave Plate Angle"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Power data (4D)
     let n_wl = wavelengths.len();
@@ -406,7 +512,8 @@ fn save_4d_hdf5(
         }
     }
 
-    let power_ds = file.new_dataset::<f64>()
+    let power_ds = file
+        .new_dataset::<f64>()
         .shape([n_wl, n_lp, n_hwp, n_qwp])
         .create("power")?;
 
@@ -414,13 +521,22 @@ fn save_4d_hdf5(
         .map_err(|e| format!("Failed to create 4D array: {}", e))?;
     power_ds.write(power_array.view())?;
 
-    power_ds.new_attr::<hdf5::types::VarLenUnicode>().create("units")?
+    power_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("units")?
         .write_scalar(&"W".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    power_ds.new_attr::<hdf5::types::VarLenUnicode>().create("long_name")?
-        .write_scalar(&"Optical Power".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    power_ds
+        .new_attr::<hdf5::types::VarLenUnicode>()
+        .create("long_name")?
+        .write_scalar(
+            &"Optical Power"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // _ARRAY_DIMENSIONS for xarray
-    let _dims = power_ds.new_attr_builder()
+    let _dims = power_ds
+        .new_attr_builder()
         .with_data(&[
             "wavelength".parse::<hdf5::types::VarLenUnicode>().unwrap(),
             "lp_angle".parse::<hdf5::types::VarLenUnicode>().unwrap(),
@@ -431,28 +547,62 @@ fn save_4d_hdf5(
 
     // Global attributes
     let timestamp_str = Local::now().to_rfc3339();
-    file.new_attr::<hdf5::types::VarLenUnicode>().create("experiment")?
-        .write_scalar(&"4D Waveplate Calibration".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    file.new_attr::<hdf5::types::VarLenUnicode>().create("timestamp")?
+    file.new_attr::<hdf5::types::VarLenUnicode>()
+        .create("experiment")?
+        .write_scalar(
+            &"4D Waveplate Calibration"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
+    file.new_attr::<hdf5::types::VarLenUnicode>()
+        .create("timestamp")?
         .write_scalar(&timestamp_str.parse::<hdf5::types::VarLenUnicode>().unwrap())?;
-    file.new_attr::<hdf5::types::VarLenUnicode>().create("instrument")?
-        .write_scalar(&"MaiTai + Newport 1830-C + 3x ELL14".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+    file.new_attr::<hdf5::types::VarLenUnicode>()
+        .create("instrument")?
+        .write_scalar(
+            &"MaiTai + Newport 1830-C + 3x ELL14"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Dimensions
-    file.new_attr::<u64>().create("n_wavelengths")?.write_scalar(&(n_wl as u64))?;
-    file.new_attr::<u64>().create("n_lp_angles")?.write_scalar(&(n_lp as u64))?;
-    file.new_attr::<u64>().create("n_hwp_angles")?.write_scalar(&(n_hwp as u64))?;
-    file.new_attr::<u64>().create("n_qwp_angles")?.write_scalar(&(n_qwp as u64))?;
-    file.new_attr::<u64>().create("n_total_points")?.write_scalar(&((n_wl * n_lp * n_hwp * n_qwp) as u64))?;
-    file.new_attr::<u64>().create("wavelength_settle_secs")?.write_scalar(&settle_secs)?;
+    file.new_attr::<u64>()
+        .create("n_wavelengths")?
+        .write_scalar(&(n_wl as u64))?;
+    file.new_attr::<u64>()
+        .create("n_lp_angles")?
+        .write_scalar(&(n_lp as u64))?;
+    file.new_attr::<u64>()
+        .create("n_hwp_angles")?
+        .write_scalar(&(n_hwp as u64))?;
+    file.new_attr::<u64>()
+        .create("n_qwp_angles")?
+        .write_scalar(&(n_qwp as u64))?;
+    file.new_attr::<u64>()
+        .create("n_total_points")?
+        .write_scalar(&((n_wl * n_lp * n_hwp * n_qwp) as u64))?;
+    file.new_attr::<u64>()
+        .create("wavelength_settle_secs")?
+        .write_scalar(&settle_secs)?;
 
     // Min/max
-    let valid_powers: Vec<f64> = power_flat.iter().filter(|p| p.is_finite()).copied().collect();
+    let valid_powers: Vec<f64> = power_flat
+        .iter()
+        .filter(|p| p.is_finite())
+        .copied()
+        .collect();
     if !valid_powers.is_empty() {
         let min_p = valid_powers.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_p = valid_powers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        file.new_attr::<f64>().create("min_power_W")?.write_scalar(&min_p)?;
-        file.new_attr::<f64>().create("max_power_W")?.write_scalar(&max_p)?;
+        let max_p = valid_powers
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+        file.new_attr::<f64>()
+            .create("min_power_W")?
+            .write_scalar(&min_p)?;
+        file.new_attr::<f64>()
+            .create("max_power_W")?
+            .write_scalar(&max_p)?;
     }
 
     Ok(())
@@ -498,7 +648,8 @@ impl MaiTaiSimple {
     fn get_wavelength(&mut self) -> Result<f64, Box<dyn std::error::Error>> {
         let response = self.send_command("wav?")?;
         let wl_str = response.trim_end_matches("nm").trim();
-        wl_str.parse::<f64>()
+        wl_str
+            .parse::<f64>()
             .map_err(|_| format!("Failed to parse wavelength: {}", response).into())
     }
 
@@ -582,7 +733,9 @@ impl Ell14Bus {
         thread::sleep(Duration::from_millis(50));
 
         let cmd = format!("{}in", address);
-        if self.port.write_all(cmd.as_bytes()).is_err() { return 1433.60; }
+        if self.port.write_all(cmd.as_bytes()).is_err() {
+            return 1433.60;
+        }
         let _ = self.port.flush();
         thread::sleep(Duration::from_millis(200));
 
@@ -593,7 +746,9 @@ impl Ell14Bus {
                 Ok(0) => break,
                 Ok(n) => {
                     response.extend_from_slice(&buf[..n]);
-                    if response.len() >= 32 { break; }
+                    if response.len() >= 32 {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
@@ -602,7 +757,7 @@ impl Ell14Bus {
 
         let response_str = String::from_utf8_lossy(&response);
         let expected_prefix = format!("{}IN", address);
-        
+
         if let Some(idx) = response_str.find(&expected_prefix) {
             let data_start = idx + 3;
             if response_str.len() >= data_start + 30 {
@@ -616,7 +771,12 @@ impl Ell14Bus {
         1433.60 // ELL14 default
     }
 
-    fn move_abs(&mut self, address: &str, degrees: f64, pulses_per_degree: f64) -> Result<(), Box<dyn std::error::Error>> {
+    fn move_abs(
+        &mut self,
+        address: &str,
+        degrees: f64,
+        pulses_per_degree: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let pulses = (degrees * pulses_per_degree).round() as u32;
         let cmd = format!("{}ma{:08X}", address, pulses);
 
@@ -645,6 +805,7 @@ struct RotatorHandle<'a> {
 
 impl<'a> RotatorHandle<'a> {
     fn move_abs(&mut self, degrees: f64) -> Result<(), Box<dyn std::error::Error>> {
-        self.bus.move_abs(&self.address, degrees, self.pulses_per_degree)
+        self.bus
+            .move_abs(&self.address, degrees, self.pulses_per_degree)
     }
 }

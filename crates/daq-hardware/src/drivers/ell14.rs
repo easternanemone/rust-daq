@@ -1438,6 +1438,8 @@ impl Ell14Driver {
                 hex_str
             };
 
+            // Parse as u32 first, then reinterpret as i32 for signed positions
+            // (ELL14 returns positions as 32-bit two's complement hex)
             let pulses = u32::from_str_radix(hex_clean, 16)
                 .context(format!("Failed to parse jog step hex: {}", hex_clean))?;
 
@@ -1551,6 +1553,7 @@ impl Ell14Driver {
 
             tokio::time::sleep(Duration::from_millis(500)).await;
 
+            // Check if device is ready (not moving/searching)
             if let Ok(resp) = self.transaction("gs").await {
                 if let Some(idx) = resp.find("GS") {
                     let hex_str = resp[idx + 2..].trim();
@@ -1584,7 +1587,7 @@ impl Ell14Driver {
         // om starts the optimization
         self.send_command("om").await?;
 
-        // Wait for completion (can take several minutes)
+        // Wait for optimization to complete (can take several minutes)
         // We poll GS status. Bit 0 is moving.
         // The protocol says GS 00 is returned when complete.
         let timeout = Duration::from_secs(300); // 5 minutes
@@ -2733,6 +2736,10 @@ impl Movable for Ell14Driver {
 // Group Controller
 // =============================================================================
 
+/// Default maximum number of rotators that should move simultaneously
+/// to avoid exceeding power supply capacity
+const DEFAULT_MAX_SIMULTANEOUS: usize = 2;
+
 /// High-level controller for managing synchronized groups of ELL14 rotators
 ///
 /// The group controller manages multiple rotators that need to move together.
@@ -2780,6 +2787,12 @@ pub struct Ell14GroupController<'a> {
     is_formed: bool,
     /// Offsets for each slave (by physical address)
     slave_offsets: std::collections::HashMap<String, f64>,
+    /// Maximum number of rotators that should move simultaneously (default: 2)
+    /// Hard error is returned if exceeded to prevent power supply brownouts.
+    /// ELL14 draws 1.2A peak during movement; 2 rotators = 2.4A (within 2.5A supply),
+    /// 3 rotators = 3.6A (exceeds supply). Override with with_max_simultaneous() if
+    /// you have a higher-capacity power supply.
+    max_simultaneous: usize,
 }
 
 impl std::fmt::Debug for Ell14GroupController<'_> {
@@ -2789,6 +2802,7 @@ impl std::fmt::Debug for Ell14GroupController<'_> {
             .field("slave_count", &self.slaves.len())
             .field("is_formed", &self.is_formed)
             .field("slave_offsets", &self.slave_offsets)
+            .field("max_simultaneous", &self.max_simultaneous)
             .finish()
     }
 }
@@ -2821,7 +2835,23 @@ impl<'a> Ell14GroupController<'a> {
             slaves: rotators,
             is_formed: false,
             slave_offsets: std::collections::HashMap::new(),
+            max_simultaneous: DEFAULT_MAX_SIMULTANEOUS,
         })
+    }
+
+    /// Set the maximum number of rotators that should move simultaneously
+    ///
+    /// Default is 2 to avoid exceeding typical power supply capacity.
+    /// Users with higher-capacity power supplies can increase this limit.
+    ///
+    /// # Arguments
+    /// * `max` - Maximum number of simultaneous rotators
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn with_max_simultaneous(mut self, max: usize) -> Self {
+        self.max_simultaneous = max;
+        self
     }
 
     /// Form the group by configuring slaves to listen to the master's address
@@ -2935,6 +2965,22 @@ impl<'a> Ell14GroupController<'a> {
             return Err(anyhow!("Group not formed. Call form_group() first."));
         }
 
+        let group_size = self.size();
+        if group_size > self.max_simultaneous {
+            return Err(anyhow!(
+                "Cannot move {} rotators simultaneously (limit: {}). \
+                 ELL14 draws up to 1.2A peak per device during homing/frequency search; \
+                 {} rotators = {:.1}A peak which exceeds typical 2.5A supply capacity and \
+                 causes brownouts. Use .with_max_simultaneous({}) to override if you have \
+                 a higher-capacity power supply.",
+                group_size,
+                self.max_simultaneous,
+                group_size,
+                group_size as f64 * 1.2,
+                group_size
+            ));
+        }
+
         tracing::info!("Homing group");
         self.master.home().await?;
 
@@ -2955,6 +3001,22 @@ impl<'a> Ell14GroupController<'a> {
     pub async fn move_group_absolute(&self, degrees: f64) -> Result<()> {
         if !self.is_formed {
             return Err(anyhow!("Group not formed. Call form_group() first."));
+        }
+
+        let group_size = self.size();
+        if group_size > self.max_simultaneous {
+            return Err(anyhow!(
+                "Cannot move {} rotators simultaneously (limit: {}). \
+                 ELL14 draws up to 1.2A peak per device during movement; \
+                 {} rotators = {:.1}A peak which exceeds typical 2.5A supply capacity and \
+                 causes brownouts. Use .with_max_simultaneous({}) to override if you have \
+                 a higher-capacity power supply.",
+                group_size,
+                self.max_simultaneous,
+                group_size,
+                group_size as f64 * 1.2,
+                group_size
+            ));
         }
 
         tracing::info!("Moving group to {:.2}°", degrees);
@@ -3199,6 +3261,117 @@ mod tests {
         assert!(err.contains("not found"));
     }
 
+    #[test]
+    fn test_group_controller_default_max_simultaneous() {
+        let (_, device1) = tokio::io::duplex(64);
+        let (_, device2) = tokio::io::duplex(64);
+        let (_, device3) = tokio::io::duplex(64);
+
+        let port1: SharedPort = Arc::new(Mutex::new(Box::new(device1)));
+        let port2: SharedPort = Arc::new(Mutex::new(Box::new(device2)));
+        let port3: SharedPort = Arc::new(Mutex::new(Box::new(device3)));
+
+        let mut rotator_2 = Ell14Driver::with_test_port(port1, "2", 398.2222);
+        let mut rotator_3 = Ell14Driver::with_test_port(port2, "3", 398.2222);
+        let mut rotator_8 = Ell14Driver::with_test_port(port3, "8", 398.2222);
+
+        // Create group with default settings
+        let group =
+            Ell14GroupController::new(vec![&mut rotator_2, &mut rotator_3, &mut rotator_8], "2")
+                .expect("Failed to create group controller");
+
+        // Verify default max_simultaneous is 2
+        assert_eq!(group.max_simultaneous, DEFAULT_MAX_SIMULTANEOUS);
+        assert_eq!(group.max_simultaneous, 2);
+    }
+
+    #[test]
+    fn test_group_controller_with_custom_max_simultaneous() {
+        let (_, device1) = tokio::io::duplex(64);
+        let (_, device2) = tokio::io::duplex(64);
+        let (_, device3) = tokio::io::duplex(64);
+
+        let port1: SharedPort = Arc::new(Mutex::new(Box::new(device1)));
+        let port2: SharedPort = Arc::new(Mutex::new(Box::new(device2)));
+        let port3: SharedPort = Arc::new(Mutex::new(Box::new(device3)));
+
+        let mut rotator_2 = Ell14Driver::with_test_port(port1, "2", 398.2222);
+        let mut rotator_3 = Ell14Driver::with_test_port(port2, "3", 398.2222);
+        let mut rotator_8 = Ell14Driver::with_test_port(port3, "8", 398.2222);
+
+        // Create group with custom max_simultaneous
+        let group =
+            Ell14GroupController::new(vec![&mut rotator_2, &mut rotator_3, &mut rotator_8], "2")
+                .expect("Failed to create group controller")
+                .with_max_simultaneous(4);
+
+        // Verify custom value is set
+        assert_eq!(group.max_simultaneous, 4);
+    }
+
+    #[test]
+    fn test_group_controller_size_exceeds_limit() {
+        // Test that we can detect when group size exceeds limit
+        // Note: Testing actual movement requires serial I/O mocking which is complex.
+        // The validation logic in home_group() and move_group_absolute() will return
+        // the power limit error before any serial I/O occurs.
+        let (_, device1) = tokio::io::duplex(64);
+        let (_, device2) = tokio::io::duplex(64);
+        let (_, device3) = tokio::io::duplex(64);
+
+        let port1: SharedPort = Arc::new(Mutex::new(Box::new(device1)));
+        let port2: SharedPort = Arc::new(Mutex::new(Box::new(device2)));
+        let port3: SharedPort = Arc::new(Mutex::new(Box::new(device3)));
+
+        let mut rotator_2 = Ell14Driver::with_test_port(port1, "2", 398.2222);
+        let mut rotator_3 = Ell14Driver::with_test_port(port2, "3", 398.2222);
+        let mut rotator_8 = Ell14Driver::with_test_port(port3, "8", 398.2222);
+
+        let group =
+            Ell14GroupController::new(vec![&mut rotator_2, &mut rotator_3, &mut rotator_8], "2")
+                .expect("Failed to create group controller");
+
+        // Verify that the group size (3) exceeds the default limit (2)
+        // This validates the precondition that would trigger the error in real usage
+        assert_eq!(group.size(), 3);
+        assert_eq!(group.max_simultaneous, 2);
+        assert!(
+            group.size() > group.max_simultaneous,
+            "Group size should exceed default limit for this test"
+        );
+    }
+
+    #[test]
+    fn test_group_controller_override_increases_limit() {
+        // Test that with_max_simultaneous() allows more rotators
+        let (_, device1) = tokio::io::duplex(64);
+        let (_, device2) = tokio::io::duplex(64);
+        let (_, device3) = tokio::io::duplex(64);
+
+        let port1: SharedPort = Arc::new(Mutex::new(Box::new(device1)));
+        let port2: SharedPort = Arc::new(Mutex::new(Box::new(device2)));
+        let port3: SharedPort = Arc::new(Mutex::new(Box::new(device3)));
+
+        let mut rotator_2 = Ell14Driver::with_test_port(port1, "2", 398.2222);
+        let mut rotator_3 = Ell14Driver::with_test_port(port2, "3", 398.2222);
+        let mut rotator_8 = Ell14Driver::with_test_port(port3, "8", 398.2222);
+
+        // Create group with override to allow 3 rotators
+        let group =
+            Ell14GroupController::new(vec![&mut rotator_2, &mut rotator_3, &mut rotator_8], "2")
+                .expect("Failed to create group controller")
+                .with_max_simultaneous(3);
+
+        // Verify the override worked
+        assert_eq!(group.size(), 3);
+        assert_eq!(group.max_simultaneous, 3);
+        assert_eq!(
+            group.size(),
+            group.max_simultaneous,
+            "With override, group size should equal the limit"
+        );
+    }
+
     #[tokio::test]
     async fn test_continuous_move_sets_zero_jog_step() -> Result<()> {
         let (mut host, device) = tokio::io::duplex(128);
@@ -3213,7 +3386,7 @@ mod tests {
             // Read the set jog step command
             let _n = host.read(&mut buf).await.unwrap();
             // Send back a success response
-            host.write_all(b"0GS00").await.unwrap();
+            host.write_all(b"0GS00").await.unwrap(); // 3 chars after GS
 
             // Read the fw command
             let _n = host.read(&mut buf).await.unwrap();

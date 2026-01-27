@@ -87,9 +87,11 @@ use std::time::Duration;
 // =============================================================================
 
 const DEFAULT_COMEDI_DEVICE: &str = "/dev/comedi0";
-const DEFAULT_MAITAI_PORT: &str = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
+const DEFAULT_MAITAI_PORT: &str =
+    "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
 const DEFAULT_NEWPORT_PORT: &str = "/dev/ttyS0";
-const DEFAULT_ELLIPTEC_PORT: &str = "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
+const DEFAULT_ELLIPTEC_PORT: &str =
+    "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
 const DEFAULT_ELLIPTEC_ADDR: &str = "2";
 
 const EOM_DAC_CHANNEL: u32 = 0;
@@ -179,7 +181,11 @@ fn save_to_hdf5_2d(
     angle_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
         .create("long_name")?
-        .write_scalar(&"Rotator Angle".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"Rotator Angle"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Voltage coordinate (1D)
     let voltage_ds = file
@@ -194,7 +200,11 @@ fn save_to_hdf5_2d(
     voltage_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
         .create("long_name")?
-        .write_scalar(&"EOM Control Voltage".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"EOM Control Voltage"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Power data (2D: [angle, voltage])
     let n_angles = angles.len();
@@ -211,7 +221,7 @@ fn save_to_hdf5_2d(
         .new_dataset::<f64>()
         .shape([n_angles, n_voltages])
         .create("power")?;
-    
+
     // Write using ndarray for proper 2D shape handling
     use ndarray::Array2;
     let power_array = Array2::from_shape_vec((n_angles, n_voltages), power_flat.clone())
@@ -225,7 +235,11 @@ fn save_to_hdf5_2d(
     power_ds
         .new_attr::<hdf5::types::VarLenUnicode>()
         .create("long_name")?
-        .write_scalar(&"Optical Power".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"Optical Power"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // _ARRAY_DIMENSIONS for xarray (order matches shape: [angle, voltage])
     let _dims = power_ds
@@ -240,32 +254,65 @@ fn save_to_hdf5_2d(
     let timestamp_str = Local::now().to_rfc3339();
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("experiment")?
-        .write_scalar(&"EOM + Rotator 2D Power Sweep".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"EOM + Rotator 2D Power Sweep"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("timestamp")?
         .write_scalar(&timestamp_str.parse::<hdf5::types::VarLenUnicode>().unwrap())?;
     file.new_attr::<hdf5::types::VarLenUnicode>()
         .create("instrument")?
-        .write_scalar(&"MaiTai + Comedi DAQ + Newport 1830-C + ELL14 Rotator".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+        .write_scalar(
+            &"MaiTai + Comedi DAQ + Newport 1830-C + ELL14 Rotator"
+                .parse::<hdf5::types::VarLenUnicode>()
+                .unwrap(),
+        )?;
 
     // Sweep parameters
-    file.new_attr::<f64>().create("voltage_min")?.write_scalar(&config.voltage_min)?;
-    file.new_attr::<f64>().create("voltage_max")?.write_scalar(&config.voltage_max)?;
-    file.new_attr::<f64>().create("voltage_step")?.write_scalar(&config.voltage_step)?;
-    file.new_attr::<f64>().create("angle_min")?.write_scalar(&config.angle_min)?;
-    file.new_attr::<f64>().create("angle_max")?.write_scalar(&config.angle_max)?;
-    file.new_attr::<f64>().create("angle_step")?.write_scalar(&config.angle_step)?;
-    file.new_attr::<u64>().create("n_angles")?.write_scalar(&(n_angles as u64))?;
-    file.new_attr::<u64>().create("n_voltages")?.write_scalar(&(n_voltages as u64))?;
-    file.new_attr::<u64>().create("n_total_points")?.write_scalar(&((n_angles * n_voltages) as u64))?;
+    file.new_attr::<f64>()
+        .create("voltage_min")?
+        .write_scalar(&config.voltage_min)?;
+    file.new_attr::<f64>()
+        .create("voltage_max")?
+        .write_scalar(&config.voltage_max)?;
+    file.new_attr::<f64>()
+        .create("voltage_step")?
+        .write_scalar(&config.voltage_step)?;
+    file.new_attr::<f64>()
+        .create("angle_min")?
+        .write_scalar(&config.angle_min)?;
+    file.new_attr::<f64>()
+        .create("angle_max")?
+        .write_scalar(&config.angle_max)?;
+    file.new_attr::<f64>()
+        .create("angle_step")?
+        .write_scalar(&config.angle_step)?;
+    file.new_attr::<u64>()
+        .create("n_angles")?
+        .write_scalar(&(n_angles as u64))?;
+    file.new_attr::<u64>()
+        .create("n_voltages")?
+        .write_scalar(&(n_voltages as u64))?;
+    file.new_attr::<u64>()
+        .create("n_total_points")?
+        .write_scalar(&((n_angles * n_voltages) as u64))?;
 
     // Summary statistics
     let valid_powers: Vec<f64> = power_flat.iter().filter(|p| !p.is_nan()).copied().collect();
     if !valid_powers.is_empty() {
         let min_power = valid_powers.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_power = valid_powers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        file.new_attr::<f64>().create("min_power_W")?.write_scalar(&min_power)?;
-        file.new_attr::<f64>().create("max_power_W")?.write_scalar(&max_power)?;
+        let max_power = valid_powers
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+        file.new_attr::<f64>()
+            .create("min_power_W")?
+            .write_scalar(&min_power)?;
+        file.new_attr::<f64>()
+            .create("max_power_W")?
+            .write_scalar(&max_power)?;
     }
 
     Ok(filepath)
@@ -374,7 +421,10 @@ impl Ell14Simple {
             143.0
         };
 
-        println!("  ELL14 (addr {}) pulses/degree: {:.2}", address, pulses_per_degree);
+        println!(
+            "  ELL14 (addr {}) pulses/degree: {:.2}",
+            address, pulses_per_degree
+        );
 
         Ok(Self {
             port,
@@ -526,7 +576,8 @@ fn test_eom_rotator_2d_sweep() {
     let output_dir = get_env_or("EOM_OUTPUT_DIR", DEFAULT_OUTPUT_DIR);
 
     // Calculate grid dimensions
-    let n_voltages = ((config.voltage_max - config.voltage_min) / config.voltage_step).ceil() as usize + 1;
+    let n_voltages =
+        ((config.voltage_max - config.voltage_min) / config.voltage_step).ceil() as usize + 1;
     let n_angles = ((config.angle_max - config.angle_min) / config.angle_step).ceil() as usize + 1;
 
     println!("Configuration:");
@@ -536,10 +587,14 @@ fn test_eom_rotator_2d_sweep() {
     println!("  Elliptec port:  {}", elliptec_port);
     println!("  Rotator addr:   {}", elliptec_addr);
     println!();
-    println!("  Voltage range:  {:.1}V to {:.1}V (step: {:.2}V) -> {} points",
-        config.voltage_min, config.voltage_max, config.voltage_step, n_voltages);
-    println!("  Angle range:    {:.1}° to {:.1}° (step: {:.1}°) -> {} points",
-        config.angle_min, config.angle_max, config.angle_step, n_angles);
+    println!(
+        "  Voltage range:  {:.1}V to {:.1}V (step: {:.2}V) -> {} points",
+        config.voltage_min, config.voltage_max, config.voltage_step, n_voltages
+    );
+    println!(
+        "  Angle range:    {:.1}° to {:.1}° (step: {:.1}°) -> {} points",
+        config.angle_min, config.angle_max, config.angle_step, n_angles
+    );
     println!("  Total points:   {}", n_angles * n_voltages);
     println!("  Output dir:     {}", output_dir);
     println!();
@@ -548,12 +603,14 @@ fn test_eom_rotator_2d_sweep() {
     println!("[1/7] Opening Comedi DAQ...");
     let device = ComediDevice::open(&comedi_device).expect("Failed to open Comedi device");
     let ao = device.analog_output().expect("Failed to get analog output");
-    let ao_range = ao.range_info(EOM_DAC_CHANNEL, 0).expect("Failed to get AO range");
+    let ao_range = ao
+        .range_info(EOM_DAC_CHANNEL, 0)
+        .expect("Failed to get AO range");
     println!("  DAC0 range: {:.1}V to {:.1}V", ao_range.min, ao_range.max);
 
     println!("[2/7] Opening ELL14 rotator...");
-    let mut rotator = Ell14Simple::open(&elliptec_port, &elliptec_addr)
-        .expect("Failed to open Elliptec rotator");
+    let mut rotator =
+        Ell14Simple::open(&elliptec_port, &elliptec_addr).expect("Failed to open Elliptec rotator");
     let initial_pos = rotator.get_position().unwrap_or(0.0);
     println!("  Current position: {:.2}°", initial_pos);
 
@@ -563,15 +620,13 @@ fn test_eom_rotator_2d_sweep() {
     thread::sleep(Duration::from_millis(EOM_SETTLING_MS));
 
     println!("[4/7] Opening MaiTai shutter...");
-    let mut maitai = SimpleSerial::open(&maitai_port, 115200)
-        .expect("Failed to open MaiTai");
+    let mut maitai = SimpleSerial::open(&maitai_port, 115200).expect("Failed to open MaiTai");
     let _ = maitai.send_command("SHUTTER 1");
     thread::sleep(Duration::from_secs(1));
     println!("  Shutter opened");
 
     println!("[5/7] Opening Newport power meter...");
-    let mut power_meter = Newport1830C::open(&newport_port)
-        .expect("Failed to open power meter");
+    let mut power_meter = Newport1830C::open(&newport_port).expect("Failed to open power meter");
     let initial_power = power_meter.read_power().unwrap_or(0.0);
     println!("  Initial power: {:.3} mW", initial_power * 1000.0);
 
@@ -598,10 +653,17 @@ fn test_eom_rotator_2d_sweep() {
 
     for (angle_idx, &target_angle) in angles.iter().enumerate() {
         // Move rotator
-        rotator.move_abs(target_angle).expect("Failed to move rotator");
+        rotator
+            .move_abs(target_angle)
+            .expect("Failed to move rotator");
         let actual_angle = rotator.get_position().unwrap_or(target_angle);
 
-        print!("Angle {:3.0}° ({:2}/{:2}): [", actual_angle, angle_idx + 1, angles.len());
+        print!(
+            "Angle {:3.0}° ({:2}/{:2}): [",
+            actual_angle,
+            angle_idx + 1,
+            angles.len()
+        );
 
         let mut voltage_powers: Vec<f64> = Vec::with_capacity(voltages.len());
 
@@ -627,9 +689,21 @@ fn test_eom_rotator_2d_sweep() {
             }
         }
 
-        println!("] min={:.2}mW max={:.2}mW",
-            voltage_powers.iter().filter(|p| !p.is_nan()).cloned().fold(f64::INFINITY, f64::min) * 1000.0,
-            voltage_powers.iter().filter(|p| !p.is_nan()).cloned().fold(0.0_f64, f64::max) * 1000.0);
+        println!(
+            "] min={:.2}mW max={:.2}mW",
+            voltage_powers
+                .iter()
+                .filter(|p| !p.is_nan())
+                .cloned()
+                .fold(f64::INFINITY, f64::min)
+                * 1000.0,
+            voltage_powers
+                .iter()
+                .filter(|p| !p.is_nan())
+                .cloned()
+                .fold(0.0_f64, f64::max)
+                * 1000.0
+        );
 
         power_2d.push(voltage_powers);
     }
@@ -638,7 +712,8 @@ fn test_eom_rotator_2d_sweep() {
 
     // Reset to safe state
     println!("Resetting to safe state...");
-    ao.write_voltage(EOM_DAC_CHANNEL, 0.0, ao_range).expect("Failed to reset voltage");
+    ao.write_voltage(EOM_DAC_CHANNEL, 0.0, ao_range)
+        .expect("Failed to reset voltage");
     let _ = maitai.send_command("SHUTTER 0");
     rotator.move_abs(0.0).ok();
     println!("  Shutter closed, EOM at 0V, rotator at 0°");
@@ -651,7 +726,10 @@ fn test_eom_rotator_2d_sweep() {
             println!();
             println!("  Python analysis:");
             println!("    import xarray as xr");
-            println!("    ds = xr.open_dataset('{}', engine='h5netcdf')", filepath.display());
+            println!(
+                "    ds = xr.open_dataset('{}', engine='h5netcdf')",
+                filepath.display()
+            );
             println!("    ds.power.plot()  # 2D heatmap");
             println!("    ds.power.sel(angle=45.0, method='nearest').plot()  # 1D slice");
         }
@@ -666,17 +744,29 @@ fn test_eom_rotator_2d_sweep() {
     println!("  2D SWEEP COMPLETE");
     println!("═══════════════════════════════════════════════════════════════");
 
-    let all_powers: Vec<f64> = power_2d.iter().flatten().filter(|p| !p.is_nan()).copied().collect();
+    let all_powers: Vec<f64> = power_2d
+        .iter()
+        .flatten()
+        .filter(|p| !p.is_nan())
+        .copied()
+        .collect();
     if !all_powers.is_empty() {
         let min_power = all_powers.iter().cloned().fold(f64::INFINITY, f64::min);
         let max_power = all_powers.iter().cloned().fold(0.0_f64, f64::max);
 
-        println!("  Grid size:       {} angles × {} voltages = {} points",
-            angles.len(), voltages.len(), angles.len() * voltages.len());
+        println!(
+            "  Grid size:       {} angles × {} voltages = {} points",
+            angles.len(),
+            voltages.len(),
+            angles.len() * voltages.len()
+        );
         println!("  Min power:       {:.3} mW", min_power * 1000.0);
         println!("  Max power:       {:.3} mW", max_power * 1000.0);
-        println!("  Dynamic range:   {:.1}:1 ({:.1} dB)",
-            max_power / min_power, 10.0 * (max_power / min_power).log10());
+        println!(
+            "  Dynamic range:   {:.1}:1 ({:.1} dB)",
+            max_power / min_power,
+            10.0 * (max_power / min_power).log10()
+        );
     }
 
     println!();

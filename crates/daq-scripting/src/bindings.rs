@@ -1239,16 +1239,18 @@ fn register_comedi_functions(engine: &mut Engine) {
                 ))
             })?;
 
-            let range = ai.range_info(channel as u32, range_index as u32).map_err(|e| {
-                Box::new(EvalAltResult::ErrorRuntime(
-                    format!(
-                        "Failed to get range {} for channel {}: {}",
-                        range_index, channel, e
-                    )
-                    .into(),
-                    Position::NONE,
-                ))
-            })?;
+            let range = ai
+                .range_info(channel as u32, range_index as u32)
+                .map_err(|e| {
+                    Box::new(EvalAltResult::ErrorRuntime(
+                        format!(
+                            "Failed to get range {} for channel {}: {}",
+                            range_index, channel, e
+                        )
+                        .into(),
+                        Position::NONE,
+                    ))
+                })?;
 
             let voltage = ai.read_voltage(channel as u32, range).map_err(|e| {
                 Box::new(EvalAltResult::ErrorRuntime(
@@ -1265,7 +1267,10 @@ fn register_comedi_functions(engine: &mut Engine) {
     // Uses default range (index 0)
     engine.register_fn(
         "write_voltage",
-        |comedi: &mut ComediHandle, channel: i64, voltage: f64| -> Result<Dynamic, Box<EvalAltResult>> {
+        |comedi: &mut ComediHandle,
+         channel: i64,
+         voltage: f64|
+         -> Result<Dynamic, Box<EvalAltResult>> {
             let ao = comedi.device.analog_output().map_err(|e| {
                 Box::new(EvalAltResult::ErrorRuntime(
                     format!("Failed to get analog output subsystem: {}", e).into(),
@@ -1280,16 +1285,17 @@ fn register_comedi_functions(engine: &mut Engine) {
                 ))
             })?;
 
-            ao.write_voltage(channel as u32, voltage, range).map_err(|e| {
-                Box::new(EvalAltResult::ErrorRuntime(
-                    format!(
-                        "Failed to write voltage {} to channel {}: {}",
-                        voltage, channel, e
-                    )
-                    .into(),
-                    Position::NONE,
-                ))
-            })?;
+            ao.write_voltage(channel as u32, voltage, range)
+                .map_err(|e| {
+                    Box::new(EvalAltResult::ErrorRuntime(
+                        format!(
+                            "Failed to write voltage {} to channel {}: {}",
+                            voltage, channel, e
+                        )
+                        .into(),
+                        Position::NONE,
+                    ))
+                })?;
 
             tracing::debug!(channel = channel, voltage = voltage, "Comedi AO write");
             Ok(Dynamic::UNIT)
@@ -1299,7 +1305,10 @@ fn register_comedi_functions(engine: &mut Engine) {
     // comedi.set_dio(channel, value) - Set digital output channel
     engine.register_fn(
         "set_dio",
-        |comedi: &mut ComediHandle, channel: i64, value: bool| -> Result<Dynamic, Box<EvalAltResult>> {
+        |comedi: &mut ComediHandle,
+         channel: i64,
+         value: bool|
+         -> Result<Dynamic, Box<EvalAltResult>> {
             let dio = comedi.device.digital_io().map_err(|e| {
                 Box::new(EvalAltResult::ErrorRuntime(
                     format!("Failed to get digital I/O subsystem: {}", e).into(),
@@ -1308,13 +1317,16 @@ fn register_comedi_functions(engine: &mut Engine) {
             })?;
 
             // Configure as output first
-            dio.configure(channel as u32, daq_driver_comedi::subsystem::DioDirection::Output)
-                .map_err(|e| {
-                    Box::new(EvalAltResult::ErrorRuntime(
-                        format!("Failed to configure channel {} as output: {}", channel, e).into(),
-                        Position::NONE,
-                    ))
-                })?;
+            dio.configure(
+                channel as u32,
+                daq_driver_comedi::subsystem::DioDirection::Output,
+            )
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Failed to configure channel {} as output: {}", channel, e).into(),
+                    Position::NONE,
+                ))
+            })?;
 
             dio.write(channel as u32, value).map_err(|e| {
                 Box::new(EvalAltResult::ErrorRuntime(
@@ -1340,13 +1352,16 @@ fn register_comedi_functions(engine: &mut Engine) {
             })?;
 
             // Configure as input first
-            dio.configure(channel as u32, daq_driver_comedi::subsystem::DioDirection::Input)
-                .map_err(|e| {
-                    Box::new(EvalAltResult::ErrorRuntime(
-                        format!("Failed to configure channel {} as input: {}", channel, e).into(),
-                        Position::NONE,
-                    ))
-                })?;
+            dio.configure(
+                channel as u32,
+                daq_driver_comedi::subsystem::DioDirection::Input,
+            )
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    format!("Failed to configure channel {} as input: {}", channel, e).into(),
+                    Position::NONE,
+                ))
+            })?;
 
             let value = dio.read(channel as u32).map_err(|e| {
                 Box::new(EvalAltResult::ErrorRuntime(
@@ -2012,11 +2027,11 @@ mod tests {
 
         // Test sleep - very short duration
         assert!(engine.eval::<()>("sleep(0.001)").is_ok());
-        
+
         // Test timestamps
         let ts: String = engine.eval("timestamp()").unwrap();
         assert!(ts.len() > 0);
-        
+
         let ts_iso: String = engine.eval("timestamp_iso()").unwrap();
         assert!(ts_iso.contains('T'));
     }
@@ -2029,7 +2044,7 @@ mod tests {
         // Actual device creation requires hardware.
         let mut engine = Engine::new();
         register_hardware(&mut engine);
-        
+
         // The factories are registered - verifiable at compile time by the
         // fact that register_hardware_factories() is called unconditionally
         // when the feature is enabled
@@ -2046,7 +2061,7 @@ mod tests {
         // register_hardware and checking it doesn't panic
         let mut engine = Engine::new();
         register_hardware(&mut engine);
-        
+
         // Functions should be registered - this is a compile-time check
         // The actual file I/O test below verifies functionality
     }
@@ -2074,10 +2089,10 @@ mod tests {
         "#;
 
         let result = engine.eval_with_scope::<bool>(&mut scope, script);
-        
+
         // Clean up temp file
         let _ = std::fs::remove_file(&file_path);
-        
+
         assert!(result.is_ok(), "HDF5 script failed: {:?}", result.err());
     }
 
@@ -2092,7 +2107,7 @@ mod tests {
         // register_hardware and checking it doesn't panic
         let mut engine = Engine::new();
         register_hardware(&mut engine);
-        
+
         // Functions should be registered - this is a compile-time check
         // Hardware tests would require actual Comedi device
     }
@@ -2118,7 +2133,7 @@ mod tests {
         // Zero sleep should work fine
         let result = engine.eval::<()>("sleep(0.0)");
         assert!(result.is_ok());
-        
+
         // Very small sleep should also work
         let result = engine.eval::<()>("sleep(0.001)");
         assert!(result.is_ok());
@@ -2132,10 +2147,7 @@ mod tests {
             err.contains("150"),
             "Error should include the invalid value"
         );
-        assert!(
-            err.contains("100"),
-            "Error should include the limit"
-        );
+        assert!(err.contains("100"), "Error should include the limit");
     }
 
     // =========================================================================
@@ -2163,17 +2175,17 @@ mod tests {
             // Move to starting position
             stage.move_abs(0.0);
             stage.wait_settled();
-            
+
             // Verify position
             let start_pos = stage.position();
-            
+
             // Do relative moves
             stage.move_rel(10.0);
             stage.move_rel(5.0);
             stage.wait_settled();
-            
+
             let end_pos = stage.position();
-            
+
             // Return the total movement
             end_pos - start_pos
         "#;
@@ -2209,7 +2221,7 @@ mod tests {
         // Check that measurement was broadcast
         let measurement = rx.try_recv();
         assert!(measurement.is_ok(), "Should receive measurement");
-        
+
         // Verify measurement is a Scalar variant with expected value
         let m = measurement.unwrap();
         match m {

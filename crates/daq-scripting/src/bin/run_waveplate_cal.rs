@@ -3,8 +3,7 @@ use daq_scripting::traits::ScriptEngine;
 use daq_scripting::RhaiEngine;
 use tracing_subscriber::EnvFilter;
 
-const SCRIPT: &str =
-    include_str!("../../../daq-examples/examples/waveplate_calibration_4d.rhai");
+const SCRIPT: &str = include_str!("../../../daq-examples/examples/waveplate_calibration_4d.rhai");
 
 /// Operations limit for 4D calibration.
 ///

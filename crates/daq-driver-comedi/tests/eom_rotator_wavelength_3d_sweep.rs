@@ -36,10 +36,10 @@ const DAC_CHANNEL: u32 = 0; // AO0 - EOM amplifier
 const DAC_RANGE: u32 = 0; // ±10V
 
 // Serial port paths
-const MAITAI_PORT: &str = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
+const MAITAI_PORT: &str =
+    "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
 const NEWPORT_PORT: &str = "/dev/ttyS0";
-const ELLIPTEC_PORT: &str =
-    "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
+const ELLIPTEC_PORT: &str = "/dev/serial/by-id/usb-FTDI_FT230X_Basic_UART_DK0AHAJZ-if00-port0";
 const ROTATOR_ADDRESS: &str = "2"; // HWP rotator
 
 // Timing
@@ -325,7 +325,9 @@ fn test_eom_rotator_wavelength_3d_sweep() {
                 "    ds = xr.open_dataset('{}', engine='h5netcdf')",
                 filename
             );
-            println!("    ds.power.sel(wavelength=800.0, method='nearest').plot()  # 2D slice at 800nm");
+            println!(
+                "    ds.power.sel(wavelength=800.0, method='nearest').plot()  # 2D slice at 800nm"
+            );
             println!("    ds.power.sel(angle=45.0, method='nearest').plot()  # 2D slice at 45°");
             println!(
                 "    ds.power.sel(wavelength=800.0, angle=45.0, method='nearest').plot()  # 1D slice"
@@ -803,8 +805,8 @@ impl Ell14Simple {
         let expected_prefix = format!("{}IN", address);
         let pulses_per_degree = if let Some(idx) = response_str.find(&expected_prefix) {
             let data_start = idx + 3; // After "{addr}IN"
-            // ELL14 has 143360 pulses/revolution = 1433.60 pulses/degree
-            // The response has: type(2) + serial(8) + year(4) + fwrel(2) + hwrel(2) + travel(4) + pulses(8) = 30 chars
+                                      // ELL14 has 143360 pulses/revolution = 1433.60 pulses/degree
+                                      // The response has: type(2) + serial(8) + year(4) + fwrel(2) + hwrel(2) + travel(4) + pulses(8) = 30 chars
             if response_str.len() >= data_start + 30 {
                 let pulses_hex = &response_str[data_start + 22..data_start + 30];
                 // pulses is total pulses per revolution, divide by 100 to get degrees
