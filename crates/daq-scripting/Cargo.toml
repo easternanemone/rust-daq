@@ -32,9 +32,12 @@ default = []
 python = ["dep:pyo3"]
 # HDF5 data storage from Rhai scripts
 hdf5_scripting = ["dep:hdf5"]
+# Marker feature for cfg guards on hardware factory functions
+hardware_factories = []
 # Full scripting support with all hardware drivers and HDF5 storage
 # This is the RECOMMENDED feature for scripted experiments on maitai
 scripting_full = [
+    "hardware_factories",
     "dep:daq-driver-thorlabs",
     "dep:daq-driver-newport",
     "dep:daq-driver-spectra-physics",
@@ -42,7 +45,6 @@ scripting_full = [
 ]
 # Alias for backwards compatibility (prefer scripting_full)
 polarization = ["scripting_full"]
-hardware_factories = ["scripting_full"]
 
 [lints]
 workspace = true
