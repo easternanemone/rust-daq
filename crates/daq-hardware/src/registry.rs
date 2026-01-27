@@ -2871,12 +2871,13 @@ height = 240
         assert!((pos - 10.0).abs() < 0.001);
 
         // Test that we can use the readable interface
-        // MockPowerMeter adds ~1% noise, so allow 2% tolerance
+        // MockPowerMeter noise model: shot_noise = 0.01 * sqrt(power) = 0.01 * sqrt(1e-6) = 1e-5
+        // Use fixed tolerance of 1.5e-5 (1.5x max shot noise) to account for thermal floor
         let readable = registry.get_readable("mock_power_meter").unwrap();
         let reading = readable.read().await.unwrap();
         assert!(
-            (reading - 1e-6).abs() < 1e-7,
-            "Reading {} not close to 1e-6",
+            (reading - 1e-6).abs() < 1.5e-5,
+            "Reading {} deviates more than 1.5e-5 from base 1e-6",
             reading
         );
     }
