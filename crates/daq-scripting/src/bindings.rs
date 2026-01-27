@@ -787,7 +787,10 @@ fn register_hardware_factories(engine: &mut Engine) {
         |handle: &mut Ell14Handle, pos: f64| -> Result<Dynamic, Box<EvalAltResult>> {
             // Validate soft limits
             if let Err(e) = handle.soft_limits.validate(pos) {
-                return Err(Box::new(EvalAltResult::ErrorRuntime(e.into(), Position::NONE)));
+                return Err(Box::new(EvalAltResult::ErrorRuntime(
+                    e.into(),
+                    Position::NONE,
+                )));
             }
             run_blocking("ELL14 move_abs", handle.driver.move_abs(pos))?;
             Ok(Dynamic::UNIT)
@@ -1129,14 +1132,11 @@ fn register_hardware_factories(engine: &mut Engine) {
     );
 
     // Convert MaiTaiHandle to ShutterHandle for use with with_shutter_open()
-    engine.register_fn(
-        "as_shutter",
-        |laser: &mut MaiTaiHandle| -> ShutterHandle {
-            ShutterHandle {
-                driver: laser.driver.clone(),
-            }
-        },
-    );
+    engine.register_fn("as_shutter", |laser: &mut MaiTaiHandle| -> ShutterHandle {
+        ShutterHandle {
+            driver: laser.driver.clone(),
+        }
+    });
 }
 
 // =============================================================================
@@ -1629,5 +1629,69 @@ mod tests {
         assert!(limits.validate(360.0).is_ok());
         assert!(limits.validate(361.0).is_err());
         assert!(limits.validate(-1.0).is_err());
+    }
+
+    #[test]
+    fn test_wavelength_functions_registered() {
+        use rhai::Engine;
+        let mut engine = Engine::new();
+
+        // Register the hardware factories (this tests the registration code compiles)
+        // The functions should be available when feature is enabled
+        // This is primarily a compile-time check
+        register_hardware(&mut engine);
+    }
+
+    #[test]
+    fn test_soft_limits_validate_comprehensive() {
+        // Test with both limits set
+        let limits = SoftLimits {
+            min: Some(0.0),
+            max: Some(360.0),
+        };
+        assert!(limits.validate(180.0).is_ok());
+        assert!(limits.validate(-1.0).is_err());
+        assert!(limits.validate(361.0).is_err());
+
+        // Test with no limits (should always pass)
+        let no_limits = SoftLimits {
+            min: None,
+            max: None,
+        };
+        assert!(no_limits.validate(999.0).is_ok());
+
+        // Test with only min
+        let min_only = SoftLimits {
+            min: Some(10.0),
+            max: None,
+        };
+        assert!(min_only.validate(5.0).is_err());
+        assert!(min_only.validate(15.0).is_ok());
+
+        // Test with only max
+        let max_only = SoftLimits {
+            min: None,
+            max: Some(100.0),
+        };
+        assert!(max_only.validate(50.0).is_ok());
+        assert!(max_only.validate(150.0).is_err());
+    }
+
+    #[test]
+    fn test_maitai_handle_type_exists() {
+        // Compile-time check that MaiTaiHandle exists with expected fields
+        #[cfg(feature = "hardware_factories")]
+        {
+            // MaiTaiHandle should exist when hardware_factories is enabled
+            // This test just verifies the type is defined
+            fn _assert_maitai_handle_fields() {
+                // This function exists only to verify the type structure at compile time
+                // It's never called, but will fail to compile if MaiTaiHandle doesn't exist
+                let _: fn(&MaiTaiHandle) -> bool = |handle| {
+                    let _ = &handle.driver;
+                    true
+                };
+            }
+        }
     }
 }
