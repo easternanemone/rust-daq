@@ -143,6 +143,12 @@ pub struct DaqApp {
     /// Docked analog output control panels (keyed by panel ID)
     docked_analog_output_panels: HashMap<usize, AnalogOutputControlPanel>,
 
+    /// Settings window state
+    settings_window: crate::settings::SettingsWindow,
+
+    /// Application settings
+    app_settings: crate::settings::AppSettings,
+
     /// PVCAM live view streaming state (requires rerun_viewer + instrument_photometrics)
     /// Works in mock mode without pvcam_hardware, or with real SDK when pvcam_hardware enabled
     #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
@@ -320,6 +326,12 @@ impl DaqApp {
         // Create health check channel
         let (health_tx, health_rx) = mpsc::channel(4);
 
+        // Load application settings from storage
+        let app_settings: crate::settings::AppSettings = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, "app_settings"))
+            .unwrap_or_default();
+
         // Load persisted device panel info
         let (
             device_panel_info,
@@ -487,6 +499,8 @@ impl DaqApp {
             docked_rotator_panels,
             docked_stage_panels,
             docked_analog_output_panels,
+            settings_window: crate::settings::SettingsWindow::default(),
+            app_settings,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
             pvcam_streaming: false,
             #[cfg(all(feature = "rerun_viewer", feature = "pvcam"))]
@@ -603,6 +617,16 @@ impl DaqApp {
                 ui.menu_button("File", |ui| {
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .button(format!("{} Settings", crate::icons::action::SETTINGS))
+                        .clicked()
+                    {
+                        self.settings_window.open();
+                        ui.close();
                     }
                 });
 
@@ -1566,9 +1590,28 @@ impl eframe::App for DaqApp {
         // Detect connection state transitions (for panel refresh on connect)
         self.detect_connection_transitions();
 
+        // Handle keyboard shortcuts
+        ctx.input(|i| {
+            // Ctrl+, opens settings (standard shortcut on many platforms)
+            if i.modifiers.command && i.key_pressed(egui::Key::Comma) {
+                self.settings_window.open();
+            }
+        });
+
         self.render_menu_bar(ctx);
         self.render_version_warning(ctx);
         self.render_status_bar(ctx);
+
+        // Render settings window
+        if self.settings_window.show(ctx, &mut self.app_settings) {
+            // Settings were applied - update dependent systems
+            if self.theme_preference != self.app_settings.appearance.theme {
+                self.theme_preference = self.app_settings.appearance.theme;
+                theme::apply_theme(ctx, self.theme_preference);
+            }
+            // Font and UI scale changes will be applied on next frame
+            ctx.set_zoom_factor(self.app_settings.appearance.ui_scale);
+        }
 
         let error_count = self.connection.health_status().total_errors;
         let error_count = if error_count > 0 {
@@ -1710,6 +1753,9 @@ impl eframe::App for DaqApp {
         eframe::set_value(storage, LAYOUT_VERSION_KEY, &LAYOUT_VERSION);
 
         eframe::set_value(storage, "theme_preference", &self.theme_preference);
+
+        // Persist application settings
+        eframe::set_value(storage, "app_settings", &self.app_settings);
 
         // Persist device panel info for layout restoration
         let persisted_panels: HashMap<usize, PersistedPanelInfo> = self
