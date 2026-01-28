@@ -269,21 +269,25 @@ message DeviceInfo {
   string driver_type = 3;  // "ell14", "esp300", "pvcam", "mock_stage", etc.
   DeviceCategory category = 4;  // Device category for GUI grouping
 
-  // Capabilities as flags
-  bool is_movable = 10;
-  bool is_readable = 11;
-  bool is_triggerable = 12;
-  bool is_frame_producer = 13;
-  bool is_exposure_controllable = 14;
-  // Laser control capabilities (bd-pwjo)
-  bool is_shutter_controllable = 15;
-  bool is_wavelength_tunable = 16;
-  bool is_emission_controllable = 17;
-  // Parameter discovery capability (bd-4myc.1)
-  bool is_parameterized = 18;
+  // Capabilities as flags (DEPRECATED - use 'capabilities' field instead)
+  bool is_movable = 10 [deprecated = true];
+  bool is_readable = 11 [deprecated = true];
+  bool is_triggerable = 12 [deprecated = true];
+  bool is_frame_producer = 13 [deprecated = true];
+  bool is_exposure_controllable = 14 [deprecated = true];
+  bool is_shutter_controllable = 15 [deprecated = true];
+  bool is_wavelength_tunable = 16 [deprecated = true];
+  bool is_emission_controllable = 17 [deprecated = true];
+  bool is_parameterized = 18 [deprecated = true];
 
   // Device-specific metadata
   DeviceMetadata metadata = 20;
+
+  // Dynamic capability list - canonical source of truth (bd-4myc.2)
+  // Values: "movable", "readable", "triggerable", "frame_producer",
+  //         "exposure_controllable", "shutter_controllable",
+  //         "wavelength_tunable", "emission_controllable", "parameterized"
+  repeated string capabilities = 100;
 }
 
 message DeviceMetadata {
