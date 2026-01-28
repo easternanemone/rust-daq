@@ -703,6 +703,14 @@ pub struct ImageViewerPanel {
     /// Latest streaming metrics from server
     stream_metrics: Option<StreamMetrics>,
 
+    // -- Physical Coordinate Calibration (bd-4088.6) --
+    /// Pixel to physical unit calibration in X direction (units per pixel)
+    pixel_scale_x: Option<f64>,
+    /// Pixel to physical unit calibration in Y direction (units per pixel)
+    pixel_scale_y: Option<f64>,
+    /// Physical unit label (e.g., "µm", "mm")
+    scale_unit: String,
+
     // -- Recording Fields (bd-3pdi.5.3) --
     /// Current recording state
     recording_state: RecordingState,
@@ -799,6 +807,11 @@ impl Default for ImageViewerPanel {
 
             // Stream quality for bandwidth control
             stream_quality: StreamQuality::Full,
+
+            // Physical coordinate calibration (bd-4088.6)
+            pixel_scale_x: None,
+            pixel_scale_y: None,
+            scale_unit: "µm".to_string(),
 
             // Background RGBA conversion (bd-xifj)
             // Buffer reuse via recycling channel (bd-wdx3)
@@ -2588,7 +2601,25 @@ impl ImageViewerPanel {
                                 && pixel_y >= 0
                                 && pixel_y < self.height as i32
                             {
-                                response.on_hover_text(format!("({}, {})", pixel_x, pixel_y));
+                                // Build hover text with pixel and optional physical coordinates
+                                let hover_text = if let (Some(scale_x), Some(scale_y)) =
+                                    (self.pixel_scale_x, self.pixel_scale_y)
+                                {
+                                    let phys_x = pixel_x as f64 * scale_x;
+                                    let phys_y = pixel_y as f64 * scale_y;
+                                    format!(
+                                        "Pixel: ({}, {}) | {:.2} {} × {:.2} {}",
+                                        pixel_x,
+                                        pixel_y,
+                                        phys_x,
+                                        &self.scale_unit,
+                                        phys_y,
+                                        &self.scale_unit
+                                    )
+                                } else {
+                                    format!("Pixel: ({}, {})", pixel_x, pixel_y)
+                                };
+                                response.on_hover_text(hover_text);
                             }
                         }
                     });
@@ -2668,6 +2699,66 @@ impl ImageViewerPanel {
                                     .default_open(true)
                                     .show(ui, |ui| {
                                         self.histogram.show_panel(ui);
+                                    });
+
+                                // Physical coordinate calibration UI (bd-4088.6)
+                                egui::CollapsingHeader::new("Calibration")
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        ui.label("Pixel to Physical Unit Conversion");
+                                        ui.separator();
+
+                                        ui.horizontal(|ui| {
+                                            ui.label("X Scale:");
+                                            let mut scale_x_str = self
+                                                .pixel_scale_x
+                                                .map(|v| format!("{:.4}", v))
+                                                .unwrap_or_default();
+                                            if ui.text_edit_singleline(&mut scale_x_str).changed() {
+                                                self.pixel_scale_x = scale_x_str.parse().ok();
+                                            }
+                                            ui.label("units/pixel");
+                                        });
+
+                                        ui.horizontal(|ui| {
+                                            ui.label("Y Scale:");
+                                            let mut scale_y_str = self
+                                                .pixel_scale_y
+                                                .map(|v| format!("{:.4}", v))
+                                                .unwrap_or_default();
+                                            if ui.text_edit_singleline(&mut scale_y_str).changed() {
+                                                self.pixel_scale_y = scale_y_str.parse().ok();
+                                            }
+                                            ui.label("units/pixel");
+                                        });
+
+                                        ui.horizontal(|ui| {
+                                            ui.label("Unit:");
+                                            egui::ComboBox::from_id_salt("scale_unit")
+                                                .selected_text(&self.scale_unit)
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut self.scale_unit,
+                                                        "µm".to_string(),
+                                                        "µm",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut self.scale_unit,
+                                                        "mm".to_string(),
+                                                        "mm",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut self.scale_unit,
+                                                        "nm".to_string(),
+                                                        "nm",
+                                                    );
+                                                });
+                                        });
+
+                                        if ui.button("Clear Calibration").clicked() {
+                                            self.pixel_scale_x = None;
+                                            self.pixel_scale_y = None;
+                                        }
                                     });
                             });
                         }
