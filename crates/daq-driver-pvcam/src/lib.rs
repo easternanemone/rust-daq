@@ -7,6 +7,9 @@
 
 pub mod components;
 
+#[cfg(feature = "pvcam_sdk")]
+pub use crate::components::connection::sdk_ref_count;
+
 /// Linker reference function to ensure this crate is not stripped.
 ///
 /// This function is called by `daq_drivers::link_drivers()` to force the linker
@@ -644,7 +647,11 @@ impl PvcamDriver {
         let frame_time_param = driver.frame_time_us.clone();
         let exposure_param = driver.exposure_ms.clone();
 
-        let conn_poll = connection.clone();
+        // Use weak reference to prevent reference cycle (bd-qtd4)
+        // The drift polling task must not hold a strong Arc to the connection,
+        // otherwise it prevents PvcamConnection::Drop from running and SDK uninit never happens.
+        let weak_conn = Arc::downgrade(&connection);
+
         // Critical fix (ADR-pvcam-continuous-acquisition, 2026-01-12):
         // Skip drift polling while streaming to prevent SDK callback corruption.
         // pl_get_param() calls during continuous acquisition corrupt callback state.
@@ -654,6 +661,13 @@ impl PvcamDriver {
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
 
+                // Exit when driver dropped (bd-qtd4)
+                // Upgrade weak reference to check if driver still exists
+                let Some(conn_arc) = weak_conn.upgrade() else {
+                    tracing::debug!("Driver dropped, stopping drift polling");
+                    break;
+                };
+
                 // CRITICAL: Skip all SDK calls while streaming is active (bd-nzcq)
                 // Calling pl_get_param during acquisition corrupts the SDK's
                 // internal callback state, causing READOUT_NOT_ACTIVE and no further callbacks.
@@ -662,7 +676,7 @@ impl PvcamDriver {
                     continue;
                 }
 
-                let conn_guard = conn_poll.lock().await;
+                let conn_guard = conn_arc.lock().await;
 
                 // Poll Temperature
                 if let Ok(temp) = PvcamFeatures::get_temperature(&conn_guard) {

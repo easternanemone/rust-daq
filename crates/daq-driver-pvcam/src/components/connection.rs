@@ -543,3 +543,12 @@ impl Drop for PvcamConnection {
         self.uninitialize();
     }
 }
+
+/// Test helper: Get current SDK reference count.
+///
+/// This is exposed for testing to verify that the drift polling task
+/// properly releases its reference when the driver is dropped.
+#[cfg(feature = "pvcam_sdk")]
+pub fn sdk_ref_count() -> u32 {
+    SDK_REF_COUNT.load(Ordering::SeqCst)
+}
