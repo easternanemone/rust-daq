@@ -35,10 +35,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use daq_server::grpc::hardware_service::HardwareServiceImpl;
 use protocol::daq::hardware_service_server::HardwareService;
 use protocol::daq::{ListDevicesRequest, MoveRequest, ReadValueRequest};
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use server::grpc::hardware_service::HardwareServiceImpl;
 use tokio::time::timeout;
 use tonic::Request;
 

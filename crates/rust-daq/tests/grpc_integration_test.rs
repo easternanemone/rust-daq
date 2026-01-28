@@ -20,13 +20,13 @@
 
 #[cfg(feature = "server")]
 mod camera_integration_tests {
-    use daq_server::grpc::hardware_service::HardwareServiceImpl;
     use protocol::daq::hardware_service_server::HardwareService;
     use protocol::daq::{
         ArmRequest, DeviceStateRequest, ListDevicesRequest, StartStreamRequest, StopStreamRequest,
         StreamFramesRequest, StreamQuality, TriggerRequest,
     };
     use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+    use server::grpc::hardware_service::HardwareServiceImpl;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::time::timeout;
@@ -399,7 +399,6 @@ mod camera_integration_tests {
 
 #[cfg(feature = "server")]
 mod scan_integration_tests {
-    use daq_server::grpc::scan_service::ScanServiceImpl;
     use protocol::daq::scan_service_server::ScanService;
     use protocol::daq::{
         AxisConfig, CreateScanRequest, GetScanStatusRequest, ScanConfig, ScanState, ScanType,
@@ -407,6 +406,7 @@ mod scan_integration_tests {
     };
     use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
     use serial_test::serial;
+    use server::grpc::scan_service::ScanServiceImpl;
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use tokio_stream::StreamExt;

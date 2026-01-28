@@ -15,13 +15,13 @@
 
 use anyhow::Result;
 use daq_driver_pvcam::PvcamDriver;
-use daq_server::grpc::hardware_service::HardwareServiceImpl;
 use protocol::daq::hardware_service_server::HardwareService;
 use protocol::daq::{
     GetParameterRequest, SetParameterRequest, StartStreamRequest, StopStreamRequest,
     StreamFramesRequest, StreamQuality,
 };
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use server::grpc::hardware_service::HardwareServiceImpl;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::StreamExt;

@@ -20,8 +20,8 @@
 //!
 //! ```rust,ignore
 //! use common::error::DaqError;
-//! use daq_storage::ring_buffer::RingBuffer;
-//! use daq_hardware::capabilities::Movable;
+//! use storage::ring_buffer::RingBuffer;
+//! use hardware::capabilities::Movable;
 //! ```
 //!
 //! ## Architecture (Post bd-232k Refactoring)
@@ -47,8 +47,8 @@
 //! - `rust_daq::error` → Use `rust_daq::prelude::error` or `common::error`
 //! - `rust_daq::observable` → Use `rust_daq::prelude::observable` or `common::observable`
 //! - `rust_daq::parameter` → Use `rust_daq::prelude::parameter` or `common::parameter`
-//! - `rust_daq::experiment` → Use `rust_daq::prelude::experiment` or `daq_experiment`
-//! - `rust_daq::scripting` → Use `rust_daq::prelude::scripting` or `daq_scripting` (requires `scripting` feature)
+//! - `rust_daq::experiment` → Use `rust_daq::prelude::experiment` or `experiment`
+//! - `rust_daq::scripting` → Use `rust_daq::prelude::scripting` or `scripting` (requires `scripting` feature)
 //!
 //! ## Feature Flags
 //!
@@ -110,7 +110,7 @@ pub use common::parameter;
     since = "0.5.0",
     note = "Use `rust_daq::prelude::experiment` instead. Root re-exports will be removed in 0.6.0"
 )]
-pub use daq_experiment as experiment;
+pub use experiment;
 
 // pub mod app; // Removed (legacy)
 #[cfg(feature = "gui_egui")]
@@ -134,7 +134,7 @@ pub mod plugins;
     since = "0.5.0",
     note = "Use `rust_daq::prelude::scripting` instead. Root re-exports will be removed in 0.6.0"
 )]
-pub use daq_scripting as scripting;
+pub use scripting;
 #[cfg(target_arch = "wasm32")]
 pub mod grpc {
     // Re-export generated types from protocol for WASM

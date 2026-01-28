@@ -4,11 +4,11 @@ members = [
     "crates/rust-daq",
     # "crates/rust-daq/pvcam-sys", # Moved to daq-driver-pvcam
     "crates/common",
-    "crates/daq-client",
+    "crates/client",
     "crates/pool",
     "crates/daq-plugin-api",
     "crates/daq-plugin-example",
-    "crates/daq-drivers",
+    "crates/drivers",
     "crates/daq-driver-pvcam",
     "crates/daq-driver-pvcam/pvcam-sys",
     "crates/daq-driver-comedi",
@@ -21,17 +21,17 @@ members = [
     "crates/daq-driver-generic",
     "crates/comedi-sys",
     "crates/protocol",
-    "crates/daq-hardware",
-    "crates/daq-scripting",
-    "crates/daq-bin", "crates/daq-server", "crates/daq-experiment",
-    "crates/daq-egui",
-    # "crates/daq-examples",
+    "crates/hardware",
+    "crates/scripting",
+    "crates/bin", "crates/server", "crates/experiment",
+    "crates/ui",
+    # "crates/examples",
 ]
 exclude = [
     "crates/rust-daq/python",
     "crates/rust-daq/fuzz",
-    # "crates/daq-bin",
-    "crates/daq-examples",
+    # "crates/bin",
+    "crates/examples",
 ]
 
 # Shared dependency versions across all crates

@@ -10,8 +10,8 @@
     unused_imports,
     missing_docs
 )]
-use daq_experiment::run_engine::RunEngine;
-use daq_hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use experiment::run_engine::RunEngine;
+use hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use std::sync::Arc;
 
 #[tokio::test]

@@ -14,7 +14,7 @@
 //! Standalone test to verify scripting engine works correctly.
 //! This test is independent of the rest of the codebase.
 
-use daq_scripting::rhai::{Dynamic, Engine, EvalAltResult, Scope};
+use scripting::rhai::{Dynamic, Engine, EvalAltResult, Scope};
 
 struct TestScriptHost {
     engine: Engine,

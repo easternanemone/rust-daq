@@ -810,7 +810,7 @@ async fn spawn_server(addr: &str) -> Result<()> {
     let addr = addr.parse().context("Invalid server address")?;
 
     tokio::spawn(async move {
-        if let Err(err) = daq_server::grpc::server::start_server_with_hardware(
+        if let Err(err) = server::grpc::server::start_server_with_hardware(
             addr,
             Arc::new(registry),
             health_monitor,

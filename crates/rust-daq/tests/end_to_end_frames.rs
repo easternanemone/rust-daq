@@ -12,9 +12,9 @@
 )]
 
 use common::experiment::document::Document;
-use daq_experiment::plans::Count;
-use daq_experiment::run_engine::RunEngine;
-use daq_hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use experiment::plans::Count;
+use experiment::run_engine::RunEngine;
+use hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use std::sync::Arc;
 use tokio::time::Duration;
 

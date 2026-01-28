@@ -221,7 +221,7 @@ fn verify_newport_1830c_export() {
 fn verify_grpc_server_export() {
     // Verify DaqServer is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::DaqServer>();
+    _check_type_exists::<server::grpc::DaqServer>();
 }
 
 #[cfg(feature = "server")]
@@ -229,7 +229,7 @@ fn verify_grpc_server_export() {
 fn verify_hardware_service_export() {
     // Verify HardwareServiceImpl is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::HardwareServiceImpl>();
+    _check_type_exists::<server::grpc::HardwareServiceImpl>();
 }
 
 #[cfg(feature = "server")]
@@ -237,7 +237,7 @@ fn verify_hardware_service_export() {
 fn verify_scan_service_export() {
     // Verify ScanServiceImpl is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::ScanServiceImpl>();
+    _check_type_exists::<server::grpc::ScanServiceImpl>();
 }
 
 #[cfg(feature = "server")]
@@ -245,7 +245,7 @@ fn verify_scan_service_export() {
 fn verify_storage_service_export() {
     // Verify StorageServiceImpl is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::StorageServiceImpl>();
+    _check_type_exists::<server::grpc::StorageServiceImpl>();
 }
 
 #[cfg(feature = "server")]
@@ -253,7 +253,7 @@ fn verify_storage_service_export() {
 fn verify_preset_service_export() {
     // Verify PresetServiceImpl is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::PresetServiceImpl>();
+    _check_type_exists::<server::grpc::PresetServiceImpl>();
 }
 
 #[cfg(feature = "server")]
@@ -261,7 +261,7 @@ fn verify_preset_service_export() {
 fn verify_module_service_export() {
     // Verify ModuleServiceImpl is exported
     fn _check_type_exists<T>() {}
-    use daq_server::grpc::ModuleServiceImpl;
+    use server::grpc::ModuleServiceImpl;
     _check_type_exists::<ModuleServiceImpl>();
 }
 
@@ -270,7 +270,7 @@ fn verify_module_service_export() {
 fn verify_plugin_service_export() {
     // Verify PluginServiceImpl is exported
     fn _check_type_exists<T>() {}
-    _check_type_exists::<daq_server::grpc::PluginServiceImpl>();
+    _check_type_exists::<server::grpc::PluginServiceImpl>();
 }
 
 // =============================================================================
@@ -284,29 +284,29 @@ fn verify_proto_types_export() {
     fn _check_type_exists<T>() {}
 
     // Control service types
-    _check_type_exists::<daq_server::grpc::SystemStatus>();
-    _check_type_exists::<daq_server::grpc::ScriptStatus>();
+    _check_type_exists::<server::grpc::SystemStatus>();
+    _check_type_exists::<server::grpc::ScriptStatus>();
 
     // Hardware service types
-    _check_type_exists::<daq_server::grpc::DeviceInfo>();
-    _check_type_exists::<daq_server::grpc::MoveRequest>();
-    _check_type_exists::<daq_server::grpc::ReadValueRequest>();
+    _check_type_exists::<server::grpc::DeviceInfo>();
+    _check_type_exists::<server::grpc::MoveRequest>();
+    _check_type_exists::<server::grpc::ReadValueRequest>();
 
     // Scan service types
-    _check_type_exists::<daq_server::grpc::ScanConfig>();
-    _check_type_exists::<daq_server::grpc::ScanStatus>();
+    _check_type_exists::<server::grpc::ScanConfig>();
+    _check_type_exists::<server::grpc::ScanStatus>();
 
     // Preset service types
-    _check_type_exists::<daq_server::grpc::Preset>();
-    _check_type_exists::<daq_server::grpc::PresetMetadata>();
+    _check_type_exists::<server::grpc::Preset>();
+    _check_type_exists::<server::grpc::PresetMetadata>();
 
     // Module service types
-    _check_type_exists::<daq_server::grpc::ModuleTypeSummary>();
-    _check_type_exists::<daq_server::grpc::ModuleConfig>();
+    _check_type_exists::<server::grpc::ModuleTypeSummary>();
+    _check_type_exists::<server::grpc::ModuleConfig>();
 
     // Storage service types
-    _check_type_exists::<daq_server::grpc::StorageConfig>();
-    _check_type_exists::<daq_server::grpc::RecordingStatus>();
+    _check_type_exists::<server::grpc::StorageConfig>();
+    _check_type_exists::<server::grpc::RecordingStatus>();
 }
 
 // =============================================================================
@@ -363,7 +363,7 @@ fn verify_rhai_engine_export() {
 #[test]
 fn verify_script_engine_trait_export() {
     // Verify ScriptEngine trait is exported
-    use daq_scripting::ScriptEngine;
+    use scripting::ScriptEngine;
     fn _check_trait_exists<T: ScriptEngine>() {}
     // Can't instantiate trait objects without marker traits
 }
@@ -398,9 +398,9 @@ fn verify_complete_grpc_api() {
     // Verify complete gRPC API surface is accessible
 
     // Services
-    use daq_server::grpc::HardwareServiceImpl;
-    use daq_server::grpc::ModuleServiceImpl;
     use protocol::daq::module_service_server::ModuleService;
+    use server::grpc::HardwareServiceImpl;
+    use server::grpc::ModuleServiceImpl;
 
     // Verify service exports
     fn _check_service_types() {

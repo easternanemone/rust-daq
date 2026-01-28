@@ -1,0 +1,33 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+description = "gRPC client library for rust-daq daemon"
+
+[lib]
+name = "client"
+path = "src/lib.rs"
+
+[dependencies]
+# gRPC client
+protocol = { path = "../protocol" }
+tonic = { workspace = true, default-features = false, features = ["transport", "prost", "codegen"] }
+prost.workspace = true
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time"] }
+futures.workspace = true
+
+# Error handling and utilities
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+url = "2"
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time", "test-util"] }
+
+[lints]
+workspace = true

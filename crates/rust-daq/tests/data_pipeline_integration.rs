@@ -130,9 +130,9 @@ fn _create_test_image(name: &str, width: u32, height: u32) -> Measurement {
 #[cfg(feature = "storage_hdf5")]
 mod hdf5_tests {
     use super::*;
-    use daq_storage::hdf5_writer::HDF5Writer;
-    use daq_storage::ring_buffer::RingBuffer;
     use std::path::Path;
+    use storage::hdf5_writer::HDF5Writer;
+    use storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_hdf5_write_scalar_measurements() {
@@ -330,7 +330,7 @@ mod hdf5_tests {
 
     #[tokio::test]
     async fn test_hdf5_manifest_persistence() {
-        use daq_experiment::document::ExperimentManifest;
+        use experiment::document::ExperimentManifest;
         use std::collections::HashMap;
 
         let temp_dir = TempDir::new().unwrap();
@@ -581,7 +581,7 @@ mod arrow_tests {
 
 mod ringbuffer_tests {
     use super::*;
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_ringbuffer_basic_operations() {
@@ -716,8 +716,8 @@ mod ringbuffer_tests {
 #[cfg(feature = "storage_hdf5")]
 mod ringbuffer_hdf5_integration {
     use super::*;
-    use daq_storage::hdf5_writer::HDF5Writer;
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::hdf5_writer::HDF5Writer;
+    use storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_ringbuffer_to_hdf5_flow() {
@@ -843,7 +843,7 @@ mod ringbuffer_hdf5_integration {
 #[cfg(all(test, feature = "storage_arrow"))]
 mod performance_tests {
     use super::*;
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::ring_buffer::RingBuffer;
 
     #[tokio::test]
     async fn test_arrow_batch_creation_performance() {

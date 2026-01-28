@@ -10,11 +10,11 @@
 mod streaming_tests {
     use chrono::Utc;
     use common::core::Measurement;
-    use daq_experiment::RunEngine;
-    use daq_hardware::registry::DeviceRegistry;
-    use daq_server::grpc::server::DaqServer;
-    use daq_server::grpc::ControlService;
+    use experiment::RunEngine;
+    use hardware::registry::DeviceRegistry;
     use protocol::daq::MeasurementRequest;
+    use server::grpc::server::DaqServer;
+    use server::grpc::ControlService;
     use std::sync::Arc;
     use tokio_stream::StreamExt;
     use tonic::Request;

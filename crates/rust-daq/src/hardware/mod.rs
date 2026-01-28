@@ -53,10 +53,10 @@
 //! See `tests/hardware_serial_tests.rs` for comprehensive integration tests.
 
 // Re-export capabilities, registry, resource_pool
-pub use daq_hardware::{capabilities, registry, resource_pool};
+pub use hardware::{capabilities, registry, resource_pool};
 
 #[cfg(feature = "serial")]
-pub use daq_hardware::plugin;
+pub use hardware::plugin;
 
 // =============================================================================
 // Driver Re-exports from standalone crates
@@ -84,13 +84,13 @@ pub use daq_driver_spectra_physics as maitai;
 
 /// PVCAM camera driver
 #[cfg(all(feature = "pvcam", feature = "pvcam_sdk"))]
-pub use daq_hardware::drivers::pvcam;
+pub use hardware::drivers::pvcam;
 
 // Configure daq-hardware mock serial for tests
 /// Mock serial port support for testing without hardware
 #[cfg(feature = "serial")]
 pub mod mock_serial {
-    pub use daq_hardware::drivers::mock_serial::*;
+    pub use hardware::drivers::mock_serial::*;
 }
 
 // Re-export core capability traits

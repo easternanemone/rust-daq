@@ -25,11 +25,11 @@ workspace = true
 
 common = { path = "../common" }
 protocol = { path = "../protocol" }
-daq-hardware = { path = "../daq-hardware", default-features = false }
-daq-storage = { path = "../daq-storage", default-features = false }
-daq-server = { path = "../daq-server", optional = true }
-daq-scripting = { path = "../daq-scripting", optional = true }
-daq-experiment = { path = "../daq-experiment" }
+hardware = { path = "../hardware", default-features = false }
+storage = { path = "../storage", default-features = false }
+server = { path = "../server", optional = true }
+scripting = { path = "../scripting", optional = true }
+experiment = { path = "../experiment" }
 daq-plugin-api = { path = "../daq-plugin-api", optional = true }
 
 # Standalone driver crates
@@ -138,40 +138,40 @@ full = ["storage_csv", "storage_arrow", "storage_matlab", "serial", "modules", "
 
 # Storage backends
 storage_csv = ["dep:csv"]
-storage_hdf5 = ["dep:hdf5", "daq-storage/storage_hdf5"]
-storage_arrow = ["dep:arrow", "daq-storage/storage_arrow", "common/storage_arrow"]
+storage_hdf5 = ["dep:hdf5", "storage/storage_hdf5"]
+storage_arrow = ["dep:arrow", "storage/storage_arrow", "common/storage_arrow"]
 storage_matlab = ["dep:matrw"]
 
 # Serial communication (async via tokio-serial)
-serial = ["dep:tokio-serial", "dep:serialport", "daq-hardware/serial"]
+serial = ["dep:tokio-serial", "dep:serialport", "hardware/serial"]
 visa = ["dep:visa-rs"]
 
 # Mock drivers for testing
 mock = ["dep:daq-driver-mock"]
 
 # Hardware drivers (standalone crates)
-thorlabs = ["serial", "dep:daq-driver-thorlabs", "daq-hardware/thorlabs"]
-newport = ["serial", "dep:daq-driver-newport", "daq-hardware/newport"]
-spectra_physics = ["serial", "dep:daq-driver-spectra-physics", "daq-hardware/spectra_physics"]
+thorlabs = ["serial", "dep:daq-driver-thorlabs", "hardware/thorlabs"]
+newport = ["serial", "dep:daq-driver-newport", "hardware/newport"]
+spectra_physics = ["serial", "dep:daq-driver-spectra-physics", "hardware/spectra_physics"]
 newport_power_meter = ["newport"]
-generic = ["serial", "dep:daq-driver-generic", "daq-hardware/generic"]
+generic = ["serial", "dep:daq-driver-generic", "hardware/generic"]
 
 # PVCAM camera support
-pvcam = ["serial", "daq-hardware/pvcam"]
-pvcam_sdk = ["pvcam", "daq-hardware/pvcam_sdk"]
+pvcam = ["serial", "hardware/pvcam"]
+pvcam_sdk = ["pvcam", "hardware/pvcam_sdk"]
 pvcam_hardware = ["pvcam_sdk"]
 
 # Comedi DAQ support
-comedi = ["dep:daq-driver-comedi", "daq-hardware/comedi", "daq-server/comedi"]
-comedi_hardware = ["comedi", "daq-driver-comedi/hardware", "daq-hardware/comedi_hardware", "daq-server/comedi_hardware"]
+comedi = ["dep:daq-driver-comedi", "hardware/comedi", "server/comedi"]
+comedi_hardware = ["comedi", "daq-driver-comedi/hardware", "hardware/comedi_hardware", "server/comedi_hardware"]
 
 # All hardware drivers (with mock PVCAM and Comedi)
 all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam", "comedi", "generic"]
 
 # Networking and server
 networking = []
-server = ["networking", "dep:daq-server", "tokio/full"]
-scripting = ["dep:daq-scripting"]
+server = ["networking", "dep:server", "tokio/full"]
+scripting = ["dep:scripting"]
 gui_egui = ["dep:egui", "dep:eframe", "dep:egui_plot", "dep:egui_extras"]
 modules = ["scripting"]
 
@@ -180,7 +180,7 @@ hardware_tests = []
 prime_95b_tests = []
 
 # Python scripting backend
-scripting_python = ["daq-scripting/python"]
+scripting_python = ["scripting/python"]
 
 # Plugin hot-reload (development only)
 plugins_hot_reload = ["dep:notify"]

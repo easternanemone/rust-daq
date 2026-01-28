@@ -249,7 +249,7 @@ async fn test_full_pipeline_to_csv() {
 #[cfg(feature = "storage_arrow")]
 #[tokio::test]
 async fn test_full_pipeline_to_arrow() {
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::ring_buffer::RingBuffer;
 
     let temp_dir = TempDir::new().unwrap();
     let ring_path = temp_dir.path().join("pipeline.buf");
@@ -300,8 +300,8 @@ async fn test_full_pipeline_to_arrow() {
 #[cfg(all(feature = "storage_hdf5", feature = "storage_arrow"))]
 #[tokio::test]
 async fn test_full_pipeline_to_hdf5() {
-    use daq_storage::hdf5_writer::HDF5Writer;
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::hdf5_writer::HDF5Writer;
+    use storage::ring_buffer::RingBuffer;
 
     let temp_dir = TempDir::new().unwrap();
     let ring_path = temp_dir.path().join("pipeline.buf");
@@ -420,8 +420,8 @@ async fn test_pipeline_error_handling() {
 #[cfg(feature = "storage_arrow")]
 #[tokio::test]
 async fn test_pipeline_graceful_shutdown() {
-    use daq_storage::ring_buffer::RingBuffer;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use storage::ring_buffer::RingBuffer;
     use tokio::time::Duration;
 
     let temp_dir = TempDir::new().unwrap();
@@ -500,8 +500,8 @@ async fn test_pipeline_graceful_shutdown() {
 #[cfg(feature = "storage_arrow")]
 #[tokio::test]
 async fn test_pipeline_high_throughput() {
-    use daq_storage::ring_buffer::RingBuffer;
     use std::time::Instant;
+    use storage::ring_buffer::RingBuffer;
 
     let temp_dir = TempDir::new().unwrap();
     let ring_path = temp_dir.path().join("throughput_test.buf");
@@ -562,8 +562,8 @@ async fn test_pipeline_high_throughput() {
 #[cfg(all(feature = "storage_arrow", feature = "storage_hdf5"))]
 #[tokio::test]
 async fn test_pipeline_data_integrity() {
-    use daq_storage::hdf5_writer::HDF5Writer;
-    use daq_storage::ring_buffer::RingBuffer;
+    use storage::hdf5_writer::HDF5Writer;
+    use storage::ring_buffer::RingBuffer;
 
     let temp_dir = TempDir::new().unwrap();
     let ring_path = temp_dir.path().join("integrity.buf");

@@ -33,7 +33,7 @@
 //! - Operation safety limits
 
 use clap::{Parser, ValueEnum};
-use daq_scripting::{RhaiEngine, ScriptEngine, ScriptError, ScriptValue};
+use scripting::{RhaiEngine, ScriptEngine, ScriptError, ScriptValue};
 use std::fs;
 use std::path::PathBuf;
 use std::process;

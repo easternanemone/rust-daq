@@ -17,9 +17,9 @@
 //! Validates that async hardware operations can be safely called from
 //! synchronous scripts using the async→sync bridge.
 
-use daq_scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use rust_daq::hardware::capabilities::{FrameProducer, Movable};
 use rust_daq::hardware::mock::{MockCamera, MockStage};
+use scripting::{CameraHandle, RhaiEngine, ScriptEngine, ScriptValue, SoftLimits, StageHandle};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]

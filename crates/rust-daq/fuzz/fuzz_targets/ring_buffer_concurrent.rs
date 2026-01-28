@@ -10,7 +10,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use daq_storage::ring_buffer::RingBuffer;
+use storage::ring_buffer::RingBuffer;
 use std::sync::Arc;
 use std::thread;
 use tempfile::TempDir;

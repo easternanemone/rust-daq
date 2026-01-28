@@ -18,7 +18,7 @@
 //!     └── ScriptModule - Script-based Module implementation
 //! ```
 
-// Script plugins - requires scripting feature (depends on daq_scripting)
+// Script plugins - requires scripting feature (depends on scripting)
 #[cfg(feature = "scripting")]
 pub mod loader;
 #[cfg(feature = "scripting")]

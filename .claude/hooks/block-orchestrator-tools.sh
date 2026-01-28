@@ -3,6 +3,7 @@
 # PreToolUse: Block orchestrator from implementation tools
 #
 # Orchestrators investigate and delegate - they don't implement.
+# But they CAN use basic CLI tools for workflow operations.
 #
 
 INPUT=$(cat)
@@ -29,11 +30,16 @@ if [[ "$FILE_PATH" == *".worktrees/bd-"* ]]; then
   exit 0  # Allow edits to worktree files
 fi
 
-# DENYLIST: Block implementation tools for orchestrator
+# Allow Edit/Write for .claude/ configuration files (hooks, settings, etc.)
+if [[ "$FILE_PATH" == *"/.claude/"* ]]; then
+  exit 0  # Allow orchestrator to manage Claude configuration
+fi
+
+# DENYLIST: Block implementation tools for orchestrator (code files only)
 BLOCKED="Edit|Write|NotebookEdit"
 
 if [[ "$TOOL_NAME" =~ ^($BLOCKED)$ ]]; then
-  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Tool '"'$TOOL_NAME'"' blocked. Orchestrators investigate and delegate via Task(). Supervisors implement."}}'
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Tool '"'$TOOL_NAME'"' blocked for code files. Orchestrators investigate and delegate via Task(). Supervisors implement."}}'
   exit 0
 fi
 
@@ -53,18 +59,14 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
   COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
   FIRST_WORD="${COMMAND%% *}"
 
-  # ALLOW git commands (check second word for read vs write)
+  # ALLOW git commands (orchestrator can manage git workflow)
   if [[ "$FIRST_WORD" == "git" ]]; then
-    SECOND_WORD=$(echo "$COMMAND" | awk '{print $2}')
-    case "$SECOND_WORD" in
-    status | log | diff | branch | checkout | merge | fetch | remote | stash | show)
-      exit 0
-      ;;
-    add | commit)
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Git '"'$SECOND_WORD'"' blocked for orchestrator. Supervisors handle commits."}}'
-      exit 0
-      ;;
-    esac
+    exit 0
+  fi
+
+  # ALLOW gh (GitHub CLI) commands
+  if [[ "$FIRST_WORD" == "gh" ]]; then
+    exit 0
   fi
 
   # ALLOW beads commands (with validation)
@@ -82,7 +84,7 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     exit 0
   fi
 
-  # Allow other bash commands (npm, cargo, etc. for investigation)
+  # Allow other bash commands (cargo, npm, rg, sg, fd, ls, etc. for investigation)
   exit 0
 fi
 

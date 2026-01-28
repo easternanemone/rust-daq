@@ -24,10 +24,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use daq_experiment::Document;
-use daq_experiment::{EngineState, RunEngine};
-use daq_scripting::script_runner::ScriptPlanRunner;
+use experiment::Document;
+use experiment::{EngineState, RunEngine};
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use scripting::script_runner::ScriptPlanRunner;
 use tokio::time::timeout;
 
 /// Create a registry with mock devices

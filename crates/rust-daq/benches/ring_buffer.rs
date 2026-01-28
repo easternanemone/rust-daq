@@ -19,10 +19,10 @@
 //! Run with: cargo bench --bench ring_buffer
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use daq_storage::ring_buffer::RingBuffer;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use storage::ring_buffer::RingBuffer;
 use tokio::runtime::Runtime;
 
 /// Benchmark writing different sizes of data to the ring buffer.

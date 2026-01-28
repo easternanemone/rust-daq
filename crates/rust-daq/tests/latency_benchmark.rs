@@ -30,12 +30,12 @@ use tokio::sync::Barrier;
 use tonic::transport::Server;
 use tonic::Request;
 
-use daq_experiment::RunEngine;
-use daq_hardware::registry::DeviceRegistry;
-use daq_server::grpc::server::DaqServer;
+use experiment::RunEngine;
+use hardware::registry::DeviceRegistry;
 use protocol::daq::control_service_client::ControlServiceClient;
 use protocol::daq::control_service_server::ControlServiceServer;
 use protocol::daq::DaemonInfoRequest;
+use server::grpc::server::DaqServer;
 
 /// Timeout for individual gRPC requests to prevent test hangs.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);

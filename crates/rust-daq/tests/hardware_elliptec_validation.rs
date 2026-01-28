@@ -26,7 +26,7 @@
 
 #![cfg(all(feature = "hardware_tests", feature = "thorlabs"))]
 
-use daq_hardware::drivers::ell14::{Ell14Bus, Ell14Driver};
+use hardware::drivers::ell14::{Ell14Bus, Ell14Driver};
 use rust_daq::hardware::capabilities::Movable;
 use std::time::Duration;
 use tokio::sync::OnceCell;

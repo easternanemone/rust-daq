@@ -73,7 +73,7 @@ pub use crate::hardware;
 /// Experiment orchestration (RunEngine and Plans)
 ///
 /// Re-exported from `daq-experiment`.
-pub use daq_experiment as experiment;
+pub use experiment;
 
 // =============================================================================
 // Scripting Integration
@@ -83,7 +83,7 @@ pub use daq_experiment as experiment;
 /// Rhai scripting engine integration
 ///
 /// Re-exported from `daq-scripting`.
-pub use daq_scripting as scripting;
+pub use scripting;
 
 // =============================================================================
 // Module System

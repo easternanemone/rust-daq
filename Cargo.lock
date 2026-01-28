@@ -1526,6 +1526,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230c5f1ca6a325a32553f8640d31ac9b49f2411e901e427570154868b46da4f7"
 
 [[package]]
+name = "bin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hardware",
+ "mimalloc",
+ "protocol",
+ "rust_daq",
+ "scripting",
+ "server",
+ "storage",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2097,6 +2115,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aaa6b4b263a5d737e9bf6b7c09b72c41a5480aec4d7219af827f6564e950b6a5"
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "prost 0.12.6",
+ "protocol",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tonic 0.10.2",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2643,41 +2678,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
-name = "daq-bin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "daq-hardware",
- "daq-scripting",
- "daq-server",
- "daq-storage",
- "mimalloc",
- "protocol",
- "rust_daq",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "daq-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "prost 0.12.6",
- "protocol",
- "serde",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tonic 0.10.2",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "daq-driver-comedi"
 version = "0.1.0"
 dependencies = [
@@ -2831,126 +2831,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daq-drivers"
-version = "0.1.0"
-dependencies = [
- "common",
- "daq-driver-comedi",
- "daq-driver-generic",
- "daq-driver-mock",
- "daq-driver-newport",
- "daq-driver-pvcam",
- "daq-driver-spectra-physics",
- "daq-driver-thorlabs",
-]
-
-[[package]]
-name = "daq-egui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "chrono",
- "clap",
- "common",
- "csv",
- "daq-client",
- "daq-driver-pvcam",
- "daq-experiment",
- "daq-hardware",
- "daq-storage",
- "dark-light",
- "dirs 5.0.1",
- "eframe 0.33.3",
- "egui 0.33.3",
- "egui-notify",
- "egui-phosphor",
- "egui-snarl",
- "egui_code_editor",
- "egui_dock",
- "egui_extras 0.33.3",
- "egui_plot 0.34.0",
- "find_peaks",
- "futures",
- "hdf5-metno",
- "lz4_flex 0.11.5",
- "mimalloc",
- "once_cell",
- "ordered-float 4.6.0",
- "prost 0.12.6",
- "protocol",
- "rerun",
- "rfd 0.17.2",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml 0.9.11+spec-1.1.0",
- "tonic 0.10.2",
- "tracing",
- "tracing-subscriber",
- "undo",
- "url",
- "which 6.0.3",
-]
-
-[[package]]
-name = "daq-experiment"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "common",
- "daq-hardware",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "daq-hardware"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "common",
- "crc",
- "daq-driver-comedi",
- "daq-driver-generic",
- "daq-driver-mock",
- "daq-driver-newport",
- "daq-driver-pvcam",
- "daq-driver-red-pitaya",
- "daq-driver-spectra-physics",
- "daq-driver-thorlabs",
- "dashmap",
- "dirs 5.0.1",
- "enum_dispatch",
- "evalexpr",
- "figment",
- "futures",
- "hot-lib-reloader",
- "log",
- "notify 6.1.1",
- "pool",
- "rand 0.8.5",
- "regex",
- "rhai",
- "schemars",
- "serde",
- "serde_json",
- "serde_valid",
- "serde_yaml",
- "serialport",
- "strfmt",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-serial",
- "toml 0.9.11+spec-1.1.0",
- "tracing",
-]
-
-[[package]]
 name = "daq-plugin-api"
 version = "0.1.0"
 dependencies = [
@@ -2967,102 +2847,6 @@ version = "0.1.0"
 dependencies = [
  "abi_stable",
  "daq-plugin-api",
-]
-
-[[package]]
-name = "daq-scripting"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "common",
- "daq-driver-comedi",
- "daq-driver-mock",
- "daq-driver-newport",
- "daq-driver-spectra-physics",
- "daq-driver-thorlabs",
- "daq-experiment",
- "daq-hardware",
- "hdf5-metno",
- "ndarray 0.15.6",
- "pyo3",
- "rhai",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "daq-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bincode",
- "chrono",
- "common",
- "config",
- "daq-driver-comedi",
- "daq-experiment",
- "daq-hardware",
- "daq-scripting",
- "daq-storage",
- "dirs 4.0.0",
- "figment",
- "futures",
- "hdf5-metno",
- "http 0.2.12",
- "hyper 0.14.32",
- "jsonwebtoken",
- "lazy_static",
- "log",
- "lz4_flex 0.11.5",
- "prometheus",
- "prost 0.12.6",
- "protocol",
- "rerun",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo 0.37.2",
- "tempfile",
- "tokio",
- "tokio-serial",
- "tokio-stream",
- "toml 0.9.11+spec-1.1.0",
- "tonic 0.10.2",
- "tonic-web 0.10.2",
- "tower-http 0.4.4",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "daq-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow 57.2.0",
- "bincode",
- "bytes",
- "chrono",
- "common",
- "hdf5-metno",
- "image",
- "memmap2 0.9.9",
- "object_store 0.11.2",
- "parquet 57.2.0",
- "pool",
- "prost 0.12.6",
- "protocol",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "zarrs",
 ]
 
 [[package]]
@@ -3897,6 +3681,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "drivers"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "daq-driver-comedi",
+ "daq-driver-generic",
+ "daq-driver-mock",
+ "daq-driver-newport",
+ "daq-driver-pvcam",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
+]
+
+[[package]]
 name = "duplicate"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4720,6 +4518,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "experiment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common",
+ "hardware",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5424,6 +5234,50 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy 0.8.33",
+]
+
+[[package]]
+name = "hardware"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "common",
+ "crc",
+ "daq-driver-comedi",
+ "daq-driver-generic",
+ "daq-driver-mock",
+ "daq-driver-newport",
+ "daq-driver-pvcam",
+ "daq-driver-red-pitaya",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
+ "dashmap",
+ "dirs 5.0.1",
+ "enum_dispatch",
+ "evalexpr",
+ "figment",
+ "futures",
+ "hot-lib-reloader",
+ "log",
+ "notify 6.1.1",
+ "pool",
+ "rand 0.8.5",
+ "regex",
+ "rhai",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_valid",
+ "serde_yaml",
+ "serialport",
+ "strfmt",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "toml 0.9.11+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]
@@ -11453,21 +11307,18 @@ dependencies = [
  "daq-driver-pvcam",
  "daq-driver-spectra-physics",
  "daq-driver-thorlabs",
- "daq-experiment",
- "daq-hardware",
  "daq-plugin-api",
- "daq-scripting",
- "daq-server",
- "daq-storage",
  "eframe 0.30.0",
  "egui 0.30.0",
  "egui_extras 0.30.0",
  "egui_kittest",
  "egui_plot 0.30.0",
+ "experiment",
  "figment",
  "flatbuffers 24.12.23",
  "flatc-rust",
  "futures",
+ "hardware",
  "hdf5-metno",
  "hostname",
  "log",
@@ -11476,12 +11327,15 @@ dependencies = [
  "notify 7.0.0",
  "prost 0.12.6",
  "protocol",
+ "scripting",
  "serde",
  "serde_json",
  "serial_test",
  "serialport",
+ "server",
  "sha2",
  "similar",
+ "storage",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -11710,6 +11564,31 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scripting"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "common",
+ "daq-driver-comedi",
+ "daq-driver-mock",
+ "daq-driver-newport",
+ "daq-driver-spectra-physics",
+ "daq-driver-thorlabs",
+ "experiment",
+ "hardware",
+ "hdf5-metno",
+ "ndarray 0.15.6",
+ "pyo3",
+ "rhai",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "sct"
@@ -12009,6 +11888,51 @@ dependencies = [
  "scopeguard",
  "unescaper",
  "winapi",
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "common",
+ "config",
+ "daq-driver-comedi",
+ "dirs 4.0.0",
+ "experiment",
+ "figment",
+ "futures",
+ "hardware",
+ "hdf5-metno",
+ "http 0.2.12",
+ "hyper 0.14.32",
+ "jsonwebtoken",
+ "lazy_static",
+ "log",
+ "lz4_flex 0.11.5",
+ "prometheus",
+ "prost 0.12.6",
+ "protocol",
+ "rerun",
+ "scripting",
+ "serde",
+ "serde_json",
+ "sha2",
+ "storage",
+ "sysinfo 0.37.2",
+ "tempfile",
+ "tokio",
+ "tokio-serial",
+ "tokio-stream",
+ "toml 0.9.11+spec-1.1.0",
+ "tonic 0.10.2",
+ "tonic-web 0.10.2",
+ "tower-http 0.4.4",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -12375,6 +12299,32 @@ checksum = "4a101fb44c7bbb34473ee14a0a9e2c06ad4b1aa22501b18223279fd21f0affd6"
 dependencies = [
  "byteorder",
  "float-cmp",
+]
+
+[[package]]
+name = "storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow 57.2.0",
+ "bincode",
+ "bytes",
+ "chrono",
+ "common",
+ "hdf5-metno",
+ "image",
+ "memmap2 0.9.9",
+ "object_store 0.11.2",
+ "parquet 57.2.0",
+ "pool",
+ "prost 0.12.6",
+ "protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "zarrs",
 ]
 
 [[package]]
@@ -13371,6 +13321,56 @@ dependencies = [
  "memoffset",
  "tempfile",
  "winapi",
+]
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "chrono",
+ "clap",
+ "client",
+ "common",
+ "csv",
+ "daq-driver-pvcam",
+ "dark-light",
+ "dirs 5.0.1",
+ "eframe 0.33.3",
+ "egui 0.33.3",
+ "egui-notify",
+ "egui-phosphor",
+ "egui-snarl",
+ "egui_code_editor",
+ "egui_dock",
+ "egui_extras 0.33.3",
+ "egui_plot 0.34.0",
+ "experiment",
+ "find_peaks",
+ "futures",
+ "hardware",
+ "hdf5-metno",
+ "lz4_flex 0.11.5",
+ "mimalloc",
+ "once_cell",
+ "ordered-float 4.6.0",
+ "prost 0.12.6",
+ "protocol",
+ "rerun",
+ "rfd 0.17.2",
+ "serde",
+ "serde_json",
+ "storage",
+ "tempfile",
+ "tokio",
+ "toml 0.9.11+spec-1.1.0",
+ "tonic 0.10.2",
+ "tracing",
+ "tracing-subscriber",
+ "undo",
+ "url",
+ "which 6.0.3",
 ]
 
 [[package]]

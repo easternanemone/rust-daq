@@ -11,7 +11,7 @@
     unused_imports,
     missing_docs
 )]
-use daq_scripting::{RhaiEngine, ScriptEngine};
+use scripting::{RhaiEngine, ScriptEngine};
 
 #[tokio::test]
 async fn test_simple_script() {

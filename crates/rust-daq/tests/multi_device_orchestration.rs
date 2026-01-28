@@ -27,8 +27,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use daq_experiment::plans::{Count, GridScan, LineScan, Plan};
-use daq_experiment::{Document, EngineState, RunEngine};
+use experiment::plans::{Count, GridScan, LineScan, Plan};
+use experiment::{Document, EngineState, RunEngine};
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
 use tokio::sync::broadcast;
 use tokio::time::timeout;

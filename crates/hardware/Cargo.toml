@@ -1,0 +1,132 @@
+[package]
+name = "hardware"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+pool = { path = "../pool" }
+async-trait.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+serde_json.workspace = true
+regex = "1.0.8"
+strfmt = "0.2.5"
+futures.workspace = true
+log = "0.4.21"
+serde_yaml = "0.9"
+dirs = "5.0"
+rand = "0.8.5"
+toml.workspace = true
+dashmap = "6.1"
+serde_valid = "0.24"
+schemars = "0.8"
+evalexpr = "11"
+figment = { version = "0.10", features = ["toml"] }
+enum_dispatch = "0.3"
+crc = { version = "3.4.0", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["sync", "time", "macros", "fs", "io-util"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["sync", "time", "macros", "io-util"] }
+
+[dependencies.serialport]
+version = "4.3.0"
+optional = true
+
+[dependencies.tokio-serial]
+version = "5.4"
+optional = true
+
+# pvcam-sys = { path = "../rust-daq/pvcam-sys", optional = true } # Removed
+
+[dependencies.daq-driver-pvcam]
+path = "../daq-driver-pvcam"
+optional = true
+
+[dependencies.daq-driver-comedi]
+path = "../daq-driver-comedi"
+optional = true
+
+[dependencies.daq-driver-mock]
+path = "../daq-driver-mock"
+
+[dependencies.daq-driver-thorlabs]
+path = "../daq-driver-thorlabs"
+optional = true
+
+[dependencies.daq-driver-newport]
+path = "../daq-driver-newport"
+optional = true
+
+[dependencies.daq-driver-spectra-physics]
+path = "../daq-driver-spectra-physics"
+optional = true
+
+[dependencies.daq-driver-red-pitaya]
+path = "../daq-driver-red-pitaya"
+optional = true
+
+[dependencies.daq-driver-generic]
+path = "../daq-driver-generic"
+optional = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[dependencies.notify]
+version = "6.1"
+optional = true
+
+[dependencies.hot-lib-reloader]
+version = "0.8"
+optional = true
+
+[dependencies.rhai]
+version = "1.19"
+features = ["sync"]
+optional = true
+
+[features]
+# Simplified feature flags (bd-0aqw)
+default = ["serial"]
+
+# Serial communication (async via tokio-serial)
+serial = ["dep:tokio-serial", "dep:serialport"]
+
+# Hardware drivers (all require serial)
+thorlabs = ["serial", "dep:daq-driver-thorlabs"]           # ELL14 rotators
+thorlabs_config = ["thorlabs"]  # Config-based ELL14 driver
+newport = ["serial", "dep:daq-driver-newport"]            # Newport stages
+spectra_physics = ["serial", "dep:daq-driver-spectra-physics"]    # Spectra-Physics lasers
+newport_power_meter = ["newport"] # Newport 1830-C power meter (included in newport)
+red_pitaya = ["dep:daq-driver-red-pitaya"]      # Red Pitaya PID controller
+generic = ["dep:daq-driver-generic"] # Config-driven generic driver
+
+# PVCAM camera support
+pvcam = ["dep:daq-driver-pvcam"]                           # Mock driver (fast compile)
+pvcam_sdk = ["pvcam", "daq-driver-pvcam/pvcam_sdk"]        # Real SDK (requires installation)
+pvcam_hardware = ["pvcam_sdk"]                             # Back-compat alias for pvcam_sdk
+
+# Comedi DAQ support (Linux only)
+comedi = ["dep:daq-driver-comedi"]                         # Mock driver (fast compile)
+comedi_hardware = ["comedi", "daq-driver-comedi/hardware"] # Real hardware (requires comedilib)
+
+# Convenience feature: all hardware drivers (with mock PVCAM and Comedi)
+all_hardware = ["thorlabs", "newport", "spectra_physics", "newport_power_meter", "pvcam", "comedi", "red_pitaya", "generic"]
+
+# Full feature set
+full = ["all_hardware", "simulator"]
+
+# Other features
+simulator = []
+plugins_hot_reload = ["dep:notify", "dep:hot-lib-reloader"]
+scripting = ["dep:rhai"]        # Rhai scripting for config-driven drivers
+binary_protocol = ["dep:crc"]   # Modbus RTU, etc.
+
+[lints]
+workspace = true

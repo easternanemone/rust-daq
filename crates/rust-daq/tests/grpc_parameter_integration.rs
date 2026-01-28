@@ -27,10 +27,10 @@
 #![cfg(feature = "server")]
 
 use anyhow::Result;
-use daq_server::grpc::hardware_service::HardwareServiceImpl;
 use protocol::daq::hardware_service_server::HardwareService;
 use protocol::daq::{GetParameterRequest, SetParameterRequest, StreamParameterChangesRequest};
 use rust_daq::hardware::registry::{DeviceConfig, DeviceRegistry, DriverType};
+use server::grpc::hardware_service::HardwareServiceImpl;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tonic::Request;
