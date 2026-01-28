@@ -2859,6 +2859,7 @@ dependencies = [
  "daq-proto",
  "daq-storage",
  "dark-light",
+ "dirs 5.0.1",
  "eframe 0.33.3",
  "egui 0.33.3",
  "egui-notify",

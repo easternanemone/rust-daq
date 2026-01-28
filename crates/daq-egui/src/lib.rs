@@ -21,6 +21,8 @@ pub mod layout;
 #[cfg(feature = "standalone")]
 pub mod panels;
 #[cfg(feature = "standalone")]
+pub mod settings;
+#[cfg(feature = "standalone")]
 pub mod theme;
 #[cfg(feature = "standalone")]
 pub mod widgets;
