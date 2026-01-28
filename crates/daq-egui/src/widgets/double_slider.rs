@@ -240,6 +240,7 @@ impl Widget for DoubleSlider<'_> {
         }
 
         if changed {
+            response.mark_changed();
             ui.ctx().request_repaint();
         }
 
