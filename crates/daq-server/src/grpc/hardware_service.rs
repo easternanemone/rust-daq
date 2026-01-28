@@ -2612,6 +2612,7 @@ fn device_info_to_proto(info: &daq_hardware::registry::DeviceInfo) -> DeviceInfo
         is_shutter_controllable: info.capabilities.contains(&Capability::ShutterControl),
         is_wavelength_tunable: info.capabilities.contains(&Capability::WavelengthTunable),
         is_emission_controllable: info.capabilities.contains(&Capability::EmissionControl),
+        is_parameterized: info.capabilities.contains(&Capability::Parameterized),
         metadata: Some(ProtoDeviceMetadata {
             position_units: info.metadata.position_units.clone(),
             min_position: info.metadata.min_position,

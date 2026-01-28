@@ -279,6 +279,8 @@ message DeviceInfo {
   bool is_shutter_controllable = 15;
   bool is_wavelength_tunable = 16;
   bool is_emission_controllable = 17;
+  // Parameter discovery capability (bd-4myc.1)
+  bool is_parameterized = 18;
 
   // Device-specific metadata
   DeviceMetadata metadata = 20;
@@ -355,12 +357,12 @@ message DeviceStateUpdate {
 message MoveRequest {
   string device_id = 1;
   double value = 2;  // Target position (absolute) or distance (relative)
-  
+
   // Optional: wait for motion to complete before returning
   // If true, response includes actual settled position
   // If false (default), returns immediately after command is sent
   optional bool wait_for_completion = 3;
-  
+
   // Optional: timeout in milliseconds for wait_for_completion
   // Only used when wait_for_completion is true
   // If not set, uses device default timeout
@@ -371,7 +373,7 @@ message MoveResponse {
   bool success = 1;
   string error_message = 2;
   double final_position = 3;  // Actual position after move
-  
+
   // True if position is settled (only meaningful when wait_for_completion was true)
   optional bool settled = 4;
 }
@@ -1804,7 +1806,7 @@ service StorageService {
   // ==========================================================================
   // Ring Buffer Tap (Cross-Process Access)
   // ==========================================================================
-  
+
   // Get information for cross-process ring buffer access via mmap.
   // Python/Julia clients can use this to discover the buffer location and
   // parameters needed to safely read data without gRPC overhead.
@@ -2392,13 +2394,13 @@ message DestroyPluginInstanceResponse {
 service HealthService {
   // Get overall system health status
   rpc GetSystemHealth(GetSystemHealthRequest) returns (GetSystemHealthResponse);
-  
+
   // Get detailed health status for all modules
   rpc GetModuleHealth(GetModuleHealthRequest) returns (GetModuleHealthResponse);
-  
+
   // Get recent error history
   rpc GetErrorHistory(GetErrorHistoryRequest) returns (GetErrorHistoryResponse);
-  
+
   // Stream health updates in real-time
   rpc StreamHealthUpdates(StreamHealthUpdatesRequest) returns (stream HealthUpdate);
 }
