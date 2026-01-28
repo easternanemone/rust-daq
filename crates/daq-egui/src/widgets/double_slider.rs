@@ -124,7 +124,7 @@ impl Widget for DoubleSlider<'_> {
         };
 
         let desired_size = Vec2::new(width, total_height);
-        let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
         // Track area (centered vertically in the handle area)
         let track_y = rect.min.y + (self.height - track_height) / 2.0;

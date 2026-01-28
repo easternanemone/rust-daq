@@ -211,18 +211,25 @@ impl SettingsSection {
 impl SettingsWindow {
     /// Show the settings window.
     pub fn show(&mut self, ctx: &egui::Context, current_settings: &mut AppSettings) -> bool {
+        if !self.open {
+            return false;
+        }
+
         let mut should_apply = false;
         let mut should_close = false;
 
         // Copy current settings to working copy when opening
-        if self.open
-            && self.working_settings.daemon_address != current_settings.connection.daemon_address
+        if self.working_settings.connection.daemon_address
+            != current_settings.connection.daemon_address
         {
             self.working_settings = current_settings.clone();
         }
 
+        // Use a local copy of open state to avoid borrow conflicts
+        let mut open = self.open;
+
         egui::Window::new(format!("{} Settings", crate::icons::action::SETTINGS))
-            .open(&mut self.open)
+            .open(&mut open)
             .collapsible(false)
             .resizable(true)
             .default_width(700.0)
@@ -305,6 +312,9 @@ impl SettingsWindow {
                     });
                 });
             });
+
+        // Update open state from local copy (window X button handling)
+        self.open = open;
 
         if should_apply {
             *current_settings = self.working_settings.clone();

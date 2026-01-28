@@ -67,7 +67,8 @@ impl KeyBinding {
         if self.alt {
             parts.push("Alt");
         }
-        parts.push(&format!("{:?}", self.key));
+        let key_str = format!("{:?}", self.key);
+        parts.push(&key_str);
         parts.join("+")
     }
 }

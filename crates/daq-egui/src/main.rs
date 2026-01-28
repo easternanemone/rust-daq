@@ -22,6 +22,8 @@ mod connection;
 mod connection_state_ext;
 mod daemon_launcher;
 #[cfg(feature = "standalone")]
+mod export;
+#[cfg(feature = "standalone")]
 mod graph;
 #[cfg(feature = "standalone")]
 mod gui_log_layer;
@@ -32,6 +34,10 @@ mod layout;
 #[cfg(feature = "standalone")]
 mod panels;
 mod reconnect;
+#[cfg(feature = "standalone")]
+mod settings;
+#[cfg(feature = "standalone")]
+mod shortcuts;
 #[cfg(feature = "standalone")]
 mod theme;
 #[cfg(feature = "standalone")]

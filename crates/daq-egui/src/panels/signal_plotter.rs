@@ -370,7 +370,7 @@ impl SignalPlotterPanel {
 
     /// Export all visible traces to CSV
     fn export_to_csv(&mut self, path: std::path::PathBuf) {
-        use crate::export::{signal::SignalTraceData, SignalExportOptions};
+        use crate::export::{SignalExportOptions, SignalTraceData};
 
         // Collect visible traces
         let traces: Vec<SignalTraceData> = self
@@ -394,7 +394,7 @@ impl SignalPlotterPanel {
 
         // Export with default options
         let options = SignalExportOptions::default();
-        match crate::export::signal::export_signal_traces(&path, &traces, &options) {
+        match crate::export::export_signal_traces(&path, &traces, &options) {
             Ok(_) => {
                 let filename = path.file_name().unwrap_or_default().to_string_lossy();
                 self.export_status = Some((
@@ -903,24 +903,8 @@ impl SignalPlotterPanel {
                         .clicked()
                     {
                         let path = self.export_path.clone();
-                        match self.export_to_csv(&path) {
-                            Ok(()) => {
-                                let point_count: usize =
-                                    self.traces.iter().map(|t| t.points.len()).sum();
-                                self.export_status = Some((
-                                    format!(
-                                        "Exported {} traces ({} points) to {}",
-                                        self.traces.len(),
-                                        point_count,
-                                        path
-                                    ),
-                                    false,
-                                ));
-                            }
-                            Err(e) => {
-                                self.export_status = Some((e, true));
-                            }
-                        }
+                        // export_to_csv updates self.export_status internally
+                        self.export_to_csv(std::path::PathBuf::from(&path));
                     }
                 });
 
@@ -1001,26 +985,5 @@ impl SignalPlotterPanel {
         }
 
         csv
-    }
-
-    /// Export trace data to CSV file
-    pub fn export_to_csv(&mut self, path: &str) -> Result<(), String> {
-        use std::io::Write;
-
-        let csv_content = self.generate_csv();
-
-        let file =
-            std::fs::File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
-
-        let mut writer = std::io::BufWriter::new(file);
-        writer
-            .write_all(csv_content.as_bytes())
-            .map_err(|e| format!("Failed to write data: {}", e))?;
-
-        writer
-            .flush()
-            .map_err(|e| format!("Failed to flush buffer: {}", e))?;
-
-        Ok(())
     }
 }

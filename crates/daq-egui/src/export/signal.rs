@@ -77,17 +77,29 @@ pub fn export_signal_traces<P: AsRef<Path>>(
     // Write metadata
     if options.csv_options.include_metadata {
         let timestamp = chrono::Local::now().to_rfc3339();
-        let mut metadata = vec![
+        let trace_count = traces.len().to_string();
+        let mut metadata: Vec<(&str, &str)> = vec![
             ("Exported by", "rust-daq GUI"),
             ("Export type", "Signal traces"),
             ("Timestamp", &timestamp),
-            ("Trace count", &traces.len().to_string()),
+            ("Trace count", &trace_count),
         ];
 
-        // Add device IDs
-        for trace in traces {
-            metadata.push((&format!("Device ({})", trace.label), &trace.device_id));
-        }
+        // Add device IDs - collect strings first to extend lifetimes
+        let device_labels: Vec<(String, &str)> = traces
+            .iter()
+            .map(|trace| {
+                (
+                    format!("Device ({})", trace.label),
+                    trace.device_id.as_str(),
+                )
+            })
+            .collect();
+        let device_refs: Vec<(&str, &str)> = device_labels
+            .iter()
+            .map(|(label, id)| (label.as_str(), *id))
+            .collect();
+        metadata.extend(device_refs);
 
         write_metadata_comments(&mut file, &metadata)?;
     }
