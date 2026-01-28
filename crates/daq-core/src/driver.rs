@@ -167,6 +167,24 @@ impl Capability {
             Self::Parameterized => "Parameterized",
         }
     }
+
+    /// Snake_case string for proto/API transport (bd-4myc.3)
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Movable => "movable",
+            Self::Readable => "readable",
+            Self::Triggerable => "triggerable",
+            Self::FrameProducer => "frame_producer",
+            Self::ExposureControl => "exposure_controllable",
+            Self::Settable => "settable",
+            Self::ShutterControl => "shutter_controllable",
+            Self::WavelengthTunable => "wavelength_tunable",
+            Self::EmissionControl => "emission_controllable",
+            Self::Commandable => "commandable",
+            Self::Stageable => "stageable",
+            Self::Parameterized => "parameterized",
+        }
+    }
 }
 
 // =============================================================================

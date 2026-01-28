@@ -2627,6 +2627,12 @@ fn device_info_to_proto(info: &daq_hardware::registry::DeviceInfo) -> DeviceInfo
             min_wavelength_nm: info.metadata.min_wavelength_nm,
             max_wavelength_nm: info.metadata.max_wavelength_nm,
         }),
+        // Dynamic capability list - canonical source of truth (bd-4myc.3)
+        capabilities: info
+            .capabilities
+            .iter()
+            .map(|c| c.as_str().to_string())
+            .collect(),
     }
 }
 
