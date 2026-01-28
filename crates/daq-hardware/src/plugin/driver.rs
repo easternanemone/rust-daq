@@ -1435,10 +1435,17 @@ impl GenericDriver {
                         let start = std::time::Instant::now();
                         observer.on_frame(&frame_view);
                         let elapsed = start.elapsed();
-                        if elapsed > Duration::from_micros(100) {
+                        if elapsed > Duration::from_millis(1) {
                             tracing::warn!(
+                                "FrameObserver '{}' exceeded timing budget: {:?}. \
+                                 Observers MUST return in <1ms to avoid frame drops.",
+                                observer.name(),
+                                elapsed
+                            );
+                        } else if elapsed > Duration::from_micros(100) {
+                            tracing::debug!(
                                 "FrameObserver '{}' took too long: {:?}. \
-                                 Observers MUST return immediately (<100µs).",
+                                 Ideally observers should return in <100µs.",
                                 observer.name(),
                                 elapsed
                             );
@@ -1456,9 +1463,12 @@ impl GenericDriver {
                 .store(frame_count as u64, std::sync::atomic::Ordering::SeqCst);
 
             // Small delay to prevent CPU spin
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // In mock mode, add delay to simulate hardware frame rate
+            // Real hardware acquisition naturally blocks waiting for frames
+            if is_mocking {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
-
         Ok(())
     }
 

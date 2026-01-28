@@ -797,13 +797,49 @@ impl FrameTap for ObserverAdapter {
             view = view.with_binning(binning);
         }
 
+        // Measure observer timing and log warnings for slow observers
+        let start = std::time::Instant::now();
         self.observer.on_frame(&view);
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_millis(1) {
+            tracing::warn!(
+                "FrameObserver '{}' exceeded timing budget: {:?}. \
+                 Observers MUST return in <1ms to avoid frame drops.",
+                self.observer.name(),
+                elapsed
+            );
+        } else if elapsed > std::time::Duration::from_micros(100) {
+            tracing::debug!(
+                "FrameObserver '{}' took too long: {:?}. \
+                 Ideally observers should return in <100µs.",
+                self.observer.name(),
+                elapsed
+            );
+        }
     }
 
     fn inspect_frame(&self, frame: &Frame) {
         // Convert Frame to FrameView (zero-copy borrow)
         let view = daq_core::data::FrameView::from_frame(frame);
+        // Measure observer timing and log warnings for slow observers
+        let start = std::time::Instant::now();
         self.observer.on_frame(&view);
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_millis(1) {
+            tracing::warn!(
+                "FrameObserver '{}' exceeded timing budget: {:?}. \
+                 Observers MUST return in <1ms to avoid frame drops.",
+                self.observer.name(),
+                elapsed
+            );
+        } else if elapsed > std::time::Duration::from_micros(100) {
+            tracing::debug!(
+                "FrameObserver '{}' took too long: {:?}. \
+                 Ideally observers should return in <100µs.",
+                self.observer.name(),
+                elapsed
+            );
+        }
     }
 
     fn name(&self) -> &str {
